@@ -1,0 +1,15 @@
+{
+  "workspace": "/Users/your-name/Documents/Stock Pilot",
+  "config_dir": "config",
+  "db_dir": "db",
+  "reports_dir": "reports",
+  "strategies_dir": "strategies",
+  "data_source": {
+    "provider": "tencent",
+    "adjustment": "qfq"
+  },
+  "privacy": {
+    "track_real_portfolio": true,
+    "allow_report_portfolio_cost": true
+  }
+}

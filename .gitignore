@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Local/private Stock Pilot data
+assets/config/*.yaml
+assets/db/
+assets/reports/
+*.sqlite
+
+# Local runtime config
+stockpilot.local.json
+.env
+
+# macOS
+.DS_Store

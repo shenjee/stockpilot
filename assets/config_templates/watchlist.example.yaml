@@ -1,0 +1,10 @@
+# 自选股配置示例
+watchlist:
+  - code: "600519"
+    market: "sh"
+    name: "贵州茅台"
+    tags: ["白酒", "核心资产"]
+  - code: "300750"
+    market: "sz"
+    name: "宁德时代"
+    tags: ["新能源", "创业板"]

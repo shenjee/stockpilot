@@ -1,0 +1,11 @@
+# 指数池配置示例
+indices:
+  - code: "000001"
+    market: "sh"
+    name: "上证指数"
+  - code: "399001"
+    market: "sz"
+    name: "深证成指"
+  - code: "399006"
+    market: "sz"
+    name: "创业板指"

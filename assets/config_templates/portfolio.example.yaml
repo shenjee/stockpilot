@@ -1,0 +1,9 @@
+# 持仓配置示例
+# 真实持仓和成本价不要提交到 Git 仓库。
+portfolio:
+  - code: "600111"
+    market: "sh"
+    name: "示例股票"
+    position: 100
+    cost_price: 10.00
+    target_weight: 0.10
