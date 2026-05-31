@@ -1,532 +1,532 @@
-# Stock Pilot 产品设计 v0.1
+# Stock Pilot Product Design v0.1
 
-## 1. 产品定位
+## 1. Product Positioning
 
-Stock Pilot 是一个面向个人投资者 / 初级基金经理成长路径的 A 股投研与量化辅助决策系统。
+Stock Pilot is an A-share research and quantitative decision-support system for individual investors who are developing toward a junior fund-manager workflow.
 
-它的目标不是自动交易，也不是黑箱荐股，而是帮助用户建立一套可解释、可复盘、可逐步进化的股票分析流程。
+It is not designed for automated trading or black-box stock picking. Its purpose is to help users build an explainable, reviewable, and gradually improving stock analysis process.
 
-核心定位：
+Core positioning:
 
-- 做市场观察，而不是凭感觉追涨杀跌
-- 做结构分析，而不是单纯堆指标
-- 做量化辅助，而不是全自动下单
-- 做规则复盘，而不是一次性经验堆积
-- 做人工交易指令辅助，由用户在证券客户端手工执行
+- Observe the market instead of chasing price moves by instinct
+- Analyze structure instead of stacking indicators blindly
+- Provide quantitative assistance instead of placing automated orders
+- Review rules continuously instead of accumulating one-off trading tips
+- Generate manual trading prompts that the user executes in a brokerage client
 
-最终形态可以理解为：
+The long-term product form is:
 
-> 一个面向 A 股投资者的投研驾驶舱和手工交易辅助驾驶系统。
+> A research cockpit and manual trading co-pilot for A-share investors.
 
-## 2. 不做什么
+## 2. Non-Goals
 
-Stock Pilot 需要明确边界，避免无序膨胀。
+Stock Pilot needs explicit boundaries to avoid uncontrolled scope growth.
 
-短期不做：
+Short-term non-goals:
 
-- 自动交易下单
-- 无依据的明日涨停预测
-- 纯 LLM 主观荐股
-- 未经验证新闻驱动的直接买卖建议
-- 复杂机器学习模型
-- 高频交易、Tick 级交易、Level2 深度策略
+- Automated order placement
+- Unsupported next-day limit-up predictions
+- Pure LLM-based subjective stock recommendations
+- Direct buy/sell calls driven by unverified news
+- Complex machine-learning models
+- High-frequency trading, tick-level trading, or Level 2 depth strategies
 
-中长期也应该谨慎处理：
+Long-term areas that still require caution:
 
-- 宏观事件直接推导个股买卖点
-- 用单一指标生成绝对买卖结论
-- 把网络经验策略当成永远有效的真理
+- Mapping macro events directly to individual-stock buy/sell points
+- Generating absolute trading decisions from a single indicator
+- Treating online trading tips as permanently valid rules
 
-系统应始终输出依据、风险、失效条件和人工确认点。
+The system should always output evidence, risks, invalidation conditions, and points that require human confirmation.
 
-## 3. 用户画像
+## 3. User Profile
 
-当前用户可以被定义为：
+The current user can be described as someone who:
 
-- 正在从普通投资者向初级基金经理式思维成长
-- 已经有自选股、持仓股和每日观察需求
-- 正在学习缠论的分型、笔、线段、走势类型、中枢
-- 希望引入量化信号，但不希望自动交易
-- 希望逐步理解宏观事件、行业轮动、个股结构之间的关系
-- 希望把网上经验、炒股书籍、个人复盘沉淀成可迭代策略库
+- Is growing from a retail investor mindset toward a junior fund-manager workflow
+- Already has watchlist, portfolio, and daily market observation needs
+- Is learning Chan theory concepts such as fractals, strokes, segments, trend types, and central zones
+- Wants quantitative signals, but does not want automated trading
+- Wants to understand the relationship between macro events, sector rotation, and individual-stock structure
+- Wants to turn online tips, trading books, and personal reviews into an evolving strategy library
 
-## 4. 核心工作流
+## 4. Core Workflow
 
-Stock Pilot 应围绕基金经理式日常流程设计。
+Stock Pilot should be designed around a fund-manager-style daily workflow.
 
-每日盘后：
+After market close:
 
-1. 读取指数、自选股、持仓股行情
-2. 更新本地 K 线数据库
-3. 计算常规指标和量价状态
-4. 分析持仓风险和浮盈浮亏
-5. 输出日报和重点观察项
+1. Read index, watchlist, and portfolio quotes
+2. Update the local K-line database
+3. Calculate common indicators and price-volume states
+4. Analyze portfolio risk and unrealized profit/loss
+5. Generate the daily report and key observation items
 
-复盘时：
+During review:
 
-1. 查看持仓和自选股走势结构
-2. 识别分型、笔、线段、中枢等结构变化
-3. 检查策略规则是否触发
-4. 记录买卖信号是否有效
-5. 更新策略状态或权重
+1. Inspect portfolio and watchlist price structures
+2. Detect structure changes such as fractals, strokes, segments, and central zones
+3. Check which strategy rules were triggered
+4. Record whether buy/sell signals were validated by the market
+5. Update strategy status or weights
 
-选股时：
+During stock selection:
 
-1. 从板块轮动和宏观事件找到方向
-2. 在相关行业中筛选个股
-3. 检查技术结构和量化信号
-4. 输出候选股票、买点条件、失效条件和风险
+1. Identify directions from sector rotation and macro events
+2. Screen stocks within the relevant industries
+3. Check technical structure and quantitative signals
+4. Output candidate stocks, entry conditions, invalidation conditions, and risks
 
-手工交易时：
+During manual trading:
 
-1. 系统输出操作提示
-2. 用户在证券客户端手动执行
-3. 后续系统跟踪信号是否被市场验证
+1. The system outputs an action prompt
+2. The user executes manually in the brokerage client
+3. The system tracks whether the signal is later validated or invalidated
 
-## 5. 能力分层
+## 5. Capability Layers
 
-Stock Pilot 可以分为 8 个能力域。
+Stock Pilot can be divided into eight capability domains.
 
-### 5.1 数据系统
+### 5.1 Data System
 
-负责所有基础数据的获取、缓存和本地存储。
+Responsible for acquiring, caching, and storing all foundational data.
 
-包括：
+Includes:
 
-- 指数行情
-- 自选股行情
-- 持仓股行情
-- 历史 K 线
-- 成交量、成交额
-- 换手率
-- PE、PB、市值
-- 板块行情
-- 商品价格，如黄金、原油
-- 汇率、美元指数
-- 宏观和政策事件
+- Index quotes
+- Watchlist quotes
+- Portfolio quotes
+- Historical K-lines
+- Volume and turnover amount
+- Turnover rate
+- PE, PB, and market capitalization
+- Sector quotes
+- Commodity prices such as gold and crude oil
+- FX rates and the US Dollar Index
+- Macro and policy events
 
-第一阶段应优先实现本地 SQLite K 线库。
+Phase 1 should prioritize a local SQLite K-line database.
 
-原则：
+Principles:
 
-- 每次查询优先读取本地
-- 本地缺失再拉取外部数据
-- 拉取后写入本地
-- 后续分析统一基于本地结构化数据
+- Query local data first
+- Fetch external data only when local data is missing
+- Write fetched data back to local storage
+- Run later analysis against normalized local data
 
-### 5.2 指标系统
+### 5.2 Indicator System
 
-负责常规技术指标和量价状态计算。
+Responsible for common technical indicators and price-volume state calculation.
 
-Phase 1 建议覆盖：
+Recommended Phase 1 coverage:
 
-- MA：5日、10日、20日、60日均线
+- MA: 5-day, 10-day, 20-day, and 60-day moving averages
 - MACD
 - KDJ
 - RSI
 - BOLL
-- 成交量均量
-- 换手率状态
-- 量比
-- 振幅
+- Volume moving averages
+- Turnover-rate state
+- Volume ratio
+- Amplitude
 - ATR
 
-指标输出不应只是金叉、死叉，而应结构化描述状态。
+Indicator output should describe structured states, not only events such as golden crosses or death crosses.
 
-示例：
-
-```text
-MACD：零轴上方，红柱缩短，上行动能减弱
-RSI：偏强但未极端
-BOLL：接近上轨，波动扩张
-成交量：较20日均量放大
-换手率：高位分歧
-```
-
-### 5.3 缠论结构系统
-
-负责走势结构识别。
-
-建议迭代顺序：
-
-1. K 线标准化
-2. 包含关系处理
-3. 顶分型 / 底分型
-4. 笔
-5. 线段
-6. 中枢
-7. 背驰
-8. 走势类型
-9. 多周期联动
-
-短期目标不是“完美缠论”，而是做一个可解释版本。
-
-版本目标：
-
-- v0.1：能标出顶/底分型
-- v0.2：能连接成笔
-- v0.3：能识别线段
-- v0.4：能识别中枢
-- v0.5：能输出结构文字说明
-
-### 5.4 经验策略库
-
-负责沉淀来自网络分享、炒股书籍和个人复盘的经验规则。
-
-这些规则不是绝对真理，而是辅助判断证据。
-
-策略来源包括：
-
-- 均线经验
-- 成交量经验
-- 换手率经验
-- 仓位经验
-- 板块轮动经验
-- 节假日风险经验
-- 重大利好兑现经验
-
-示例规则：
+Example:
 
 ```text
-不上20日均线，不买
-不破5日均线，不卖
-跌破5日均线，减半仓
-跌破10日线，清仓离场
-躺在60日均线以下的票，不要买
-上升趋势中回调到5日均线，是买点
-上升趋势中回踩到20日均线，有支撑
-低位低量可关注，低位放量可以介入，高位放量要离场
-重大利好兑现后，高开高卖，注意风险
-重大节日前提前降低仓位
+MACD: above the zero axis, red bars shrinking, upside momentum weakening
+RSI: strong but not extreme
+BOLL: near upper band, volatility expanding
+Volume: above the 20-day average volume
+Turnover: high-level divergence
 ```
 
-策略库应支持生命周期：
+### 5.3 Chan Structure System
 
-- active：当前使用
-- testing：观察验证中
-- deprecated：已淘汰
-- conflict：存在冲突，需要人工判断
+Responsible for identifying trend structure.
 
-策略之间可能冲突。系统不应强行给出单一结论，而应展示冲突。
+Suggested iteration order:
 
-示例：
+1. K-line normalization
+2. Inclusion relationship handling
+3. Top and bottom fractals
+4. Strokes
+5. Segments
+6. Central zones
+7. Divergence
+8. Trend types
+9. Multi-timeframe linkage
+
+The short-term goal is not perfect Chan theory implementation. The goal is an explainable version.
+
+Version targets:
+
+- v0.1: mark top and bottom fractals
+- v0.2: connect fractals into strokes
+- v0.3: identify segments
+- v0.4: identify central zones
+- v0.5: output structure descriptions in text
+
+### 5.4 Experience Strategy Library
+
+Responsible for collecting experience rules from online sharing, trading books, and personal reviews.
+
+These rules are not absolute truths. They are supporting evidence for decision-making.
+
+Rule sources include:
+
+- Moving-average experience
+- Volume experience
+- Turnover-rate experience
+- Position-sizing experience
+- Sector-rotation experience
+- Holiday risk experience
+- Major-good-news realization experience
+
+Example rules:
 
 ```text
-趋势过滤：股价仍在20日均线下方，不满足买入条件
-量价信号：低位放量，出现关注信号
-合成结论：不确认买点，加入观察，等待站上20日线或回踩确认
+Do not buy before the price moves above the 20-day moving average.
+Do not sell while the price stays above the 5-day moving average.
+Reduce half the position if the price breaks below the 5-day moving average.
+Exit if the price breaks below the 10-day moving average.
+Do not buy stocks that remain below the 60-day moving average.
+In an uptrend, a pullback to the 5-day moving average can be an entry point.
+In an uptrend, a pullback to the 20-day moving average may have support.
+Low price plus low volume can be watched; low price plus rising volume may be actionable; high price plus rising volume is a warning.
+After major positive news is realized, high-open strength should be treated carefully because realization can bring risk.
+Reduce exposure before major holidays.
 ```
 
-### 5.5 量化信号系统
+The strategy library should support lifecycle states:
 
-负责把指标、结构和策略规则合成为可执行的手工交易辅助信号。
+- active: currently used
+- testing: under observation
+- deprecated: retired
+- conflict: conflicts with other rules and requires human judgment
 
-信号不直接等于自动交易。
+Rules can conflict with each other. The system should show the conflict instead of forcing a single conclusion.
 
-建议使用信号等级：
+Example:
 
 ```text
-Signal Level 0：无信号
-Signal Level 1：观察
-Signal Level 2：试探
-Signal Level 3：确认
-Signal Level 4：强确认
-Signal Level -1：风险
-Signal Level -2：减仓
-Signal Level -3：退出
+Trend filter: price is still below the 20-day moving average, so buy conditions are not satisfied.
+Price-volume signal: low-level volume expansion creates an observation signal.
+Combined conclusion: no confirmed entry; add to watchlist and wait for a move above the 20-day line or a valid pullback confirmation.
 ```
 
-每个信号必须包含：
+### 5.5 Quantitative Signal System
 
-- 股票
-- 周期
-- 信号等级
-- 触发规则
-- 支持依据
-- 压制因素
-- 失效条件
-- 风险说明
-- 建议动作
-- 是否需要人工确认
+Responsible for combining indicators, structure, and strategy rules into actionable manual-trading assistance signals.
 
-示例：
+A signal is not the same as an automated trade.
+
+Suggested signal levels:
 
 ```text
-股票：600111 北方稀土
-周期：日线 + 30分钟
-信号：观察买点
-依据：
-- 日线回踩中枢下沿未破
-- 30分钟底分型出现
-- MACD绿柱缩短
-- 成交量缩量
-- 换手率下降
-失效：
-- 跌破前低
-- 跌破中枢下沿
-建议动作：
-- 加入观察
-- 不直接重仓
+Signal Level 0: no signal
+Signal Level 1: watch
+Signal Level 2: probe
+Signal Level 3: confirmed
+Signal Level 4: strongly confirmed
+Signal Level -1: risk
+Signal Level -2: reduce
+Signal Level -3: exit
 ```
 
-### 5.6 板块轮动系统
+Each signal must include:
 
-负责识别市场资金方向。
+- Stock
+- Timeframe
+- Signal level
+- Triggered rules
+- Supporting evidence
+- Suppressing factors
+- Invalidation conditions
+- Risk notes
+- Suggested action
+- Whether human confirmation is required
 
-A 股中板块和龙头效应很强，因此个股信号需要结合板块环境过滤。
-
-重点关注：
-
-- 板块涨跌幅
-- 板块成交额
-- 板块放量情况
-- 龙头股表现
-- 板块内上涨家数
-- 板块轮动持续性
-- 板块与大盘指数的相对强弱
-
-原则：
-
-- 个股技术买点如果没有板块支持，信号降级
-- 板块强但个股结构不好，只进入观察
-- 宏观事件只先影响板块观察权重，不直接给个股买点
-
-### 5.7 宏观事件系统
-
-负责记录国际关系、政策变化、商品价格和行业影响。
-
-用户关注的事件类型包括：
-
-- 伊朗、美国、俄罗斯、中国等国家关系变化
-- 霍尔木兹海峡和中东局势
-- 黄金、原油、美元指数变化
-- 中美贸易磋商
-- AI 芯片管制放松或收紧
-- 农产品贸易变化
-- 航空采购、波音发动机等产业事件
-
-宏观事件的使用方式：
+Example:
 
 ```text
-事件 -> 影响主题 -> 映射行业 -> 提出观察方向 -> 等待板块和个股行情验证
+Stock: 600111 Northern Rare Earth
+Timeframe: daily + 30-minute
+Signal: watch entry
+Evidence:
+- Daily pullback held above the lower edge of the central zone
+- A 30-minute bottom fractal appeared
+- MACD green bars are shrinking
+- Volume contracted
+- Turnover rate declined
+Invalidation:
+- Breaks below the previous low
+- Breaks below the lower edge of the central zone
+Suggested action:
+- Add to watchlist
+- Do not take a heavy position directly
 ```
 
-示例：
+### 5.6 Sector Rotation System
+
+Responsible for identifying where market capital is moving.
+
+Sector and leader effects are strong in the A-share market, so individual-stock signals should be filtered by sector context.
+
+Key observations:
+
+- Sector price change
+- Sector turnover amount
+- Sector volume expansion
+- Leading-stock performance
+- Number of rising stocks within the sector
+- Sector-rotation persistence
+- Relative strength versus major indices
+
+Principles:
+
+- Downgrade individual technical entries if there is no sector support
+- If the sector is strong but the individual structure is weak, only mark as watch
+- Macro events should first adjust sector observation weights, not directly generate individual-stock entries
+
+### 5.7 Macro Event System
+
+Responsible for recording international relations, policy changes, commodity prices, and industry impacts.
+
+Event types of interest include:
+
+- Changes in relations among Iran, the United States, Russia, China, and related countries
+- The Strait of Hormuz and broader Middle East developments
+- Gold, crude oil, and US Dollar Index changes
+- US-China trade negotiations
+- Easing or tightening of AI chip controls
+- Agricultural trade changes
+- Aviation procurement, Boeing engines, and related industrial events
+
+Macro events should be used through this chain:
 
 ```text
-中东局势缓和：
-- 原油风险溢价下降
-- 石油天然气偏空观察
-- 黄金避险需求可能下降
-- 化工下游可能受益于成本改善
+Event -> affected themes -> mapped industries -> observation direction -> sector and stock-market validation
+```
+
+Example:
+
+```text
+Middle East tension easing:
+- Crude-oil risk premium declines
+- Oil and gas become bearish-watch sectors
+- Gold safe-haven demand may weaken
+- Some downstream chemical companies may benefit from lower input costs
 ```
 
 ```text
-AI芯片管制放松：
-- AI算力偏多
-- 半导体设备偏多
-- 先进封装偏多
-- AI软件偏多
-- 国产替代逻辑可能分化，需要行情验证
+AI chip restrictions easing:
+- AI computing becomes bullish
+- Semiconductor equipment becomes bullish
+- Advanced packaging becomes bullish
+- AI software becomes bullish
+- Domestic substitution may diverge and needs market validation
 ```
 
-宏观事件不应直接生成买卖指令。只有当宏观方向、板块轮动、个股结构和量化信号共同确认时，才可进入股票推荐。
+Macro events should not directly generate trading instructions. Stock recommendations should only appear when macro direction, sector rotation, individual-stock structure, and quantitative signals confirm together.
 
-### 5.8 持仓与复盘系统
+### 5.8 Portfolio and Review System
 
-负责持仓监控、风险暴露和策略验证。
+Responsible for portfolio monitoring, risk exposure, and strategy validation.
 
-包括：
+Includes:
 
-- 持仓市值
-- 浮盈浮亏
-- 单股仓位
-- 板块集中度
-- 风险等级
-- 止损条件
-- 策略命中记录
-- 买卖后复盘
+- Portfolio market value
+- Unrealized profit/loss
+- Single-stock position size
+- Sector concentration
+- Risk level
+- Stop conditions
+- Strategy hit records
+- Post-trade review
 
-持仓系统应回答：
+The portfolio system should answer:
 
-- 当前持仓风险在哪里
-- 哪些持仓触发减仓或退出信号
-- 哪些持仓仍处于有效趋势中
-- 买入理由是否仍然成立
-- 原策略是否需要降权或淘汰
+- Where are the current portfolio risks?
+- Which holdings triggered reduce or exit signals?
+- Which holdings remain in valid trends?
+- Is the original entry reason still valid?
+- Should the original strategy be downgraded or retired?
 
-## 6. 产品阶段规划
+## 6. Product Roadmap
 
-### Phase 0：产品设计与任务拆解
+### Phase 0: Product Design and Task Breakdown
 
-目标：
+Goals:
 
-- 明确产品定位
-- 明确不做什么
-- 明确模块边界
-- 明确信号体系
-- 明确策略库形态
-- 拆出第一批可执行任务
+- Define product positioning
+- Define non-goals
+- Define module boundaries
+- Define the signal system
+- Define the strategy-library format
+- Break down the first executable tasks
 
-交付：
+Deliverables:
 
 - `PRODUCT_DESIGN.md`
-- 初始 task backlog
+- Initial task backlog
 
-### Phase 1：基础投研台
+### Phase 1: Basic Research Desk
 
-目标：
+Goal:
 
-每天稳定回答：
+Answer reliably every day:
 
-> 我关注的股票今天发生了什么？
+> What happened today to the stocks I care about?
 
-范围：
+Scope:
 
-- 本地 K 线数据库
-- 自选股 / 持仓股日报
-- 常规指标
-- 成交量 / 换手率状态
-- 基础持仓盈亏和风险
+- Local K-line database
+- Watchlist and portfolio daily reports
+- Common indicators
+- Volume and turnover-rate states
+- Basic portfolio profit/loss and risk
 
-不做：
+Non-goals:
 
-- 复杂缠论
-- 宏观事件推荐个股
-- 自动荐股
+- Complex Chan theory
+- Macro-event-driven stock recommendations
+- Automated stock picking
 
-### Phase 2：结构分析机
+### Phase 2: Structure Analysis Engine
 
-目标：
+Goal:
 
-回答：
+Answer:
 
-> 这只股票现在处于什么走势结构？
+> What trend structure is this stock currently in?
 
-范围：
+Scope:
 
-- 分型
-- 笔
-- 线段
-- 中枢
-- 背驰雏形
-- 多周期观察
+- Fractals
+- Strokes
+- Segments
+- Central zones
+- Early divergence detection
+- Multi-timeframe observation
 
-输出：
+Output:
 
-- 结构文字描述
-- 结构变化提醒
-- 潜在买卖点候选
+- Structure descriptions
+- Structure-change alerts
+- Potential buy/sell point candidates
 
-### Phase 3：策略规则与量化信号
+### Phase 3: Strategy Rules and Quantitative Signals
 
-目标：
+Goal:
 
-回答：
+Answer:
 
-> 哪些规则被触发？是否形成可执行观察或操作信号？
+> Which rules were triggered, and did they form an actionable observation or operation signal?
 
-范围：
+Scope:
 
-- 策略规则库
-- 均线规则
-- 量价规则
-- 仓位规则
-- 节假日规则
-- 策略冲突展示
-- 信号等级合成
+- Strategy rule library
+- Moving-average rules
+- Price-volume rules
+- Position rules
+- Holiday rules
+- Strategy conflict display
+- Signal-level synthesis
 
-输出：
+Output:
 
-- 观察信号
-- 试探信号
-- 确认信号
-- 减仓信号
-- 退出信号
+- Watch signals
+- Probe signals
+- Confirmed signals
+- Reduce signals
+- Exit signals
 
-### Phase 4：板块轮动
+### Phase 4: Sector Rotation
 
-目标：
+Goal:
 
-回答：
+Answer:
 
-> 市场资金在哪里？个股信号是否有板块支持？
+> Where is market capital moving, and does an individual-stock signal have sector support?
 
-范围：
+Scope:
 
-- 板块涨跌
-- 板块成交额
-- 龙头股
-- 板块相对强弱
-- 板块持续性
-- 个股信号板块过滤
+- Sector price changes
+- Sector turnover amount
+- Leading stocks
+- Sector relative strength
+- Sector persistence
+- Individual-signal sector filtering
 
-### Phase 5：宏观事件与行业映射
+### Phase 5: Macro Events and Industry Mapping
 
-目标：
+Goal:
 
-回答：
+Answer:
 
-> 宏观事件可能影响哪些行业？行情是否正在验证？
+> Which industries may be affected by macro events, and is the market validating that impact?
 
-范围：
+Scope:
 
-- 国际关系事件
-- 商品价格
-- 美元指数
-- 贸易政策
-- 芯片管制
-- 农业、航空、能源、黄金等行业映射
+- International-relations events
+- Commodity prices
+- US Dollar Index
+- Trade policy
+- Chip controls
+- Industry mapping for agriculture, aviation, energy, gold, and related sectors
 
-输出：
+Output:
 
-- 事件观察
-- 行业影响方向
-- 板块验证状态
-- 候选行业池
+- Event observations
+- Industry impact directions
+- Sector validation status
+- Candidate industry pool
 
-### Phase 6：股票推荐与组合辅助
+### Phase 6: Stock Recommendation and Portfolio Assistance
 
-目标：
+Goal:
 
-回答：
+Answer:
 
-> 在当前市场环境和行业方向下，哪些股票值得进入观察或操作？
+> Under the current market environment and industry direction, which stocks are worth watching or acting on?
 
-推荐条件：
+Recommendation requirements:
 
-- 宏观或事件方向支持
-- 板块轮动确认
-- 个股技术结构良好
-- 量化信号触发
-- 风险可定义
-- 失效条件明确
+- Macro or event direction supports the theme
+- Sector rotation confirms the theme
+- Individual technical structure is healthy
+- Quantitative signal is triggered
+- Risk can be defined
+- Invalidation condition is clear
 
-输出：
+Output:
 
-- 候选股票
-- 买点条件
-- 卖点条件
-- 仓位建议区间
-- 风险等级
-- 人工确认项
+- Candidate stocks
+- Entry conditions
+- Exit conditions
+- Position-size range
+- Risk level
+- Human confirmation items
 
-## 7. Skill 组织建议
+## 7. Skill Organization
 
-短期建议继续使用一个主 skill：
+In the short term, continue using one main skill:
 
 ```text
 china-stock-daily-tracker
 ```
 
-原因：
+Reasons:
 
-- 需求仍在成型
-- 单 skill 更容易迭代
-- 当前已有日报和配置基础
-- 过早拆分会增加维护复杂度
+- Requirements are still evolving
+- A single skill is easier to iterate
+- The current skill already has report and configuration foundations
+- Splitting too early increases maintenance complexity
 
-中长期可拆分为多个 skill：
+In the medium to long term, the system can be split into multiple skills:
 
 ```text
 stock-data-engine
@@ -537,21 +537,22 @@ stock-macro-event-engine
 stock-portfolio-pilot
 ```
 
-拆分条件：
+Split when:
 
-- 模块边界稳定
-- 数据接口稳定
-- 代码体量明显变大
-- 不同 agent 需要复用其中一部分能力
+- Module boundaries stabilize
+- Data interfaces stabilize
+- Code size grows significantly
+- Other agents need to reuse only part of the capability
 
-## 8. 建议目录结构
+## 8. Suggested Directory Structure
 
-短期可在当前 skill 内按模块组织：
+In the short term, organize modules inside the current skill:
 
 ```text
 china-stock-daily-tracker/
 ├── SKILL.md
 ├── PRODUCT_DESIGN.md
+├── PRODUCT_DESIGN.zh.md
 ├── scripts/
 │   ├── generate_report.py
 │   ├── local_db.py
@@ -579,66 +580,66 @@ china-stock-daily-tracker/
 └── references/
 ```
 
-这只是目标结构，不代表一次性实现。
+This is a target structure, not a one-shot implementation plan.
 
-## 9. 第一批任务建议
+## 9. First Task Batch
 
-P0：
+P0:
 
-- 建立本地 SQLite K 线数据库
-- 设计统一 K 线数据结构
-- 将历史 K 线拉取结果写入本地库
-- 增加 MA、MACD、RSI、KDJ、BOLL 计算
-- 增加成交量和换手率状态描述
+- Build a local SQLite K-line database
+- Design a unified K-line data structure
+- Persist fetched historical K-lines into the local database
+- Add MA, MACD, RSI, KDJ, and BOLL calculations
+- Add volume and turnover-rate state descriptions
 
-P1：
+P1:
 
-- 建立策略规则 Markdown 目录
-- 写入第一批均线、量价、仓位经验规则
-- 实现分型识别
-- 实现笔识别
-- 把指标状态接入日报
+- Create the strategy-rule Markdown directory
+- Add the first batch of moving-average, price-volume, and position experience rules
+- Implement fractal detection
+- Implement stroke detection
+- Integrate indicator states into the daily report
 
-P2：
+P2:
 
-- 实现线段识别
-- 实现中枢识别
-- 建立信号等级合成模型
-- 增加持仓减仓 / 退出信号
+- Implement segment detection
+- Implement central-zone detection
+- Build the signal-level synthesis model
+- Add portfolio reduce and exit signals
 
-P3：
+P3:
 
-- 接入板块轮动数据
-- 增加板块强弱分析
-- 建立宏观事件到行业的人工映射表
-- 让个股推荐必须经过板块和结构双重过滤
+- Integrate sector-rotation data
+- Add sector strength analysis
+- Build a manual macro-event-to-industry mapping table
+- Require stock recommendations to pass both sector and structure filters
 
-## 10. 设计原则
+## 10. Design Principles
 
-Stock Pilot 后续迭代应遵循以下原则：
+Future Stock Pilot iterations should follow these principles:
 
-- 先数据，后分析
-- 先观察，后信号
-- 先结构，后推荐
-- 先人工确认，后自动化
-- 每个结论必须有依据
-- 每个信号必须有失效条件
-- 每条策略必须允许复盘、降权和淘汰
-- 宏观事件必须等待行业和个股行情验证
-- 不因单一指标生成强买强卖结论
+- Data before analysis
+- Observation before signals
+- Structure before recommendations
+- Human confirmation before automation
+- Every conclusion must have evidence
+- Every signal must have invalidation conditions
+- Every rule must be reviewable, down-weightable, and removable
+- Macro events must wait for sector and individual-stock market validation
+- No strong buy/sell decision should come from a single indicator
 
-## 11. 最小可用版本定义
+## 11. Minimum Viable Product
 
-Stock Pilot MVP 不需要推荐股票。
+The Stock Pilot MVP does not need to recommend stocks.
 
-第一版可用标准：
+The first usable version should be able to:
 
-- 能每天更新自选股和持仓股数据
-- 能保存历史 K 线到本地数据库
-- 能输出基础技术指标状态
-- 能输出成交量和换手率状态
-- 能提示持仓风险
-- 能记录并展示经验策略规则
-- 能生成稳定 Markdown 日报
+- Update watchlist and portfolio data daily
+- Save historical K-lines into a local database
+- Output basic technical indicator states
+- Output volume and turnover-rate states
+- Warn about portfolio risks
+- Record and display experience strategy rules
+- Generate stable Markdown daily reports
 
-当 MVP 稳定后，再进入结构分析、信号合成、板块轮动和宏观事件系统。
+After the MVP is stable, the system can move into structure analysis, signal synthesis, sector rotation, and macro event support.
