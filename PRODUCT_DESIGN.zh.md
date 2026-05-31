@@ -1,8 +1,8 @@
-# Stock Pilot 产品设计 v0.1
+# china-stock-daily-tracker 产品设计 v0.1
 
 ## 1. 产品定位
 
-Stock Pilot 是一个面向个人投资者 / 初级基金经理成长路径的 A 股投研与量化辅助决策系统。
+china-stock-daily-tracker 是一个面向个人投资者 / 初级基金经理成长路径的 A 股投研与量化辅助决策系统。
 
 它的目标不是自动交易，也不是黑箱荐股，而是帮助用户建立一套可解释、可复盘、可逐步进化的股票分析流程。
 
@@ -20,7 +20,7 @@ Stock Pilot 是一个面向个人投资者 / 初级基金经理成长路径的 A
 
 ## 2. 不做什么
 
-Stock Pilot 需要明确边界，避免无序膨胀。
+china-stock-daily-tracker 需要明确边界，避免无序膨胀。
 
 短期不做：
 
@@ -52,7 +52,7 @@ Stock Pilot 需要明确边界，避免无序膨胀。
 
 ## 4. 核心工作流
 
-Stock Pilot 应围绕基金经理式日常流程设计。
+china-stock-daily-tracker 应围绕基金经理式日常流程设计。
 
 每日盘后：
 
@@ -85,7 +85,7 @@ Stock Pilot 应围绕基金经理式日常流程设计。
 
 ## 5. 能力分层
 
-Stock Pilot 可以分为 8 个能力域。
+china-stock-daily-tracker 可以分为 8 个能力域。
 
 ### 5.1 数据系统
 
@@ -615,7 +615,7 @@ P3：
 
 ## 10. 设计原则
 
-Stock Pilot 后续迭代应遵循以下原则：
+china-stock-daily-tracker 后续迭代应遵循以下原则：
 
 - 先数据，后分析
 - 先观察，后信号
@@ -629,7 +629,7 @@ Stock Pilot 后续迭代应遵循以下原则：
 
 ## 11. 最小可用版本定义
 
-Stock Pilot MVP 不需要推荐股票。
+china-stock-daily-tracker MVP 不需要推荐股票。
 
 第一版可用标准：
 

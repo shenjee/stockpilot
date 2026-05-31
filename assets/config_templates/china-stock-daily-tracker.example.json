@@ -1,5 +1,5 @@
 {
-  "workspace": "/Users/your-name/Documents/Stock Pilot",
+  "workspace": ".",
   "config_dir": "config",
   "db_dir": "db",
   "reports_dir": "reports",

@@ -1,8 +1,8 @@
-# Stock Pilot Product Design v0.1
+# china-stock-daily-tracker Product Design v0.1
 
 ## 1. Product Positioning
 
-Stock Pilot is an A-share research and quantitative decision-support system for individual investors who are developing toward a junior fund-manager workflow.
+china-stock-daily-tracker is an A-share research and quantitative decision-support system for individual investors who are developing toward a junior fund-manager workflow.
 
 It is not designed for automated trading or black-box stock picking. Its purpose is to help users build an explainable, reviewable, and gradually improving stock analysis process.
 
@@ -20,7 +20,7 @@ The long-term product form is:
 
 ## 2. Non-Goals
 
-Stock Pilot needs explicit boundaries to avoid uncontrolled scope growth.
+china-stock-daily-tracker needs explicit boundaries to avoid uncontrolled scope growth.
 
 Short-term non-goals:
 
@@ -52,7 +52,7 @@ The current user can be described as someone who:
 
 ## 4. Core Workflow
 
-Stock Pilot should be designed around a fund-manager-style daily workflow.
+china-stock-daily-tracker should be designed around a fund-manager-style daily workflow.
 
 After market close:
 
@@ -85,7 +85,7 @@ During manual trading:
 
 ## 5. Capability Layers
 
-Stock Pilot can be divided into eight capability domains.
+china-stock-daily-tracker can be divided into eight capability domains.
 
 ### 5.1 Data System
 
@@ -616,7 +616,7 @@ P3:
 
 ## 10. Design Principles
 
-Future Stock Pilot iterations should follow these principles:
+Future china-stock-daily-tracker iterations should follow these principles:
 
 - Data before analysis
 - Observation before signals
@@ -630,7 +630,7 @@ Future Stock Pilot iterations should follow these principles:
 
 ## 11. Minimum Viable Product
 
-The Stock Pilot MVP does not need to recommend stocks.
+The china-stock-daily-tracker MVP does not need to recommend stocks.
 
 The first usable version should be able to:
 

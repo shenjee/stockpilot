@@ -2,7 +2,7 @@
 name: china-stock-daily-tracker
 description: "中国A股每日行情追踪 - 生成事实型行情报告，覆盖指数、自选股、持仓股。"
 metadata:
-  author: StockPilot
+  author: china-stock-daily-tracker
   version: 1.0.0
   category: finance
   tags: [a-share, stock, daily-report, market-data]
@@ -31,31 +31,16 @@ metadata:
 
 ## 使用方式
 
-### 手动生成报告
+运行脚本位于本 skill 目录的 `scripts/generate_report.py`。
+
+私有数据目录不是 skill 安装目录。默认使用当前 agent/project 的工作目录。配置、SQLite 数据库和报告会写入该 workspace 下的 `config/`、`db/`、`reports/`。
 
 ```bash
-python3 scripts/generate_report.py \
-  --workspace "$HOME/Documents/Stock Pilot"
+cd <workspace-dir>
+python3 <skill-dir>/scripts/generate_report.py --type close
 ```
 
-也可以用环境变量指定私有工作区：
-
-```bash
-export STOCKPILOT_WORKSPACE="$HOME/Documents/Stock Pilot"
-python3 scripts/generate_report.py
-```
-
-### 定时运行（cron）
-
-生成报告：
-
-```bash
-# 收盘简报 - 工作日 15:30
-30 15 * * 1-5 cd ~/development/china-stock-daily-tracker && STOCKPILOT_WORKSPACE="$HOME/Documents/Stock Pilot" python3 scripts/generate_report.py --type close
-
-# 复盘报告 - 工作日 20:30
-30 20 * * 1-5 cd ~/development/china-stock-daily-tracker && STOCKPILOT_WORKSPACE="$HOME/Documents/Stock Pilot" python3 scripts/generate_report.py --type review
-```
+特殊部署时可用 `CHINA_STOCK_DAILY_TRACKER_WORKSPACE` 或本地 `china-stock-daily-tracker.local.json` 覆盖 workspace。
 
 ## 配置文件
 
@@ -99,7 +84,7 @@ strategies:
 
 ## 报告输出
 
-- 路径：`assets/reports/daily_report_YYYYMMDD.md`
+- 路径：`<workspace>/reports/daily_report_YYYYMMDD.md`
 - 格式：Markdown
 - 内容：指数概览、自选股行情、持仓盈亏、技术指标状态、经验规则、板块数据状态
 

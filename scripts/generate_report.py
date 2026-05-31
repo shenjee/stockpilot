@@ -18,10 +18,8 @@ from pathlib import Path
 
 # 配置路径
 SKILL_DIR = Path(__file__).parent.parent
-DEFAULT_CONFIG_DIR = SKILL_DIR / "assets" / "config"
-DEFAULT_REPORT_DIR = SKILL_DIR / "assets" / "reports"
-DEFAULT_DB_DIR = SKILL_DIR / "assets" / "db"
 DEFAULT_LOOKBACK_DAYS = 140
+LOCAL_CONFIG_NAMES = ("china-stock-daily-tracker.local.json", "china-stock-daily-tracker.json")
 
 # 主要指数代码（腾讯财经格式）
 INDICES = {
@@ -38,22 +36,42 @@ INDICES = {
 
 
 class RuntimePaths:
-    """运行期路径：源码和私有工作区分离。"""
+    """运行期路径：skill目录和私有工作区分离。"""
 
-    def __init__(self, workspace: str = None):
-        if workspace:
-            root = Path(workspace).expanduser().resolve()
-            self.workspace = root
-            self.config_dir = root / "config"
-            self.report_dir = root / "reports"
-            self.db_dir = root / "db"
-            self.strategy_dir = root / "strategies"
-        else:
-            self.workspace = SKILL_DIR
-            self.config_dir = DEFAULT_CONFIG_DIR
-            self.report_dir = DEFAULT_REPORT_DIR
-            self.db_dir = DEFAULT_DB_DIR
-            self.strategy_dir = SKILL_DIR / "assets" / "strategies"
+    def __init__(self, config_file: str = None):
+        config = self._load_runtime_config(config_file)
+        root_value = os.environ.get("CHINA_STOCK_DAILY_TRACKER_WORKSPACE") or config.get("workspace")
+        root = Path(root_value).expanduser().resolve() if root_value else Path.cwd().resolve()
+
+        self.workspace = root
+        self.config_dir = self._resolve_path(config.get("config_dir", "config"))
+        self.report_dir = self._resolve_path(config.get("reports_dir", "reports"))
+        self.db_dir = self._resolve_path(config.get("db_dir", "db"))
+        self.strategy_dir = self._resolve_path(config.get("strategies_dir", "strategies"))
+
+    def _load_runtime_config(self, config_file: str = None) -> dict:
+        path = config_file or os.environ.get("CHINA_STOCK_DAILY_TRACKER_CONFIG")
+        if path:
+            return self._read_json_config(Path(path).expanduser())
+
+        for name in LOCAL_CONFIG_NAMES:
+            candidate = Path.cwd() / name
+            if candidate.exists():
+                return self._read_json_config(candidate)
+        return {}
+
+    def _read_json_config(self, path: Path) -> dict:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except Exception as e:
+            print(f"[WARN] 加载运行配置失败 {path}: {e}")
+            return {}
+
+    def _resolve_path(self, value: str) -> Path:
+        path = Path(value).expanduser()
+        return path.resolve() if path.is_absolute() else (self.workspace / path).resolve()
 
     def ensure_dirs(self):
         self.config_dir.mkdir(parents=True, exist_ok=True)
@@ -610,7 +628,7 @@ class ReportGenerator:
         """
         self.api = TXStockAPI()
         self.paths = paths or RuntimePaths()
-        self.kline_store = KLineStore(self.paths.db_dir / "stockpilot.sqlite")
+        self.kline_store = KLineStore(self.paths.db_dir / "china_stock_daily_tracker.sqlite")
         
         if target_date:
             self.target_date = datetime.strptime(target_date, '%Y-%m-%d')
@@ -1382,13 +1400,13 @@ def main():
                        help='报告类型：close=收盘简报, review=复盘报告')
     parser.add_argument('--date', '-d', help='指定日期，格式：2025-05-22（默认今天）')
     parser.add_argument('--output', '-o', help='输出文件路径（默认保存到reports目录）')
-    parser.add_argument('--workspace', '-w',
-                       help='Stock Pilot私有工作区路径；配置、数据库和报告会写入该目录')
+    parser.add_argument('--config',
+                       help='运行配置JSON路径；默认查找 CHINA_STOCK_DAILY_TRACKER_CONFIG、当前目录 china-stock-daily-tracker.local.json、china-stock-daily-tracker.json')
     parser.add_argument('--force', action='store_true',
                        help='强制生成报告（忽略交易日检查）')
     args = parser.parse_args()
 
-    paths = RuntimePaths(args.workspace or os.environ.get("STOCKPILOT_WORKSPACE"))
+    paths = RuntimePaths(config_file=args.config)
     
     # 确保配置目录存在
     paths.ensure_dirs()
