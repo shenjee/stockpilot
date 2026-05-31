@@ -11,13 +11,17 @@ import json
 import os
 import sys
 import argparse
+import math
+import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
 # 配置路径
 SKILL_DIR = Path(__file__).parent.parent
-CONFIG_DIR = SKILL_DIR / "assets" / "config"
-REPORT_DIR = SKILL_DIR / "assets" / "reports"
+DEFAULT_CONFIG_DIR = SKILL_DIR / "assets" / "config"
+DEFAULT_REPORT_DIR = SKILL_DIR / "assets" / "reports"
+DEFAULT_DB_DIR = SKILL_DIR / "assets" / "db"
+DEFAULT_LOOKBACK_DAYS = 140
 
 # 主要指数代码（腾讯财经格式）
 INDICES = {
@@ -31,6 +35,30 @@ INDICES = {
     "sh000688": ("科创50", "SH"),
     "sz899050": ("北证50", "BJ"),
 }
+
+
+class RuntimePaths:
+    """运行期路径：源码和私有工作区分离。"""
+
+    def __init__(self, workspace: str = None):
+        if workspace:
+            root = Path(workspace).expanduser().resolve()
+            self.workspace = root
+            self.config_dir = root / "config"
+            self.report_dir = root / "reports"
+            self.db_dir = root / "db"
+            self.strategy_dir = root / "strategies"
+        else:
+            self.workspace = SKILL_DIR
+            self.config_dir = DEFAULT_CONFIG_DIR
+            self.report_dir = DEFAULT_REPORT_DIR
+            self.db_dir = DEFAULT_DB_DIR
+            self.strategy_dir = SKILL_DIR / "assets" / "strategies"
+
+    def ensure_dirs(self):
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        self.report_dir.mkdir(parents=True, exist_ok=True)
+        self.db_dir.mkdir(parents=True, exist_ok=True)
 
 
 class TXStockAPI:
@@ -227,15 +255,362 @@ class TXStockAPI:
         }
 
 
+class KLineStore:
+    """本地SQLite K线库"""
+
+    def __init__(self, db_path: Path):
+        self.db_path = db_path
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._init_schema()
+
+    def _connect(self):
+        return sqlite3.connect(self.db_path)
+
+    def _init_schema(self):
+        with self._connect() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS daily_klines (
+                    symbol TEXT NOT NULL,
+                    code TEXT NOT NULL,
+                    market TEXT NOT NULL,
+                    trade_date TEXT NOT NULL,
+                    open REAL NOT NULL,
+                    close REAL NOT NULL,
+                    high REAL NOT NULL,
+                    low REAL NOT NULL,
+                    volume INTEGER NOT NULL,
+                    source TEXT NOT NULL DEFAULT 'tencent',
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (symbol, trade_date)
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_daily_klines_date ON daily_klines(trade_date)")
+
+    @staticmethod
+    def symbol(code: str, market: str = None) -> str:
+        prefix = market or TXStockAPI._get_prefix(code)
+        return f"{prefix}{code}"
+
+    def latest_date(self, code: str, market: str = None) -> str:
+        symbol = self.symbol(code, market)
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT MAX(trade_date) FROM daily_klines WHERE symbol = ?",
+                (symbol,),
+            ).fetchone()
+        return row[0] if row and row[0] else None
+
+    def count_since(self, code: str, start_date: str, market: str = None) -> int:
+        symbol = self.symbol(code, market)
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM daily_klines WHERE symbol = ? AND trade_date >= ?",
+                (symbol, start_date),
+            ).fetchone()
+        return int(row[0] or 0)
+
+    def upsert_many(self, code: str, market: str, klines: list):
+        if not klines:
+            return
+        symbol = self.symbol(code, market)
+        updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        rows = [
+            (
+                symbol,
+                code,
+                market or TXStockAPI._get_prefix(code),
+                item["date"],
+                item["open"],
+                item["close"],
+                item["high"],
+                item["low"],
+                item["volume"],
+                "tencent",
+                updated_at,
+            )
+            for item in klines
+        ]
+        with self._connect() as conn:
+            conn.executemany("""
+                INSERT INTO daily_klines (
+                    symbol, code, market, trade_date, open, close, high, low,
+                    volume, source, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(symbol, trade_date) DO UPDATE SET
+                    open = excluded.open,
+                    close = excluded.close,
+                    high = excluded.high,
+                    low = excluded.low,
+                    volume = excluded.volume,
+                    updated_at = excluded.updated_at
+            """, rows)
+
+    def get_klines(self, code: str, end_date: str, market: str = None, limit: int = 120) -> list:
+        symbol = self.symbol(code, market)
+        with self._connect() as conn:
+            rows = conn.execute("""
+                SELECT trade_date, open, close, high, low, volume
+                FROM daily_klines
+                WHERE symbol = ? AND trade_date <= ?
+                ORDER BY trade_date DESC
+                LIMIT ?
+            """, (symbol, end_date, limit)).fetchall()
+
+        rows.reverse()
+        return [
+            {
+                "date": row[0],
+                "open": row[1],
+                "close": row[2],
+                "high": row[3],
+                "low": row[4],
+                "volume": row[5],
+            }
+            for row in rows
+        ]
+
+
+class IndicatorCalculator:
+    """常规技术指标和量价状态计算"""
+
+    @staticmethod
+    def _sma(values: list, period: int):
+        if len(values) < period:
+            return None
+        return sum(values[-period:]) / period
+
+    @staticmethod
+    def _ema_series(values: list, period: int) -> list:
+        if not values:
+            return []
+        alpha = 2 / (period + 1)
+        ema = [values[0]]
+        for value in values[1:]:
+            ema.append(value * alpha + ema[-1] * (1 - alpha))
+        return ema
+
+    @classmethod
+    def calculate(cls, klines: list, float_shares: float = None) -> dict:
+        if not klines:
+            return {}
+
+        closes = [k["close"] for k in klines]
+        highs = [k["high"] for k in klines]
+        lows = [k["low"] for k in klines]
+        volumes = [k["volume"] for k in klines]
+        last = klines[-1]
+        close = closes[-1]
+
+        ma = {period: cls._sma(closes, period) for period in (5, 10, 20, 60)}
+        prev_ma = {period: cls._sma(closes[:-1], period) for period in (5, 10, 20, 60)}
+        volume_ma5 = cls._sma(volumes, 5)
+        volume_ma20 = cls._sma(volumes, 20)
+
+        ema12 = cls._ema_series(closes, 12)
+        ema26 = cls._ema_series(closes, 26)
+        dif_series = [a - b for a, b in zip(ema12, ema26)]
+        dea_series = cls._ema_series(dif_series, 9)
+        macd_hist = [(dif - dea) * 2 for dif, dea in zip(dif_series, dea_series)]
+
+        rsi6 = cls._rsi(closes, 6)
+        kdj = cls._kdj(klines)
+        boll = cls._boll(closes)
+        atr14 = cls._atr(klines, 14)
+
+        amplitude = ((last["high"] - last["low"]) / close * 100) if close else None
+        volume_ratio = (last["volume"] / volume_ma5) if volume_ma5 else None
+        turnover_rate = None
+        if float_shares:
+            turnover_rate = last["volume"] * 100 / float_shares * 100
+
+        values = {
+            "ma": ma,
+            "prev_ma": prev_ma,
+            "macd": {
+                "dif": dif_series[-1] if dif_series else None,
+                "dea": dea_series[-1] if dea_series else None,
+                "hist": macd_hist[-1] if macd_hist else None,
+                "prev_hist": macd_hist[-2] if len(macd_hist) >= 2 else None,
+            },
+            "kdj": kdj,
+            "rsi6": rsi6,
+            "boll": boll,
+            "volume_ma5": volume_ma5,
+            "volume_ma20": volume_ma20,
+            "volume_ratio": volume_ratio,
+            "turnover_rate": turnover_rate,
+            "amplitude": amplitude,
+            "atr14": atr14,
+        }
+        values["states"] = cls.describe(values, close, last["volume"])
+        return values
+
+    @staticmethod
+    def _rsi(closes: list, period: int):
+        if len(closes) <= period:
+            return None
+        gains = []
+        losses = []
+        for i in range(-period, 0):
+            diff = closes[i] - closes[i - 1]
+            gains.append(max(diff, 0))
+            losses.append(abs(min(diff, 0)))
+        avg_gain = sum(gains) / period
+        avg_loss = sum(losses) / period
+        if avg_loss == 0:
+            return 100.0
+        rs = avg_gain / avg_loss
+        return 100 - (100 / (1 + rs))
+
+    @staticmethod
+    def _kdj(klines: list, period: int = 9):
+        if len(klines) < period:
+            return None
+        k_value = 50.0
+        d_value = 50.0
+        for idx in range(period - 1, len(klines)):
+            window = klines[idx - period + 1:idx + 1]
+            low = min(item["low"] for item in window)
+            high = max(item["high"] for item in window)
+            close = klines[idx]["close"]
+            rsv = 50.0 if high == low else (close - low) / (high - low) * 100
+            k_value = (2 / 3) * k_value + (1 / 3) * rsv
+            d_value = (2 / 3) * d_value + (1 / 3) * k_value
+        return {"k": k_value, "d": d_value, "j": 3 * k_value - 2 * d_value}
+
+    @classmethod
+    def _boll(cls, closes: list, period: int = 20):
+        if len(closes) < period:
+            return None
+        window = closes[-period:]
+        mid = sum(window) / period
+        variance = sum((value - mid) ** 2 for value in window) / period
+        std = math.sqrt(variance)
+        return {"upper": mid + 2 * std, "mid": mid, "lower": mid - 2 * std}
+
+    @staticmethod
+    def _atr(klines: list, period: int = 14):
+        if len(klines) <= period:
+            return None
+        trs = []
+        for idx in range(1, len(klines)):
+            high = klines[idx]["high"]
+            low = klines[idx]["low"]
+            prev_close = klines[idx - 1]["close"]
+            trs.append(max(high - low, abs(high - prev_close), abs(low - prev_close)))
+        if len(trs) < period:
+            return None
+        return sum(trs[-period:]) / period
+
+    @staticmethod
+    def _fmt(value, suffix: str = "", digits: int = 2) -> str:
+        if value is None:
+            return "N/A"
+        return f"{value:.{digits}f}{suffix}"
+
+    @classmethod
+    def describe(cls, values: dict, close: float, volume: int) -> list:
+        states = []
+        ma = values["ma"]
+        ma_parts = []
+        for period in (5, 10, 20, 60):
+            value = ma.get(period)
+            if value:
+                pos = "上方" if close >= value else "下方"
+                ma_parts.append(f"MA{period}{pos}({value:.2f})")
+        if ma_parts:
+            states.append("均线：" + "，".join(ma_parts))
+
+        macd = values["macd"]
+        if macd["dif"] is not None and macd["dea"] is not None:
+            axis = "零轴上方" if macd["dif"] >= 0 else "零轴下方"
+            hist = macd["hist"]
+            prev_hist = macd["prev_hist"]
+            if hist is not None and prev_hist is not None:
+                momentum = "动能增强" if abs(hist) > abs(prev_hist) else "动能减弱"
+                bar = "红柱" if hist >= 0 else "绿柱"
+                states.append(f"MACD：{axis}，{bar}{momentum}")
+
+        rsi = values.get("rsi6")
+        if rsi is not None:
+            if rsi >= 80:
+                rsi_state = "偏热"
+            elif rsi >= 60:
+                rsi_state = "偏强"
+            elif rsi <= 20:
+                rsi_state = "偏冷"
+            elif rsi <= 40:
+                rsi_state = "偏弱"
+            else:
+                rsi_state = "中性"
+            states.append(f"RSI6：{rsi_state}({rsi:.1f})")
+
+        kdj = values.get("kdj")
+        if kdj:
+            kdj_state = "偏强" if kdj["k"] >= kdj["d"] else "偏弱"
+            states.append(f"KDJ：{kdj_state}(K {kdj['k']:.1f}, D {kdj['d']:.1f}, J {kdj['j']:.1f})")
+
+        boll = values.get("boll")
+        if boll:
+            if close >= boll["upper"]:
+                boll_state = "触及或突破上轨"
+            elif close <= boll["lower"]:
+                boll_state = "触及或跌破下轨"
+            elif close >= boll["mid"]:
+                boll_state = "位于中轨上方"
+            else:
+                boll_state = "位于中轨下方"
+            states.append(f"BOLL：{boll_state}")
+
+        volume_ma20 = values.get("volume_ma20")
+        if volume_ma20:
+            ratio = volume / volume_ma20
+            if ratio >= 2:
+                volume_state = "显著放量"
+            elif ratio >= 1.2:
+                volume_state = "温和放量"
+            elif ratio <= 0.6:
+                volume_state = "缩量"
+            else:
+                volume_state = "接近20日均量"
+            states.append(f"成交量：{volume_state}({ratio:.2f}x 20日均量)")
+
+        turnover_rate = values.get("turnover_rate")
+        if turnover_rate is not None:
+            if turnover_rate >= 15:
+                turnover_state = "高换手"
+            elif turnover_rate >= 5:
+                turnover_state = "活跃"
+            elif turnover_rate <= 1:
+                turnover_state = "低换手"
+            else:
+                turnover_state = "正常"
+            states.append(f"换手率：{turnover_state}({turnover_rate:.2f}%)")
+        else:
+            states.append("换手率：未配置流通股本，暂不计算")
+
+        amplitude = values.get("amplitude")
+        atr = values.get("atr14")
+        if amplitude is not None:
+            states.append(f"振幅：{amplitude:.2f}%")
+        if atr is not None:
+            states.append(f"ATR14：{atr:.2f}")
+
+        return states
+
+
 class ReportGenerator:
     """报告生成器"""
     
-    def __init__(self, target_date: str = None):
+    def __init__(self, target_date: str = None, paths: RuntimePaths = None):
         """
         初始化报告生成器
         target_date: 目标日期，格式 '2025-05-22'，None表示今天
         """
         self.api = TXStockAPI()
+        self.paths = paths or RuntimePaths()
+        self.kline_store = KLineStore(self.paths.db_dir / "stockpilot.sqlite")
         
         if target_date:
             self.target_date = datetime.strptime(target_date, '%Y-%m-%d')
@@ -254,7 +629,7 @@ class ReportGenerator:
     
     def load_config(self, filename: str) -> dict:
         """加载配置文件（简单YAML子集解析）"""
-        filepath = CONFIG_DIR / filename
+        filepath = self.paths.config_dir / filename
         if not filepath.exists():
             return {}
         try:
@@ -406,9 +781,11 @@ class ReportGenerator:
             return []
         
         if self.is_historical:
-            return self._get_historical_watchlist_data(watchlist)
+            data = self._get_historical_watchlist_data(watchlist)
         else:
-            return self._get_realtime_watchlist_data(watchlist)
+            data = self._get_realtime_watchlist_data(watchlist)
+
+        return self._enrich_stock_data(data, watchlist)
     
     def _get_realtime_watchlist_data(self, watchlist: list) -> list:
         """获取实时自选股数据"""
@@ -462,9 +839,65 @@ class ReportGenerator:
             return []
         
         if self.is_historical:
-            return self._get_historical_portfolio_data(portfolio)
+            data = self._get_historical_portfolio_data(portfolio)
         else:
-            return self._get_realtime_portfolio_data(portfolio)
+            data = self._get_realtime_portfolio_data(portfolio)
+
+        return self._enrich_stock_data(data, portfolio)
+
+    def _ensure_kline_data(self, code: str, market: str = None):
+        """优先使用本地K线；本地缺失或样本不足时补拉外部数据。"""
+        start_date = (self.target_date - timedelta(days=DEFAULT_LOOKBACK_DAYS)).strftime('%Y-%m-%d')
+        latest = self.kline_store.latest_date(code, market)
+        local_count = self.kline_store.count_since(code, start_date, market)
+        if latest and latest >= self.date_display and local_count >= 60:
+            return
+
+        klines = self.api.get_kline(code, start_date, self.date_display, market=market)
+        if klines:
+            self.kline_store.upsert_many(code, market, klines)
+
+    def _enrich_stock_data(self, data: list, config_items: list) -> list:
+        """补充本地K线、指标状态和基础风险提示。"""
+        config_by_code = {item["code"]: item for item in config_items}
+        for item in data:
+            code = item["code"]
+            config = config_by_code.get(code, {})
+            market = config.get("market") or item.get("market")
+            item["market"] = market
+            self._ensure_kline_data(code, market)
+            klines = self.kline_store.get_klines(code, self.date_display, market=market, limit=120)
+            float_shares = config.get("float_shares")
+            indicators = IndicatorCalculator.calculate(klines, float_shares=float_shares)
+            item["klines_count"] = len(klines)
+            item["last_kline"] = klines[-1] if klines else None
+            item["prev_kline"] = klines[-2] if len(klines) >= 2 else None
+            item["indicators"] = indicators
+            item["risk_flags"] = self._build_risk_flags(item)
+        return data
+
+    def _build_risk_flags(self, item: dict) -> list:
+        """基于事实的持仓风险提示，不给买卖建议。"""
+        flags = []
+        change_pct = item.get("change_pct", 0)
+        profit_pct = item.get("profit_pct")
+        indicators = item.get("indicators") or {}
+        ma = indicators.get("ma") or {}
+        price = item.get("price")
+
+        if change_pct <= -5:
+            flags.append(f"单日跌幅 {abs(change_pct):.2f}% ，波动较大")
+        if profit_pct is not None and profit_pct <= -10:
+            flags.append(f"浮亏 {abs(profit_pct):.2f}% ，已超过10%观察阈值")
+        if price and ma.get(20) and price < ma[20]:
+            flags.append("收盘价位于MA20下方")
+        if price and ma.get(60) and price < ma[60]:
+            flags.append("收盘价位于MA60下方")
+        turnover_rate = indicators.get("turnover_rate")
+        if turnover_rate and turnover_rate >= 15:
+            flags.append(f"换手率 {turnover_rate:.2f}% ，交易分歧较高")
+
+        return flags
     
     def _get_realtime_portfolio_data(self, portfolio: list) -> list:
         """获取实时持仓股数据"""
@@ -564,6 +997,11 @@ class ReportGenerator:
         if amount >= 10000:
             return f"{amount/10000:.2f}亿"
         return f"{amount:.2f}万"
+
+    def _format_optional(self, value, suffix: str = "", digits: int = 2) -> str:
+        if value is None:
+            return "-"
+        return f"{value:.{digits}f}{suffix}"
     
     def generate_index_section(self, data: list, is_historical: bool = False) -> str:
         """生成指数板块"""
@@ -657,8 +1095,151 @@ class ReportGenerator:
         lines.append(f"- 总市值：{total_market_value:,.2f} 元")
         lines.append(f"- 总成本：{total_cost_value:,.2f} 元")
         lines.append(f"- 浮动盈亏：{total_profit:+.2f} 元 ({total_profit_pct:+.2f}%)")
+
+        risk_items = []
+        for item in data:
+            for flag in item.get("risk_flags", []):
+                risk_items.append(f"- {item['name']} ({item['code']})：{flag}")
+        if risk_items:
+            lines.append("\n**持仓风险提示（事实阈值）**：")
+            lines.extend(risk_items)
         
         return "\n".join(lines) + "\n"
+
+    def generate_indicator_section(self, watchlist_data: list, portfolio_data: list) -> str:
+        """生成技术指标和量价状态板块"""
+        lines = ["## 📐 技术指标与量价状态\n"]
+        combined = self._dedupe_stock_rows(portfolio_data + watchlist_data)
+        if not combined:
+            lines.append("*暂无股票数据*\n")
+            return "\n".join(lines)
+
+        lines.append("| 股票 | 代码 | K线样本 | MA状态 | MACD | RSI6 | 成交量 | 换手率 |")
+        lines.append("|------|------|---------|--------|------|------|--------|--------|")
+
+        for item in combined:
+            indicators = item.get("indicators") or {}
+            ma = indicators.get("ma") or {}
+            price = item.get("price")
+            ma20 = ma.get(20)
+            ma60 = ma.get(60)
+            ma_state = []
+            if price and ma20:
+                ma_state.append("MA20上方" if price >= ma20 else "MA20下方")
+            if price and ma60:
+                ma_state.append("MA60上方" if price >= ma60 else "MA60下方")
+            ma_text = "，".join(ma_state) if ma_state else "-"
+
+            macd = indicators.get("macd") or {}
+            hist = macd.get("hist")
+            prev_hist = macd.get("prev_hist")
+            if hist is None:
+                macd_text = "-"
+            else:
+                bar = "红柱" if hist >= 0 else "绿柱"
+                if prev_hist is None:
+                    macd_text = bar
+                else:
+                    macd_text = f"{bar}{'放大' if abs(hist) > abs(prev_hist) else '缩短'}"
+
+            volume_ma20 = indicators.get("volume_ma20")
+            if volume_ma20:
+                volume_text = f"{item['volume'] / volume_ma20:.2f}x"
+            else:
+                volume_text = "-"
+
+            turnover = indicators.get("turnover_rate")
+            lines.append(
+                f"| {item['name']} | {item['code']} | {item.get('klines_count', 0)} | "
+                f"{ma_text} | {macd_text} | {self._format_optional(indicators.get('rsi6'), digits=1)} | "
+                f"{volume_text} | {self._format_optional(turnover, '%')} |"
+            )
+
+        lines.append("\n**状态说明**：")
+        for item in combined[:8]:
+            states = (item.get("indicators") or {}).get("states") or []
+            if states:
+                lines.append(f"- {item['name']} ({item['code']})：" + "；".join(states[:4]))
+        if len(combined) > 8:
+            lines.append(f"- 其余 {len(combined) - 8} 只股票已计算指标，详见上表。")
+
+        return "\n".join(lines) + "\n"
+
+    def _dedupe_stock_rows(self, rows: list) -> list:
+        seen = set()
+        result = []
+        for row in rows:
+            key = row.get("code")
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(row)
+        return result
+
+    def load_strategy_rules(self) -> list:
+        config = self.load_config("strategy_rules.yaml")
+        return config.get("strategies", [])
+
+    def generate_strategy_section(self, watchlist_data: list, portfolio_data: list) -> str:
+        """生成经验策略规则板块"""
+        lines = ["## 📚 经验策略规则\n"]
+        rules = self.load_strategy_rules()
+        if not rules:
+            lines.append("*暂无策略规则配置，请在 config/strategy_rules.yaml 中添加*\n")
+            return "\n".join(lines)
+
+        status_counts = {}
+        for rule in rules:
+            status = rule.get("status", "active")
+            status_counts[status] = status_counts.get(status, 0) + 1
+        lines.append(
+            "**规则库状态**：" +
+            "，".join(f"{status} {count}条" for status, count in sorted(status_counts.items()))
+        )
+        lines.append("")
+
+        active_rules = [rule for rule in rules if rule.get("status", "active") in ("active", "testing")]
+        lines.append("| 状态 | 类别 | 规则 |")
+        lines.append("|------|------|------|")
+        for rule in active_rules[:12]:
+            lines.append(
+                f"| {rule.get('status', 'active')} | {rule.get('category', '-')} | "
+                f"{rule.get('text', rule.get('name', '-'))} |"
+            )
+
+        triggered = self._evaluate_strategy_facts(active_rules, self._dedupe_stock_rows(portfolio_data + watchlist_data))
+        if triggered:
+            lines.append("\n**今日规则事实检查**：")
+            lines.extend(triggered[:20])
+        else:
+            lines.append("\n**今日规则事实检查**：暂无可自动检查的规则触发。")
+
+        return "\n".join(lines) + "\n"
+
+    def _evaluate_strategy_facts(self, rules: list, stocks: list) -> list:
+        results = []
+        for stock in stocks:
+            indicators = stock.get("indicators") or {}
+            ma = indicators.get("ma") or {}
+            prev_ma = indicators.get("prev_ma") or {}
+            price = stock.get("price")
+            prev = stock.get("prev_kline") or {}
+            for rule in rules:
+                check = rule.get("check")
+                if not check:
+                    continue
+                if check == "below_ma20" and price and ma.get(20) and price < ma[20]:
+                    results.append(f"- {stock['name']} ({stock['code']})：低于MA20，匹配规则「{rule.get('name', rule.get('text', '未命名'))}」")
+                elif check == "below_ma60" and price and ma.get(60) and price < ma[60]:
+                    results.append(f"- {stock['name']} ({stock['code']})：低于MA60，匹配规则「{rule.get('name', rule.get('text', '未命名'))}」")
+                elif check == "break_below_ma5" and price and prev.get("close") and ma.get(5) and prev_ma.get(5):
+                    if prev["close"] >= prev_ma[5] and price < ma[5]:
+                        results.append(f"- {stock['name']} ({stock['code']})：跌破MA5，匹配规则「{rule.get('name', rule.get('text', '未命名'))}」")
+                elif check == "volume_above_20ma":
+                    volume_ma20 = indicators.get("volume_ma20")
+                    if volume_ma20 and stock.get("volume", 0) >= volume_ma20 * 1.2:
+                        results.append(f"- {stock['name']} ({stock['code']})：成交量高于20日均量，匹配规则「{rule.get('name', rule.get('text', '未命名'))}」")
+        return results
     
     def generate_sector_section(self) -> str:
         """生成板块轮动板块（V1预留）"""
@@ -765,6 +1346,8 @@ class ReportGenerator:
         lines.append(self.generate_index_section(index_data, is_historical=self.is_historical))
         lines.append(self.generate_watchlist_section(watchlist_data))
         lines.append(self.generate_portfolio_section(portfolio_data))
+        lines.append(self.generate_indicator_section(watchlist_data, portfolio_data))
+        lines.append(self.generate_strategy_section(watchlist_data, portfolio_data))
         lines.append(self.generate_sector_section())
         
         lines.extend([
@@ -781,11 +1364,11 @@ class ReportGenerator:
     
     def save_report(self, content: str, report_type: str = "close") -> Path:
         """保存报告到文件"""
-        REPORT_DIR.mkdir(parents=True, exist_ok=True)
+        self.paths.report_dir.mkdir(parents=True, exist_ok=True)
         
         suffix = "close" if report_type == "close" else "review"
         filename = f"daily_report_{self.date_str}_{suffix}.md"
-        filepath = REPORT_DIR / filename
+        filepath = self.paths.report_dir / filename
         
         with open(filepath, 'w', encoding='utf-8') as f:
             f.write(content)
@@ -799,16 +1382,19 @@ def main():
                        help='报告类型：close=收盘简报, review=复盘报告')
     parser.add_argument('--date', '-d', help='指定日期，格式：2025-05-22（默认今天）')
     parser.add_argument('--output', '-o', help='输出文件路径（默认保存到reports目录）')
+    parser.add_argument('--workspace', '-w',
+                       help='Stock Pilot私有工作区路径；配置、数据库和报告会写入该目录')
     parser.add_argument('--force', action='store_true',
                        help='强制生成报告（忽略交易日检查）')
     args = parser.parse_args()
+
+    paths = RuntimePaths(args.workspace or os.environ.get("STOCKPILOT_WORKSPACE"))
     
     # 确保配置目录存在
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    paths.ensure_dirs()
     
     # 创建示例配置（如果不存在）
-    watchlist_path = CONFIG_DIR / "watchlist.yaml"
+    watchlist_path = paths.config_dir / "watchlist.yaml"
     if not watchlist_path.exists():
         with open(watchlist_path, 'w', encoding='utf-8') as f:
             f.write("""# 自选股配置
@@ -824,7 +1410,7 @@ watchlist:
   #   tags: ["新能源", "创业板"]
 """)
     
-    portfolio_path = CONFIG_DIR / "portfolio.yaml"
+    portfolio_path = paths.config_dir / "portfolio.yaml"
     if not portfolio_path.exists():
         with open(portfolio_path, 'w', encoding='utf-8') as f:
             f.write("""# 持仓配置
@@ -838,9 +1424,39 @@ portfolio:
   #   cost_price: 25.50     # 成本价（元）
   #   target_weight: 0.15   # 目标仓位占比（可选）
 """)
+
+    strategy_rules_path = paths.config_dir / "strategy_rules.yaml"
+    if not strategy_rules_path.exists():
+        with open(strategy_rules_path, 'w', encoding='utf-8') as f:
+            f.write("""# 经验策略规则
+# status: active/testing/deprecated/conflict
+# check 为可选字段，用于日报中的事实检查，不生成买卖建议。
+
+strategies:
+  - name: "20日均线趋势过滤"
+    category: "均线"
+    status: "active"
+    check: "below_ma20"
+    text: "不上20日均线，不确认趋势条件"
+  - name: "60日均线长期过滤"
+    category: "均线"
+    status: "active"
+    check: "below_ma60"
+    text: "长期位于60日均线下方的标的保持谨慎观察"
+  - name: "5日均线短线风险"
+    category: "均线"
+    status: "testing"
+    check: "break_below_ma5"
+    text: "跌破5日均线时记录短线风险变化"
+  - name: "量能观察"
+    category: "成交量"
+    status: "testing"
+    check: "volume_above_20ma"
+    text: "成交量高于20日均量时记录量能变化"
+""")
     
     # 生成报告
-    generator = ReportGenerator(target_date=args.date)
+    generator = ReportGenerator(target_date=args.date, paths=paths)
     
     if not args.force and not generator.is_trading_day():
         print(f"[{generator.date_display}] 非交易日，跳过报告生成（使用 --force 强制生成）")

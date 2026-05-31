@@ -1,0 +1,25 @@
+# 经验策略规则示例
+# status: active/testing/deprecated/conflict
+# check 为可选字段，用于日报中的事实检查，不生成买卖建议。
+
+strategies:
+  - name: "20日均线趋势过滤"
+    category: "均线"
+    status: "active"
+    check: "below_ma20"
+    text: "不上20日均线，不确认趋势条件"
+  - name: "60日均线长期过滤"
+    category: "均线"
+    status: "active"
+    check: "below_ma60"
+    text: "长期位于60日均线下方的标的保持谨慎观察"
+  - name: "5日均线短线风险"
+    category: "均线"
+    status: "testing"
+    check: "break_below_ma5"
+    text: "跌破5日均线时记录短线风险变化"
+  - name: "量能观察"
+    category: "成交量"
+    status: "testing"
+    check: "volume_above_20ma"
+    text: "成交量高于20日均量时记录量能变化"
