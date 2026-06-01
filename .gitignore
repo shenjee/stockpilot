@@ -2,14 +2,17 @@
 __pycache__/
 *.py[cod]
 
-# Local/private Stock Pilot data
-assets/config/*.yaml
-assets/db/
-assets/reports/
+# Local/private runtime data
+**/assets/config/*.yaml
+**/assets/db/
+**/assets/reports/
+config/
+db/
+reports/
 *.sqlite
 
 # Local runtime config
-stockpilot.local.json
+china-stock-daily-tracker.local.json
 .env
 
 # macOS
