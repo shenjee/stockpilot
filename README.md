@@ -51,10 +51,36 @@ Runtime data should stay outside the installed skill directory:
 
 ```text
 <workspace-or-project-dir>/
-|-- config/
-|-- db/
-|-- reports/
-`-- <target-skills-dir>/
+`-- stockpilot/
+    |-- config/
+    |-- db/
+    `-- reports/
+```
+
+The runtime directory is configurable. By default, `runtime_dir` is `stockpilot`.
+Directory fields such as `config_dir`, `db_dir`, and `reports_dir` are resolved
+under `runtime_dir` unless an absolute path is provided:
+
+```json
+{
+  "workspace": ".",
+  "runtime_dir": "stockpilot",
+  "config_dir": "config",
+  "db_dir": "db",
+  "reports_dir": "reports"
+}
+```
+
+Installed skills live in the target client's skills directory, separate from
+runtime data:
+
+```text
+<target-skills-dir>/
+`-- china-stock-daily-tracker/
+    |-- SKILL.md
+    |-- scripts/
+    |-- references/
+    `-- assets/
 ```
 
 This keeps the skill install immutable and keeps private state out of the source repository.

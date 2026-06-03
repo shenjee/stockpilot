@@ -42,12 +42,14 @@ class RuntimePaths:
         config = self._load_runtime_config(config_file)
         root_value = os.environ.get("CHINA_STOCK_DAILY_TRACKER_WORKSPACE") or config.get("workspace")
         root = Path(root_value).expanduser().resolve() if root_value else Path.cwd().resolve()
+        runtime_value = config.get("runtime_dir", "stockpilot")
 
         self.workspace = root
-        self.config_dir = self._resolve_path(config.get("config_dir", "config"))
-        self.report_dir = self._resolve_path(config.get("reports_dir", "reports"))
-        self.db_dir = self._resolve_path(config.get("db_dir", "db"))
-        self.strategy_dir = self._resolve_path(config.get("strategies_dir", "strategies"))
+        self.runtime_dir = self._resolve_workspace_path(runtime_value)
+        self.config_dir = self._resolve_runtime_path(config.get("config_dir", "config"))
+        self.report_dir = self._resolve_runtime_path(config.get("reports_dir", "reports"))
+        self.db_dir = self._resolve_runtime_path(config.get("db_dir", "db"))
+        self.strategy_dir = self._resolve_runtime_path(config.get("strategies_dir", "strategies"))
 
     def _load_runtime_config(self, config_file: str = None) -> dict:
         path = config_file or os.environ.get("CHINA_STOCK_DAILY_TRACKER_CONFIG")
@@ -69,11 +71,16 @@ class RuntimePaths:
             print(f"[WARN] 加载运行配置失败 {path}: {e}")
             return {}
 
-    def _resolve_path(self, value: str) -> Path:
+    def _resolve_workspace_path(self, value: str) -> Path:
         path = Path(value).expanduser()
         return path.resolve() if path.is_absolute() else (self.workspace / path).resolve()
 
+    def _resolve_runtime_path(self, value: str) -> Path:
+        path = Path(value).expanduser()
+        return path.resolve() if path.is_absolute() else (self.runtime_dir / path).resolve()
+
     def ensure_dirs(self):
+        self.runtime_dir.mkdir(parents=True, exist_ok=True)
         self.config_dir.mkdir(parents=True, exist_ok=True)
         self.report_dir.mkdir(parents=True, exist_ok=True)
         self.db_dir.mkdir(parents=True, exist_ok=True)

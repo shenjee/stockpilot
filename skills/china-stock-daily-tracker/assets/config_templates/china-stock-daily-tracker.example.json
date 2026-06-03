@@ -1,5 +1,6 @@
 {
   "workspace": ".",
+  "runtime_dir": "stockpilot",
   "config_dir": "config",
   "db_dir": "db",
   "reports_dir": "reports",

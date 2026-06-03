@@ -33,14 +33,18 @@ metadata:
 
 运行脚本位于本 skill 目录的 `scripts/generate_report.py`。
 
-私有数据目录不是 skill 安装目录。默认使用当前 agent/project 的工作目录。配置、SQLite 数据库和报告会写入该 workspace 下的 `config/`、`db/`、`reports/`。
+私有数据目录不是 skill 安装目录。默认使用当前 agent/project 的工作目录作为 `workspace`，并在 `workspace/stockpilot/` 下保存运行数据：
+
+- `stockpilot/config/`
+- `stockpilot/db/`
+- `stockpilot/reports/`
 
 ```bash
 cd <workspace-dir>
 python3 <skill-dir>/scripts/generate_report.py --type close
 ```
 
-特殊部署时可用 `CHINA_STOCK_DAILY_TRACKER_WORKSPACE` 或本地 `china-stock-daily-tracker.local.json` 覆盖 workspace。
+特殊部署时可用 `CHINA_STOCK_DAILY_TRACKER_WORKSPACE` 或本地 `china-stock-daily-tracker.local.json` 覆盖 workspace。`runtime_dir` 可在 JSON 配置中覆盖；`config_dir`、`db_dir`、`reports_dir` 默认相对 `runtime_dir` 解析，传入绝对路径时按绝对路径解析。
 
 ## 配置文件
 
@@ -93,7 +97,7 @@ strategies:
 
 ## 报告输出
 
-- 路径：`<workspace>/reports/daily_report_YYYYMMDD.md`
+- 路径：`<workspace>/<runtime_dir>/reports/daily_report_YYYYMMDD.md`
 - 格式：Markdown
 - 内容：指数概览、自选股行情、持仓盈亏、技术指标状态、经验规则、板块数据状态
 
