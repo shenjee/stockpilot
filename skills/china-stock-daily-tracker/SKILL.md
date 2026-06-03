@@ -61,11 +61,20 @@ watchlist:
 ```yaml
 portfolio:
   - code: "600111"
+    market: "sh"
     name: "北方稀土"
     position: 1000        # 持仓数量
     cost_price: 25.50     # 成本价
+    broker: "示例券商"     # 券商（可选）
     target_weight: 0.15   # 目标仓位占比(可选)
+    buy_orders:           # 建仓/加仓记录（可选）
+      - trade_date: "2026-06-01"
+        trade_time: "09:35:00"
+        buy_price: 25.50
+        quantity: 1000
+        amount: 25500.00
   - code: "000001"
+    market: "sz"
     name: "平安银行"
     position: 2000
     cost_price: 12.30

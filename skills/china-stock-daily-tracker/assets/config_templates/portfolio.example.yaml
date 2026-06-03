@@ -6,4 +6,11 @@ portfolio:
     name: "示例股票"
     position: 100
     cost_price: 10.00
+    broker: "示例券商"
     target_weight: 0.10
+    buy_orders:
+      - trade_date: "2026-06-01"
+        trade_time: "09:35:00"
+        buy_price: 10.00
+        quantity: 100
+        amount: 1000.00

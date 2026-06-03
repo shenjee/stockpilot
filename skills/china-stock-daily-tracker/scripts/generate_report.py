@@ -646,101 +646,135 @@ class ReportGenerator:
         return weekday < 5  # 0-4 为周一到周五
     
     def load_config(self, filename: str) -> dict:
-        """加载配置文件（简单YAML子集解析）"""
+        """加载配置文件。"""
         filepath = self.paths.config_dir / filename
         if not filepath.exists():
             return {}
         try:
             with open(filepath, 'r', encoding='utf-8') as f:
                 content = f.read()
+
+            try:
+                import yaml
+                data = yaml.safe_load(content)
+                return data if isinstance(data, dict) else {}
+            except ImportError:
+                pass
+
             return self._parse_simple_yaml(content)
         except Exception as e:
             print(f"[WARN] 加载配置失败 {filename}: {e}")
             return {}
     
     def _parse_simple_yaml(self, content: str) -> dict:
-        """简单YAML解析器（仅支持列表和基本键值对）"""
-        result = {}
-        current_list = None
-        current_list_key = None
-        current_item = None
-        
-        # 保护字段：保持字符串格式
-        string_fields = {'code', 'name'}
-        
-        for line in content.split('\n'):
-            # 跳过注释和空行
-            stripped = line.strip()
-            if not stripped or stripped.startswith('#'):
+        """简单YAML解析器，支持本项目配置所需的映射、列表和嵌套列表。"""
+        lines = []
+        for raw_line in content.splitlines():
+            if not raw_line.strip() or raw_line.lstrip().startswith('#'):
                 continue
-            
-            # 列表键（如 "watchlist:")
-            if stripped.endswith(':') and not stripped.startswith('-'):
-                key = stripped[:-1].strip()
-                result[key] = []
-                current_list_key = key
-                current_list = result[key]
-                current_item = None
-                continue
-            
-            # 列表项（如 "- code: \"600519\"")
-            if stripped.startswith('- '):
-                # 新列表项
-                current_item = {}
-                if current_list is not None:
-                    current_list.append(current_item)
-                
-                # 解析 "- key: value" 格式
+            indent = len(raw_line) - len(raw_line.lstrip(' '))
+            lines.append((indent, raw_line.strip()))
+
+        def parse_scalar(value: str):
+            value = value.strip()
+            if not value:
+                return None
+            if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+                return value[1:-1]
+            if value.startswith('[') and value.endswith(']'):
+                arr = []
+                for item in value[1:-1].split(','):
+                    parsed = parse_scalar(item)
+                    if parsed is not None:
+                        arr.append(parsed)
+                return arr
+            if value.lower() in {'true', 'false'}:
+                return value.lower() == 'true'
+            try:
+                return float(value) if '.' in value else int(value)
+            except ValueError:
+                return value
+
+        def parse_block(index: int, indent: int):
+            if index >= len(lines) or lines[index][0] < indent:
+                return None, index
+            if lines[index][0] == indent and lines[index][1].startswith('- '):
+                return parse_list(index, indent)
+            return parse_map(index, indent)
+
+        def parse_list(index: int, indent: int):
+            result = []
+            while index < len(lines):
+                line_indent, stripped = lines[index]
+                if line_indent < indent:
+                    break
+                if line_indent != indent or not stripped.startswith('- '):
+                    break
+
                 item_content = stripped[2:].strip()
-                if ':' in item_content:
-                    key, value = item_content.split(':', 1)
-                    key = key.strip()
-                    value = value.strip().strip('"').strip("'")
-                    # 尝试转换为数字（但保护字段保持字符串）
-                    if key not in string_fields:
-                        try:
-                            if '.' in value:
-                                value = float(value)
-                            else:
-                                value = int(value)
-                        except:
-                            pass
-                    current_item[key] = value
-                continue
-            
-            # 列表项的属性（缩进格式）
-            if current_item is not None and ':' in stripped:
+                if not item_content:
+                    item, index = parse_block(index + 1, indent + 2)
+                    result.append(item)
+                    continue
+
+                if ':' not in item_content:
+                    result.append(parse_scalar(item_content))
+                    index += 1
+                    continue
+
+                item = {}
+                key, value = item_content.split(':', 1)
+                key = key.strip()
+                value = value.strip()
+                if value:
+                    item[key] = parse_scalar(value)
+                    index += 1
+                else:
+                    child, index = parse_block(index + 1, indent + 2)
+                    item[key] = child if child is not None else []
+
+                while index < len(lines):
+                    prop_indent, prop_line = lines[index]
+                    if prop_indent <= indent:
+                        break
+                    if prop_indent != indent + 2 or prop_line.startswith('- ') or ':' not in prop_line:
+                        break
+
+                    prop_key, prop_value = prop_line.split(':', 1)
+                    prop_key = prop_key.strip()
+                    prop_value = prop_value.strip()
+                    if prop_value:
+                        item[prop_key] = parse_scalar(prop_value)
+                        index += 1
+                    else:
+                        child, index = parse_block(index + 1, prop_indent + 2)
+                        item[prop_key] = child if child is not None else []
+
+                result.append(item)
+            return result, index
+
+        def parse_map(index: int, indent: int):
+            result = {}
+            while index < len(lines):
+                line_indent, stripped = lines[index]
+                if line_indent < indent:
+                    break
+                if line_indent != indent or stripped.startswith('- ') or ':' not in stripped:
+                    break
+
                 key, value = stripped.split(':', 1)
                 key = key.strip()
                 value = value.strip()
-                
-                # 处理数组值（如 tags: ["a", "b"]）
-                if value.startswith('[') and value.endswith(']'):
-                    try:
-                        # 简单解析数组
-                        arr_content = value[1:-1]
-                        arr = []
-                        for item in arr_content.split(','):
-                            item = item.strip().strip('"').strip("'")
-                            if item:
-                                arr.append(item)
-                        current_item[key] = arr
-                    except:
-                        current_item[key] = value
+                if value:
+                    result[key] = parse_scalar(value)
+                    index += 1
                 else:
-                    value = value.strip('"').strip("'")
-                    # 尝试转换为数字（但保护字段保持字符串）
-                    if key not in string_fields:
-                        try:
-                            if '.' in value:
-                                value = float(value)
-                            else:
-                                value = int(value)
-                        except:
-                            pass
-                    current_item[key] = value
-        
-        return result
+                    child, index = parse_block(index + 1, indent + 2)
+                    result[key] = child if child is not None else {}
+            return result, index
+
+        parsed, _ = parse_block(0, 0)
+        return parsed if isinstance(parsed, dict) else {}
     
     def get_index_data(self) -> list:
         """获取主要指数数据"""
@@ -951,6 +985,8 @@ class ReportGenerator:
             quote["total_profit"] = round(total_profit, 2)
             quote["profit_pct"] = round(profit_pct, 2)
             quote["target_weight"] = config_item.get("target_weight")
+            quote["broker"] = config_item.get("broker")
+            quote["buy_orders"] = config_item.get("buy_orders", [])
             
             results.append(quote)
         
@@ -998,6 +1034,8 @@ class ReportGenerator:
                 'total_profit': round(total_profit, 2),
                 'profit_pct': round(profit_pct, 2),
                 'target_weight': item.get('target_weight'),
+                'broker': item.get('broker'),
+                'buy_orders': item.get('buy_orders', []),
             })
         
         return results
@@ -1089,8 +1127,8 @@ class ReportGenerator:
             lines.append("*暂无持仓配置，请在 config/portfolio.yaml 中添加*\n")
             return "\n".join(lines)
         
-        lines.append("| 股票 | 代码 | 现价 | 今日涨跌 | 持仓 | 成本价 | 市值 | 浮动盈亏 | 盈亏率 |")
-        lines.append("|------|------|------|----------|------|--------|------|----------|--------|")
+        lines.append("| 股票 | 代码 | 券商 | 现价 | 今日涨跌 | 持仓 | 成本价 | 市值 | 浮动盈亏 | 盈亏率 |")
+        lines.append("|------|------|------|------|----------|------|--------|------|----------|--------|")
         
         total_market_value = 0
         total_cost_value = 0
@@ -1102,8 +1140,9 @@ class ReportGenerator:
             change_str = f"{item['change']:+.2f} ({item['change_pct']:+.2f}%)"
             profit_str = f"{item['total_profit']:+.2f}"
             profit_pct_str = f"{item['profit_pct']:+.2f}%"
+            broker = item.get('broker') or "-"
             
-            lines.append(f"| {item['name']} | {item['code']} | {item['price']:.2f} | {change_str} | {item['position']} | {item['cost_price']:.2f} | {item['market_value']:.2f} | {profit_str} | {profit_pct_str} |")
+            lines.append(f"| {item['name']} | {item['code']} | {broker} | {item['price']:.2f} | {change_str} | {item['position']} | {item['cost_price']:.2f} | {item['market_value']:.2f} | {profit_str} | {profit_pct_str} |")
         
         # 汇总
         total_profit = total_market_value - total_cost_value
