@@ -370,7 +370,7 @@ AI芯片管制放松：
 
 交付：
 
-- `PRODUCT_DESIGN.md`
+- `docs/PRODUCT_DESIGN.md`
 - 初始 task backlog
 
 ### Phase 1：基础投研台
@@ -546,37 +546,31 @@ stock-portfolio-pilot
 
 ## 8. 建议目录结构
 
-短期可在当前 skill 内按模块组织：
+本仓库是 Stock Pilot skill collection。仓库级设计文档放在 `docs/`，每个可安装 skill 放在 `skills/<skill-name>/`：
 
 ```text
-china-stock-daily-tracker/
-├── SKILL.md
-├── PRODUCT_DESIGN.md
-├── scripts/
-│   ├── generate_report.py
-│   ├── local_db.py
-│   ├── fetch_kline.py
-│   ├── indicators.py
-│   ├── chan_structure.py
-│   ├── strategy_engine.py
-│   ├── sector_rotation.py
-│   ├── macro_events.py
-│   └── portfolio_risk.py
-├── assets/
-│   ├── config/
-│   │   ├── watchlist.yaml
-│   │   ├── portfolio.yaml
-│   │   └── index_pool.yaml
-│   ├── db/
-│   │   └── stocks.sqlite
-│   ├── strategies/
-│   │   ├── ma_rules.md
-│   │   ├── volume_price_rules.md
-│   │   ├── position_rules.md
-│   │   ├── sector_rules.md
-│   │   └── event_rules.md
-│   └── reports/
-└── references/
+stockpilotskills/
+├── README.md
+├── docs/
+│   ├── PRODUCT_DESIGN.md
+│   └── PRODUCT_DESIGN.zh.md
+└── skills/
+    └── china-stock-daily-tracker/
+        ├── SKILL.md
+        ├── scripts/
+        │   ├── generate_report.py
+        │   ├── local_db.py
+        │   ├── fetch_kline.py
+        │   ├── indicators.py
+        │   ├── chan_structure.py
+        │   ├── strategy_engine.py
+        │   ├── sector_rotation.py
+        │   ├── macro_events.py
+        │   └── portfolio_risk.py
+        ├── assets/
+        │   ├── config_templates/
+        │   └── strategies/
+        └── references/
 ```
 
 这只是目标结构，不代表一次性实现。

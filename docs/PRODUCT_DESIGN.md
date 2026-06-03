@@ -370,7 +370,7 @@ Goals:
 
 Deliverables:
 
-- `PRODUCT_DESIGN.md`
+- `docs/PRODUCT_DESIGN.md`
 - Initial task backlog
 
 ### Phase 1: Basic Research Desk
@@ -546,38 +546,31 @@ Split when:
 
 ## 8. Suggested Directory Structure
 
-In the short term, organize modules inside the current skill:
+This repository is a Stock Pilot skill collection. Repository-level design documents stay under `docs/`, and each installable skill stays under `skills/<skill-name>/`:
 
 ```text
-china-stock-daily-tracker/
-├── SKILL.md
-├── PRODUCT_DESIGN.md
-├── PRODUCT_DESIGN.zh.md
-├── scripts/
-│   ├── generate_report.py
-│   ├── local_db.py
-│   ├── fetch_kline.py
-│   ├── indicators.py
-│   ├── chan_structure.py
-│   ├── strategy_engine.py
-│   ├── sector_rotation.py
-│   ├── macro_events.py
-│   └── portfolio_risk.py
-├── assets/
-│   ├── config/
-│   │   ├── watchlist.yaml
-│   │   ├── portfolio.yaml
-│   │   └── index_pool.yaml
-│   ├── db/
-│   │   └── stocks.sqlite
-│   ├── strategies/
-│   │   ├── ma_rules.md
-│   │   ├── volume_price_rules.md
-│   │   ├── position_rules.md
-│   │   ├── sector_rules.md
-│   │   └── event_rules.md
-│   └── reports/
-└── references/
+stockpilotskills/
+├── README.md
+├── docs/
+│   ├── PRODUCT_DESIGN.md
+│   └── PRODUCT_DESIGN.zh.md
+└── skills/
+    └── china-stock-daily-tracker/
+        ├── SKILL.md
+        ├── scripts/
+        │   ├── generate_report.py
+        │   ├── local_db.py
+        │   ├── fetch_kline.py
+        │   ├── indicators.py
+        │   ├── chan_structure.py
+        │   ├── strategy_engine.py
+        │   ├── sector_rotation.py
+        │   ├── macro_events.py
+        │   └── portfolio_risk.py
+        ├── assets/
+        │   ├── config_templates/
+        │   └── strategies/
+        └── references/
 ```
 
 This is a target structure, not a one-shot implementation plan.
