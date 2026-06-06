@@ -15,7 +15,8 @@ metadata:
 
 ## 数据来源
 
-- 腾讯财经公开API（零依赖，标准库实现）
+- 默认使用腾讯财经公开 API provider（零依赖，标准库实现）
+- 行情数据请求封装在 `scripts/market_data.py`，后续可新增其他 provider
 - 本地配置：`config/watchlist.yaml`、`config/portfolio.yaml`
 
 ## 功能
@@ -44,7 +45,7 @@ cd <workspace-dir>
 python3 <skill-dir>/scripts/generate_report.py --type close
 ```
 
-特殊部署时可用 `CHINA_STOCK_DAILY_TRACKER_WORKSPACE` 或本地 `china-stock-daily-tracker.local.json` 覆盖 workspace。`runtime_dir` 可在 JSON 配置中覆盖；`config_dir`、`db_dir`、`reports_dir` 默认相对 `runtime_dir` 解析，传入绝对路径时按绝对路径解析。
+特殊部署时可用 `CHINA_STOCK_DAILY_TRACKER_WORKSPACE` 或本地 `china-stock-daily-tracker.local.json` 覆盖 workspace。`runtime_dir` 可在 JSON 配置中覆盖；`config_dir`、`db_dir`、`reports_dir` 默认相对 `runtime_dir` 解析，传入绝对路径时按绝对路径解析。行情源可通过 `data_source.provider` 配置，当前支持 `tencent`。
 
 ## 配置文件
 

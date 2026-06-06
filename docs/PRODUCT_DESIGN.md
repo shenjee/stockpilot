@@ -357,6 +357,20 @@ The portfolio system should answer:
 
 ## 6. Product Roadmap
 
+### 6.1 Phase-to-PRD Module Mapping
+
+Product phases define delivery order. Section 5 defines long-term module boundaries. They are not strictly one-to-one: a module may first ship basic capabilities and later gain signal synthesis, risk constraints, and portfolio assistance.
+
+| Phase | Phase Name | Primary PRD Modules | Notes |
+|---|---|---|---|
+| Phase 0 | Product Design and Task Breakdown | Overall product boundaries and task breakdown | Define positioning, non-goals, module boundaries, and the first executable tasks |
+| Phase 1 | Basic Research Desk | 5.1 Data System, 5.2 Indicator System, 5.8 Portfolio and Review System (basic part) | First complete the local K-line database, daily reports, common indicators, price-volume states, and basic portfolio risk |
+| Phase 2 | Structure Analysis Engine | 5.3 Chan Structure System | Start with explainable fractals, strokes, segments, central zones, and early divergence detection; do not try to implement perfect Chan theory in one step |
+| Phase 3 | Strategy Rules and Quantitative Signals | 5.4 Experience Strategy Library, 5.5 Quantitative Signal System, 5.8 Portfolio and Review System (signal part) | Combine indicators, structure, rules, and position risk into reviewable watch, reduce, exit, and related signals |
+| Phase 4 | Sector Rotation | 5.6 Sector Rotation System | Identify where market capital is moving and use sector support to confirm or downgrade individual-stock signals |
+| Phase 5 | Macro Events and Industry Mapping | 5.7 Macro Event System | Record events, map possible industry impact, and wait for sector and individual-stock market validation |
+| Phase 6 | Stock Recommendation and Portfolio Assistance | Combined application of 5.5 Quantitative Signal System, 5.6 Sector Rotation System, 5.7 Macro Event System, and 5.8 Portfolio and Review System | Only output candidate stocks and portfolio assistance when macro direction, sector rotation, individual structure, quantitative signals, and risk conditions confirm together |
+
 ### Phase 0: Product Design and Task Breakdown
 
 Goals:
@@ -374,6 +388,8 @@ Deliverables:
 - Initial task backlog
 
 ### Phase 1: Basic Research Desk
+
+Corresponding PRD modules: 5.1 Data System, 5.2 Indicator System, and 5.8 Portfolio and Review System (basic part).
 
 Goal:
 
@@ -397,6 +413,8 @@ Non-goals:
 
 ### Phase 2: Structure Analysis Engine
 
+Corresponding PRD module: 5.3 Chan Structure System.
+
 Goal:
 
 Answer:
@@ -419,6 +437,8 @@ Output:
 - Potential buy/sell point candidates
 
 ### Phase 3: Strategy Rules and Quantitative Signals
+
+Corresponding PRD modules: 5.4 Experience Strategy Library, 5.5 Quantitative Signal System, and 5.8 Portfolio and Review System (signal part).
 
 Goal:
 
@@ -446,6 +466,8 @@ Output:
 
 ### Phase 4: Sector Rotation
 
+Corresponding PRD module: 5.6 Sector Rotation System.
+
 Goal:
 
 Answer:
@@ -462,6 +484,8 @@ Scope:
 - Individual-signal sector filtering
 
 ### Phase 5: Macro Events and Industry Mapping
+
+Corresponding PRD module: 5.7 Macro Event System.
 
 Goal:
 
@@ -486,6 +510,8 @@ Output:
 - Candidate industry pool
 
 ### Phase 6: Stock Recommendation and Portfolio Assistance
+
+Corresponding PRD modules: combined application of 5.5 Quantitative Signal System, 5.6 Sector Rotation System, 5.7 Macro Event System, and 5.8 Portfolio and Review System.
 
 Goal:
 
@@ -560,7 +586,7 @@ stockpilotskills/
         ├── scripts/
         │   ├── generate_report.py
         │   ├── local_db.py
-        │   ├── fetch_kline.py
+        │   ├── market_data.py
         │   ├── indicators.py
         │   ├── chan_structure.py
         │   ├── strategy_engine.py

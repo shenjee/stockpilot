@@ -5,8 +5,6 @@
 支持实时数据和历史数据
 """
 
-import urllib.request
-import urllib.error
 import json
 import os
 import sys
@@ -16,24 +14,12 @@ import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from market_data import INDICES, create_market_data_provider, get_market_prefix
+
 # 配置路径
 SKILL_DIR = Path(__file__).parent.parent
 DEFAULT_LOOKBACK_DAYS = 140
 LOCAL_CONFIG_NAMES = ("china-stock-daily-tracker.local.json", "china-stock-daily-tracker.json")
-
-# 主要指数代码（腾讯财经格式）
-INDICES = {
-    "sh000001": ("上证指数", "SH"),
-    "sz399001": ("深证成指", "SZ"),
-    "sz399006": ("创业板指", "SZ"),
-    "sh000016": ("上证50", "SH"),
-    "sh000300": ("沪深300", "SH"),
-    "sh000905": ("中证500", "SH"),
-    "sh000852": ("中证1000", "SH"),
-    "sh000688": ("科创50", "SH"),
-    "sz899050": ("北证50", "BJ"),
-}
-
 
 class RuntimePaths:
     """运行期路径：skill目录和私有工作区分离。"""
@@ -50,6 +36,8 @@ class RuntimePaths:
         self.report_dir = self._resolve_runtime_path(config.get("reports_dir", "reports"))
         self.db_dir = self._resolve_runtime_path(config.get("db_dir", "db"))
         self.strategy_dir = self._resolve_runtime_path(config.get("strategies_dir", "strategies"))
+        data_source = config.get("data_source", {}) if isinstance(config.get("data_source"), dict) else {}
+        self.market_data_provider = config.get("market_data_provider") or data_source.get("provider", "tencent")
 
     def _load_runtime_config(self, config_file: str = None) -> dict:
         path = config_file or os.environ.get("CHINA_STOCK_DAILY_TRACKER_CONFIG")
@@ -86,200 +74,6 @@ class RuntimePaths:
         self.db_dir.mkdir(parents=True, exist_ok=True)
 
 
-class TXStockAPI:
-    """腾讯财经股票数据接口 - 仅使用标准库"""
-    
-    TIMEOUT = 10
-    MAX_RETRIES = 3
-    
-    @staticmethod
-    def _get_prefix(code: str, market: str = None) -> str:
-        """
-        判断交易所前缀
-        优先使用显式传入的 market 参数，否则按代码规则推断
-        """
-        if market:
-            return market
-        # 推断规则（备用）
-        if code.startswith("6"):
-            return "sh"
-        elif code.startswith("0") or code.startswith("3"):
-            return "sz"
-        elif code.startswith("8") or code.startswith("4"):
-            return "bj"
-        return "sh"
-    
-    @classmethod
-    def _fetch_with_retry(cls, url: str, decode: str = "gbk") -> str:
-        """带重试机制的HTTP请求"""
-        req = urllib.request.Request(url, headers={
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.0'
-        })
-        
-        last_error = None
-        for attempt in range(cls.MAX_RETRIES):
-            try:
-                with urllib.request.urlopen(req, timeout=cls.TIMEOUT) as resp:
-                    return resp.read().decode(decode)
-            except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as e:
-                last_error = e
-                if attempt < cls.MAX_RETRIES - 1:
-                    import time
-                    time.sleep(1 * (attempt + 1))
-                continue
-        
-        raise last_error or Exception("Request failed after retries")
-    
-    @classmethod
-    def realtime(cls, codes, markets=None):
-        """
-        获取实时行情
-        codes: 股票代码列表或 (code, market) 元组列表
-        markets: 与codes对应的market列表（可选）
-        """
-        if isinstance(codes, str):
-            codes = [codes]
-        
-        # 处理指数代码（已带前缀）和普通股票代码
-        code_str_parts = []
-        for i, c in enumerate(codes):
-            if isinstance(c, tuple):
-                # (code, market) 元组格式
-                code, market = c
-                code_str_parts.append(f"{market}{code}")
-            elif c.startswith(("sh", "sz", "bj")):
-                code_str_parts.append(c)
-            else:
-                # 使用显式market或推断
-                market = markets[i] if markets else None
-                code_str_parts.append(f"{cls._get_prefix(c, market)}{c}")
-        
-        url = f"https://qt.gtimg.cn/q={','.join(code_str_parts)}"
-        
-        try:
-            data = cls._fetch_with_retry(url, decode="gbk")
-        except Exception as e:
-            print(f"[ERROR] 获取行情失败: {e}")
-            return []
-        
-        results = []
-        for line in data.strip().split(';'):
-            if 'v_' not in line or '"' not in line:
-                continue
-            try:
-                parts = line.split('"')[1].split('~')
-                if len(parts) < 35:
-                    continue
-                
-                # 计算涨跌幅
-                price = float(parts[3])
-                pre_close = float(parts[4])
-                change = price - pre_close
-                change_pct = (change / pre_close * 100) if pre_close > 0 else 0
-                
-                results.append({
-                    'name': parts[1],
-                    'code': parts[2],
-                    'price': price,
-                    'pre_close': pre_close,
-                    'open': float(parts[5]),
-                    'high': float(parts[33]),
-                    'low': float(parts[34]),
-                    'volume': int(parts[6]),  # 手
-                    'amount': float(parts[37]) if len(parts) > 37 else 0,  # 万元
-                    'change': round(change, 2),
-                    'change_pct': round(change_pct, 2),
-                })
-            except Exception as e:
-                continue
-        
-        return results[0] if len(results) == 1 and len(codes) == 1 else results
-    
-    @classmethod
-    def get_kline(cls, code: str, start_date: str, end_date: str, ktype: str = 'day', autype: str = 'qfq', market: str = None) -> list:
-        """
-        获取历史K线数据
-        
-        参数:
-            code: 股票代码，如 '600111'
-            start_date: 开始日期，'2025-05-01'
-            end_date: 结束日期，'2025-05-17'
-            ktype: K线类型 - 'day'(日线), 'week'(周线), 'month'(月线)
-            autype: 复权类型 - 'qfq'(前复权), 'hfq'(后复权), 'bfq'(不复权)
-            market: 交易所前缀，如 'sh', 'sz', 'bj'（可选，默认自动推断）
-        
-        返回:
-            [{'date': '2025-05-15', 'open': 24.48, 'close': 24.63, 'high': 25.22, 'low': 24.43, 'volume': 1233415}, ...]
-        """
-        prefix = cls._get_prefix(code, market)
-        
-        # 构建URL
-        url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={prefix}{code},{ktype},{start_date},{end_date},500,{autype}"
-        
-        try:
-            data = json.loads(cls._fetch_with_retry(url, decode="utf-8"))
-        except Exception as e:
-            print(f"[ERROR] 获取K线数据失败 {code}: {e}")
-            return []
-        
-        if data.get('code') != 0:
-            return []
-        
-        # 提取K线数据
-        key = f"{autype}day" if ktype == 'day' else f"{autype}{ktype}"
-        klines = data['data'].get(f"{prefix}{code}", {}).get(key, [])
-        
-        results = []
-        for item in klines:
-            results.append({
-                'date': item[0],
-                'open': round(float(item[1]), 2),
-                'close': round(float(item[2]), 2),
-                'high': round(float(item[3]), 2),
-                'low': round(float(item[4]), 2),
-                'volume': int(float(item[5])),
-            })
-        
-        return results
-    
-    @classmethod
-    def get_daily_quote(cls, code: str, trade_date: str, autype: str = 'qfq', market: str = None) -> dict:
-        """
-        获取特定日期的行情数据
-        trade_date: '2025-05-15'
-        market: 交易所前缀，如 'sh', 'sz', 'bj'（可选）
-        """
-        df = cls.get_kline(code, trade_date, trade_date, ktype='day', autype=autype, market=market)
-        if not df:
-            return None
-        
-        data = df[0]
-        # 计算涨跌幅（需要前一日收盘价）
-        prev_date = (datetime.strptime(trade_date, '%Y-%m-%d') - timedelta(days=1)).strftime('%Y-%m-%d')
-        prev_data = cls.get_kline(code, prev_date, prev_date, ktype='day', autype=autype)
-        
-        if prev_data:
-            pre_close = prev_data[0]['close']
-            change = data['close'] - pre_close
-            change_pct = (change / pre_close * 100) if pre_close > 0 else 0
-        else:
-            pre_close = data['open']  # 如果无法获取前一日，用开盘价代替
-            change = data['close'] - pre_close
-            change_pct = (change / pre_close * 100) if pre_close > 0 else 0
-        
-        return {
-            'date': data['date'],
-            'open': data['open'],
-            'close': data['close'],
-            'high': data['high'],
-            'low': data['low'],
-            'volume': data['volume'],
-            'pre_close': pre_close,
-            'change': round(change, 2),
-            'change_pct': round(change_pct, 2),
-        }
-
-
 class KLineStore:
     """本地SQLite K线库"""
 
@@ -313,7 +107,7 @@ class KLineStore:
 
     @staticmethod
     def symbol(code: str, market: str = None) -> str:
-        prefix = market or TXStockAPI._get_prefix(code)
+        prefix = market or get_market_prefix(code)
         return f"{prefix}{code}"
 
     def latest_date(self, code: str, market: str = None) -> str:
@@ -334,7 +128,7 @@ class KLineStore:
             ).fetchone()
         return int(row[0] or 0)
 
-    def upsert_many(self, code: str, market: str, klines: list):
+    def upsert_many(self, code: str, market: str, klines: list, source: str = "unknown"):
         if not klines:
             return
         symbol = self.symbol(code, market)
@@ -343,14 +137,14 @@ class KLineStore:
             (
                 symbol,
                 code,
-                market or TXStockAPI._get_prefix(code),
+                market or get_market_prefix(code),
                 item["date"],
                 item["open"],
                 item["close"],
                 item["high"],
                 item["low"],
                 item["volume"],
-                "tencent",
+                source,
                 updated_at,
             )
             for item in klines
@@ -441,6 +235,7 @@ class IndicatorCalculator:
         rsi6 = cls._rsi(closes, 6)
         kdj = cls._kdj(klines)
         boll = cls._boll(closes)
+        prev_boll = cls._boll(closes[:-1])
         atr14 = cls._atr(klines, 14)
 
         amplitude = ((last["high"] - last["low"]) / close * 100) if close else None
@@ -461,6 +256,7 @@ class IndicatorCalculator:
             "kdj": kdj,
             "rsi6": rsi6,
             "boll": boll,
+            "prev_boll": prev_boll,
             "volume_ma5": volume_ma5,
             "volume_ma20": volume_ma20,
             "volume_ratio": volume_ratio,
@@ -535,8 +331,7 @@ class IndicatorCalculator:
         return f"{value:.{digits}f}{suffix}"
 
     @classmethod
-    def describe(cls, values: dict, close: float, volume: int) -> list:
-        states = []
+    def describe_ma(cls, values: dict, close: float) -> str:
         ma = values["ma"]
         ma_parts = []
         for period in (5, 10, 20, 60):
@@ -544,19 +339,27 @@ class IndicatorCalculator:
             if value:
                 pos = "上方" if close >= value else "下方"
                 ma_parts.append(f"MA{period}{pos}({value:.2f})")
-        if ma_parts:
-            states.append("均线：" + "，".join(ma_parts))
+        return "均线：" + "，".join(ma_parts) if ma_parts else "均线：数据不足"
 
+    @classmethod
+    def describe_macd(cls, values: dict) -> str:
         macd = values["macd"]
         if macd["dif"] is not None and macd["dea"] is not None:
             axis = "零轴上方" if macd["dif"] >= 0 else "零轴下方"
             hist = macd["hist"]
             prev_hist = macd["prev_hist"]
             if hist is not None and prev_hist is not None:
+                bar_change = "放大" if abs(hist) > abs(prev_hist) else "缩短"
                 momentum = "动能增强" if abs(hist) > abs(prev_hist) else "动能减弱"
                 bar = "红柱" if hist >= 0 else "绿柱"
-                states.append(f"MACD：{axis}，{bar}{momentum}")
+                return f"MACD：{axis}，{bar}{bar_change}，{momentum}"
+            if hist is not None:
+                bar = "红柱" if hist >= 0 else "绿柱"
+                return f"MACD：{axis}，{bar}"
+        return "MACD：数据不足"
 
+    @staticmethod
+    def describe_rsi(values: dict) -> str:
         rsi = values.get("rsi6")
         if rsi is not None:
             if rsi >= 80:
@@ -569,25 +372,57 @@ class IndicatorCalculator:
                 rsi_state = "偏弱"
             else:
                 rsi_state = "中性"
-            states.append(f"RSI6：{rsi_state}({rsi:.1f})")
+            return f"RSI6：{rsi_state}({rsi:.1f})"
+        return "RSI6：数据不足"
 
+    @staticmethod
+    def describe_kdj(values: dict) -> str:
         kdj = values.get("kdj")
         if kdj:
-            kdj_state = "偏强" if kdj["k"] >= kdj["d"] else "偏弱"
-            states.append(f"KDJ：{kdj_state}(K {kdj['k']:.1f}, D {kdj['d']:.1f}, J {kdj['j']:.1f})")
+            if kdj["j"] >= 100:
+                kdj_state = "超买钝化"
+            elif kdj["j"] <= 0:
+                kdj_state = "超卖钝化"
+            else:
+                kdj_state = "偏强" if kdj["k"] >= kdj["d"] else "偏弱"
+            return f"KDJ：{kdj_state}(K {kdj['k']:.1f}, D {kdj['d']:.1f}, J {kdj['j']:.1f})"
+        return "KDJ：数据不足"
 
+    @staticmethod
+    def describe_boll(values: dict, close: float) -> str:
         boll = values.get("boll")
         if boll:
+            width = boll["upper"] - boll["lower"]
+            prev_boll = values.get("prev_boll")
+            width_state = ""
+            if prev_boll:
+                prev_width = prev_boll["upper"] - prev_boll["lower"]
+                if prev_width:
+                    change_ratio = (width - prev_width) / prev_width
+                    if change_ratio >= 0.03:
+                        width_state = "，波动扩张"
+                    elif change_ratio <= -0.03:
+                        width_state = "，波动收敛"
+                    else:
+                        width_state = "，波动持平"
+
             if close >= boll["upper"]:
                 boll_state = "触及或突破上轨"
             elif close <= boll["lower"]:
                 boll_state = "触及或跌破下轨"
+            elif width and close >= boll["upper"] - width * 0.15:
+                boll_state = "接近上轨"
+            elif width and close <= boll["lower"] + width * 0.15:
+                boll_state = "接近下轨"
             elif close >= boll["mid"]:
                 boll_state = "位于中轨上方"
             else:
                 boll_state = "位于中轨下方"
-            states.append(f"BOLL：{boll_state}")
+            return f"BOLL：{boll_state}{width_state}"
+        return "BOLL：数据不足"
 
+    @staticmethod
+    def describe_volume(values: dict, volume: int) -> str:
         volume_ma20 = values.get("volume_ma20")
         if volume_ma20:
             ratio = volume / volume_ma20
@@ -599,28 +434,86 @@ class IndicatorCalculator:
                 volume_state = "缩量"
             else:
                 volume_state = "接近20日均量"
-            states.append(f"成交量：{volume_state}({ratio:.2f}x 20日均量)")
+            return f"成交量：{volume_state}({ratio:.2f}x 20日均量)"
+        return "成交量：数据不足"
 
+    @staticmethod
+    def describe_volume_ratio(values: dict) -> str:
+        ratio = values.get("volume_ratio")
+        if ratio is None:
+            return "量比：数据不足"
+        if ratio >= 2:
+            ratio_state = "短线显著放量"
+        elif ratio >= 1.2:
+            ratio_state = "短线放量"
+        elif ratio <= 0.6:
+            ratio_state = "短线缩量"
+        else:
+            ratio_state = "接近5日均量"
+        return f"量比：{ratio:.2f}，{ratio_state}"
+
+    @staticmethod
+    def describe_turnover(values: dict) -> str:
         turnover_rate = values.get("turnover_rate")
         if turnover_rate is not None:
             if turnover_rate >= 15:
-                turnover_state = "高换手"
+                turnover_state = "高位分歧"
             elif turnover_rate >= 5:
                 turnover_state = "活跃"
             elif turnover_rate <= 1:
                 turnover_state = "低换手"
             else:
                 turnover_state = "正常"
-            states.append(f"换手率：{turnover_state}({turnover_rate:.2f}%)")
-        else:
-            states.append("换手率：未配置流通股本，暂不计算")
+            return f"换手率：{turnover_state}({turnover_rate:.2f}%)"
+        return "换手率：流通股本未配置"
 
+    @staticmethod
+    def describe_amplitude(values: dict) -> str:
         amplitude = values.get("amplitude")
-        atr = values.get("atr14")
         if amplitude is not None:
-            states.append(f"振幅：{amplitude:.2f}%")
+            if amplitude >= 10:
+                amplitude_state = "大幅波动"
+            elif amplitude >= 5:
+                amplitude_state = "波动放大"
+            elif amplitude <= 2:
+                amplitude_state = "窄幅震荡"
+            else:
+                amplitude_state = "正常波动"
+            return f"振幅：{amplitude:.2f}%，{amplitude_state}"
+        return "振幅：数据不足"
+
+    @staticmethod
+    def describe_atr(values: dict, close: float) -> str:
+        atr = values.get("atr14")
         if atr is not None:
-            states.append(f"ATR14：{atr:.2f}")
+            atr_pct = atr / close * 100 if close else None
+            if atr_pct is None:
+                return f"ATR14：{atr:.2f}"
+            if atr_pct >= 8:
+                atr_state = "高波动"
+            elif atr_pct >= 4:
+                atr_state = "波动偏高"
+            elif atr_pct <= 1.5:
+                atr_state = "低波动"
+            else:
+                atr_state = "正常波动"
+            return f"ATR14：{atr:.2f}({atr_pct:.2f}%)，{atr_state}"
+        return "ATR14：数据不足"
+
+    @classmethod
+    def describe(cls, values: dict, close: float, volume: int) -> list:
+        states = [
+            cls.describe_ma(values, close),
+            cls.describe_macd(values),
+            cls.describe_rsi(values),
+            cls.describe_kdj(values),
+            cls.describe_boll(values, close),
+            cls.describe_volume(values, volume),
+            cls.describe_volume_ratio(values),
+            cls.describe_turnover(values),
+            cls.describe_amplitude(values),
+            cls.describe_atr(values, close),
+        ]
 
         return states
 
@@ -628,13 +521,13 @@ class IndicatorCalculator:
 class ReportGenerator:
     """报告生成器"""
     
-    def __init__(self, target_date: str = None, paths: RuntimePaths = None):
+    def __init__(self, target_date: str = None, paths: RuntimePaths = None, market_data_provider=None):
         """
         初始化报告生成器
         target_date: 目标日期，格式 '2025-05-22'，None表示今天
         """
-        self.api = TXStockAPI()
         self.paths = paths or RuntimePaths()
+        self.market_data = market_data_provider or create_market_data_provider(self.paths.market_data_provider)
         self.kline_store = KLineStore(self.paths.db_dir / "china_stock_daily_tracker.sqlite")
         
         if target_date:
@@ -792,11 +685,11 @@ class ReportGenerator:
         """获取实时指数数据"""
         # 使用 (code, market) 元组格式
         codes = [(code[2:], code[:2]) for code in INDICES.keys()]
-        data = self.api.realtime(codes)
+        data = self.market_data.realtime(codes)
         
         # 补充指数信息
         for item in data:
-            market = self.api._get_prefix(item['code'])
+            market = get_market_prefix(item['code'])
             full_code = f"{market}{item['code']}"
             if full_code in INDICES:
                 item['index_name'] = INDICES[full_code][0]
@@ -812,7 +705,7 @@ class ReportGenerator:
         for full_code, (name, market) in INDICES.items():
             code = full_code[2:]  # 去掉前缀
             prefix = full_code[:2]  # 前缀
-            data = self.api.get_daily_quote(code, date_str, market=prefix)
+            data = self.market_data.get_daily_quote(code, date_str, market=prefix)
             if data:
                 results.append({
                     'name': code,
@@ -850,7 +743,7 @@ class ReportGenerator:
         """获取实时自选股数据"""
         # 使用 (code, market) 元组格式
         codes = [(item["code"], item.get("market")) for item in watchlist]
-        quotes = self.api.realtime(codes)
+        quotes = self.market_data.realtime(codes)
         
         # 合并配置信息
         if isinstance(quotes, dict):
@@ -871,7 +764,7 @@ class ReportGenerator:
         for item in watchlist:
             code = item["code"]
             market = item.get("market")
-            data = self.api.get_daily_quote(code, date_str, market=market)
+            data = self.market_data.get_daily_quote(code, date_str, market=market)
             if data:
                 results.append({
                     'name': item.get('name', code),
@@ -912,9 +805,9 @@ class ReportGenerator:
         if latest and latest >= self.date_display and local_count >= 60:
             return
 
-        klines = self.api.get_kline(code, start_date, self.date_display, market=market)
+        klines = self.market_data.get_kline(code, start_date, self.date_display, market=market)
         if klines:
-            self.kline_store.upsert_many(code, market, klines)
+            self.kline_store.upsert_many(code, market, klines, source=self.market_data.provider_id)
 
     def _enrich_stock_data(self, data: list, config_items: list) -> list:
         """补充本地K线、指标状态和基础风险提示。"""
@@ -962,7 +855,7 @@ class ReportGenerator:
         """获取实时持仓股数据"""
         # 使用 (code, market) 元组格式
         codes = [(item["code"], item.get("market")) for item in portfolio]
-        quotes = self.api.realtime(codes)
+        quotes = self.market_data.realtime(codes)
         
         if isinstance(quotes, dict):
             quotes = [quotes]
@@ -1010,7 +903,7 @@ class ReportGenerator:
             position = item.get("position", 0)
             cost_price = item.get("cost_price", 0)
             
-            data = self.api.get_daily_quote(code, date_str, market=market)
+            data = self.market_data.get_daily_quote(code, date_str, market=market)
             if not data:
                 continue
             
@@ -1178,54 +1071,39 @@ class ReportGenerator:
             lines.append("*暂无股票数据*\n")
             return "\n".join(lines)
 
-        lines.append("| 股票 | 代码 | K线样本 | MA状态 | MACD | RSI6 | 成交量 | 换手率 |")
-        lines.append("|------|------|---------|--------|------|------|--------|--------|")
+        lines.append("| 股票 | 代码 | K线样本 | MA | MACD | KDJ | RSI | BOLL | 成交量 | 量比 | 换手率 | 振幅 | ATR |")
+        lines.append("|------|------|---------|----|------|-----|-----|------|--------|------|--------|------|-----|")
 
         for item in combined:
             indicators = item.get("indicators") or {}
-            ma = indicators.get("ma") or {}
             price = item.get("price")
-            ma20 = ma.get(20)
-            ma60 = ma.get(60)
-            ma_state = []
-            if price and ma20:
-                ma_state.append("MA20上方" if price >= ma20 else "MA20下方")
-            if price and ma60:
-                ma_state.append("MA60上方" if price >= ma60 else "MA60下方")
-            ma_text = "，".join(ma_state) if ma_state else "-"
-
-            macd = indicators.get("macd") or {}
-            hist = macd.get("hist")
-            prev_hist = macd.get("prev_hist")
-            if hist is None:
-                macd_text = "-"
+            volume = item.get("volume", 0)
+            if indicators and price:
+                ma_text = IndicatorCalculator.describe_ma(indicators, price).replace("均线：", "")
+                macd_text = IndicatorCalculator.describe_macd(indicators).replace("MACD：", "")
+                kdj_text = IndicatorCalculator.describe_kdj(indicators).replace("KDJ：", "")
+                rsi_text = IndicatorCalculator.describe_rsi(indicators).replace("RSI6：", "")
+                boll_text = IndicatorCalculator.describe_boll(indicators, price).replace("BOLL：", "")
+                volume_text = IndicatorCalculator.describe_volume(indicators, volume).replace("成交量：", "")
+                volume_ratio_text = IndicatorCalculator.describe_volume_ratio(indicators).replace("量比：", "")
+                turnover_text = IndicatorCalculator.describe_turnover(indicators).replace("换手率：", "")
+                amplitude_text = IndicatorCalculator.describe_amplitude(indicators).replace("振幅：", "")
+                atr_text = IndicatorCalculator.describe_atr(indicators, price).replace("ATR14：", "")
             else:
-                bar = "红柱" if hist >= 0 else "绿柱"
-                if prev_hist is None:
-                    macd_text = bar
-                else:
-                    macd_text = f"{bar}{'放大' if abs(hist) > abs(prev_hist) else '缩短'}"
+                ma_text = macd_text = kdj_text = rsi_text = boll_text = "-"
+                volume_text = volume_ratio_text = turnover_text = amplitude_text = atr_text = "-"
 
-            volume_ma20 = indicators.get("volume_ma20")
-            if volume_ma20:
-                volume_text = f"{item['volume'] / volume_ma20:.2f}x"
-            else:
-                volume_text = "-"
-
-            turnover = indicators.get("turnover_rate")
             lines.append(
                 f"| {item['name']} | {item['code']} | {item.get('klines_count', 0)} | "
-                f"{ma_text} | {macd_text} | {self._format_optional(indicators.get('rsi6'), digits=1)} | "
-                f"{volume_text} | {self._format_optional(turnover, '%')} |"
+                f"{ma_text} | {macd_text} | {kdj_text} | {rsi_text} | {boll_text} | "
+                f"{volume_text} | {volume_ratio_text} | {turnover_text} | {amplitude_text} | {atr_text} |"
             )
 
-        lines.append("\n**状态说明**：")
-        for item in combined[:8]:
+        lines.append("\n**结构化状态说明**：")
+        for item in combined:
             states = (item.get("indicators") or {}).get("states") or []
             if states:
-                lines.append(f"- {item['name']} ({item['code']})：" + "；".join(states[:4]))
-        if len(combined) > 8:
-            lines.append(f"- 其余 {len(combined) - 8} 只股票已计算指标，详见上表。")
+                lines.append(f"- {item['name']} ({item['code']})：" + "；".join(states))
 
         return "\n".join(lines) + "\n"
 
@@ -1400,7 +1278,7 @@ class ReportGenerator:
             "",
             f"**报告类型**：{'收盘简报' if report_type == 'close' else '复盘报告'}",
             f"**生成时间**：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-            f"**数据来源**：腾讯财经{'（历史数据）' if self.is_historical else '（实时行情）'}",
+            f"**数据来源**：{self.market_data.name}{'（历史数据）' if self.is_historical else '（实时行情）'}",
             "",
             "---",
             "",
@@ -1468,6 +1346,7 @@ watchlist:
   # 示例：
   # - code: "600519"
   #   name: "贵州茅台"
+  #   float_shares: 1000000000  # 流通股本（股，可选）；配置后可计算换手率
   #   tags: ["白酒", "核心资产"]
   # - code: "300750"
   #   name: "宁德时代"
@@ -1486,6 +1365,7 @@ portfolio:
   #   name: "北方稀土"
   #   position: 1000        # 持仓数量（股）
   #   cost_price: 25.50     # 成本价（元）
+  #   float_shares: 100000000  # 流通股本（股，可选）；配置后可计算换手率
   #   target_weight: 0.15   # 目标仓位占比（可选）
 """)
 

@@ -67,9 +67,16 @@ under `runtime_dir` unless an absolute path is provided:
   "runtime_dir": "stockpilot",
   "config_dir": "config",
   "db_dir": "db",
-  "reports_dir": "reports"
+  "reports_dir": "reports",
+  "data_source": {
+    "provider": "tencent"
+  }
 }
 ```
+
+Market data providers are isolated under the skill scripts. The default provider
+is Tencent Finance; future providers should implement the same provider contract
+instead of adding HTTP request code to `generate_report.py`.
 
 Installed skills live in the target client's skills directory, separate from
 runtime data:

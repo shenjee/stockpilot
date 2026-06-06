@@ -3,6 +3,7 @@ watchlist:
   - code: "600519"
     market: "sh"
     name: "贵州茅台"
+    float_shares: 1000000000  # 流通股本（股，可选）；配置后可计算换手率
     tags: ["白酒", "核心资产"]
   - code: "300750"
     market: "sz"
