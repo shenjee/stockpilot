@@ -2,13 +2,21 @@
 
 All notable changes to Stock Pilot Skills are documented here.
 
-## [Unreleased]
+## [1.0.0] - 2026-06-06
 
-Phase 1.5 changes under development. This work closes the Phase 1 indicator-output gap before starting Phase 2 structure analysis.
+Initial Stock Pilot skill release.
 
 ### Added
 
-- Added full Phase 1.5 technical indicator output for the daily report:
+- Added installable `china-stock-daily-tracker` skill structure.
+- Added product design documents in English and Chinese.
+- Added factual A-share daily report workflow.
+- Added watchlist and portfolio configuration support.
+- Added local SQLite daily K-line cache.
+- Added basic index, watchlist, portfolio, indicator, strategy-rule, and sector-placeholder report sections.
+- Added basic portfolio fields including broker and buy-order records.
+- Added runtime directory configuration for private workspace data.
+- Added full technical indicator output for the daily report:
   - MA5, MA10, MA20, MA60
   - MACD
   - KDJ
@@ -27,29 +35,9 @@ Phase 1.5 changes under development. This work closes the Phase 1 indicator-outp
 - Added `scripts/market_data.py` with a pluggable market data provider boundary.
 - Added Tencent Finance as the default market data provider.
 - Added `data_source.provider` runtime configuration support.
-- Added Phase-to-PRD module mapping in the product design documents.
 
 ### Changed
 
 - Refactored `generate_report.py` so report generation no longer owns Tencent-specific HTTP request code.
 - Updated documentation to describe provider-based market data architecture.
 - Updated the suggested script layout from `fetch_kline.py` to `market_data.py`.
-
-## [1.0.0] - 2026-06-04
-
-Phase 1 baseline before the Phase 1.5 indicator-output pass.
-
-### Added
-
-- Added installable `china-stock-daily-tracker` skill structure.
-- Added product design documents in English and Chinese.
-- Added factual A-share daily report workflow.
-- Added watchlist and portfolio configuration support.
-- Added local SQLite daily K-line cache.
-- Added basic index, watchlist, portfolio, indicator, strategy-rule, and sector-placeholder report sections.
-- Added basic portfolio fields including broker and buy-order records.
-- Added runtime directory configuration for private workspace data.
-
-### Notes
-
-- Phase 1.0 established the basic research desk, but indicator output was not yet complete against PRD section 5.2.
