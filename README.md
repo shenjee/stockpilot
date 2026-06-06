@@ -10,11 +10,16 @@ The repository is organized as a skill collection. Each installable skill lives 
 | --- | --- |
 | `china-stock-daily-tracker` | Generates factual China A-share daily market reports for indexes, watchlists, and portfolios. |
 
+## Version History
+
+See [CHANGELOG.md](CHANGELOG.md).
+
 ## Repository Layout
 
 ```text
 stockpilotskills/
 |-- README.md
+|-- CHANGELOG.md
 |-- docs/
 |   |-- PRODUCT_DESIGN.md
 |   `-- PRODUCT_DESIGN.zh.md
