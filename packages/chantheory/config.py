@@ -5,10 +5,10 @@ from typing import Dict, Tuple
 
 
 ENGINE_NAME = "czsc"
-PINNED_ENGINE_VERSION = "0.9.63"
+PINNED_ENGINE_VERSION = "0.10.12"
 PINNED_ENGINE_REASON = (
-    "Pinned to a Python 3.9-compatible release. Newer 0.10.x releases require "
-    "Python 3.10+ and do not match the current project runtime."
+    "Pinned to the installed and validated czsc 0.10.12 baseline for the "
+    "current project runtime."
 )
 
 DEFAULT_PARAMETERS = {
@@ -75,9 +75,9 @@ def get_engine_compatibility() -> EngineCompatibility:
     return EngineCompatibility(
         engine=ENGINE_NAME,
         version=PINNED_ENGINE_VERSION,
-        supported_python="3.8-3.12 classifiers on 0.9.63",
-        validated_python="3.9.6",
-        import_shim="Import numpy.typing before czsc to avoid rs_czsc import failure on Python 3.9.",
+        supported_python="Requires Python >=3.10; classifiers currently published through 3.13 on 0.10.12",
+        validated_python="3.14.5",
+        import_shim="Import numpy.typing before czsc so rs_czsc-dependent imports initialize consistently.",
     )
 
 

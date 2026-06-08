@@ -1,0 +1,477 @@
+{
+  "symbol": "000001.SZ",
+  "timeframe": "day",
+  "source": "tencent",
+  "engine": "czsc",
+  "engine_version": "0.9.63",
+  "parameters": {
+    "max_bi_num": 50,
+    "min_bars": 10,
+    "strict_validation": true,
+    "derive_amount_from_close_volume": true
+  },
+  "fractals": [
+    {
+      "id": "fractal_2025-01-02_bottom",
+      "fractal_type": "bottom",
+      "bar_index": 1,
+      "timestamp": "2025-01-02",
+      "price": 9.7,
+      "confirmed": true,
+      "source": "czsc",
+      "meta": {
+        "raw_mark": "D"
+      }
+    },
+    {
+      "id": "fractal_2025-01-03_top",
+      "fractal_type": "top",
+      "bar_index": 2,
+      "timestamp": "2025-01-03",
+      "price": 10.9,
+      "confirmed": true,
+      "source": "czsc",
+      "meta": {
+        "raw_mark": "G"
+      }
+    },
+    {
+      "id": "fractal_2025-01-06_bottom",
+      "fractal_type": "bottom",
+      "bar_index": 3,
+      "timestamp": "2025-01-06",
+      "price": 10.0,
+      "confirmed": true,
+      "source": "czsc",
+      "meta": {
+        "raw_mark": "D"
+      }
+    },
+    {
+      "id": "fractal_2025-01-07_top",
+      "fractal_type": "top",
+      "bar_index": 4,
+      "timestamp": "2025-01-07",
+      "price": 11.3,
+      "confirmed": false,
+      "source": "czsc",
+      "meta": {
+        "raw_mark": "G"
+      }
+    }
+  ],
+  "strokes": [
+    {
+      "id": "stroke_2025-01-02_2025-01-03",
+      "direction": "up",
+      "start_fractal_id": "fractal_2025-01-02_bottom",
+      "end_fractal_id": "fractal_2025-01-03_top",
+      "start_timestamp": "2025-01-02",
+      "end_timestamp": "2025-01-03",
+      "start_price": 9.7,
+      "end_price": 10.9,
+      "confirmed": true,
+      "meta": {
+        "high": 10.9,
+        "low": 9.7,
+        "raw_direction": "Up"
+      }
+    },
+    {
+      "id": "stroke_2025-01-03_2025-01-06",
+      "direction": "down",
+      "start_fractal_id": "fractal_2025-01-03_top",
+      "end_fractal_id": "fractal_2025-01-06_bottom",
+      "start_timestamp": "2025-01-03",
+      "end_timestamp": "2025-01-06",
+      "start_price": 10.9,
+      "end_price": 10.0,
+      "confirmed": true,
+      "meta": {
+        "high": 10.9,
+        "low": 10.0,
+        "raw_direction": "Down"
+      }
+    },
+    {
+      "id": "stroke_2025-01-06_2025-01-07",
+      "direction": "up",
+      "start_fractal_id": "fractal_2025-01-06_bottom",
+      "end_fractal_id": "fractal_2025-01-07_top",
+      "start_timestamp": "2025-01-06",
+      "end_timestamp": "2025-01-07",
+      "start_price": 10.0,
+      "end_price": 11.3,
+      "confirmed": true,
+      "meta": {
+        "high": 11.3,
+        "low": 10.0,
+        "raw_direction": "Up"
+      }
+    }
+  ],
+  "segments": [
+    {
+      "id": "segment_001_2025-01-02_2025-01-07",
+      "direction": "up",
+      "stroke_ids": [
+        "stroke_2025-01-02_2025-01-03",
+        "stroke_2025-01-03_2025-01-06",
+        "stroke_2025-01-06_2025-01-07"
+      ],
+      "start_timestamp": "2025-01-02",
+      "end_timestamp": "2025-01-07",
+      "start_price": 9.7,
+      "end_price": 11.3,
+      "confirmed": true,
+      "meta": {
+        "mapping_strategy": "conservative_three_stroke_window",
+        "window_size": 3
+      }
+    }
+  ],
+  "pivot_zones": [
+    {
+      "id": "pivot_zone_001_2025-01-02_2025-01-07",
+      "start_timestamp": "2025-01-02",
+      "end_timestamp": "2025-01-07",
+      "high": 11.0,
+      "low": 10.0,
+      "segment_ids": [
+        "segment_001_2025-01-02_2025-01-07"
+      ],
+      "level": "stroke",
+      "active": true,
+      "meta": {
+        "mapping_strategy": "czsc_get_zs_seq",
+        "gg": 11.3,
+        "dd": 9.7,
+        "zz": 10.5
+      }
+    }
+  ],
+  "divergences": [],
+  "structure_alerts": [
+    {
+      "id": "alert_unstable_tail_stroke_2025-01-06_2025-01-07",
+      "alert_type": "unstable_tail_stroke",
+      "severity": "info",
+      "timestamp": "2025-01-07",
+      "related_ids": [
+        "stroke_2025-01-06_2025-01-07"
+      ],
+      "message": "The latest stroke is still extending and should be treated as unstable.",
+      "meta": {
+        "direction": "up"
+      }
+    },
+    {
+      "id": "alert_active_pivot_zone_pivot_zone_001_2025-01-02_2025-01-07",
+      "alert_type": "active_pivot_zone",
+      "severity": "info",
+      "timestamp": "2025-01-07",
+      "related_ids": [
+        "pivot_zone_001_2025-01-02_2025-01-07"
+      ],
+      "message": "An active pivot zone is present in the latest mapped structure.",
+      "meta": {
+        "level": "stroke"
+      }
+    }
+  ],
+  "candidate_buy_points": [],
+  "candidate_sell_points": [],
+  "plot_primitives": [
+    {
+      "id": "primitive_fractal_2025-01-02_bottom",
+      "type": "marker",
+      "layer": "fractals",
+      "x": "2025-01-02",
+      "y": 9.7,
+      "x1": "",
+      "y1": null,
+      "x2": "",
+      "y2": null,
+      "style": "triangle_up",
+      "color": "#16A34A",
+      "text": "B",
+      "meta": {
+        "reference_type": "fractal",
+        "reference_id": "fractal_2025-01-02_bottom",
+        "confirmed": true
+      }
+    },
+    {
+      "id": "primitive_fractal_2025-01-03_top",
+      "type": "marker",
+      "layer": "fractals",
+      "x": "2025-01-03",
+      "y": 10.9,
+      "x1": "",
+      "y1": null,
+      "x2": "",
+      "y2": null,
+      "style": "triangle_down",
+      "color": "#DC2626",
+      "text": "T",
+      "meta": {
+        "reference_type": "fractal",
+        "reference_id": "fractal_2025-01-03_top",
+        "confirmed": true
+      }
+    },
+    {
+      "id": "primitive_fractal_2025-01-06_bottom",
+      "type": "marker",
+      "layer": "fractals",
+      "x": "2025-01-06",
+      "y": 10.0,
+      "x1": "",
+      "y1": null,
+      "x2": "",
+      "y2": null,
+      "style": "triangle_up",
+      "color": "#16A34A",
+      "text": "B",
+      "meta": {
+        "reference_type": "fractal",
+        "reference_id": "fractal_2025-01-06_bottom",
+        "confirmed": true
+      }
+    },
+    {
+      "id": "primitive_fractal_2025-01-07_top",
+      "type": "marker",
+      "layer": "fractals",
+      "x": "2025-01-07",
+      "y": 11.3,
+      "x1": "",
+      "y1": null,
+      "x2": "",
+      "y2": null,
+      "style": "triangle_down",
+      "color": "#DC2626",
+      "text": "T",
+      "meta": {
+        "reference_type": "fractal",
+        "reference_id": "fractal_2025-01-07_top",
+        "confirmed": false
+      }
+    },
+    {
+      "id": "primitive_stroke_2025-01-02_2025-01-03",
+      "type": "line",
+      "layer": "strokes",
+      "x": "",
+      "y": null,
+      "x1": "2025-01-02",
+      "y1": 9.7,
+      "x2": "2025-01-03",
+      "y2": 10.9,
+      "style": "solid",
+      "color": "#2563EB",
+      "text": "",
+      "meta": {
+        "reference_type": "stroke",
+        "reference_id": "stroke_2025-01-02_2025-01-03",
+        "confirmed": true
+      }
+    },
+    {
+      "id": "primitive_stroke_2025-01-03_2025-01-06",
+      "type": "line",
+      "layer": "strokes",
+      "x": "",
+      "y": null,
+      "x1": "2025-01-03",
+      "y1": 10.9,
+      "x2": "2025-01-06",
+      "y2": 10.0,
+      "style": "solid",
+      "color": "#F97316",
+      "text": "",
+      "meta": {
+        "reference_type": "stroke",
+        "reference_id": "stroke_2025-01-03_2025-01-06",
+        "confirmed": true
+      }
+    },
+    {
+      "id": "primitive_stroke_2025-01-06_2025-01-07",
+      "type": "line",
+      "layer": "strokes",
+      "x": "",
+      "y": null,
+      "x1": "2025-01-06",
+      "y1": 10.0,
+      "x2": "2025-01-07",
+      "y2": 11.3,
+      "style": "solid",
+      "color": "#2563EB",
+      "text": "",
+      "meta": {
+        "reference_type": "stroke",
+        "reference_id": "stroke_2025-01-06_2025-01-07",
+        "confirmed": true
+      }
+    },
+    {
+      "id": "primitive_segment_001_2025-01-02_2025-01-07",
+      "type": "line",
+      "layer": "segments",
+      "x": "",
+      "y": null,
+      "x1": "2025-01-02",
+      "y1": 9.7,
+      "x2": "2025-01-07",
+      "y2": 11.3,
+      "style": "dashed",
+      "color": "#7C3AED",
+      "text": "",
+      "meta": {
+        "reference_type": "segment",
+        "reference_id": "segment_001_2025-01-02_2025-01-07",
+        "confirmed": true
+      }
+    },
+    {
+      "id": "primitive_pivot_zone_001_2025-01-02_2025-01-07",
+      "type": "box",
+      "layer": "pivot_zones",
+      "x": "",
+      "y": null,
+      "x1": "2025-01-02",
+      "y1": 11.0,
+      "x2": "2025-01-07",
+      "y2": 10.0,
+      "style": "fill",
+      "color": "#F59E0B",
+      "text": "Pivot Zone",
+      "meta": {
+        "reference_type": "pivot_zone",
+        "reference_id": "pivot_zone_001_2025-01-02_2025-01-07",
+        "active": true,
+        "level": "stroke"
+      }
+    },
+    {
+      "id": "primitive_alert_unstable_tail_stroke_2025-01-06_2025-01-07",
+      "type": "label",
+      "layer": "alerts",
+      "x": "2025-01-07",
+      "y": 11.3,
+      "x1": "",
+      "y1": null,
+      "x2": "",
+      "y2": null,
+      "style": "solid",
+      "color": "#0F766E",
+      "text": "The latest stroke is still extending and should be treated as unstable.",
+      "meta": {
+        "reference_type": "structure_alert",
+        "reference_id": "alert_unstable_tail_stroke_2025-01-06_2025-01-07",
+        "related_ids": [
+          "stroke_2025-01-06_2025-01-07"
+        ]
+      }
+    },
+    {
+      "id": "primitive_alert_active_pivot_zone_pivot_zone_001_2025-01-02_2025-01-07",
+      "type": "label",
+      "layer": "alerts",
+      "x": "2025-01-07",
+      "y": 11.3,
+      "x1": "",
+      "y1": null,
+      "x2": "",
+      "y2": null,
+      "style": "solid",
+      "color": "#0F766E",
+      "text": "An active pivot zone is present in the latest mapped structure.",
+      "meta": {
+        "reference_type": "structure_alert",
+        "reference_id": "alert_active_pivot_zone_pivot_zone_001_2025-01-02_2025-01-07",
+        "related_ids": [
+          "pivot_zone_001_2025-01-02_2025-01-07"
+        ]
+      }
+    }
+  ],
+  "summary": [
+    "000001.SZ normalized 5 day bars for Phase 2 analysis.",
+    "czsc 0.9.63 mapped 4 fractals and 3 finished strokes.",
+    "Phase 2 produced 1 segments and 1 pivot zones.",
+    "The latest confirmed stroke points up into 2025-01-07.",
+    "The newest structure is still extending, so the tail should be treated as unstable."
+  ],
+  "warnings": [
+    {
+      "id": "warning_amount_derived",
+      "warning_code": "AMOUNT_DERIVED",
+      "severity": "warning",
+      "message": "Missing amount values are derived with close * volume during Phase 1.",
+      "field": "amount",
+      "meta": {}
+    },
+    {
+      "id": "warning_insufficient_bars",
+      "warning_code": "INSUFFICIENT_BARS",
+      "severity": "warning",
+      "message": "Only 5 bars are available; at least 10 bars are recommended for more stable Chan structure mapping.",
+      "field": "bars",
+      "meta": {}
+    },
+    {
+      "id": "warning_unstable_tail_stroke",
+      "warning_code": "UNSTABLE_TAIL_STROKE",
+      "severity": "warning",
+      "message": "The latest stroke is extending, so the most recent structure remains unstable.",
+      "field": "strokes",
+      "meta": {}
+    },
+    {
+      "id": "warning_divergence_conservative_empty",
+      "warning_code": "DIVERGENCE_CONSERVATIVE_EMPTY",
+      "severity": "info",
+      "message": "Divergences remain conservatively empty in Phase 2 until a stable project rule is finalized.",
+      "field": "divergences",
+      "meta": {}
+    }
+  ],
+  "meta": {
+    "bar_count": 5,
+    "input_fields": [
+      "date",
+      "open",
+      "close",
+      "high",
+      "low",
+      "volume"
+    ],
+    "gaps": [
+      "Current tracker K-lines do not persist amount/turnover directly.",
+      "Current repo flow only fetches day bars; minute and higher-period aggregation are future work.",
+      "Adjustment mode is implicit in provider usage and not yet carried in the normalized schema."
+    ],
+    "engine_probe": {
+      "status": "ok",
+      "raw_bar_count": 5,
+      "fractal_count": 4,
+      "finished_bi_count": 3,
+      "last_bi_extend": true
+    },
+    "engine_assumptions": {
+      "engine_version": "0.9.63",
+      "segment_strategy": "conservative_three_stroke_window",
+      "pivot_zone_strategy": "czsc.utils.sig.get_zs_seq on finished strokes",
+      "divergence_strategy": "conservative_empty_until project-level rule is finalized"
+    },
+    "mapping": {
+      "fractal_count": 4,
+      "stroke_count": 3,
+      "segment_count": 1,
+      "pivot_zone_count": 1,
+      "divergence_count": 0
+    }
+  }
+}

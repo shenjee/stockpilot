@@ -10,20 +10,29 @@ It is not a reimplementation of Chan Theory core logic. Its job is to:
 - define plotting, summary, and warning responsibilities,
 - degrade safely when the engine or input is not ready.
 
-## P1 Status
+## Status
 
 Phase 2 P1 freezes the adapter contract and validates a working `czsc` path.
 
-- Engine: `czsc==0.9.63`
+- Engine: `czsc==0.10.12`
 - Validation runtime: Python `3.9.6`
 - Why this pin: latest `0.10.x` releases on PyPI require Python `>=3.10`
 - Import note: load `numpy.typing` before importing `czsc` on Python `3.9`
 
 Observed validation result:
 
-- `czsc==0.9.63` installs successfully in a clean Python `3.9` virtualenv
+- `czsc==0.10.12` installs successfully in the validated project virtualenv
 - the current tracker day-bar payload converts into `czsc.objects.RawBar`
 - `CZSC(raw_bars)` runs successfully for A-share sample data after the `numpy.typing` import shim
+
+Phase 2 P2 adds:
+
+- project-level mapping for `fractals`, `strokes`, `segments`, and `pivot_zones`
+- conservative `divergences` output as an intentionally empty list with explicit warnings
+- stable `plot_primitives` for markers, lines, boxes, and labels
+- short summary and warning generation for unstable tail strokes and insufficient bars
+- a Streamlit debug app under `apps/chan-streamlit/`
+- deterministic JSON and row fixtures under `packages/chantheory/tests/fixtures/`
 
 ## Public API
 
@@ -97,9 +106,9 @@ Project timeframe to `czsc` mapping:
 
 Current repo validation only covers day bars because `china-stock-daily-tracker` persists day K-lines today.
 
-## Frozen Result Schema
+## Result Schema
 
-P1 freezes the top-level schema even though P2 will fill in the structure mapping.
+P1 freezes the top-level schema and P2 fills the stable structure mapping.
 
 ```json
 {
@@ -107,7 +116,7 @@ P1 freezes the top-level schema even though P2 will fill in the structure mappin
   "timeframe": "day",
   "source": "tencent",
   "engine": "czsc",
-  "engine_version": "0.9.63",
+  "engine_version": "0.10.12",
   "parameters": {
     "max_bi_num": 50,
     "min_bars": 60,
@@ -134,6 +143,43 @@ Responsibilities are split as follows:
 - `plot_primitives`: visualization-ready points, lines, boxes, labels, markers
 - `summary`: short sentences for skills and agents
 - `warnings`: normalization gaps, engine failures, and runtime degradation details
+
+Current P2 mapping notes:
+
+- `fractals`: mapped from `CZSC.fx_list`
+- `strokes`: mapped from `CZSC.finished_bis`
+- `segments`: derived conservatively with a project-side three-stroke window because `czsc==0.10.12` does not expose a first-class segment list
+- `pivot_zones`: derived from `czsc.utils.sig.get_zs_seq` on finished strokes
+- `divergences`: conservatively empty until a project-stable rule is finalized
+
+## Plot Contract
+
+`plot_primitives` currently supports:
+
+- `marker` for fractals
+- `line` for strokes and segments
+- `box` for pivot zones
+- `label` for structure alerts
+
+Layer order remains:
+
+1. `candles`
+2. `fractals`
+3. `strokes`
+4. `segments`
+5. `pivot_zones`
+6. `divergences`
+7. `alerts`
+
+Style rules:
+
+- top fractals: red triangle markers
+- bottom fractals: green triangle markers
+- up strokes: blue solid lines
+- down strokes: orange solid lines
+- segments: purple dashed lines
+- active pivot zones: amber filled boxes
+- alerts: teal or red labels depending on severity
 
 ## Current Data Fit
 
@@ -172,3 +218,11 @@ rows = [
 result = analyze_tracker_klines(rows=rows, code="000001", market="sz")
 payload = result.to_dict()
 ```
+
+## Fixtures
+
+Committed P2 fixtures:
+
+- `packages/chantheory/tests/fixtures/p2_sample_rows.json`
+- `packages/chantheory/tests/fixtures/p2_sample_result.json`
+- `apps/chan-streamlit/sample_data/000001_sz_day_rows.json`

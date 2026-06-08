@@ -114,40 +114,40 @@
 
 ### 必须完成
 
-- [ ] 构建项目 K 线到 `czsc` 输入对象的转换器
-- [ ] 封装稳定的 `czsc` 调用入口
-- [ ] 避免 `czsc` 内部类直接泄漏到上层
-- [ ] 把版本相关假设写入代码和文档
-- [ ] 把 `czsc` 结果映射为项目级 `fractals`
-- [ ] 把 `czsc` 结果映射为项目级 `strokes`
-- [ ] 把 `czsc` 结果映射为项目级 `segments`
-- [ ] 把 `czsc` 结果映射为项目级 `pivot_zones`
-- [ ] 明确 `divergences` 在 Phase 2 的保守输出策略
-- [ ] 增加 symbol、timeframe、source、parameters、engine_version 等元数据
-- [ ] 让 JSON 输出结构稳定可复用
-- [ ] 定义 `plot_primitives` 的点、线、框、标签、标记结构
-- [ ] 定义 K 线、Fractal、Stroke、Segment、Pivot Zone 的图层顺序
-- [ ] 定义颜色、样式和标注规范
-- [ ] 输出已知样例的 JSON 基线
-- [ ] 生成结构摘要，且保持短句化
-- [ ] 生成不足数据、结构不稳、转换异常等 `warnings`
-- [ ] 定义 agent 可读、日报可用的摘要文案
-- [ ] 创建 `apps/chan-streamlit/`
-- [ ] 添加 `app.py`
-- [ ] 添加 Streamlit README
-- [ ] 提供 symbol、timeframe、date range、参数控制项
-- [ ] 在 K 线图上叠加 `plot_primitives`
-- [ ] 添加 Fractal、Stroke、Segment、Pivot Zone、Divergence 的开关
-- [ ] 添加原始 JSON 检查视图
-- [ ] 添加 warnings 和 diagnostics 面板
-- [ ] 准备可视化验算样例数据
+- [x] 构建项目 K 线到 `czsc` 输入对象的转换器
+- [x] 封装稳定的 `czsc` 调用入口
+- [x] 避免 `czsc` 内部类直接泄漏到上层
+- [x] 把版本相关假设写入代码和文档
+- [x] 把 `czsc` 结果映射为项目级 `fractals`
+- [x] 把 `czsc` 结果映射为项目级 `strokes`
+- [x] 把 `czsc` 结果映射为项目级 `segments`
+- [x] 把 `czsc` 结果映射为项目级 `pivot_zones`
+- [x] 明确 `divergences` 在 Phase 2 的保守输出策略
+- [x] 增加 symbol、timeframe、source、parameters、engine_version 等元数据
+- [x] 让 JSON 输出结构稳定可复用
+- [x] 定义 `plot_primitives` 的点、线、框、标签、标记结构
+- [x] 定义 K 线、Fractal、Stroke、Segment、Pivot Zone 的图层顺序
+- [x] 定义颜色、样式和标注规范
+- [x] 输出已知样例的 JSON 基线
+- [x] 生成结构摘要，且保持短句化
+- [x] 生成不足数据、结构不稳、转换异常等 `warnings`
+- [x] 定义 agent 可读、日报可用的摘要文案
+- [x] 创建 `apps/chan-streamlit/`
+- [x] 添加 `app.py`
+- [x] 添加 Streamlit README
+- [x] 提供 symbol、timeframe、date range、参数控制项
+- [x] 在 K 线图上叠加 `plot_primitives`
+- [x] 添加 Fractal、Stroke、Segment、Pivot Zone、Divergence 的开关
+- [x] 添加原始 JSON 检查视图
+- [x] 添加 warnings 和 diagnostics 面板
+- [x] 准备可视化验算样例数据
 
 ### 完成标准
 
-- [ ] `chantheory` 能输出稳定的结构结果和绘图原语
-- [ ] Streamlit 能完成结构叠加和结果核对
-- [ ] 摘要和告警能用于调试与日报接入
-- [ ] Phase 2 的视觉输出契约已基本稳定
+- [x] `chantheory` 能输出稳定的结构结果和绘图原语
+- [x] Streamlit 能完成结构叠加和结果核对
+- [x] 摘要和告警能用于调试与日报接入
+- [x] Phase 2 的视觉输出契约已基本稳定
 
 ## P3：业务接入与收口
 
