@@ -147,6 +147,18 @@ BOLL：接近上轨，波动扩张
 
 负责走势结构识别。
 
+术语约定：
+
+- 缠论：`Chan Theory`
+- 分型：`Fractal`
+- 笔：`Stroke`
+- 线段：`Segment`
+- 中枢：`Pivot Zone`
+- 走势类型：`Trend Structure`
+- 背驰：`Divergence`
+- 一买 / 二买 / 三买：`First / Second / Third Buy Point`
+- 一卖 / 二卖 / 三卖：`First / Second / Third Sell Point`
+
 建议迭代顺序：
 
 1. K 线标准化
@@ -384,7 +396,7 @@ AI芯片管制放松：
 
 交付：
 
-- `docs/PRODUCT_DESIGN.md`
+- `docs/product_design.md`
 - 初始 task backlog
 
 ### Phase 1：基础投研台
@@ -432,9 +444,82 @@ AI芯片管制放松：
 
 输出：
 
-- 结构文字描述
+- 图形化结构输出（主输出）
 - 结构变化提醒
+- 简短文字摘要（辅助输出）
 - 潜在买卖点候选
+
+实现边界：
+
+- Phase 2 不把缠论逻辑继续堆进日报脚本
+- Phase 2 不重复造轮子自研完整缠论核心算法
+- Phase 2 默认采用开源 `czsc` 作为底层缠论分析引擎
+- 项目内保留自己的 `chantheory` 适配层，负责输入标准化、参数约束、统一 schema、图形数据和摘要输出
+- skill script 负责调用 `chantheory` 适配层，并把结果转成 Markdown、文本摘要或信号输入
+- UI 负责可视化展示，不承载核心缠论计算逻辑
+- 图形化结果优先于自然语言描述，自然语言仅作为辅助说明
+
+推荐架构：
+
+```text
+本地K线库 / 市场数据
+        ->
+数据标准化与适配层（chantheory）
+        ->
+czsc
+        ->
+统一结果模型 / plot_primitives / summary / warnings
+        ->
+  ├─ skill scripts：文本报告、结构摘要、agent 调用
+  ├─ Streamlit app：算法验证、结构检查、参数调试
+  └─ desktop / local app：K线叠加、分型/笔/线段/中枢可视化、交互复盘
+```
+
+原因：
+
+- `czsc` 已提供较成熟的缠论核心能力，适合作为 Phase 2 的默认引擎
+- 直接自研分型、笔、线段、中枢会重复造轮子，且口径与测试成本很高
+- 保留项目自己的适配层后，可以避免 skill、agent、UI 直接绑定 `czsc` 原生对象和版本细节
+- 统一结果模型后，skills、agents、apps、调试工具都能共享同一套输出契约
+
+推荐交付顺序：
+
+1. 先验证 `czsc` 与当前 A 股 K 线数据格式和周期配置是否匹配
+2. 先完成 `chantheory` 适配层，统一输入输出与 `plot_primitives`
+3. 先用 Streamlit 建立调试与验证界面，检查分型、笔、线段、中枢绘制是否正确
+4. skill 接入适配层，输出简短文字摘要和结构化结果
+5. 等结构口径稳定后，再建设本地 UI 或 desktop app
+
+`chantheory` 适配层建议输入：
+
+- 标准化 OHLCV K 线序列
+- 周期参数
+- `czsc` 分析参数
+- 可选的人工校正规则
+
+`chantheory` 适配层建议输出：
+
+- `fractals`
+- `strokes`
+- `segments`
+- `pivot_zones`
+- `divergences`
+- `structure_alerts`
+- `candidate_buy_points`
+- `candidate_sell_points`
+- `plot_primitives`
+- `summary`
+- `warnings`
+
+建议说明：
+
+- Phase 2 的 UI 需求是真实存在的，因为缠论结构对使用者来说图形化明显比纯文本更直观
+- 对缠论来说，图形化展示应为主输出，文字描述只保留为摘要、注释和 agent 可读说明
+- Streamlit 很适合作为 Phase 2 的调试与验算界面，用于快速检查结构识别是否正确
+- 但 UI 不适合直接依赖 openclaw、codex 一类 agent 运行环境长期承载
+- 更合理的做法是将 UI 单独做成本地 desktop app 或本地 web app，并通过统一分析接口读取缠论结果
+- `czsc` 负责底层缠论核心识别，`chantheory` 负责项目侧的适配、约束和统一输出
+- skill 与 desktop app 应共同依赖 `chantheory` 适配层，而不是直接依赖 UI 组件或 `czsc` 内部对象
 
 ### Phase 3：策略规则与量化信号
 
@@ -551,6 +636,16 @@ china-stock-daily-tracker
 - 单 skill 更容易迭代
 - 当前已有日报和配置基础
 - 过早拆分会增加维护复杂度
+- `czsc` 适合作为底层分析引擎，但不应直接成为上层 skill 的裸依赖
+
+补充建议：
+
+- 短期保持 `china-stock-daily-tracker` 作为主 skill 入口
+- Phase 2 新增的缠论能力优先沉淀为项目内的 `chantheory` 适配层，由主 skill 调用
+- `chantheory` 默认集成 `czsc`，但对外暴露项目自己的稳定 schema 和绘图数据
+- 是否把缠论单独拆成新 skill，应在分析接口稳定、参数边界稳定后再决定
+- 不建议把缠论 UI 直接做进 skill；UI 更适合作为独立本地应用存在
+- `chantheory` 应被视为独立分析接入层，skills、agents、apps、调试工具都应作为它的消费者
 
 中长期可拆分为多个 skill：
 
@@ -572,14 +667,30 @@ stock-portfolio-pilot
 
 ## 8. 建议目录结构
 
-本仓库是 Stock Pilot skill collection。仓库级设计文档放在 `docs/`，每个可安装 skill 放在 `skills/<skill-name>/`：
+本仓库是 Stock Pilot skill collection。仓库级设计文档放在 `docs/`，每个可安装 skill 放在 `skills/<skill-name>/`，项目自有适配层放在 `packages/`，可视化应用放在 `apps/`：
 
 ```text
 stockpilotskills/
 ├── README.md
 ├── docs/
-│   ├── PRODUCT_DESIGN.md
-│   └── PRODUCT_DESIGN.zh.md
+│   ├── product_design.md
+│   ├── product_design.zh.md
+│   ├── phase2_tasks.md
+│   └── chan_theory_v0.1.md
+├── packages/
+│   └── chantheory/
+│       ├── __init__.py
+│       ├── normalize.py
+│       ├── adapters.py
+│       ├── schema.py
+│       ├── describe.py
+│       ├── plotting.py
+│       └── config.py
+├── apps/
+│   └── chan-streamlit/
+│       ├── README.md
+│       ├── app.py
+│       └── pages/
 └── skills/
     └── china-stock-daily-tracker/
         ├── SKILL.md
@@ -588,7 +699,6 @@ stockpilotskills/
         │   ├── local_db.py
         │   ├── market_data.py
         │   ├── indicators.py
-        │   ├── chan_structure.py
         │   ├── strategy_engine.py
         │   ├── sector_rotation.py
         │   ├── macro_events.py
@@ -615,14 +725,15 @@ P1：
 
 - 建立策略规则 Markdown 目录
 - 写入第一批均线、量价、仓位经验规则
-- 实现分型识别
-- 实现笔识别
+- 验证 `czsc` 与当前 A 股 K 线输入格式的兼容性
+- 建立 `chantheory` 输入标准化和 `czsc` 调用适配层
 - 把指标状态接入日报
 
 P2：
 
-- 实现线段识别
-- 实现中枢识别
+- 定义统一结构输出 schema
+- 输出图形绘制所需的 `plot_primitives`
+- 建立 Streamlit 调试界面，验证 `czsc` 结构绘制结果
 - 建立信号等级合成模型
 - 增加持仓减仓 / 退出信号
 

@@ -45,7 +45,7 @@ The current user can be described as someone who:
 
 - Is growing from a retail investor mindset toward a junior fund-manager workflow
 - Already has watchlist, portfolio, and daily market observation needs
-- Is learning Chan theory concepts such as fractals, strokes, segments, trend types, and central zones
+- Is learning Chan Theory concepts such as Fractals, Strokes, Segments, Trend Structures, and Pivot Zones
 - Wants quantitative signals, but does not want automated trading
 - Wants to understand the relationship between macro events, sector rotation, and individual-stock structure
 - Wants to turn online tips, trading books, and personal reviews into an evolving strategy library
@@ -65,7 +65,7 @@ After market close:
 During review:
 
 1. Inspect portfolio and watchlist price structures
-2. Detect structure changes such as fractals, strokes, segments, and central zones
+2. Detect structure changes such as Fractals, Strokes, Segments, and Pivot Zones
 3. Check which strategy rules were triggered
 4. Record whether buy/sell signals were validated by the market
 5. Update strategy status or weights
@@ -145,7 +145,7 @@ Turnover: high-level divergence
 
 ### 5.3 Chan Structure System
 
-Responsible for identifying trend structure.
+Responsible for identifying Trend Structure.
 
 Suggested iteration order:
 
@@ -154,19 +154,19 @@ Suggested iteration order:
 3. Top and bottom fractals
 4. Strokes
 5. Segments
-6. Central zones
+6. Pivot Zones
 7. Divergence
-8. Trend types
+8. Trend Structures
 9. Multi-timeframe linkage
 
-The short-term goal is not perfect Chan theory implementation. The goal is an explainable version.
+The short-term goal is not perfect Chan Theory implementation. The goal is an explainable version.
 
 Version targets:
 
 - v0.1: mark top and bottom fractals
 - v0.2: connect fractals into strokes
 - v0.3: identify segments
-- v0.4: identify central zones
+- v0.4: identify Pivot Zones
 - v0.5: output structure descriptions in text
 
 ### 5.4 Experience Strategy Library
@@ -365,7 +365,7 @@ Product phases define delivery order. Section 5 defines long-term module boundar
 |---|---|---|---|
 | Phase 0 | Product Design and Task Breakdown | Overall product boundaries and task breakdown | Define positioning, non-goals, module boundaries, and the first executable tasks |
 | Phase 1 | Basic Research Desk | 5.1 Data System, 5.2 Indicator System, 5.8 Portfolio and Review System (basic part) | First complete the local K-line database, daily reports, common indicators, price-volume states, and basic portfolio risk |
-| Phase 2 | Structure Analysis Engine | 5.3 Chan Structure System | Start with explainable fractals, strokes, segments, central zones, and early divergence detection; do not try to implement perfect Chan theory in one step |
+| Phase 2 | Structure Analysis Engine | 5.3 Chan Structure System | Start with explainable Fractals, Strokes, Segments, Pivot Zones, and early Divergence detection; do not try to implement perfect Chan Theory in one step |
 | Phase 3 | Strategy Rules and Quantitative Signals | 5.4 Experience Strategy Library, 5.5 Quantitative Signal System, 5.8 Portfolio and Review System (signal part) | Combine indicators, structure, rules, and position risk into reviewable watch, reduce, exit, and related signals |
 | Phase 4 | Sector Rotation | 5.6 Sector Rotation System | Identify where market capital is moving and use sector support to confirm or downgrade individual-stock signals |
 | Phase 5 | Macro Events and Industry Mapping | 5.7 Macro Event System | Record events, map possible industry impact, and wait for sector and individual-stock market validation |
@@ -384,7 +384,7 @@ Goals:
 
 Deliverables:
 
-- `docs/PRODUCT_DESIGN.md`
+- `docs/product_design.md`
 - Initial task backlog
 
 ### Phase 1: Basic Research Desk
@@ -407,7 +407,7 @@ Scope:
 
 Non-goals:
 
-- Complex Chan theory
+- Complex Chan Theory
 - Macro-event-driven stock recommendations
 - Automated stock picking
 
@@ -426,15 +426,88 @@ Scope:
 - Fractals
 - Strokes
 - Segments
-- Central zones
-- Early divergence detection
+- Pivot Zones
+- Early Divergence detection
 - Multi-timeframe observation
 
 Output:
 
-- Structure descriptions
+- Visual structure output as the primary output
 - Structure-change alerts
+- Short text summaries as supporting output
 - Potential buy/sell point candidates
+
+Implementation boundary:
+
+- Phase 2 does not keep piling Chan logic into the daily-report script
+- Phase 2 does not rebuild a full Chan core from scratch
+- Phase 2 uses open-source `czsc` as the default underlying Chan analysis engine
+- The project keeps its own `chantheory` adapter layer for input normalization, parameter constraints, unified schema, plotting data, and summaries
+- Skill scripts call the `chantheory` adapter layer and turn the results into Markdown, text summaries, or signal inputs
+- The UI layer focuses on visualization and should not own the core Chan calculations
+- Visual output should take priority over natural-language description, with language kept only as a supporting layer
+
+Recommended architecture:
+
+```text
+Local K-line database / market data
+        ->
+Normalization and adapter layer (chantheory)
+        ->
+czsc
+        ->
+Unified result model / plot_primitives / summary / warnings
+        ->
+  ├─ skill scripts: text reports, structure summaries, agent use
+  ├─ Streamlit app: algorithm verification, structure inspection, parameter debugging
+  └─ desktop / local app: K-line overlays, fractal/stroke/segment/central-zone visualization, interactive review
+```
+
+Reasons:
+
+- `czsc` already provides mature core Chan capabilities and is a strong default engine for Phase 2
+- Reimplementing Fractals, Strokes, Segments, and Pivot Zones from scratch would duplicate effort and increase testing cost
+- Keeping a project-owned adapter layer avoids binding skills, agents, and UIs directly to `czsc` native objects and version details
+- Once the result model is unified, skills, agents, apps, and debug tools can all consume the same contract
+
+Recommended delivery order:
+
+1. Verify that `czsc` matches the current A-share K-line format and timeframe requirements
+2. Build the `chantheory` adapter layer and unify inputs, outputs, and `plot_primitives`
+3. Use Streamlit to build a debug and verification view for checking whether Fractals, Strokes, Segments, and Pivot Zones are drawn correctly
+4. Let the skill consume the adapter layer and output short text summaries plus structured results
+5. Build a local UI or desktop app only after the structure rules and output format stabilize
+
+Suggested inputs for the `chantheory` adapter layer:
+
+- Standardized OHLCV K-line sequences
+- Timeframe parameters
+- `czsc` analysis parameters
+- Optional manual correction rules
+
+Suggested outputs for the `chantheory` adapter layer:
+
+- `fractals`
+- `strokes`
+- `segments`
+- `pivot_zones`
+- `divergences`
+- `structure_alerts`
+- `candidate_buy_points`
+- `candidate_sell_points`
+- `plot_primitives`
+- `summary`
+- `warnings`
+
+Notes:
+
+- The UI requirement in Phase 2 is real because Chan structures are much easier for users to understand visually than through plain text alone
+- For Chan Theory, visual output should be the primary output, while text should be limited to summaries, captions, and agent-readable explanations
+- Streamlit is a strong fit for Phase 2 debugging and validation because it allows fast visual inspection of structure recognition results
+- But the UI should not rely on openclaw, codex, or similar agent runtimes as a long-term interaction host
+- A better approach is to build the UI as a local desktop app or local web app that reads Chan results through a unified analysis interface
+- `czsc` owns the underlying Chan core recognition, while `chantheory` owns project-side adaptation, constraints, and unified output
+- The skill and the desktop app should both depend on the `chantheory` adapter layer instead of UI components or `czsc` internals
 
 ### Phase 3: Strategy Rules and Quantitative Signals
 
@@ -551,6 +624,16 @@ Reasons:
 - A single skill is easier to iterate
 - The current skill already has report and configuration foundations
 - Splitting too early increases maintenance complexity
+- `czsc` is a good underlying engine, but it should not become a naked dependency of the upper-layer skill
+
+Additional guidance:
+
+- Keep `china-stock-daily-tracker` as the main skill entry in the short term
+- Let new Phase 2 Chan capability land first as a project-owned `chantheory` adapter layer consumed by the main skill
+- Let `chantheory` integrate `czsc` by default while exposing a stable project schema and plotting data to the outside
+- Decide whether Chan should become a separate skill only after the analysis interfaces and parameter boundaries stabilize
+- Do not place the Chan UI directly inside the skill; UI fits better as a separate local application
+- `chantheory` should be treated as an independent integration layer, with skills, agents, apps, and debug tools all acting as consumers
 
 In the medium to long term, the system can be split into multiple skills:
 
@@ -572,14 +655,30 @@ Split when:
 
 ## 8. Suggested Directory Structure
 
-This repository is a Stock Pilot skill collection. Repository-level design documents stay under `docs/`, and each installable skill stays under `skills/<skill-name>/`:
+This repository is a Stock Pilot skill collection. Repository-level design documents stay under `docs/`, installable skills stay under `skills/<skill-name>/`, project-owned adapters stay under `packages/`, and visualization apps stay under `apps/`:
 
 ```text
 stockpilotskills/
 ├── README.md
 ├── docs/
-│   ├── PRODUCT_DESIGN.md
-│   └── PRODUCT_DESIGN.zh.md
+│   ├── product_design.md
+│   ├── product_design.zh.md
+│   ├── phase2_tasks.md
+│   └── chan_theory_v0.1.md
+├── packages/
+│   └── chantheory/
+│       ├── __init__.py
+│       ├── normalize.py
+│       ├── adapters.py
+│       ├── schema.py
+│       ├── describe.py
+│       ├── plotting.py
+│       └── config.py
+├── apps/
+│   └── chan-streamlit/
+│       ├── README.md
+│       ├── app.py
+│       └── pages/
 └── skills/
     └── china-stock-daily-tracker/
         ├── SKILL.md
@@ -588,7 +687,6 @@ stockpilotskills/
         │   ├── local_db.py
         │   ├── market_data.py
         │   ├── indicators.py
-        │   ├── chan_structure.py
         │   ├── strategy_engine.py
         │   ├── sector_rotation.py
         │   ├── macro_events.py
@@ -615,14 +713,15 @@ P1:
 
 - Create the strategy-rule Markdown directory
 - Add the first batch of moving-average, price-volume, and position experience rules
-- Implement fractal detection
-- Implement stroke detection
+- Validate `czsc` against the current A-share K-line input format
+- Build the `chantheory` normalization and `czsc` adapter layer
 - Integrate indicator states into the daily report
 
 P2:
 
-- Implement segment detection
-- Implement central-zone detection
+- Define the unified structure output schema
+- Output `plot_primitives` for chart rendering
+- Build a Streamlit debug view to validate `czsc` structure rendering
 - Build the signal-level synthesis model
 - Add portfolio reduce and exit signals
 

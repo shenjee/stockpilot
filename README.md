@@ -21,8 +21,10 @@ stockpilotskills/
 |-- README.md
 |-- CHANGELOG.md
 |-- docs/
-|   |-- PRODUCT_DESIGN.md
-|   `-- PRODUCT_DESIGN.zh.md
+|   |-- product_design.md
+|   |-- product_design.zh.md
+|   |-- phase2_tasks.md
+|   `-- chan_theory_v0.1.md
 `-- skills/
     `-- china-stock-daily-tracker/
         |-- SKILL.md
