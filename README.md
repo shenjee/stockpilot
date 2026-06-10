@@ -10,6 +10,24 @@ The repository is organized as a skill collection. Each installable skill lives 
 | --- | --- |
 | `china-stock-daily-tracker` | Generates factual China A-share daily market reports for indexes, watchlists, and portfolios. |
 
+## Phase 2: Chan Structure Analysis
+
+Phase 2 adds a project-owned `chantheory` adapter layer for Chan Theory structure analysis. It uses `czsc` as the underlying engine, but skills, agents, and UIs consume the stable project schema instead of `czsc` native objects.
+
+Current Phase 2 boundaries:
+
+- `chantheory` normalizes OHLCV input, calls `czsc`, maps results into a project schema, and emits `plot_primitives`, summaries, and warnings.
+- Visual structure output is the primary output; text is only a short supporting summary.
+- Candidate buy/sell points are structure-only candidates. They are not standalone trading instructions; signal synthesis belongs to a later phase.
+- The Streamlit app under `apps/chan-streamlit/` is a debug and validation tool, not the long-term product UI.
+
+Related docs:
+
+- [docs/product_design.md](docs/product_design.md)
+- [docs/product_design.zh.md](docs/product_design.zh.md)
+- [docs/chan_theory_v0.1.md](docs/chan_theory_v0.1.md)
+- [docs/phase2_tasks.md](docs/phase2_tasks.md)
+
 ## Version History
 
 See [CHANGELOG.md](CHANGELOG.md).
@@ -25,6 +43,19 @@ stockpilotskills/
 |   |-- product_design.zh.md
 |   |-- phase2_tasks.md
 |   `-- chan_theory_v0.1.md
+|-- packages/
+|   `-- chantheory/
+|       |-- normalize.py
+|       |-- adapters.py
+|       |-- schema.py
+|       |-- plotting.py
+|       |-- describe.py
+|       `-- config.py
+|-- apps/
+|   `-- chan-streamlit/
+|       |-- app.py
+|       |-- README.md
+|       `-- sample_data/
 `-- skills/
     `-- china-stock-daily-tracker/
         |-- SKILL.md
@@ -101,4 +132,4 @@ This keeps the skill install immutable and keeps private state out of the source
 
 ## Development
 
-Edit skill code under `skills/<skill-name>/`. Keep product notes and long-form design documents under `docs/`.
+Edit installable skill code under `skills/<skill-name>/`. Keep project-owned reusable packages under `packages/`, local validation apps under `apps/`, and product notes or long-form design documents under `docs/`.

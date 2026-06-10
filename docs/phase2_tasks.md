@@ -41,13 +41,13 @@
 
 ## 核心交付物
 
-- [ ] 锁定并验证可用的 `czsc` 依赖策略
-- [ ] 建立 `packages/chantheory/` 适配层包
-- [ ] 冻结 Phase 2 对外 schema，统一使用 `snake_case`
-- [ ] 冻结 `plot_primitives` 绘图契约
-- [ ] 提供 Streamlit 调试与验算界面
+- [x] 锁定并验证可用的 `czsc` 依赖策略
+- [x] 建立 `packages/chantheory/` 适配层包
+- [x] 冻结 Phase 2 对外 schema，统一使用 `snake_case`
+- [x] 冻结 `plot_primitives` 绘图契约
+- [x] 提供 Streamlit 调试与验算界面
 - [ ] 提供 `china-stock-daily-tracker` 的稳定接入路径
-- [ ] 建立测试样例、回归基线与运行时预算
+- [ ] 建立完整测试样例、回归基线与运行时预算
 
 ## P1：基础落地
 
@@ -91,13 +91,17 @@
 - [x] 定义项目数据到 `czsc` 的周期映射
 - [x] 定义适配层需要的包含关系与预处理策略
 - [x] 准备合法、非法、边界输入样例
+- [ ] 将复权方式纳入正式输入 schema 或 `meta`
+- [ ] 明确交易日历、停牌和缺失 K 线的处理契约
+- [ ] 明确分钟级 K 线聚合规则
 
 ### 完成标准
 
 - [x] `czsc` 能在当前项目环境中稳定安装和调用
 - [x] `chantheory` 包目录和基础模块已落地
 - [x] 第一版 schema 和字段命名规则已冻结
-- [x] 输入标准化规则足够支撑后续封装开发
+- [x] 输入标准化规则足够支撑 day bar 封装开发
+- [ ] 输入标准化规则覆盖复权、交易日历、停牌 / 缺失 K 线和分钟级聚合
 
 ## P2：结构输出与可视化
 
@@ -120,10 +124,11 @@
 - [x] 把版本相关假设写入代码和文档
 - [x] 把 `czsc` 结果映射为项目级 `fractals`
 - [x] 把 `czsc` 结果映射为项目级 `strokes`
-- [x] 把 `czsc` 结果映射为项目级 `segments`
+- [x] 把 `czsc` 结果映射或保守派生为项目级 `segments`，并记录 `mapping_strategy`
 - [x] 把 `czsc` 结果映射为项目级 `pivot_zones`
 - [x] 明确 `divergences` 在 Phase 2 的保守输出策略
 - [x] 增加 symbol、timeframe、source、parameters、engine_version 等元数据
+- [x] 明确 `candidate_buy_points`、`candidate_sell_points` 仅表示结构候选点，不等同于交易信号
 - [x] 让 JSON 输出结构稳定可复用
 - [x] 定义 `plot_primitives` 的点、线、框、标签、标记结构
 - [x] 定义 K 线、Fractal、Stroke、Segment、Pivot Zone 的图层顺序
@@ -171,6 +176,7 @@
 - [ ] 在日报中加入简短结构摘要
 - [ ] 保证缠论分析失败时整份日报仍可降级输出
 - [ ] 增加开关配置，可启停 Phase 2 分析
+- [ ] 确认日报中只展示结构候选点，不把 candidate points 渲染为直接买卖指令
 - [ ] 增加 normalization 和 schema conversion 单元测试
 - [ ] 增加代表性 Chan Theory 结构回归样例
 - [ ] 增加 `czsc` 结果映射测试
@@ -188,6 +194,7 @@
 - [ ] 记录 Streamlit 验证流程
 - [ ] 记录与 `china-stock-daily-tracker` 的集成流
 - [ ] 记录已知限制与 Phase 3 交接点
+- [ ] 将 Phase 2 剩余数据口径 gaps 记录到用户可读文档：复权、交易日历、停牌 / 缺失 K 线、分钟级聚合
 
 ### 完成标准
 
@@ -198,20 +205,22 @@
 
 ## 关键路径
 
-- [ ] 先验证并锁定 `czsc`
-- [ ] 再冻结 `chantheory` 适配层契约
-- [ ] 再完成标准化与 `czsc` 封装
-- [ ] 再冻结统一 schema 和 `plot_primitives`
-- [ ] 再完成 Streamlit 验证界面
+- [x] 先验证并锁定 `czsc`
+- [x] 再冻结 `chantheory` 适配层契约
+- [x] 再完成 day bar 标准化与 `czsc` 封装
+- [x] 再冻结统一 schema 和 `plot_primitives`
+- [x] 再完成 Streamlit 验证界面
 - [ ] 再接入 `china-stock-daily-tracker`
 - [ ] 最后补齐测试、性能与文档
 
 ## 验收标准
 
-- [ ] `czsc` 能在项目环境中稳定安装和使用
-- [ ] `chantheory` 对外暴露稳定的项目级 API 和 schema
-- [ ] 同一份 K 线输入能得到确定性的适配结果
-- [ ] `plot_primitives` 足以支撑 Phase 2 可视化验算
-- [ ] Streamlit 能渲染并检查主要结构结果
+- [x] `czsc` 能在项目环境中稳定安装和使用
+- [x] `chantheory` 对外暴露稳定的项目级 API 和 schema
+- [x] 同一份样例 K 线输入能得到确定性的适配结果
+- [x] `plot_primitives` 足以支撑 Phase 2 可视化验算
+- [x] Streamlit 能渲染并检查主要结构结果
 - [ ] `china-stock-daily-tracker` 已通过 `chantheory` 接入，而非直接绑定 `czsc`
 - [ ] Phase 2 的文本输出保持简短辅助，图形输出保持主导地位
+- [ ] Phase 2 的结构候选买卖点不会被日报或 skill 输出升级为直接交易指令
+- [ ] 复权、交易日历、停牌 / 缺失 K 线、分钟级聚合等数据口径 gaps 已有明确处理或限制说明

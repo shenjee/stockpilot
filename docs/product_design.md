@@ -507,8 +507,10 @@ Suggested outputs for the `chantheory` adapter layer:
 
 - `symbol`
 - `timeframe`
+- `source`
 - `engine`
 - `engine_version`
+- `parameters`
 - `fractals`
 - `strokes`
 - `segments`
@@ -520,6 +522,7 @@ Suggested outputs for the `chantheory` adapter layer:
 - `plot_primitives`
 - `summary`
 - `warnings`
+- `meta`
 
 Notes:
 

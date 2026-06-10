@@ -507,8 +507,10 @@ chantheory 适配层
 
 - `symbol`
 - `timeframe`
+- `source`
 - `engine`
 - `engine_version`
+- `parameters`
 - `fractals`
 - `strokes`
 - `segments`
@@ -520,6 +522,7 @@ chantheory 适配层
 - `plot_primitives`
 - `summary`
 - `warnings`
+- `meta`
 
 建议说明：
 
