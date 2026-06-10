@@ -147,6 +147,18 @@ Turnover: high-level divergence
 
 Responsible for identifying Trend Structure.
 
+Terminology:
+
+- Chan Theory: `Chan Theory`
+- Fractal: `Fractal`
+- Stroke: `Stroke`
+- Segment: `Segment`
+- Pivot Zone: `Pivot Zone`
+- Trend Structure: `Trend Structure`
+- Divergence: `Divergence`
+- First / Second / Third Buy Point: `First / Second / Third Buy Point`
+- First / Second / Third Sell Point: `First / Second / Third Sell Point`
+
 Suggested iteration order:
 
 1. K-line normalization
@@ -161,13 +173,15 @@ Suggested iteration order:
 
 The short-term goal is not perfect Chan Theory implementation. The goal is an explainable version.
 
-Version targets:
+Version targets for the project-owned adapter output, not for rebuilding a full Chan Theory engine from scratch:
 
 - v0.1: mark top and bottom fractals
 - v0.2: connect fractals into strokes
 - v0.3: identify segments
 - v0.4: identify Pivot Zones
 - v0.5: output structure descriptions in text
+
+These targets describe what `chantheory` exposes after mapping `czsc` results into the project schema. They do not imply that Stock Pilot should implement all Fractal, Stroke, Segment, and Pivot Zone recognition rules independently.
 
 ### 5.4 Experience Strategy Library
 
@@ -435,7 +449,7 @@ Output:
 - Visual structure output as the primary output
 - Structure-change alerts
 - Short text summaries as supporting output
-- Potential buy/sell point candidates
+- Structure-only candidate buy/sell points
 
 Implementation boundary:
 
@@ -446,17 +460,17 @@ Implementation boundary:
 - Skill scripts call the `chantheory` adapter layer and turn the results into Markdown, text summaries, or signal inputs
 - The UI layer focuses on visualization and should not own the core Chan calculations
 - Visual output should take priority over natural-language description, with language kept only as a supporting layer
+- Candidate buy/sell points in Phase 2 are structure candidates only; they must not become standalone trading instructions before Phase 3 signal synthesis
 
 Recommended architecture:
 
 ```text
 Local K-line database / market data
         ->
-Normalization and adapter layer (chantheory)
-        ->
-czsc
-        ->
-Unified result model / plot_primitives / summary / warnings
+chantheory adapter
+  ├─ normalize project K-line data
+  ├─ call czsc
+  └─ map results to project schema / plot_primitives / summary / warnings
         ->
   ├─ skill scripts: text reports, structure summaries, agent use
   ├─ Streamlit app: algorithm verification, structure inspection, parameter debugging
@@ -483,10 +497,18 @@ Suggested inputs for the `chantheory` adapter layer:
 - Standardized OHLCV K-line sequences
 - Timeframe parameters
 - `czsc` analysis parameters
+- Adjustment mode: forward-adjusted, backward-adjusted, or unadjusted
+- Trading-calendar assumptions and suspension / missing-bar handling
+- Minimum bar-count requirements for each structure level
+- Intraday aggregation rules for minute-level K-lines
 - Optional manual correction rules
 
 Suggested outputs for the `chantheory` adapter layer:
 
+- `symbol`
+- `timeframe`
+- `engine`
+- `engine_version`
 - `fractals`
 - `strokes`
 - `segments`
@@ -713,12 +735,12 @@ P1:
 
 - Create the strategy-rule Markdown directory
 - Add the first batch of moving-average, price-volume, and position experience rules
-- Validate `czsc` against the current A-share K-line input format
-- Build the `chantheory` normalization and `czsc` adapter layer
+- Prepare Phase 2 by validating whether `czsc` matches the current A-share K-line input format, adjustment mode, and timeframe assumptions
 - Integrate indicator states into the daily report
 
 P2:
 
+- Build the `chantheory` normalization and `czsc` adapter layer
 - Define the unified structure output schema
 - Output `plot_primitives` for chart rendering
 - Build a Streamlit debug view to validate `czsc` structure rendering
