@@ -27,6 +27,11 @@ DEFAULT_END = date.today()
 DEFAULT_START = DEFAULT_END - timedelta(days=240)
 SUPPORTED_LANGUAGES = {"zh": "中文", "en": "English"}
 LAYER_KEYS = ("fractals", "strokes", "segments", "pivot_zones", "divergences", "alerts")
+X_WINDOW_STEPS = (20, 30, 45, 60, 90, 120, 180, 240, 360, 720)
+DEFAULT_X_WINDOW = 90
+Y_ZOOM_STEP = 1.2
+MIN_Y_ZOOM = 0.45
+MAX_Y_ZOOM = 3.0
 TIMEFRAME_LABELS = {
     "zh": {"1m": "1分钟", "5m": "5分钟", "15m": "15分钟", "30m": "30分钟", "60m": "60分钟", "day": "日线", "week": "周线", "month": "月线"},
     "en": {"1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m", "60m": "60m", "day": "day", "week": "week", "month": "month"},
@@ -73,6 +78,12 @@ TEXT = {
         "count_pivot_zones": "中枢",
         "count_divergences": "背驰",
         "count_plot_primitives": "绘图原语",
+        "x_axis_label": "时间轴",
+        "y_axis_label": "价格轴",
+        "zoom_in_label": "+",
+        "zoom_out_label": "-",
+        "x_window_caption": "显示最近 {count} 根",
+        "y_zoom_caption": "{scale:.2f}x 区间",
     },
     "en": {
         "page_title": "Chan Theory Debug App",
@@ -115,6 +126,12 @@ TEXT = {
         "count_pivot_zones": "pivot_zones",
         "count_divergences": "divergences",
         "count_plot_primitives": "plot_primitives",
+        "x_axis_label": "Time Axis",
+        "y_axis_label": "Price Axis",
+        "zoom_in_label": "+",
+        "zoom_out_label": "-",
+        "x_window_caption": "Last {count} bars",
+        "y_zoom_caption": "{scale:.2f}x range",
     },
 }
 
@@ -355,50 +372,61 @@ def main() -> None:
             key="language",
         )
 
-    if not run:
-        st.info(_t(language, "choose_inputs"))
-        return
-
-    rows = _fetch_rows(
-        symbol=symbol.strip(),
-        market=market,
-        timeframe=timeframe,
-        start_date=start_date,
-        end_date=end_date,
-    )
-    if not rows:
-        suggestions = _probe_market_suggestions(
+    if run:
+        rows = _fetch_rows(
             symbol=symbol.strip(),
-            selected_market=market,
+            market=market,
             timeframe=timeframe,
             start_date=start_date,
             end_date=end_date,
         )
-        if suggestions:
-            suggestion_lines = ", ".join(
-                f"{item['market']} ({item['count']} rows)" for item in suggestions
+        if not rows:
+            st.session_state.pop("chan_chart_rows", None)
+            st.session_state.pop("chan_chart_result", None)
+            st.session_state.pop("chan_chart_timeframe", None)
+            suggestions = _probe_market_suggestions(
+                symbol=symbol.strip(),
+                selected_market=market,
+                timeframe=timeframe,
+                start_date=start_date,
+                end_date=end_date,
             )
-            st.warning(_t(language, "no_data_market", symbol=symbol.strip(), market=market, suggestions=suggestion_lines))
-        else:
-            st.warning(_t(language, "no_data_selected"))
-        return
+            if suggestions:
+                suggestion_lines = ", ".join(
+                    f"{item['market']} ({item['count']} rows)" for item in suggestions
+                )
+                st.warning(_t(language, "no_data_market", symbol=symbol.strip(), market=market, suggestions=suggestion_lines))
+            else:
+                st.warning(_t(language, "no_data_selected"))
+            return
 
-    result = analyze_tracker_klines(
-        rows=rows,
-        code=symbol.strip(),
-        market=market,
-        timeframe=timeframe,
-        parameters={
-            "max_bi_num": int(max_bi_num),
-            "min_bars": int(min_bars),
-            "strict_validation": bool(strict_validation),
-        },
-        strict=bool(strict_validation),
-    )
+        result = analyze_tracker_klines(
+            rows=rows,
+            code=symbol.strip(),
+            market=market,
+            timeframe=timeframe,
+            parameters={
+                "max_bi_num": int(max_bi_num),
+                "min_bars": int(min_bars),
+                "strict_validation": bool(strict_validation),
+            },
+            strict=bool(strict_validation),
+        )
+        st.session_state.chan_chart_rows = rows
+        st.session_state.chan_chart_result = result
+        st.session_state.chan_chart_timeframe = timeframe
+    elif "chan_chart_rows" in st.session_state and "chan_chart_result" in st.session_state:
+        rows = st.session_state.chan_chart_rows
+        result = st.session_state.chan_chart_result
+        timeframe = str(st.session_state.get("chan_chart_timeframe", timeframe))
+    else:
+        st.info(_t(language, "choose_inputs"))
+        return
 
     chart_col, side_col = st.columns([3, 2])
     with chart_col:
         st.subheader(_t(language, "kline_overlay"))
+        x_window, y_zoom = _render_chart_zoom_controls(len(rows), language)
         st.plotly_chart(
             _build_figure(
                 rows=rows,
@@ -406,8 +434,21 @@ def main() -> None:
                 visibility=visibility,
                 timeframe=timeframe,
                 language=language,
+                x_window=x_window,
+                y_zoom=y_zoom,
             ),
             width="stretch",
+            config={
+                "scrollZoom": False,
+                "modeBarButtonsToRemove": [
+                    "zoom2d",
+                    "zoomIn2d",
+                    "zoomOut2d",
+                    "autoScale2d",
+                    "select2d",
+                    "lasso2d",
+                ],
+            },
         )
 
     with side_col:
@@ -499,9 +540,13 @@ def _build_figure(
     visibility: Dict[str, bool],
     timeframe: str,
     language: str,
+    x_window: int | None = None,
+    y_zoom: float = 1.0,
 ) -> go.Figure:
     ordered_rows = sorted(rows, key=lambda item: str(item["date"]))
     x_values = [item["date"] for item in ordered_rows]
+    visible_rows = ordered_rows[-x_window:] if x_window else ordered_rows
+    visible_x_values = [item["date"] for item in visible_rows]
     figure = go.Figure()
     figure.add_trace(
         go.Candlestick(
@@ -585,6 +630,7 @@ def _build_figure(
 
     figure.update_layout(
         margin={"l": 20, "r": 20, "t": 30, "b": 20},
+        dragmode="pan",
         xaxis_rangeslider_visible=False,
         legend={"orientation": "h"},
         template="plotly_white",
@@ -593,7 +639,96 @@ def _build_figure(
         rangebreaks = _build_daily_rangebreaks(x_values)
         if rangebreaks:
             figure.update_xaxes(rangebreaks=rangebreaks)
+    if visible_x_values:
+        figure.update_xaxes(range=[visible_x_values[0], visible_x_values[-1]])
+    y_range = _build_y_axis_range(visible_rows, y_zoom)
+    if y_range:
+        figure.update_yaxes(range=y_range)
     return figure
+
+
+def _render_chart_zoom_controls(row_count: int, language: str) -> tuple[int, float]:
+    if "chan_chart_x_window" not in st.session_state:
+        st.session_state.chan_chart_x_window = min(DEFAULT_X_WINDOW, max(row_count, 1))
+    if "chan_chart_y_zoom" not in st.session_state:
+        st.session_state.chan_chart_y_zoom = 1.0
+
+    st.session_state.chan_chart_x_window = _clamp_x_window(int(st.session_state.chan_chart_x_window), row_count)
+    st.session_state.chan_chart_y_zoom = min(MAX_Y_ZOOM, max(MIN_Y_ZOOM, float(st.session_state.chan_chart_y_zoom)))
+
+    x_label_col, x_zoom_in_col, x_zoom_out_col, x_caption_col = st.columns([1.2, 0.7, 0.7, 2.4])
+    with x_label_col:
+        st.write(_t(language, "x_axis_label"))
+    with x_zoom_in_col:
+        if st.button(_t(language, "zoom_in_label"), key="chart_x_zoom_in", help=_t(language, "x_axis_label")):
+            st.session_state.chan_chart_x_window = _next_x_window(
+                st.session_state.chan_chart_x_window,
+                row_count,
+                zoom_in=True,
+            )
+    with x_zoom_out_col:
+        if st.button(_t(language, "zoom_out_label"), key="chart_x_zoom_out", help=_t(language, "x_axis_label")):
+            st.session_state.chan_chart_x_window = _next_x_window(
+                st.session_state.chan_chart_x_window,
+                row_count,
+                zoom_in=False,
+            )
+    with x_caption_col:
+        st.caption(_t(language, "x_window_caption", count=st.session_state.chan_chart_x_window))
+
+    y_label_col, y_zoom_in_col, y_zoom_out_col, y_caption_col = st.columns([1.2, 0.7, 0.7, 2.4])
+    with y_label_col:
+        st.write(_t(language, "y_axis_label"))
+    with y_zoom_in_col:
+        if st.button(_t(language, "zoom_in_label"), key="chart_y_zoom_in", help=_t(language, "y_axis_label")):
+            st.session_state.chan_chart_y_zoom = max(
+                MIN_Y_ZOOM,
+                st.session_state.chan_chart_y_zoom / Y_ZOOM_STEP,
+            )
+    with y_zoom_out_col:
+        if st.button(_t(language, "zoom_out_label"), key="chart_y_zoom_out", help=_t(language, "y_axis_label")):
+            st.session_state.chan_chart_y_zoom = min(
+                MAX_Y_ZOOM,
+                st.session_state.chan_chart_y_zoom * Y_ZOOM_STEP,
+            )
+    with y_caption_col:
+        st.caption(_t(language, "y_zoom_caption", scale=st.session_state.chan_chart_y_zoom))
+
+    return int(st.session_state.chan_chart_x_window), float(st.session_state.chan_chart_y_zoom)
+
+
+def _clamp_x_window(value: int, row_count: int) -> int:
+    if row_count <= 0:
+        return 1
+    return min(max(value, X_WINDOW_STEPS[0]), row_count)
+
+
+def _next_x_window(current: int, row_count: int, *, zoom_in: bool) -> int:
+    usable_steps = [step for step in X_WINDOW_STEPS if step <= max(row_count, 1)]
+    if not usable_steps:
+        return max(row_count, 1)
+    if row_count > usable_steps[-1]:
+        usable_steps.append(row_count)
+    if zoom_in:
+        smaller_steps = [step for step in usable_steps if step < current]
+        return smaller_steps[-1] if smaller_steps else usable_steps[0]
+    larger_steps = [step for step in usable_steps if step > current]
+    return larger_steps[0] if larger_steps else usable_steps[-1]
+
+
+def _build_y_axis_range(rows: List[Dict[str, object]], y_zoom: float) -> List[float] | None:
+    if not rows:
+        return None
+    lows = [float(item["low"]) for item in rows]
+    highs = [float(item["high"]) for item in rows]
+    low = min(lows)
+    high = max(highs)
+    if high <= low:
+        padding = max(abs(high) * 0.02, 0.01)
+        return [low - padding, high + padding]
+    span = high - low
+    padding = span * 0.08 * y_zoom
+    return [low - padding, high + padding]
 
 
 def _to_rgba(hex_color: str, alpha: float) -> str:
