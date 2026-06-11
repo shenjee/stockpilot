@@ -7,7 +7,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
 
 from .config import ENGINE_NAME, PINNED_ENGINE_VERSION, get_default_parameters
 from .describe import build_summary
-from .normalize import normalize_ohlcv_rows, normalize_tracker_klines
+from .normalize import NormalizationError, normalize_ohlcv_rows, normalize_tracker_klines
 from .plotting import build_plot_primitives
 from .schema import (
     AnalysisResult,
@@ -35,13 +35,22 @@ def analyze(
     parameters: Dict[str, Any] | None = None,
     strict: bool = True,
 ) -> AnalysisResult:
-    normalized = normalize_ohlcv_rows(
-        rows=rows,
-        symbol=symbol,
-        timeframe=timeframe,
-        source=source,
-        strict=strict,
-    )
+    try:
+        normalized = normalize_ohlcv_rows(
+            rows=rows,
+            symbol=symbol,
+            timeframe=timeframe,
+            source=source,
+            strict=strict,
+        )
+    except NormalizationError as exc:
+        return _frozen_result_after_normalization_failure(
+            symbol=symbol,
+            timeframe=timeframe,
+            source=source,
+            parameters=parameters,
+            error=exc,
+        )
     return analyze_normalized(normalized=normalized, parameters=parameters)
 
 
@@ -54,14 +63,25 @@ def analyze_tracker_klines(
     parameters: Dict[str, Any] | None = None,
     strict: bool = True,
 ) -> AnalysisResult:
-    normalized = normalize_tracker_klines(
-        rows=rows,
-        code=code,
-        market=market,
-        timeframe=timeframe,
-        source=source,
-        strict=strict,
-    )
+    try:
+        normalized = normalize_tracker_klines(
+            rows=rows,
+            code=code,
+            market=market,
+            timeframe=timeframe,
+            source=source,
+            strict=strict,
+        )
+    except NormalizationError as exc:
+        market_suffix = (market or "").upper()
+        fallback_symbol = f"{code}.{market_suffix}" if market_suffix else code
+        return _frozen_result_after_normalization_failure(
+            symbol=fallback_symbol,
+            timeframe=timeframe,
+            source=source,
+            parameters=parameters,
+            error=exc,
+        )
     return analyze_normalized(normalized=normalized, parameters=parameters)
 
 
@@ -159,6 +179,48 @@ def analyze_normalized(
         )
 
     result.plot_primitives = build_plot_primitives(result)
+    result.summary = build_summary(result)
+    return result
+
+
+def _frozen_result_after_normalization_failure(
+    symbol: str,
+    timeframe: str,
+    source: str,
+    parameters: Dict[str, Any] | None,
+    error: Exception,
+) -> AnalysisResult:
+    merged_parameters = get_default_parameters()
+    if parameters:
+        merged_parameters.update(parameters)
+    result = AnalysisResult(
+        symbol=symbol,
+        timeframe=timeframe,
+        source=source,
+        engine=ENGINE_NAME,
+        engine_version=PINNED_ENGINE_VERSION,
+        parameters=merged_parameters,
+        warnings=[
+            _warning(
+                warning_id="warning_normalization_failed",
+                code="NORMALIZATION_FAILED",
+                message=f"Input normalization failed during Phase 2: {error}",
+                field="bars",
+            )
+        ],
+        meta={
+            "bar_count": 0,
+            "input_fields": [],
+            "gaps": [],
+            "engine_probe": {"status": "skipped", "reason": "normalization_failed"},
+            "engine_assumptions": {
+                "engine_version": PINNED_ENGINE_VERSION,
+                "segment_strategy": "conservative_three_stroke_window",
+                "pivot_zone_strategy": "czsc.utils.sig.get_zs_seq on finished strokes",
+                "divergence_strategy": "conservative_empty_until project-level rule is finalized",
+            },
+        },
+    )
     result.summary = build_summary(result)
     return result
 
@@ -486,8 +548,10 @@ def _build_candidate_points(
     last_stroke = strokes[-1]
     last_zone = pivot_zones[-1]
     if last_zone.low <= last_stroke.end_price <= last_zone.high:
+        if last_stroke.direction not in {"up", "down"}:
+            return buy_points, sell_points
         collection = buy_points if last_stroke.direction == "down" else sell_points
-        point_type = "first_buy_point" if last_stroke.direction == "down" else "first_sell_point"
+        point_type = "structure_buy_candidate" if last_stroke.direction == "down" else "structure_sell_candidate"
         collection.append(
             CandidatePoint(
                 id=f"{point_type}_{last_stroke.end_timestamp}",
@@ -497,7 +561,10 @@ def _build_candidate_points(
                 reference_id=last_zone.id,
                 confirmed=False,
                 reason="The latest confirmed stroke ends inside the active pivot zone range.",
-                meta={"direction": last_stroke.direction},
+                meta={
+                    "direction": last_stroke.direction,
+                    "signal_scope": "structure_candidate_only",
+                },
             )
         )
 
@@ -544,6 +611,26 @@ def _build_mapping_warnings(result: AnalysisResult, analyzer: object) -> List[An
             )
         )
 
+    if any(fractal.fractal_type == "unknown" for fractal in result.fractals):
+        warnings.append(
+            _warning(
+                warning_id="warning_unknown_fractal_type",
+                code="UNKNOWN_FRACTAL_TYPE",
+                message="At least one czsc fractal mark could not be mapped to top or bottom.",
+                field="fractals",
+            )
+        )
+
+    if any(stroke.direction == "unknown" for stroke in result.strokes):
+        warnings.append(
+            _warning(
+                warning_id="warning_unknown_stroke_direction",
+                code="UNKNOWN_STROKE_DIRECTION",
+                message="At least one czsc stroke direction could not be mapped to up or down.",
+                field="strokes",
+            )
+        )
+
     if not result.divergences:
         warnings.append(
             AnalysisWarning(
@@ -585,20 +672,30 @@ def _enum_name(value: Any) -> str:
 
 def _normalize_direction(value: Any) -> str:
     text = _enum_name(value).lower()
-    if "up" in text:
+    raw_text = str(value).strip().lower()
+    value_text = str(getattr(value, "value", "")).strip().lower()
+    candidates = {text, raw_text, value_text}
+    joined = " ".join(item for item in candidates if item)
+
+    if candidates & {"up"} or "up" in joined or "向上" in joined:
         return "up"
-    if "down" in text:
+    if candidates & {"down"} or "down" in joined or "向下" in joined:
         return "down"
-    return "up"
+    return "unknown"
 
 
 def _normalize_fractal_type(value: Any) -> str:
     text = _enum_name(value).lower()
-    if text in {"g", "top"} or "top" in text:
+    raw_text = str(value).strip().lower()
+    value_text = str(getattr(value, "value", "")).strip().lower()
+    candidates = {text, raw_text, value_text}
+    joined = " ".join(item for item in candidates if item)
+
+    if candidates & {"g", "top", "high"} or "top" in joined or "顶" in joined or "高" in joined:
         return "top"
-    if text in {"d", "bottom"} or "bottom" in text:
+    if candidates & {"d", "bottom", "low"} or "bottom" in joined or "底" in joined or "低" in joined:
         return "bottom"
-    return "top"
+    return "unknown"
 
 
 def _to_float(value: Any) -> float:

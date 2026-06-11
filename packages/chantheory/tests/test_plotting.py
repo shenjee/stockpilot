@@ -35,6 +35,14 @@ class PlottingTests(unittest.TestCase):
                     timestamp="2025-01-02",
                     price=9.7,
                     confirmed=True,
+                ),
+                Fractal(
+                    id="fractal_2",
+                    fractal_type="top",
+                    bar_index=2,
+                    timestamp="2025-01-03",
+                    price=10.9,
+                    confirmed=True,
                 )
             ],
             strokes=[
@@ -93,6 +101,7 @@ class PlottingTests(unittest.TestCase):
                     reference_id="pivot_1",
                     confirmed=False,
                     reason="test",
+                    meta={"signal_scope": "structure_candidate_only"},
                 )
             ],
             meta={"bar_count": 50},
@@ -105,7 +114,16 @@ class PlottingTests(unittest.TestCase):
         self.assertIn(("line", "strokes"), layers)
         self.assertIn(("line", "segments"), layers)
         self.assertIn(("box", "pivot_zones"), layers)
+        self.assertIn(("marker", "candidate_points"), layers)
         self.assertIn(("label", "alerts"), layers)
+        candidate = next(item for item in primitives if item.layer == "candidate_points")
+        self.assertEqual(candidate.meta["signal_scope"], "structure_candidate_only")
+        bottom_fractal = next(item for item in primitives if item.id == "primitive_fractal_1")
+        top_fractal = next(item for item in primitives if item.id == "primitive_fractal_2")
+        self.assertEqual(bottom_fractal.text, "B")
+        self.assertEqual(bottom_fractal.meta["textposition"], "bottom center")
+        self.assertEqual(top_fractal.text, "T")
+        self.assertEqual(top_fractal.meta["textposition"], "top center")
 
 
 if __name__ == "__main__":

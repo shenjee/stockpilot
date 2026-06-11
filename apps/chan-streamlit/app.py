@@ -520,13 +520,14 @@ def _build_figure(
             continue
         primitive_type = primitive.get("type")
         if primitive_type == "marker":
+            primitive_meta = dict(primitive.get("meta", {}) or {})
             figure.add_trace(
                 go.Scatter(
                     x=[primitive.get("x")],
                     y=[primitive.get("y")],
                     mode="markers+text",
                     text=[primitive.get("text", "")],
-                    textposition="top center",
+                    textposition=str(primitive_meta.get("textposition", "top center")),
                     marker={"color": primitive.get("color", "#2563EB"), "size": 10},
                     name=layer,
                     showlegend=False,

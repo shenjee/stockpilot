@@ -3,7 +3,7 @@
   "timeframe": "day",
   "source": "tencent",
   "engine": "czsc",
-  "engine_version": "0.9.63",
+  "engine_version": "0.10.12",
   "parameters": {
     "max_bi_num": 50,
     "min_bars": 10,
@@ -399,7 +399,7 @@
   ],
   "summary": [
     "000001.SZ normalized 5 day bars for Phase 2 analysis.",
-    "czsc 0.9.63 mapped 4 fractals and 3 finished strokes.",
+    "czsc 0.10.12 mapped 4 fractals and 3 finished strokes.",
     "Phase 2 produced 1 segments and 1 pivot zones.",
     "The latest confirmed stroke points up into 2025-01-07.",
     "The newest structure is still extending, so the tail should be treated as unstable."
@@ -461,7 +461,7 @@
       "last_bi_extend": true
     },
     "engine_assumptions": {
-      "engine_version": "0.9.63",
+      "engine_version": "0.10.12",
       "segment_strategy": "conservative_three_stroke_window",
       "pivot_zone_strategy": "czsc.utils.sig.get_zs_seq on finished strokes",
       "divergence_strategy": "conservative_empty_until project-level rule is finalized"

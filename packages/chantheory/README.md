@@ -15,9 +15,9 @@ It is not a reimplementation of Chan Theory core logic. Its job is to:
 Phase 2 P1 freezes the adapter contract and validates a working `czsc` path.
 
 - Engine: `czsc==0.10.12`
-- Validation runtime: Python `3.9.6`
-- Why this pin: latest `0.10.x` releases on PyPI require Python `>=3.10`
-- Import note: load `numpy.typing` before importing `czsc` on Python `3.9`
+- Validation runtime: Python `3.14.5`
+- Why this pin: `0.10.12` is the installed and validated baseline for the current project runtime
+- Import note: load `numpy.typing` before importing `czsc` so rs_czsc-dependent imports initialize consistently
 
 Observed validation result:
 
@@ -29,7 +29,7 @@ Phase 2 P2 adds:
 
 - project-level mapping for `fractals`, `strokes`, `segments`, and `pivot_zones`
 - conservative `divergences` output as an intentionally empty list with explicit warnings
-- stable `plot_primitives` for markers, lines, boxes, and labels
+- stable `plot_primitives` for markers, lines, boxes, labels, and structure-only candidate points
 - short summary and warning generation for unstable tail strokes and insufficient bars
 - a Streamlit debug app under `apps/chan-streamlit/`
 - deterministic JSON and row fixtures under `packages/chantheory/tests/fixtures/`
@@ -151,6 +151,7 @@ Current P2 mapping notes:
 - `segments`: derived conservatively with a project-side three-stroke window because `czsc==0.10.12` does not expose a first-class segment list
 - `pivot_zones`: derived from `czsc.utils.sig.get_zs_seq` on finished strokes
 - `divergences`: conservatively empty until a project-stable rule is finalized
+- `candidate_buy_points` / `candidate_sell_points`: structure-only candidates with `meta.signal_scope = "structure_candidate_only"`; they are not trading instructions
 
 ## Plot Contract
 
@@ -168,8 +169,9 @@ Layer order remains:
 3. `strokes`
 4. `segments`
 5. `pivot_zones`
-6. `divergences`
-7. `alerts`
+6. `candidate_points`
+7. `divergences`
+8. `alerts`
 
 Style rules:
 
@@ -179,6 +181,7 @@ Style rules:
 - down strokes: orange solid lines
 - segments: purple dashed lines
 - active pivot zones: amber filled boxes
+- candidate points: green or red diamond markers
 - alerts: teal or red labels depending on severity
 
 ## Current Data Fit
@@ -196,6 +199,7 @@ Current gaps against ideal `czsc` input metadata:
 
 - no persisted `amount` field, so P1 derives it
 - no explicit adjustment flag in normalized output yet
+- no formal trading-calendar or suspension handling contract yet
 - no repo-level minute bar persistence yet
 
 ## Error And Degradation Rules

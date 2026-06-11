@@ -1,5 +1,6 @@
 import sys
 import unittest
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -8,12 +9,36 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "packages"))
 
-from chantheory.adapters import _to_timestamp, analyze_tracker_klines, load_czsc
+from chantheory.adapters import (
+    _normalize_direction,
+    _normalize_fractal_type,
+    _to_timestamp,
+    analyze_tracker_klines,
+    load_czsc,
+)
 
 
 class AdapterTests(unittest.TestCase):
     def test_to_timestamp_normalizes_spacing_around_colons(self):
         self.assertEqual(_to_timestamp("2026-05-28 16:00 :00"), "2026-05-28 16:00:00")
+
+    def test_normalize_fractal_type_supports_czsc_mark_enums(self):
+        top_mark = SimpleNamespace(name="G", value="顶分型")
+        bottom_mark = SimpleNamespace(name="D", value="底分型")
+
+        self.assertEqual(_normalize_fractal_type(top_mark), "top")
+        self.assertEqual(_normalize_fractal_type(bottom_mark), "bottom")
+        self.assertEqual(_normalize_fractal_type("高"), "top")
+        self.assertEqual(_normalize_fractal_type("低"), "bottom")
+
+    def test_normalize_direction_supports_czsc_direction_enums(self):
+        up_direction = SimpleNamespace(name="Up", value="向上")
+        down_direction = SimpleNamespace(name="Down", value="向下")
+
+        self.assertEqual(_normalize_direction(up_direction), "up")
+        self.assertEqual(_normalize_direction(down_direction), "down")
+        self.assertEqual(_normalize_direction("向上"), "up")
+        self.assertEqual(_normalize_direction("向下"), "down")
 
     def test_load_czsc_supports_top_level_exports(self):
         RawBar = object()
@@ -52,6 +77,22 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(result.fractals, [])
         self.assertEqual(result.strokes, [])
         self.assertTrue(any(item.warning_code == "ENGINE_PROBE_FAILED" for item in result.warnings))
+        self.assertTrue(result.summary)
+
+    def test_normalization_failure_returns_frozen_schema(self):
+        result = analyze_tracker_klines(
+            rows=[
+                {"date": "2025-01-02", "open": 10, "close": 11, "high": 11.2, "low": 9.8, "volume": 1000},
+            ],
+            code="000001",
+            market="bad",
+        )
+
+        self.assertEqual(result.symbol, "000001.BAD")
+        self.assertEqual(result.engine, "czsc")
+        self.assertEqual(result.fractals, [])
+        self.assertEqual(result.meta["engine_probe"]["status"], "skipped")
+        self.assertTrue(any(item.warning_code == "NORMALIZATION_FAILED" for item in result.warnings))
         self.assertTrue(result.summary)
 
     def test_p2_mapping_populates_schema_and_plot_primitives(self):
@@ -100,6 +141,36 @@ class AdapterTests(unittest.TestCase):
         self.assertTrue(any(item.warning_code == "INSUFFICIENT_BARS" for item in result.warnings))
         self.assertTrue(any(item.warning_code == "UNSTABLE_TAIL_STROKE" for item in result.warnings))
         self.assertTrue(result.summary)
+
+    def test_candidate_points_are_structure_only(self):
+        rows = [
+            {"date": "2025-01-01", "open": 10.0, "close": 10.4, "high": 10.5, "low": 9.9, "volume": 1000},
+            {"date": "2025-01-02", "open": 10.4, "close": 9.8, "high": 10.6, "low": 9.7, "volume": 1200},
+            {"date": "2025-01-03", "open": 9.8, "close": 10.8, "high": 10.9, "low": 9.6, "volume": 1500},
+        ]
+        fx1 = SimpleNamespace(dt="2025-01-01", mark="G", fx=10.5)
+        fx2 = SimpleNamespace(dt="2025-01-02", mark="D", fx=9.7)
+        bi1 = SimpleNamespace(fx_a=fx1, fx_b=fx2, direction="Down", high=10.5, low=9.7)
+        analyzer = SimpleNamespace(fx_list=[fx1, fx2], ubi_fxs=[], finished_bis=[bi1], last_bi_extend=False)
+        zs = SimpleNamespace(sdt="2025-01-01", edt="2025-01-02", zg=10.0, zd=9.5, gg=10.5, dd=9.5, zz=9.75)
+        sig_module = SimpleNamespace(get_zs_seq=lambda bis: [zs])
+
+        with patch("chantheory.adapters._run_engine", return_value=(analyzer, [object()] * 3)), patch(
+            "chantheory.adapters.load_czsc_utils", return_value=sig_module
+        ):
+            result = analyze_tracker_klines(rows=rows, code="000001", market="sz")
+
+        self.assertEqual(len(result.candidate_buy_points), 1)
+        candidate = result.candidate_buy_points[0]
+        self.assertEqual(candidate.point_type, "structure_buy_candidate")
+        self.assertEqual(candidate.meta["signal_scope"], "structure_candidate_only")
+
+    def test_fixture_engine_version_matches_pin(self):
+        fixture_path = Path(__file__).resolve().parent / "fixtures" / "p2_sample_result.json"
+        payload = json.loads(fixture_path.read_text())
+
+        self.assertEqual(payload["engine_version"], "0.10.12")
+        self.assertEqual(payload["meta"]["engine_assumptions"]["engine_version"], "0.10.12")
 
 
 if __name__ == "__main__":

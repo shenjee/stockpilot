@@ -11,6 +11,7 @@ LAYER_ORDER = (
     "strokes",
     "segments",
     "pivot_zones",
+    "candidate_points",
     "divergences",
     "alerts",
 )
@@ -23,7 +24,21 @@ def build_plot_primitives(result: AnalysisResult) -> List[PlotPrimitive]:
     primitives: List[PlotPrimitive] = []
 
     for fractal in result.fractals:
-        color = "#DC2626" if fractal.fractal_type == "top" else "#16A34A"
+        if fractal.fractal_type == "top":
+            color = "#DC2626"
+            style = "triangle_down"
+            text = "T"
+            textposition = "top center"
+        elif fractal.fractal_type == "bottom":
+            color = "#16A34A"
+            style = "triangle_up"
+            text = "B"
+            textposition = "bottom center"
+        else:
+            color = "#6B7280"
+            style = "circle"
+            text = "?"
+            textposition = "top center"
         primitives.append(
             PlotPrimitive(
                 id=f"primitive_{fractal.id}",
@@ -31,13 +46,14 @@ def build_plot_primitives(result: AnalysisResult) -> List[PlotPrimitive]:
                 layer="fractals",
                 x=fractal.timestamp,
                 y=fractal.price,
-                style="triangle_down" if fractal.fractal_type == "top" else "triangle_up",
+                style=style,
                 color=color,
-                text="T" if fractal.fractal_type == "top" else "B",
+                text=text,
                 meta={
                     "reference_type": "fractal",
                     "reference_id": fractal.id,
                     "confirmed": fractal.confirmed,
+                    "textposition": textposition,
                 },
             )
         )
@@ -100,6 +116,50 @@ def build_plot_primitives(result: AnalysisResult) -> List[PlotPrimitive]:
                     "reference_id": zone.id,
                     "active": zone.active,
                     "level": zone.level,
+                },
+            )
+        )
+
+    for point in result.candidate_buy_points:
+        primitives.append(
+            PlotPrimitive(
+                id=f"primitive_{point.id}",
+                type="marker",
+                layer="candidate_points",
+                x=point.timestamp,
+                y=point.price,
+                style="diamond",
+                color="#059669",
+                text="Buy?",
+                meta={
+                    "reference_type": "candidate_buy_point",
+                    "reference_id": point.id,
+                    "point_type": point.point_type,
+                    "source_reference_id": point.reference_id,
+                    "confirmed": point.confirmed,
+                    "signal_scope": point.meta.get("signal_scope", "structure_candidate_only"),
+                },
+            )
+        )
+
+    for point in result.candidate_sell_points:
+        primitives.append(
+            PlotPrimitive(
+                id=f"primitive_{point.id}",
+                type="marker",
+                layer="candidate_points",
+                x=point.timestamp,
+                y=point.price,
+                style="diamond",
+                color="#B91C1C",
+                text="Sell?",
+                meta={
+                    "reference_type": "candidate_sell_point",
+                    "reference_id": point.id,
+                    "point_type": point.point_type,
+                    "source_reference_id": point.reference_id,
+                    "confirmed": point.confirmed,
+                    "signal_scope": point.meta.get("signal_scope", "structure_candidate_only"),
                 },
             )
         )
