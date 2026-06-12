@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "packages"))
 
 from chantheory.adapters import (
+    _map_segments,
     _map_pending_stroke,
     _map_strokes,
     _normalize_direction,
@@ -18,6 +19,28 @@ from chantheory.adapters import (
     analyze_tracker_klines,
     load_czsc,
 )
+from chantheory.schema import Stroke
+
+
+def _stroke(
+    suffix: str,
+    direction: str,
+    start_timestamp: str,
+    start_price: float,
+    end_timestamp: str,
+    end_price: float,
+) -> Stroke:
+    return Stroke(
+        id=f"stroke_{suffix}",
+        direction=direction,
+        start_fractal_id=f"fractal_{suffix}_start",
+        end_fractal_id=f"fractal_{suffix}_end",
+        start_timestamp=start_timestamp,
+        end_timestamp=end_timestamp,
+        start_price=start_price,
+        end_price=end_price,
+        confirmed=True,
+    )
 
 
 class AdapterTests(unittest.TestCase):
@@ -161,7 +184,9 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(len(result.strokes), 3)
         self.assertEqual(len(result.segments), 1)
         self.assertEqual(len(result.pivot_zones), 1)
-        self.assertEqual(result.segments[0].meta["mapping_strategy"], "conservative_three_stroke_window")
+        self.assertEqual(result.segments[0].meta["mapping_strategy"], "chan_odd_stroke_overlap_confirmation")
+        self.assertFalse(result.segments[0].confirmed)
+        self.assertEqual(result.segments[0].meta["status"], "pending")
         self.assertFalse(result.fractals[-1].confirmed)
         self.assertTrue(any(item.type == "line" and item.layer == "strokes" for item in result.plot_primitives))
         self.assertTrue(any(item.type == "box" and item.layer == "pivot_zones" for item in result.plot_primitives))
@@ -209,6 +234,72 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(pending.end_timestamp, "2025-01-07")
         self.assertEqual(pending.end_price, 11.2)
         self.assertTrue(pending.meta["pending"])
+
+    def test_map_segments_requires_initial_three_stroke_overlap(self):
+        strokes = [
+            _stroke("1", "up", "2025-01-01", 10.0, "2025-01-02", 12.0),
+            _stroke("2", "down", "2025-01-02", 12.0, "2025-01-03", 9.0),
+            _stroke("3", "up", "2025-01-03", 9.0, "2025-01-04", 9.5),
+        ]
+
+        self.assertEqual(_map_segments(strokes), [])
+
+    def test_map_segments_builds_pending_three_stroke_segment(self):
+        strokes = [
+            _stroke("1", "up", "2025-01-01", 10.0, "2025-01-02", 12.0),
+            _stroke("2", "down", "2025-01-02", 12.0, "2025-01-03", 11.0),
+            _stroke("3", "up", "2025-01-03", 11.0, "2025-01-04", 13.0),
+        ]
+
+        segments = _map_segments(strokes)
+
+        self.assertEqual(len(segments), 1)
+        self.assertEqual(segments[0].direction, "up")
+        self.assertEqual(segments[0].stroke_ids, ["stroke_1", "stroke_2", "stroke_3"])
+        self.assertEqual(segments[0].start_timestamp, "2025-01-01")
+        self.assertEqual(segments[0].end_timestamp, "2025-01-04")
+        self.assertFalse(segments[0].confirmed)
+        self.assertEqual(segments[0].meta["status"], "pending")
+        self.assertEqual(segments[0].meta["stroke_count"], 3)
+
+    def test_map_segments_confirms_previous_when_opposite_segment_forms(self):
+        strokes = [
+            _stroke("1", "up", "2025-01-01", 10.0, "2025-01-02", 12.0),
+            _stroke("2", "down", "2025-01-02", 12.0, "2025-01-03", 11.0),
+            _stroke("3", "up", "2025-01-03", 11.0, "2025-01-04", 13.0),
+            _stroke("4", "down", "2025-01-04", 13.0, "2025-01-05", 11.0),
+            _stroke("5", "up", "2025-01-05", 11.0, "2025-01-06", 12.0),
+            _stroke("6", "down", "2025-01-06", 12.0, "2025-01-07", 10.0),
+        ]
+
+        segments = _map_segments(strokes)
+
+        self.assertEqual(len(segments), 2)
+        self.assertEqual(segments[0].direction, "up")
+        self.assertEqual(segments[1].direction, "down")
+        self.assertTrue(segments[0].confirmed)
+        self.assertEqual(segments[0].meta["status"], "confirmed")
+        self.assertEqual(segments[0].meta["confirmed_by_segment_id"], segments[1].id)
+        self.assertFalse(segments[1].confirmed)
+        self.assertEqual(segments[0].end_timestamp, segments[1].start_timestamp)
+        self.assertEqual(segments[0].end_price, segments[1].start_price)
+
+    def test_map_segments_extends_by_two_strokes_until_opposite_segment_forms(self):
+        strokes = [
+            _stroke("1", "up", "2025-01-01", 10.0, "2025-01-02", 12.0),
+            _stroke("2", "down", "2025-01-02", 12.0, "2025-01-03", 11.0),
+            _stroke("3", "up", "2025-01-03", 11.0, "2025-01-04", 13.0),
+            _stroke("4", "down", "2025-01-04", 13.0, "2025-01-05", 8.0),
+            _stroke("5", "up", "2025-01-05", 8.0, "2025-01-06", 14.0),
+        ]
+
+        segments = _map_segments(strokes)
+
+        self.assertEqual(len(segments), 1)
+        self.assertEqual(segments[0].direction, "up")
+        self.assertEqual(segments[0].stroke_ids, ["stroke_1", "stroke_2", "stroke_3", "stroke_4", "stroke_5"])
+        self.assertEqual(segments[0].meta["stroke_count"], 5)
+        self.assertFalse(segments[0].confirmed)
 
     def test_candidate_points_are_structure_only(self):
         rows = [
