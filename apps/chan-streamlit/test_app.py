@@ -1,5 +1,7 @@
 import importlib.util
+import sys
 import unittest
+from datetime import date
 from pathlib import Path
 
 
@@ -7,6 +9,7 @@ APP_PATH = Path(__file__).resolve().parent / "app.py"
 SPEC = importlib.util.spec_from_file_location("chan_streamlit_app", APP_PATH)
 app = importlib.util.module_from_spec(SPEC)
 assert SPEC and SPEC.loader
+sys.modules[SPEC.name] = app
 SPEC.loader.exec_module(app)
 
 
@@ -52,6 +55,26 @@ class ChartAxisTests(unittest.TestCase):
 
         self.assertIsNone(figure.layout.xaxis.type)
         self.assertEqual(tuple(figure.layout.xaxis.range), ("2026-06-11", "2026-06-12"))
+
+    def test_ordered_rows_and_chart_key_use_display_order(self):
+        rows = [
+            {"date": "2026-06-12", "open": 10, "close": 11, "high": 11.2, "low": 9.8, "volume": 100},
+            {"date": "2026-06-10", "open": 9, "close": 10, "high": 10.1, "low": 8.9, "volume": 120},
+            {"date": "2026-06-11", "open": 10, "close": 10.5, "high": 10.8, "low": 9.9, "volume": 130},
+        ]
+
+        ordered = app._ordered_rows(rows)
+        key = app._build_chart_key(
+            symbol="000001",
+            market="sz",
+            timeframe="day",
+            start_date=date(2026, 6, 10),
+            end_date=date(2026, 6, 12),
+            rows=ordered,
+        )
+
+        self.assertEqual([row["date"] for row in ordered], ["2026-06-10", "2026-06-11", "2026-06-12"])
+        self.assertTrue(key.endswith("|3|2026-06-10|2026-06-12"))
 
 
 if __name__ == "__main__":

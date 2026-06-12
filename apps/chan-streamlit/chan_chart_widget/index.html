@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./plotly.min.js"></script>
+  <style>
+    html, body {
+      margin: 0; padding: 0; background: transparent;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+      overflow: hidden;
+    }
+    #fullscreen-container {
+      display: flex; flex-direction: column; width: 100%; height: 700px;
+      border: 1px solid rgba(15, 23, 42, 0.08); border-radius: 12px;
+      background: #ffffff; box-sizing: border-box;
+    }
+    #fullscreen-container:fullscreen {
+      border: none; border-radius: 0; height: 100vh !important; width: 100vw !important;
+    }
+    #chart-wrapper {
+      position: relative; flex: 1; min-height: 0; width: 100%;
+    }
+    #chan-plotly-chart { width: 100%; height: 100%; }
+
+    .chan-overlay { position: absolute; z-index: 20; display: flex; align-items: center; gap: 10px; pointer-events: none; }
+    .chan-overlay--top { top: 12px; left: 16px; right: 16px; justify-content: flex-start; }
+
+    .chan-bottom-bar {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 8px 16px; background: #ffffff;
+      border-top: 1px solid rgba(15, 23, 42, 0.05);
+      flex-shrink: 0; z-index: 20;
+    }
+    .chan-bottom-bar__left { display: flex; gap: 12px; align-items: center; }
+    .chan-bottom-bar__right { display: flex; gap: 6px; align-items: center; }
+
+    .chan-group { display: flex; align-items: center; gap: 4px; pointer-events: auto; padding: 4px 6px; border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 8px; background: rgba(255, 255, 255, 0.9); box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05); backdrop-filter: blur(8px); }
+    .chan-group__label { padding: 0 4px; font-size: 11px; font-weight: 600; color: #475569; }
+    .chan-group__caption { min-width: 60px; padding: 0 4px; font-size: 11px; font-weight: 500; color: #64748b; text-align: right; }
+
+    .chan-button { border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 8px; background: #ffffff; color: #334155; font-size: 13px; font-weight: 600; padding: 6px 14px; cursor: pointer; transition: all 0.15s; pointer-events: auto; box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04); }
+    .chan-button:hover { background: #f8fafc; transform: translateY(-1px); }
+    .chan-button.is-active { background: #eff6ff; color: #2563eb; border-color: #bfdbfe; box-shadow: 0 4px 12px rgba(37, 99, 235, 0.15); }
+
+    .chan-icon-button { border: 0; width: 24px; height: 24px; border-radius: 6px; background: #f8fafc; color: #0f172a; font-size: 14px; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; pointer-events: auto; }
+    .chan-icon-button:hover { background: #e2e8f0; }
+
+    .chan-action-button { border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 8px; background: rgba(255, 255, 255, 0.9); color: #0f172a; font-size: 12px; font-weight: 600; padding: 6px 12px; cursor: pointer; transition: all 0.15s; pointer-events: auto; box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05); }
+    .chan-action-button:hover { background: #f8fafc; transform: translateY(-1px); }
+    .chan-action-button.is-active { background: #dbeafe; color: #1d4ed8; border-color: #bfdbfe; }
+  </style>
+</head>
+<body>
+  <div id="fullscreen-container">
+    <div id="chart-wrapper">
+      <div id="chan-plotly-chart"></div>
+      <div class="chan-overlay chan-overlay--top" id="overlay-top"></div>
+    </div>
+    <div class="chan-bottom-bar">
+      <div class="chan-bottom-bar__left" id="overlay-bottom"></div>
+      <div class="chan-bottom-bar__right" id="overlay-actions"></div>
+    </div>
+  </div>
+
+  <script>
+    function sendMessageToStreamlitClient(type, data) {
+      window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, data), "*");
+    }
+    function setComponentValue(value) {
+      sendMessageToStreamlitClient("streamlit:setComponentValue", { value: value });
+    }
+    function setFrameHeight(height) {
+      sendMessageToStreamlitClient("streamlit:setFrameHeight", { height: height });
+    }
+
+    let isInitialized = false;
+    let currentState = { xWindowIndex: 0, yZoom: 1.0, dragmode: "pan" };
+    let currentPayload = null;
+    let currentChartKey = null;
+    const chartDiv = document.getElementById("chan-plotly-chart");
+    const container = document.getElementById("fullscreen-container");
+
+    const renderCaption = (template, values) => template.replace(/\{(\w+)\}/g, (_, key) => values[key] ?? "");
+
+    window.addEventListener("message", function(event) {
+      if (event.data.type === "streamlit:render") {
+        const payload = event.data.args.payload;
+        const chartChanged = currentChartKey !== payload.chartKey;
+        currentPayload = payload;
+
+        if (chartChanged) {
+          currentChartKey = payload.chartKey;
+          currentState.xWindowIndex = Math.max(payload.xWindowSteps.indexOf(payload.defaultXWindow), 0);
+          currentState.yZoom = payload.defaultYZoom;
+          currentState.dragmode = "pan";
+        } else {
+          currentState.xWindowIndex = Math.min(currentState.xWindowIndex, Math.max(payload.xWindowSteps.length - 1, 0));
+          currentState.yZoom = Math.min(payload.maxYZoom, Math.max(payload.minYZoom, currentState.yZoom));
+        }
+
+        renderUI(payload);
+        renderPlotly(payload);
+
+        if (!isInitialized) {
+          isInitialized = true;
+          setFrameHeight(700);
+        }
+      }
+    });
+
+    function renderUI(payload) {
+      document.getElementById("overlay-top").innerHTML = payload.timeframes.map(tf =>
+        `<button class="chan-button ${tf.value === payload.activeTimeframe ? 'is-active' : ''}" data-tf="${tf.value}">${tf.label}</button>`
+      ).join('');
+
+      document.getElementById("overlay-bottom").innerHTML = `
+        <div class="chan-group">
+          <span class="chan-group__label">${payload.text.xAxisLabel}</span>
+          <button class="chan-icon-button" data-axis="x" data-dir="in">${payload.text.zoomIn}</button>
+          <button class="chan-icon-button" data-axis="x" data-dir="out">${payload.text.zoomOut}</button>
+          <span class="chan-group__caption" id="caption-x"></span>
+        </div>
+        <div class="chan-group">
+          <span class="chan-group__label">${payload.text.yAxisLabel}</span>
+          <button class="chan-icon-button" data-axis="y" data-dir="in">${payload.text.zoomIn}</button>
+          <button class="chan-icon-button" data-axis="y" data-dir="out">${payload.text.zoomOut}</button>
+          <span class="chan-group__caption" id="caption-y"></span>
+        </div>
+      `;
+
+      document.getElementById("overlay-actions").innerHTML = `
+        <button class="chan-action-button ${currentState.dragmode === 'pan' ? 'is-active' : ''}" data-action="pan">${payload.text.pan}</button>
+        <button class="chan-action-button" data-action="reset">${payload.text.reset}</button>
+        <button class="chan-action-button" data-action="fullscreen">${payload.text.fullscreen}</button>
+      `;
+
+      syncCaptions();
+    }
+
+    function syncCaptions() {
+      if (!currentPayload) return;
+      document.getElementById("caption-x").textContent = renderCaption(currentPayload.text.xWindowCaption, {
+        count: currentPayload.xWindowSteps[currentState.xWindowIndex]
+      });
+      document.getElementById("caption-y").textContent = renderCaption(currentPayload.text.yZoomCaption, {
+        scale: currentState.yZoom.toFixed(2)
+      });
+    }
+
+    function getAxisRanges() {
+      const rows = currentPayload.rows;
+      const xValues = rows.map(r => r.date);
+      const windowCount = currentPayload.xWindowSteps[currentState.xWindowIndex];
+      const visibleRows = rows.slice(-windowCount);
+
+      let xRange = null;
+      if (xValues.length) {
+        const visibleX = xValues.slice(-windowCount);
+        if (!currentPayload.useContinuousBarAxis) {
+          xRange = [visibleX[0], visibleX[visibleX.length - 1]];
+        } else {
+          const startIndex = Math.max(xValues.indexOf(visibleX[0]) - 0.5, -0.5);
+          const endIndex = xValues.indexOf(visibleX[visibleX.length - 1]) + 0.5;
+          xRange = [startIndex, endIndex];
+        }
+      }
+
+      let yRange = null;
+      if (visibleRows.length) {
+        const lows = visibleRows.map(r => r.low);
+        const highs = visibleRows.map(r => r.high);
+        const low = Math.min(...lows);
+        const high = Math.max(...highs);
+        if (high <= low) {
+          const pad = Math.max(Math.abs(high) * 0.02, 0.01);
+          yRange = [low - pad, high + pad];
+        } else {
+          const span = high - low;
+          const pad = span * 0.08 * currentState.yZoom;
+          yRange = [low - pad, high + pad];
+        }
+      }
+
+      return { xRange, yRange };
+    }
+
+    function applyRanges() {
+      const { xRange, yRange } = getAxisRanges();
+      const updates = {};
+      if (xRange) updates["xaxis.range"] = xRange;
+      if (yRange) updates["yaxis.range"] = yRange;
+      syncCaptions();
+      Plotly.relayout(chartDiv, updates);
+    }
+
+    function renderPlotly(payload) {
+      if (typeof Plotly === 'undefined') {
+        setTimeout(() => renderPlotly(payload), 100);
+        return;
+      }
+
+      const layout = payload.figure.layout;
+      layout.margin = { l: 20, r: 20, t: 60, b: 40 };
+      if (layout.xaxis) {
+        layout.xaxis.automargin = true;
+      }
+      layout.dragmode = currentState.dragmode;
+
+      Plotly.newPlot(chartDiv, payload.figure.data, layout, {
+        responsive: true,
+        displaylogo: false,
+        scrollZoom: false,
+        displayModeBar: false
+      }).then(() => {
+        applyRanges();
+        
+        if (typeof chartDiv.removeAllListeners === 'function') {
+          chartDiv.removeAllListeners("plotly_relayout");
+        }
+        chartDiv.on("plotly_relayout", (eventData) => {
+          if (eventData.dragmode) {
+            currentState.dragmode = String(eventData.dragmode);
+            const panBtn = document.querySelector('[data-action="pan"]');
+            if(panBtn) {
+              document.querySelectorAll('[data-action="pan"]').forEach(b => b.classList.remove("is-active"));
+              panBtn.classList.add("is-active");
+            }
+          }
+          if (eventData["xaxis.autorange"] || eventData["yaxis.autorange"]) {
+            currentState.xWindowIndex = Math.max(payload.xWindowSteps.indexOf(payload.defaultXWindow), 0);
+            currentState.yZoom = payload.defaultYZoom;
+            syncCaptions();
+          }
+        });
+      });
+    }
+
+    document.body.addEventListener("click", (e) => {
+      const tfBtn = e.target.closest("[data-tf]");
+      if (tfBtn) {
+        const tf = tfBtn.dataset.tf;
+        if (tf !== currentPayload.activeTimeframe) {
+          document.querySelectorAll('.chan-button').forEach(b => b.classList.remove('is-active'));
+          tfBtn.classList.add('is-active');
+          setComponentValue(tf);
+        }
+        return;
+      }
+
+      const axisBtn = e.target.closest("[data-axis]");
+      if (axisBtn && currentPayload) {
+        const axis = axisBtn.dataset.axis;
+        const dir = axisBtn.dataset.dir;
+        if (axis === "x") {
+          if (dir === "in" && currentState.xWindowIndex > 0) currentState.xWindowIndex--;
+          else if (dir === "out" && currentState.xWindowIndex < currentPayload.xWindowSteps.length - 1) currentState.xWindowIndex++;
+        } else if (axis === "y") {
+          if (dir === "in") currentState.yZoom = Math.max(currentPayload.minYZoom, currentState.yZoom / currentPayload.yZoomStep);
+          else if (dir === "out") currentState.yZoom = Math.min(currentPayload.maxYZoom, currentState.yZoom * currentPayload.yZoomStep);
+        }
+        applyRanges();
+        return;
+      }
+
+      const actionBtn = e.target.closest("[data-action]");
+      if (actionBtn && currentPayload) {
+        const action = actionBtn.dataset.action;
+        if (action === "pan") {
+          currentState.dragmode = "pan";
+          document.querySelectorAll('[data-action="pan"]').forEach(b => b.classList.add('is-active'));
+          Plotly.relayout(chartDiv, { dragmode: "pan" });
+        } else if (action === "reset") {
+          currentState.xWindowIndex = Math.max(currentPayload.xWindowSteps.indexOf(currentPayload.defaultXWindow), 0);
+          currentState.yZoom = currentPayload.defaultYZoom;
+          currentState.dragmode = "pan";
+          document.querySelectorAll('[data-action="pan"]').forEach(b => b.classList.add('is-active'));
+          Plotly.relayout(chartDiv, { dragmode: "pan" });
+          applyRanges();
+        } else if (action === "fullscreen") {
+          if (document.fullscreenElement === container) {
+            document.exitFullscreen();
+          } else {
+            container.requestFullscreen();
+          }
+        }
+      }
+    });
+
+    const resizeObserver = new ResizeObserver(() => {
+      if (typeof Plotly !== 'undefined' && chartDiv && chartDiv.data) {
+        Plotly.Plots.resize(chartDiv);
+      }
+    });
+    resizeObserver.observe(document.getElementById("chart-wrapper"));
+
+    document.addEventListener("fullscreenchange", () => {
+      // Small delay to ensure browser layout is updated before resizing
+      setTimeout(() => {
+        if (typeof Plotly !== 'undefined' && chartDiv && chartDiv.data) {
+          Plotly.Plots.resize(chartDiv);
+        }
+      }, 50);
+    });
+
+    sendMessageToStreamlitClient("streamlit:componentReady", {apiVersion: 1});
+  </script>
+</body>
+</html>

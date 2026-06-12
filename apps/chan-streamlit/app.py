@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -7,12 +8,15 @@ import re
 from typing import Any, Dict, Iterable, List
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 try:
     import plotly.graph_objects as go
 except ImportError as exc:  # pragma: no cover - Streamlit runtime guard
     raise SystemExit("plotly is required for apps/chan-streamlit/app.py") from exc
 
+_WIDGET_PATH = Path(__file__).parent / "chan_chart_widget"
+chan_chart_widget = components.declare_component("chan_chart_widget", path=str(_WIDGET_PATH))
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "packages"))
@@ -87,6 +91,9 @@ TEXT = {
         "zoom_out_label": "-",
         "x_window_caption": "显示最近 {count} 根",
         "y_zoom_caption": "{scale:.2f}x 区间",
+        "pan_label": "移动",
+        "reset_label": "重置",
+        "fullscreen_label": "全屏",
     },
     "en": {
         "page_title": "Chan Theory Debug App",
@@ -135,6 +142,9 @@ TEXT = {
         "zoom_out_label": "-",
         "x_window_caption": "Last {count} bars",
         "y_zoom_caption": "{scale:.2f}x range",
+        "pan_label": "Pan",
+        "reset_label": "Reset",
+        "fullscreen_label": "Full",
     },
 }
 
@@ -142,6 +152,11 @@ TEXT = {
 def _t(language: str, key: str, **kwargs: object) -> str:
     template = TEXT.get(language, TEXT["en"]).get(key, TEXT["en"].get(key, key))
     return template.format(**kwargs)
+
+
+def _frontend_template(language: str, key: str) -> str:
+    template = TEXT.get(language, TEXT["en"]).get(key, TEXT["en"].get(key, key))
+    return template.replace("{scale:.2f}", "{scale}")
 
 
 def _layer_label(layer: str, language: str) -> str:
@@ -376,14 +391,10 @@ def main() -> None:
             key="language",
         )
 
-    timeframe = st.radio(
-        _t(language, "timeframe_label"),
-        TIMEFRAME_OPTIONS,
-        key="chan_selected_timeframe",
-        horizontal=True,
-        format_func=lambda value: _format_timeframe(str(value), language),
-        label_visibility="collapsed",
-    )
+    chart_col, side_col = st.columns([3, 2])
+    with chart_col:
+        st.subheader(_t(language, "kline_overlay"))
+        timeframe = st.session_state.chan_selected_timeframe
 
     analysis_inputs = {
         "symbol": symbol.strip(),
@@ -456,33 +467,68 @@ def main() -> None:
         st.info(_t(language, "choose_inputs"))
         return
 
-    chart_col, side_col = st.columns([3, 2])
     with chart_col:
-        st.subheader(_t(language, "kline_overlay"))
-        x_window, y_zoom = _render_chart_zoom_controls(len(rows), language)
-        st.plotly_chart(
-            _build_figure(
-                rows=rows,
-                result_payload=result.to_dict(),
-                visibility=visibility,
-                timeframe=timeframe,
-                language=language,
-                x_window=x_window,
-                y_zoom=y_zoom,
-            ),
-            width="stretch",
-            config={
-                "scrollZoom": False,
-                "modeBarButtonsToRemove": [
-                    "zoom2d",
-                    "zoomIn2d",
-                    "zoomOut2d",
-                    "autoScale2d",
-                    "select2d",
-                    "lasso2d",
-                ],
-            },
+        chart_rows = _ordered_rows(rows)
+        figure = _build_figure(
+            rows=chart_rows,
+            result_payload=result.to_dict(),
+            visibility=visibility,
+            timeframe=timeframe,
+            language=language,
+            x_window=min(DEFAULT_X_WINDOW, max(len(chart_rows), 1)),
+            y_zoom=1.0,
         )
+
+        row_count = len(chart_rows)
+        x_steps = [
+            n
+            for n in [30, 60, 90, 120, 240, 360, 480, row_count]
+            if n <= row_count
+        ]
+        if row_count not in x_steps:
+            x_steps.append(row_count)
+        
+        payload = {
+            "figure": json.loads(figure.to_json()),
+            "rows": chart_rows,
+            "chartKey": _build_chart_key(
+                symbol=symbol.strip(),
+                market=market,
+                timeframe=timeframe,
+                start_date=start_date,
+                end_date=end_date,
+                rows=chart_rows,
+            ),
+            "timeframes": [
+                {"value": tf, "label": _format_timeframe(tf, language)}
+                for tf in TIMEFRAME_OPTIONS
+            ],
+            "activeTimeframe": timeframe,
+            "useContinuousBarAxis": _is_minute_timeframe(timeframe),
+            "xWindowSteps": x_steps,
+            "defaultXWindow": min(DEFAULT_X_WINDOW, max(row_count, 1)),
+            "defaultYZoom": 1.0,
+            "yZoomStep": Y_ZOOM_STEP,
+            "minYZoom": MIN_Y_ZOOM,
+            "maxYZoom": MAX_Y_ZOOM,
+            "text": {
+                "xAxisLabel": _t(language, "x_axis_label"),
+                "yAxisLabel": _t(language, "y_axis_label"),
+                "zoomIn": _t(language, "zoom_in_label"),
+                "zoomOut": _t(language, "zoom_out_label"),
+                "xWindowCaption": _frontend_template(language, "x_window_caption"),
+                "yZoomCaption": _frontend_template(language, "y_zoom_caption"),
+                "pan": _t(language, "pan_label"),
+                "reset": _t(language, "reset_label"),
+                "fullscreen": _t(language, "fullscreen_label"),
+            },
+        }
+
+        returned_timeframe = chan_chart_widget(payload=payload, key="chan_chart_widget_inst")
+
+        if returned_timeframe and returned_timeframe != st.session_state.chan_selected_timeframe:
+            st.session_state.chan_selected_timeframe = returned_timeframe
+            st.rerun()
 
     with side_col:
         st.subheader(_t(language, "summary_header"))
@@ -565,6 +611,32 @@ def _probe_market_suggestions(
         if rows:
             suggestions.append({"market": candidate, "count": len(rows)})
     return suggestions
+
+
+def _ordered_rows(rows: Iterable[Dict[str, object]]) -> List[Dict[str, object]]:
+    return sorted((dict(item) for item in rows), key=lambda item: str(item["date"]))
+
+
+def _build_chart_key(
+    symbol: str,
+    market: str,
+    timeframe: str,
+    start_date: date,
+    end_date: date,
+    rows: List[Dict[str, object]],
+) -> str:
+    first_date = str(rows[0]["date"]) if rows else ""
+    last_date = str(rows[-1]["date"]) if rows else ""
+    return "|".join([
+        symbol,
+        market,
+        timeframe,
+        start_date.isoformat(),
+        end_date.isoformat(),
+        str(len(rows)),
+        first_date,
+        last_date,
+    ])
 
 
 def _build_figure(
@@ -663,11 +735,13 @@ def _build_figure(
             )
 
     figure.update_layout(
-        margin={"l": 20, "r": 20, "t": 30, "b": 20},
+        margin={"l": 20, "r": 24, "t": 30, "b": 78},
         dragmode="pan",
         xaxis_rangeslider_visible=False,
-        legend={"orientation": "h"},
+        showlegend=False,
         template="plotly_white",
+        paper_bgcolor="#FFFFFF",
+        plot_bgcolor="#FFFFFF",
     )
     if timeframe == "day":
         rangebreaks = _build_daily_rangebreaks(x_values)
@@ -723,75 +797,6 @@ def _build_intraday_date_ticks(x_values: List[object]) -> tuple[List[object], Li
             previous_day = day
 
     return tick_values, tick_text
-
-
-def _render_chart_zoom_controls(row_count: int, language: str) -> tuple[int, float]:
-    if "chan_chart_x_window" not in st.session_state:
-        st.session_state.chan_chart_x_window = min(DEFAULT_X_WINDOW, max(row_count, 1))
-    if "chan_chart_y_zoom" not in st.session_state:
-        st.session_state.chan_chart_y_zoom = 1.0
-
-    st.session_state.chan_chart_x_window = _clamp_x_window(int(st.session_state.chan_chart_x_window), row_count)
-    st.session_state.chan_chart_y_zoom = min(MAX_Y_ZOOM, max(MIN_Y_ZOOM, float(st.session_state.chan_chart_y_zoom)))
-
-    x_label_col, x_zoom_in_col, x_zoom_out_col, x_caption_col = st.columns([1.2, 0.7, 0.7, 2.4])
-    with x_label_col:
-        st.write(_t(language, "x_axis_label"))
-    with x_zoom_in_col:
-        if st.button(_t(language, "zoom_in_label"), key="chart_x_zoom_in", help=_t(language, "x_axis_label")):
-            st.session_state.chan_chart_x_window = _next_x_window(
-                st.session_state.chan_chart_x_window,
-                row_count,
-                zoom_in=True,
-            )
-    with x_zoom_out_col:
-        if st.button(_t(language, "zoom_out_label"), key="chart_x_zoom_out", help=_t(language, "x_axis_label")):
-            st.session_state.chan_chart_x_window = _next_x_window(
-                st.session_state.chan_chart_x_window,
-                row_count,
-                zoom_in=False,
-            )
-    with x_caption_col:
-        st.caption(_t(language, "x_window_caption", count=st.session_state.chan_chart_x_window))
-
-    y_label_col, y_zoom_in_col, y_zoom_out_col, y_caption_col = st.columns([1.2, 0.7, 0.7, 2.4])
-    with y_label_col:
-        st.write(_t(language, "y_axis_label"))
-    with y_zoom_in_col:
-        if st.button(_t(language, "zoom_in_label"), key="chart_y_zoom_in", help=_t(language, "y_axis_label")):
-            st.session_state.chan_chart_y_zoom = max(
-                MIN_Y_ZOOM,
-                st.session_state.chan_chart_y_zoom / Y_ZOOM_STEP,
-            )
-    with y_zoom_out_col:
-        if st.button(_t(language, "zoom_out_label"), key="chart_y_zoom_out", help=_t(language, "y_axis_label")):
-            st.session_state.chan_chart_y_zoom = min(
-                MAX_Y_ZOOM,
-                st.session_state.chan_chart_y_zoom * Y_ZOOM_STEP,
-            )
-    with y_caption_col:
-        st.caption(_t(language, "y_zoom_caption", scale=st.session_state.chan_chart_y_zoom))
-
-    return int(st.session_state.chan_chart_x_window), float(st.session_state.chan_chart_y_zoom)
-
-
-def _clamp_x_window(value: int, row_count: int) -> int:
-    if row_count <= 0:
-        return 1
-    return min(max(value, X_WINDOW_STEPS[0]), row_count)
-
-
-def _next_x_window(current: int, row_count: int, *, zoom_in: bool) -> int:
-    usable_steps = [step for step in X_WINDOW_STEPS if step <= max(row_count, 1)]
-    if not usable_steps:
-        return max(row_count, 1)
-    if row_count > usable_steps[-1]:
-        usable_steps.append(row_count)
-    if zoom_in:
-        smaller_steps = [step for step in usable_steps if step < current]
-        return smaller_steps[-1] if smaller_steps else usable_steps[0]
-    larger_steps = [step for step in usable_steps if step > current]
-    return larger_steps[0] if larger_steps else usable_steps[-1]
 
 
 def _build_y_axis_range(rows: List[Dict[str, object]], y_zoom: float) -> List[float] | None:
