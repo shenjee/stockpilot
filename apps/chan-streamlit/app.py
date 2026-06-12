@@ -26,6 +26,8 @@ from market_data import TencentStockDataProvider  # noqa: E402
 DEFAULT_END = date.today()
 DEFAULT_START = DEFAULT_END - timedelta(days=240)
 SUPPORTED_LANGUAGES = {"zh": "中文", "en": "English"}
+TIMEFRAME_OPTIONS = ("1m", "5m", "30m", "60m", "day")
+DEFAULT_TIMEFRAME = "day"
 LAYER_KEYS = ("fractals", "strokes", "segments", "pivot_zones", "divergences", "alerts")
 X_WINDOW_STEPS = (20, 30, 45, 60, 90, 120, 180, 240, 360, 720)
 DEFAULT_X_WINDOW = 90
@@ -33,7 +35,7 @@ Y_ZOOM_STEP = 1.2
 MIN_Y_ZOOM = 0.45
 MAX_Y_ZOOM = 3.0
 TIMEFRAME_LABELS = {
-    "zh": {"1m": "1分钟", "5m": "5分钟", "15m": "15分钟", "30m": "30分钟", "60m": "60分钟", "day": "日线", "week": "周线", "month": "月线"},
+    "zh": {"1m": "1 分", "5m": "5 分", "15m": "15 分", "30m": "30 分", "60m": "60 分", "day": "日 K", "week": "周 K", "month": "月 K"},
     "en": {"1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m", "60m": "60m", "day": "day", "week": "week", "month": "month"},
 }
 TEXT = {
@@ -304,6 +306,8 @@ def _build_display_summary(result: AnalysisResult, language: str) -> List[str]:
 def main() -> None:
     if "language" not in st.session_state:
         st.session_state.language = "zh"
+    if "chan_selected_timeframe" not in st.session_state:
+        st.session_state.chan_selected_timeframe = DEFAULT_TIMEFRAME
     language = str(st.session_state.language)
 
     st.set_page_config(page_title=_t("zh", "page_title"), layout="wide")
@@ -353,7 +357,6 @@ def main() -> None:
         st.markdown(_sidebar_section_title(_t(language, "inputs_header")), unsafe_allow_html=True)
         symbol = st.text_input(_t(language, "symbol_label"), value="000001")
         market = st.selectbox(_t(language, "market_label"), ["sz", "sh", "bj"], index=0)
-        timeframe = st.selectbox(_t(language, "timeframe_label"), ["day", "week", "month"], index=0)
         start_date = st.date_input(_t(language, "start_date_label"), value=DEFAULT_START)
         end_date = st.date_input(_t(language, "end_date_label"), value=DEFAULT_END)
         max_bi_num = st.number_input(_t(language, "max_bi_num_label"), min_value=10, max_value=200, value=50, step=10)
@@ -372,7 +375,34 @@ def main() -> None:
             key="language",
         )
 
-    if run:
+    timeframe = st.radio(
+        _t(language, "timeframe_label"),
+        TIMEFRAME_OPTIONS,
+        key="chan_selected_timeframe",
+        horizontal=True,
+        format_func=lambda value: _format_timeframe(str(value), language),
+        label_visibility="collapsed",
+    )
+
+    analysis_inputs = {
+        "symbol": symbol.strip(),
+        "market": market,
+        "timeframe": timeframe,
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "max_bi_num": int(max_bi_num),
+        "min_bars": int(min_bars),
+        "strict_validation": bool(strict_validation),
+    }
+    cached_inputs = st.session_state.get("chan_chart_inputs")
+    should_analyze = bool(run) or (
+        cached_inputs is not None
+        and cached_inputs != analysis_inputs
+        and "chan_chart_rows" in st.session_state
+        and "chan_chart_result" in st.session_state
+    )
+
+    if should_analyze:
         rows = _fetch_rows(
             symbol=symbol.strip(),
             market=market,
@@ -384,6 +414,7 @@ def main() -> None:
             st.session_state.pop("chan_chart_rows", None)
             st.session_state.pop("chan_chart_result", None)
             st.session_state.pop("chan_chart_timeframe", None)
+            st.session_state.pop("chan_chart_inputs", None)
             suggestions = _probe_market_suggestions(
                 symbol=symbol.strip(),
                 selected_market=market,
@@ -415,6 +446,7 @@ def main() -> None:
         st.session_state.chan_chart_rows = rows
         st.session_state.chan_chart_result = result
         st.session_state.chan_chart_timeframe = timeframe
+        st.session_state.chan_chart_inputs = analysis_inputs
     elif "chan_chart_rows" in st.session_state and "chan_chart_result" in st.session_state:
         rows = st.session_state.chan_chart_rows
         result = st.session_state.chan_chart_result

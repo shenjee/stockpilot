@@ -62,6 +62,12 @@ class TencentStockDataProvider(MarketDataProvider):
     name = "腾讯财经"
     TIMEOUT = 10
     MAX_RETRIES = 3
+    MINUTE_KTYPES = {
+        "1m": "m1",
+        "5m": "m5",
+        "30m": "m30",
+        "60m": "m60",
+    }
 
     @staticmethod
     def _get_prefix(code: str, market: str = None) -> str:
@@ -144,6 +150,15 @@ class TencentStockDataProvider(MarketDataProvider):
 
     @classmethod
     def get_kline(cls, code: str, start_date: str, end_date: str, ktype: str = "day", autype: str = "qfq", market: str = None) -> list:
+        if ktype in cls.MINUTE_KTYPES:
+            return cls.get_minute_kline(
+                code=code,
+                start_date=start_date,
+                end_date=end_date,
+                ktype=ktype,
+                market=market,
+            )
+
         prefix = cls._get_prefix(code, market)
         url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={prefix}{code},{ktype},{start_date},{end_date},500,{autype}"
 
@@ -171,6 +186,73 @@ class TencentStockDataProvider(MarketDataProvider):
             })
 
         return results
+
+    @classmethod
+    def get_minute_kline(cls, code: str, start_date: str, end_date: str, ktype: str = "1m", market: str = None) -> list:
+        tx_ktype = cls.MINUTE_KTYPES.get(ktype)
+        if not tx_ktype:
+            return []
+
+        prefix = cls._get_prefix(code, market)
+        count = cls._estimate_minute_bar_count(start_date=start_date, end_date=end_date, ktype=ktype)
+        url = f"https://ifzq.gtimg.cn/appstock/app/kline/mkline?param={prefix}{code},{tx_ktype},,{count}"
+
+        try:
+            data = json.loads(cls._fetch_with_retry(url, decode="utf-8"))
+        except Exception as e:
+            print(f"[ERROR] 获取分钟K线数据失败 {code}: {e}")
+            return []
+
+        if data.get("code") != 0:
+            return []
+
+        raw_items = data.get("data", {}).get(f"{prefix}{code}", {}).get(tx_ktype, [])
+        start_day = cls._parse_date(start_date)
+        end_day = cls._parse_date(end_date)
+        results = []
+        for item in raw_items:
+            if len(item) < 6:
+                continue
+            timestamp = cls._format_minute_timestamp(str(item[0]))
+            if not timestamp:
+                continue
+            row_day = datetime.strptime(timestamp[:10], "%Y-%m-%d").date()
+            if row_day < start_day or row_day > end_day:
+                continue
+            results.append({
+                "date": timestamp,
+                "open": round(float(item[1]), 2),
+                "close": round(float(item[2]), 2),
+                "high": round(float(item[3]), 2),
+                "low": round(float(item[4]), 2),
+                "volume": int(float(item[5])),
+            })
+
+        return results
+
+    @classmethod
+    def _estimate_minute_bar_count(cls, start_date: str, end_date: str, ktype: str) -> int:
+        start_day = cls._parse_date(start_date)
+        end_day = cls._parse_date(end_date)
+        day_count = max((end_day - start_day).days + 1, 1)
+        bars_per_day = {
+            "1m": 240,
+            "5m": 48,
+            "30m": 8,
+            "60m": 4,
+        }.get(ktype, 240)
+        return min(max(day_count * bars_per_day, 10), 5000)
+
+    @staticmethod
+    def _parse_date(value: str):
+        return datetime.strptime(value, "%Y-%m-%d").date()
+
+    @staticmethod
+    def _format_minute_timestamp(value: str) -> str:
+        try:
+            return datetime.strptime(value, "%Y%m%d%H%M").strftime("%Y-%m-%d %H:%M:00")
+        except ValueError:
+            return ""
 
     @classmethod
     def get_daily_quote(cls, code: str, trade_date: str, autype: str = "qfq", market: str = None) -> dict:

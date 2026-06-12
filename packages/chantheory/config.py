@@ -46,7 +46,7 @@ TRACKER_REQUIRED_FIELDS: Tuple[str, ...] = (
 
 TRACKER_GAPS: Tuple[str, ...] = (
     "Current tracker K-lines do not persist amount/turnover directly.",
-    "Current repo flow only fetches day bars; minute and higher-period aggregation are future work.",
+    "Current Tencent minute K-lines are fetched on demand and are not persisted in the local daily K-line cache.",
     "Adjustment mode is implicit in provider usage and not yet carried in the normalized schema.",
 )
 
