@@ -131,6 +131,7 @@ def analyze_normalized(
         analyzer, raw_bars = _run_engine(normalized=normalized, parameters=merged_parameters)
         fractals = _map_fractals(analyzer=analyzer, normalized=normalized)
         strokes = _map_strokes(analyzer=analyzer)
+        pending_stroke = _map_pending_stroke(analyzer=analyzer, strokes=strokes)
         segments = _map_segments(strokes=strokes)
         pivot_zones = _map_pivot_zones(analyzer=analyzer, segments=segments)
         divergences = _map_divergences()
@@ -166,6 +167,8 @@ def analyze_normalized(
             "pivot_zone_count": len(pivot_zones),
             "divergence_count": len(divergences),
         }
+        if pending_stroke is not None:
+            result.meta["pending_stroke"] = pending_stroke
         result.warnings.extend(_build_mapping_warnings(result=result, analyzer=analyzer))
     except Exception as exc:
         result.meta["engine_probe"] = {"status": "failed", "error": str(exc)}
@@ -261,8 +264,6 @@ def load_czsc() -> Tuple[object, object, object]:
     except ImportError as exc:
         raise EngineImportError(str(exc)) from exc
 
-    # czsc 0.10.x exports these symbols from the package root / core module,
-    # while older releases exposed RawBar from czsc.objects.
     def _import_attr(module_name: str, attr_name: str) -> object | None:
         try:
             module = import_module(module_name)
@@ -270,6 +271,17 @@ def load_czsc() -> Tuple[object, object, object]:
             return None
         return getattr(module, attr_name, None)
 
+    # Prefer the pure-Python CZSC path. The top-level rs_czsc-backed RawBar
+    # converts date-only daily bars to pandas timestamps such as the previous
+    # day 16:00, which makes Chan structures fall off the K-line trading dates.
+    py_raw_bar = _import_attr("czsc.py.objects", "RawBar")
+    py_freq = _import_attr("czsc.py.objects", "Freq")
+    py_czsc = _import_attr("czsc.py.analyze", "CZSC")
+    if py_raw_bar is not None and py_freq is not None and py_czsc is not None:
+        return py_raw_bar, py_freq, py_czsc
+
+    # czsc 0.10.x exports these symbols from the package root / core module,
+    # while older releases exposed RawBar from czsc.objects.
     raw_bar_candidates = (
         getattr(czsc, "RawBar", None),
         _import_attr("czsc.core", "RawBar"),
@@ -365,27 +377,93 @@ def _map_strokes(analyzer: object) -> List[Stroke]:
         start_price = _to_float(_safe_get(fx_a, "fx", "low", "high", default=0.0))
         end_price = _to_float(_safe_get(fx_b, "fx", "high", "low", default=0.0))
         direction = _normalize_direction(_safe_get(bi, "direction", default=""))
+        start_fractal_id = _fractal_id(start_ts, start_type)
+        meta = {
+            "high": _to_float(_safe_get(bi, "high", default=max(start_price, end_price))),
+            "low": _to_float(_safe_get(bi, "low", default=min(start_price, end_price))),
+            "raw_direction": _enum_name(_safe_get(bi, "direction", default="")),
+        }
+
+        if items:
+            previous = items[-1]
+            if _stroke_endpoint_mismatch(previous=previous, start_timestamp=start_ts, start_price=start_price):
+                meta["continuity_adjusted"] = True
+                meta["continuity_reference_stroke_id"] = previous.id
+                meta["original_start_timestamp"] = start_ts
+                meta["original_start_price"] = start_price
+                meta["original_start_fractal_id"] = start_fractal_id
+                start_ts = previous.end_timestamp or start_ts
+                start_price = previous.end_price
+                start_fractal_id = previous.end_fractal_id or start_fractal_id
 
         items.append(
             Stroke(
                 id=_stroke_id(start_timestamp=start_ts, end_timestamp=end_ts),
                 direction=direction,
-                start_fractal_id=_fractal_id(start_ts, start_type),
+                start_fractal_id=start_fractal_id,
                 end_fractal_id=_fractal_id(end_ts, end_type),
                 start_timestamp=start_ts,
                 end_timestamp=end_ts,
                 start_price=start_price,
                 end_price=end_price,
                 confirmed=True,
-                meta={
-                    "high": _to_float(_safe_get(bi, "high", default=max(start_price, end_price))),
-                    "low": _to_float(_safe_get(bi, "low", default=min(start_price, end_price))),
-                    "raw_direction": _enum_name(_safe_get(bi, "direction", default="")),
-                },
+                meta=meta,
             )
         )
 
     return items
+
+
+def _map_pending_stroke(analyzer: object, strokes: Sequence[Stroke]) -> Stroke | None:
+    ubi = getattr(analyzer, "ubi", None)
+    if not ubi:
+        return None
+
+    start_fx = _safe_get(ubi, "fx_a")
+    direction = _normalize_direction(_safe_get(ubi, "direction", default=""))
+    if start_fx is None or direction not in {"up", "down"}:
+        return None
+
+    start_ts = _to_timestamp(start_fx)
+    start_type = _normalize_fractal_type(_safe_get(start_fx, "mark", default=""))
+    start_price = _to_float(_safe_get(start_fx, "fx", "low", "high", default=_safe_get(ubi, "low", "high", default=0.0)))
+    start_fractal_id = _fractal_id(start_ts, start_type)
+    end_bar = _safe_get(ubi, "high_bar" if direction == "up" else "low_bar")
+    end_ts = _to_timestamp(end_bar)
+    if not end_ts:
+        return None
+    end_price = _to_float(
+        _safe_get(
+            ubi,
+            "high" if direction == "up" else "low",
+            default=_safe_get(end_bar, "high" if direction == "up" else "low", default=0.0),
+        )
+    )
+
+    if strokes:
+        previous = strokes[-1]
+        start_ts = previous.end_timestamp or start_ts
+        start_price = previous.end_price
+        start_fractal_id = previous.end_fractal_id or start_fractal_id
+        if previous.end_timestamp == end_ts and abs(previous.end_price - end_price) < 1e-9:
+            return None
+
+    return Stroke(
+        id=f"stroke_pending_{start_ts}_{end_ts}",
+        direction=direction,
+        start_fractal_id=start_fractal_id,
+        end_fractal_id=f"fractal_pending_{end_ts}_{direction}",
+        start_timestamp=start_ts,
+        end_timestamp=end_ts,
+        start_price=start_price,
+        end_price=end_price,
+        confirmed=False,
+        meta={
+            "pending": True,
+            "source": "czsc_ubi",
+            "raw_direction": _enum_name(_safe_get(ubi, "direction", default="")),
+        },
+    )
 
 
 def _map_segments(strokes: Sequence[Stroke]) -> List[Segment]:
@@ -653,10 +731,20 @@ def _stroke_id(start_timestamp: str, end_timestamp: str) -> str:
     return f"stroke_{start_timestamp}_{end_timestamp}"
 
 
+def _stroke_endpoint_mismatch(previous: Stroke, start_timestamp: str, start_price: float) -> bool:
+    timestamp_matches = previous.end_timestamp == start_timestamp if (previous.end_timestamp or start_timestamp) else True
+    price_matches = abs(previous.end_price - start_price) < 1e-9
+    return not (timestamp_matches and price_matches)
+
+
 def _safe_get(obj: object, *names: str, default: Any = None) -> Any:
     for name in names:
         if obj is None:
             return default
+        if isinstance(obj, Mapping) and name in obj:
+            value = obj[name]
+            if value is not None:
+                return value
         if hasattr(obj, name):
             value = getattr(obj, name)
             if value is not None:

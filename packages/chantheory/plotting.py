@@ -78,6 +78,28 @@ def build_plot_primitives(result: AnalysisResult) -> List[PlotPrimitive]:
             )
         )
 
+    pending_stroke = result.meta.get("pending_stroke")
+    if pending_stroke:
+        primitives.append(
+            PlotPrimitive(
+                id=f"primitive_{pending_stroke.id}",
+                type="line",
+                layer="strokes",
+                x1=pending_stroke.start_timestamp,
+                y1=pending_stroke.start_price,
+                x2=pending_stroke.end_timestamp,
+                y2=pending_stroke.end_price,
+                style="dashed",
+                color="#2563EB" if pending_stroke.direction == "up" else "#F97316",
+                meta={
+                    "reference_type": "stroke",
+                    "reference_id": pending_stroke.id,
+                    "confirmed": False,
+                    "pending": True,
+                },
+            )
+        )
+
     for segment in result.segments:
         primitives.append(
             PlotPrimitive(

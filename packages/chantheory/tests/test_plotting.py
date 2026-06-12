@@ -104,7 +104,21 @@ class PlottingTests(unittest.TestCase):
                     meta={"signal_scope": "structure_candidate_only"},
                 )
             ],
-            meta={"bar_count": 50},
+            meta={
+                "bar_count": 50,
+                "pending_stroke": Stroke(
+                    id="stroke_pending_1",
+                    direction="up",
+                    start_fractal_id="fractal_2",
+                    end_fractal_id="fractal_pending",
+                    start_timestamp="2025-01-03",
+                    end_timestamp="2025-01-08",
+                    start_price=10.9,
+                    end_price=11.5,
+                    confirmed=False,
+                    meta={"pending": True},
+                ),
+            },
         )
 
         primitives = build_plot_primitives(result)
@@ -120,10 +134,14 @@ class PlottingTests(unittest.TestCase):
         self.assertEqual(candidate.meta["signal_scope"], "structure_candidate_only")
         bottom_fractal = next(item for item in primitives if item.id == "primitive_fractal_1")
         top_fractal = next(item for item in primitives if item.id == "primitive_fractal_2")
+        pending_stroke = next(item for item in primitives if item.id == "primitive_stroke_pending_1")
         self.assertEqual(bottom_fractal.text, "B")
         self.assertEqual(bottom_fractal.meta["textposition"], "bottom center")
         self.assertEqual(top_fractal.text, "T")
         self.assertEqual(top_fractal.meta["textposition"], "top center")
+        self.assertEqual(pending_stroke.style, "dashed")
+        self.assertFalse(pending_stroke.meta["confirmed"])
+        self.assertTrue(pending_stroke.meta["pending"])
 
 
 if __name__ == "__main__":

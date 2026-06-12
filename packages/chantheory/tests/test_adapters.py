@@ -10,6 +10,8 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "packages"))
 
 from chantheory.adapters import (
+    _map_pending_stroke,
+    _map_strokes,
     _normalize_direction,
     _normalize_fractal_type,
     _to_timestamp,
@@ -62,6 +64,35 @@ class AdapterTests(unittest.TestCase):
         self.assertIs(actual_raw_bar, RawBar)
         self.assertIs(actual_freq, Freq)
         self.assertIs(actual_czsc, CZSC)
+
+    def test_load_czsc_prefers_pure_python_exports(self):
+        top_raw_bar = object()
+        top_freq = object()
+        top_czsc = object()
+        py_raw_bar = object()
+        py_freq = object()
+        py_czsc = object()
+        czsc_module = SimpleNamespace(RawBar=top_raw_bar, Freq=top_freq, CZSC=top_czsc)
+        py_objects_module = SimpleNamespace(RawBar=py_raw_bar, Freq=py_freq)
+        py_analyze_module = SimpleNamespace(CZSC=py_czsc)
+
+        def fake_import(name):
+            if name == "numpy.typing":
+                return object()
+            if name == "czsc":
+                return czsc_module
+            if name == "czsc.py.objects":
+                return py_objects_module
+            if name == "czsc.py.analyze":
+                return py_analyze_module
+            raise ImportError(name)
+
+        with patch("chantheory.adapters.import_module", side_effect=fake_import):
+            actual_raw_bar, actual_freq, actual_czsc = load_czsc()
+
+        self.assertIs(actual_raw_bar, py_raw_bar)
+        self.assertIs(actual_freq, py_freq)
+        self.assertIs(actual_czsc, py_czsc)
 
     def test_engine_failure_returns_frozen_schema(self):
         rows = [
@@ -141,6 +172,43 @@ class AdapterTests(unittest.TestCase):
         self.assertTrue(any(item.warning_code == "INSUFFICIENT_BARS" for item in result.warnings))
         self.assertTrue(any(item.warning_code == "UNSTABLE_TAIL_STROKE" for item in result.warnings))
         self.assertTrue(result.summary)
+
+    def test_map_strokes_repairs_adjacent_endpoint_gap(self):
+        fx1 = SimpleNamespace(dt="2025-01-02", mark="D", fx=9.7)
+        fx2 = SimpleNamespace(dt="2025-01-03", mark="G", fx=10.9)
+        fx2_gap = SimpleNamespace(dt="2025-01-04", mark="G", fx=10.7)
+        fx3 = SimpleNamespace(dt="2025-01-06", mark="D", fx=10.0)
+        bi1 = SimpleNamespace(fx_a=fx1, fx_b=fx2, direction="Up", high=10.9, low=9.7)
+        bi2 = SimpleNamespace(fx_a=fx2_gap, fx_b=fx3, direction="Down", high=10.7, low=10.0)
+        analyzer = SimpleNamespace(finished_bis=[bi1, bi2])
+
+        strokes = _map_strokes(analyzer)
+
+        self.assertEqual(len(strokes), 2)
+        self.assertEqual(strokes[1].start_timestamp, strokes[0].end_timestamp)
+        self.assertEqual(strokes[1].start_price, strokes[0].end_price)
+        self.assertEqual(strokes[1].start_fractal_id, strokes[0].end_fractal_id)
+        self.assertTrue(strokes[1].meta["continuity_adjusted"])
+        self.assertEqual(strokes[1].meta["original_start_timestamp"], "2025-01-04")
+        self.assertEqual(strokes[1].meta["original_start_price"], 10.7)
+
+    def test_map_pending_stroke_builds_unconfirmed_tail_from_ubi(self):
+        fx1 = SimpleNamespace(dt="2025-01-02", mark="D", fx=9.7)
+        fx2 = SimpleNamespace(dt="2025-01-03", mark="G", fx=10.9)
+        bi1 = SimpleNamespace(fx_a=fx1, fx_b=fx2, direction="Up", high=10.9, low=9.7)
+        strokes = _map_strokes(SimpleNamespace(finished_bis=[bi1]))
+        high_bar = SimpleNamespace(dt="2025-01-07", high=11.2)
+        ubi = {"fx_a": fx2, "direction": "Up", "high": 11.2, "high_bar": high_bar}
+
+        pending = _map_pending_stroke(SimpleNamespace(ubi=ubi), strokes)
+
+        self.assertIsNotNone(pending)
+        self.assertFalse(pending.confirmed)
+        self.assertEqual(pending.start_timestamp, strokes[-1].end_timestamp)
+        self.assertEqual(pending.start_price, strokes[-1].end_price)
+        self.assertEqual(pending.end_timestamp, "2025-01-07")
+        self.assertEqual(pending.end_price, 11.2)
+        self.assertTrue(pending.meta["pending"])
 
     def test_candidate_points_are_structure_only(self):
         rows = [
