@@ -420,7 +420,10 @@ def _map_pending_stroke(analyzer: object, strokes: Sequence[Stroke]) -> Stroke |
         return None
 
     start_fx = _safe_get(ubi, "fx_a")
-    direction = _normalize_direction(_safe_get(ubi, "direction", default=""))
+    raw_direction = _normalize_direction(_safe_get(ubi, "direction", default=""))
+    direction = raw_direction
+    if strokes:
+        direction = _opposite_direction(strokes[-1].direction)
     if start_fx is None or direction not in {"up", "down"}:
         return None
 
@@ -445,7 +448,12 @@ def _map_pending_stroke(analyzer: object, strokes: Sequence[Stroke]) -> Stroke |
         start_ts = previous.end_timestamp or start_ts
         start_price = previous.end_price
         start_fractal_id = previous.end_fractal_id or start_fractal_id
+        if end_ts <= start_ts:
+            return None
         if previous.end_timestamp == end_ts and abs(previous.end_price - end_price) < 1e-9:
+            return None
+        actual_direction = _direction_from_prices(start_price, end_price)
+        if actual_direction != direction:
             return None
 
     return Stroke(
@@ -461,6 +469,7 @@ def _map_pending_stroke(analyzer: object, strokes: Sequence[Stroke]) -> Stroke |
         meta={
             "pending": True,
             "source": "czsc_ubi",
+            "mapped_direction": direction,
             "raw_direction": _enum_name(_safe_get(ubi, "direction", default="")),
         },
     )
@@ -893,6 +902,14 @@ def _to_timestamp(value: Any) -> str:
 
 def _direction_from_prices(start_price: float, end_price: float) -> str:
     return "up" if end_price >= start_price else "down"
+
+
+def _opposite_direction(direction: str) -> str:
+    if direction == "up":
+        return "down"
+    if direction == "down":
+        return "up"
+    return ""
 
 
 def _timestamps_overlap(start_a: str, end_a: str, start_b: str, end_b: str) -> bool:

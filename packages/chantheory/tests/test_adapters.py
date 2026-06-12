@@ -218,9 +218,9 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(strokes[1].meta["original_start_price"], 10.7)
 
     def test_map_pending_stroke_builds_unconfirmed_tail_from_ubi(self):
-        fx1 = SimpleNamespace(dt="2025-01-02", mark="D", fx=9.7)
-        fx2 = SimpleNamespace(dt="2025-01-03", mark="G", fx=10.9)
-        bi1 = SimpleNamespace(fx_a=fx1, fx_b=fx2, direction="Up", high=10.9, low=9.7)
+        fx1 = SimpleNamespace(dt="2025-01-02", mark="G", fx=10.9)
+        fx2 = SimpleNamespace(dt="2025-01-03", mark="D", fx=9.7)
+        bi1 = SimpleNamespace(fx_a=fx1, fx_b=fx2, direction="Down", high=10.9, low=9.7)
         strokes = _map_strokes(SimpleNamespace(finished_bis=[bi1]))
         high_bar = SimpleNamespace(dt="2025-01-07", high=11.2)
         ubi = {"fx_a": fx2, "direction": "Up", "high": 11.2, "high_bar": high_bar}
@@ -234,6 +234,41 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(pending.end_timestamp, "2025-01-07")
         self.assertEqual(pending.end_price, 11.2)
         self.assertTrue(pending.meta["pending"])
+
+    def test_map_pending_stroke_alternates_after_previous_stroke(self):
+        strokes = [
+            _stroke("1", "down", "2026-06-11 13:30:00", 11.30, "2026-06-12 09:30:00", 10.88),
+        ]
+        fx = SimpleNamespace(dt="2026-06-12 09:30:00", mark="D", fx=10.88)
+        high_bar = SimpleNamespace(dt="2026-06-12 14:30:00", high=11.24)
+        low_bar = SimpleNamespace(dt="2026-06-11 15:00:00", low=11.31)
+        ubi = {
+            "fx_a": fx,
+            "direction": "Down",
+            "high": 11.24,
+            "low": 11.31,
+            "high_bar": high_bar,
+            "low_bar": low_bar,
+        }
+
+        pending = _map_pending_stroke(SimpleNamespace(ubi=ubi), strokes)
+
+        self.assertIsNotNone(pending)
+        self.assertEqual(pending.direction, "up")
+        self.assertEqual(pending.start_timestamp, "2026-06-12 09:30:00")
+        self.assertEqual(pending.end_timestamp, "2026-06-12 14:30:00")
+        self.assertEqual(pending.end_price, 11.24)
+        self.assertEqual(pending.meta["raw_direction"], "Down")
+
+    def test_map_pending_stroke_drops_non_forward_tail(self):
+        strokes = [
+            _stroke("1", "down", "2026-06-11 13:30:00", 11.30, "2026-06-12 09:30:00", 10.88),
+        ]
+        fx = SimpleNamespace(dt="2026-06-12 09:30:00", mark="D", fx=10.88)
+        high_bar = SimpleNamespace(dt="2026-06-11 15:00:00", high=11.31)
+        ubi = {"fx_a": fx, "direction": "Up", "high": 11.31, "high_bar": high_bar}
+
+        self.assertIsNone(_map_pending_stroke(SimpleNamespace(ubi=ubi), strokes))
 
     def test_map_segments_requires_initial_three_stroke_overlap(self):
         strokes = [
