@@ -28,6 +28,7 @@ DEFAULT_START = DEFAULT_END - timedelta(days=240)
 SUPPORTED_LANGUAGES = {"zh": "中文", "en": "English"}
 TIMEFRAME_OPTIONS = ("1m", "5m", "30m", "60m", "day")
 DEFAULT_TIMEFRAME = "day"
+MINUTE_TIMEFRAMES = {"1m", "5m", "30m", "60m"}
 LAYER_KEYS = ("fractals", "strokes", "segments", "pivot_zones", "divergences", "alerts")
 X_WINDOW_STEPS = (20, 30, 45, 60, 90, 120, 180, 240, 360, 720)
 DEFAULT_X_WINDOW = 90
@@ -579,6 +580,7 @@ def _build_figure(
     x_values = [item["date"] for item in ordered_rows]
     visible_rows = ordered_rows[-x_window:] if x_window else ordered_rows
     visible_x_values = [item["date"] for item in visible_rows]
+    use_continuous_bar_axis = _is_minute_timeframe(timeframe)
     figure = go.Figure()
     figure.add_trace(
         go.Candlestick(
@@ -671,12 +673,56 @@ def _build_figure(
         rangebreaks = _build_daily_rangebreaks(x_values)
         if rangebreaks:
             figure.update_xaxes(rangebreaks=rangebreaks)
+    elif use_continuous_bar_axis:
+        tick_values, tick_text = _build_intraday_date_ticks(x_values)
+        figure.update_xaxes(
+            type="category",
+            categoryorder="array",
+            categoryarray=x_values,
+            tickmode="array",
+            tickvals=tick_values,
+            ticktext=tick_text,
+        )
     if visible_x_values:
-        figure.update_xaxes(range=[visible_x_values[0], visible_x_values[-1]])
+        figure.update_xaxes(range=_build_x_axis_range(x_values, visible_x_values, use_continuous_bar_axis))
     y_range = _build_y_axis_range(visible_rows, y_zoom)
     if y_range:
         figure.update_yaxes(range=y_range)
     return figure
+
+
+def _is_minute_timeframe(timeframe: str) -> bool:
+    return timeframe in MINUTE_TIMEFRAMES
+
+
+def _build_x_axis_range(x_values: List[object], visible_x_values: List[object], use_continuous_bar_axis: bool) -> List[object]:
+    if not visible_x_values:
+        return []
+    if not use_continuous_bar_axis:
+        return [visible_x_values[0], visible_x_values[-1]]
+
+    index_by_value = {value: index for index, value in enumerate(x_values)}
+    start_index = index_by_value.get(visible_x_values[0], 0)
+    end_index = index_by_value.get(visible_x_values[-1], max(len(x_values) - 1, 0))
+    return [max(start_index - 0.5, -0.5), end_index + 0.5]
+
+
+def _build_intraday_date_ticks(x_values: List[object]) -> tuple[List[object], List[str]]:
+    if not x_values:
+        return [], []
+
+    tick_values: List[object] = []
+    tick_text: List[str] = []
+    previous_day = ""
+    for value in x_values:
+        text = str(value)
+        day = text[:10]
+        if day != previous_day:
+            tick_values.append(value)
+            tick_text.append(day)
+            previous_day = day
+
+    return tick_values, tick_text
 
 
 def _render_chart_zoom_controls(row_count: int, language: str) -> tuple[int, float]:
