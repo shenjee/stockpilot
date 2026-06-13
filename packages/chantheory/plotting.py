@@ -101,6 +101,7 @@ def build_plot_primitives(result: AnalysisResult) -> List[PlotPrimitive]:
         )
 
     for segment in result.segments:
+        is_growing = segment.meta.get("status") == "growing"
         primitives.append(
             PlotPrimitive(
                 id=f"primitive_{segment.id}",
@@ -110,8 +111,8 @@ def build_plot_primitives(result: AnalysisResult) -> List[PlotPrimitive]:
                 y1=segment.start_price,
                 x2=segment.end_timestamp,
                 y2=segment.end_price,
-                style="solid",
-                color="rgba(124, 58, 237, 0.25)" if segment.direction == "up" else "rgba(147, 51, 234, 0.5)",
+                style="dashed" if is_growing else "solid",
+                color="rgba(124, 58, 237, 0.25)" if segment.direction == "up" else "rgba(147, 51, 234, 0.25)",
                 meta={
                     "reference_type": "segment",
                     "reference_id": segment.id,
