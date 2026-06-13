@@ -63,12 +63,16 @@ TEXT = {
         "no_data_selected": "所选参数未返回 K 线数据。",
         "no_data_market": "代码 `{symbol}` 在市场 `{market}` 下未返回 K 线数据。可尝试：{suggestions}。",
         "kline_overlay": "K 线叠加图",
+        "tab_structure": "结构",
+        "tab_summary": "摘要",
+        "tab_warnings": "告警",
+        "tab_debug": "调试",
+        "no_alerts": "没有结构提示。",
         "summary_header": "摘要",
         "alerts_header": "结构提示",
         "warnings_header": "告警",
         "no_warnings": "没有告警。",
-        "diagnostics_header": "诊断信息",
-        "structure_counts_header": "结构统计",
+        "diagnostics_header": "结构诊断",
         "raw_json_header": "原始 JSON",
         "layer_fractals": "显示分型",
         "layer_strokes": "显示笔",
@@ -84,7 +88,6 @@ TEXT = {
         "count_segments": "线段",
         "count_pivot_zones": "中枢",
         "count_divergences": "背驰",
-        "count_plot_primitives": "绘图原语",
         "x_axis_label": "时间轴",
         "y_axis_label": "价格轴",
         "zoom_in_label": "+",
@@ -114,12 +117,16 @@ TEXT = {
         "no_data_selected": "No K-line data returned for the selected input.",
         "no_data_market": "No K-line data returned for `{symbol}` on market `{market}`. Try: {suggestions}.",
         "kline_overlay": "K-Line Overlay",
+        "tab_structure": "Structure",
+        "tab_summary": "Summary",
+        "tab_warnings": "Warnings",
+        "tab_debug": "Debug",
+        "no_alerts": "No structure alerts.",
         "summary_header": "Summary",
         "alerts_header": "Structure Alerts",
         "warnings_header": "Warnings",
         "no_warnings": "No warnings.",
-        "diagnostics_header": "Diagnostics",
-        "structure_counts_header": "Structure Counts",
+        "diagnostics_header": "Structure Diagnostics",
         "raw_json_header": "Raw JSON",
         "layer_fractals": "Show Fractals",
         "layer_strokes": "Show Strokes",
@@ -135,7 +142,6 @@ TEXT = {
         "count_segments": "segments",
         "count_pivot_zones": "pivot_zones",
         "count_divergences": "divergences",
-        "count_plot_primitives": "plot_primitives",
         "x_axis_label": "Time Axis",
         "y_axis_label": "Price Axis",
         "zoom_in_label": "+",
@@ -391,10 +397,7 @@ def main() -> None:
             key="language",
         )
 
-    chart_col, side_col = st.columns([3, 2])
-    with chart_col:
-        st.subheader(_t(language, "kline_overlay"))
-        timeframe = st.session_state.chan_selected_timeframe
+    timeframe = st.session_state.chan_selected_timeframe
 
     analysis_inputs = {
         "symbol": symbol.strip(),
@@ -467,109 +470,110 @@ def main() -> None:
         st.info(_t(language, "choose_inputs"))
         return
 
-    with chart_col:
-        chart_rows = _ordered_rows(rows)
-        figure = _build_figure(
-            rows=chart_rows,
-            result_payload=result.to_dict(),
-            visibility=visibility,
+    chart_rows = _ordered_rows(rows)
+    figure = _build_figure(
+        rows=chart_rows,
+        result_payload=result.to_dict(),
+        visibility=visibility,
+        timeframe=timeframe,
+        language=language,
+        x_window=min(DEFAULT_X_WINDOW, max(len(chart_rows), 1)),
+        y_zoom=1.0,
+    )
+
+    row_count = len(chart_rows)
+    x_steps = [
+        n
+        for n in [30, 60, 90, 120, 240, 360, 480, row_count]
+        if n <= row_count
+    ]
+    if row_count not in x_steps:
+        x_steps.append(row_count)
+    
+    payload = {
+        "figure": json.loads(figure.to_json()),
+        "rows": chart_rows,
+        "chartKey": _build_chart_key(
+            symbol=symbol.strip(),
+            market=market,
             timeframe=timeframe,
-            language=language,
-            x_window=min(DEFAULT_X_WINDOW, max(len(chart_rows), 1)),
-            y_zoom=1.0,
-        )
+            start_date=start_date,
+            end_date=end_date,
+            rows=chart_rows,
+        ),
+        "timeframes": [
+            {"value": tf, "label": _format_timeframe(tf, language)}
+            for tf in TIMEFRAME_OPTIONS
+        ],
+        "activeTimeframe": timeframe,
+        "useContinuousBarAxis": _is_minute_timeframe(timeframe),
+        "xWindowSteps": x_steps,
+        "defaultXWindow": min(DEFAULT_X_WINDOW, max(row_count, 1)),
+        "defaultYZoom": 1.0,
+        "yZoomStep": Y_ZOOM_STEP,
+        "minYZoom": MIN_Y_ZOOM,
+        "maxYZoom": MAX_Y_ZOOM,
+        "text": {
+            "xAxisLabel": _t(language, "x_axis_label"),
+            "yAxisLabel": _t(language, "y_axis_label"),
+            "zoomIn": _t(language, "zoom_in_label"),
+            "zoomOut": _t(language, "zoom_out_label"),
+            "xWindowCaption": _frontend_template(language, "x_window_caption"),
+            "yZoomCaption": _frontend_template(language, "y_zoom_caption"),
+            "pan": _t(language, "pan_label"),
+            "reset": _t(language, "reset_label"),
+            "fullscreen": _t(language, "fullscreen_label"),
+        },
+    }
 
-        row_count = len(chart_rows)
-        x_steps = [
-            n
-            for n in [30, 60, 90, 120, 240, 360, 480, row_count]
-            if n <= row_count
-        ]
-        if row_count not in x_steps:
-            x_steps.append(row_count)
-        
-        payload = {
-            "figure": json.loads(figure.to_json()),
-            "rows": chart_rows,
-            "chartKey": _build_chart_key(
-                symbol=symbol.strip(),
-                market=market,
-                timeframe=timeframe,
-                start_date=start_date,
-                end_date=end_date,
-                rows=chart_rows,
-            ),
-            "timeframes": [
-                {"value": tf, "label": _format_timeframe(tf, language)}
-                for tf in TIMEFRAME_OPTIONS
-            ],
-            "activeTimeframe": timeframe,
-            "useContinuousBarAxis": _is_minute_timeframe(timeframe),
-            "xWindowSteps": x_steps,
-            "defaultXWindow": min(DEFAULT_X_WINDOW, max(row_count, 1)),
-            "defaultYZoom": 1.0,
-            "yZoomStep": Y_ZOOM_STEP,
-            "minYZoom": MIN_Y_ZOOM,
-            "maxYZoom": MAX_Y_ZOOM,
-            "text": {
-                "xAxisLabel": _t(language, "x_axis_label"),
-                "yAxisLabel": _t(language, "y_axis_label"),
-                "zoomIn": _t(language, "zoom_in_label"),
-                "zoomOut": _t(language, "zoom_out_label"),
-                "xWindowCaption": _frontend_template(language, "x_window_caption"),
-                "yZoomCaption": _frontend_template(language, "y_zoom_caption"),
-                "pan": _t(language, "pan_label"),
-                "reset": _t(language, "reset_label"),
-                "fullscreen": _t(language, "fullscreen_label"),
-            },
-        }
+    returned_timeframe = chan_chart_widget(payload=payload, key="chan_chart_widget_inst")
 
-        returned_timeframe = chan_chart_widget(payload=payload, key="chan_chart_widget_inst")
+    if returned_timeframe and returned_timeframe != st.session_state.chan_selected_timeframe:
+        st.session_state.chan_selected_timeframe = returned_timeframe
+        st.rerun()
 
-        if returned_timeframe and returned_timeframe != st.session_state.chan_selected_timeframe:
-            st.session_state.chan_selected_timeframe = returned_timeframe
-            st.rerun()
+    st.markdown("---")
 
-    with side_col:
-        st.subheader(_t(language, "summary_header"))
+    tab_struct, tab_summary, tab_warn, tab_debug = st.tabs([
+        _t(language, "tab_structure"),
+        _t(language, "tab_summary"),
+        _t(language, "tab_warnings"),
+        _t(language, "tab_debug"),
+    ])
+
+    with tab_struct:
+        if result.structure_alerts:
+            for alert in result.structure_alerts:
+                st.write(f"- {_format_alert_message(alert.__dict__, language)}")
+        else:
+            st.write(_t(language, "no_alerts"))
+
+    with tab_summary:
         for line in _build_display_summary(result, language):
             st.write(f"- {line}")
 
-        if result.structure_alerts:
-            st.subheader(_t(language, "alerts_header"))
-            for alert in result.structure_alerts:
-                st.write(f"- {_format_alert_message(alert.__dict__, language)}")
-
-        st.subheader(_t(language, "warnings_header"))
+    with tab_warn:
         if result.warnings:
             for item in result.warnings:
                 st.write(f"- [{_format_severity(item.severity, language)}] {item.warning_code}: {_format_warning_message(item, language)}")
         else:
             st.write(_t(language, "no_warnings"))
 
+    with tab_debug:
         with st.expander(_t(language, "diagnostics_header"), expanded=False):
             st.json(
                 {
                     "engine_probe": result.meta.get("engine_probe", {}),
                     "mapping": result.meta.get("mapping", {}),
+                    "rendering": {
+                        "count_plot_primitives": len(result.plot_primitives)
+                    },
                     "engine_assumptions": result.meta.get("engine_assumptions", {}),
                 }
             )
 
-    with st.expander(_t(language, "structure_counts_header"), expanded=False):
-        st.json(
-            {
-                _t(language, "count_fractals"): len(result.fractals),
-                _t(language, "count_strokes"): len(result.strokes),
-                _t(language, "count_segments"): len(result.segments),
-                _t(language, "count_pivot_zones"): len(result.pivot_zones),
-                _t(language, "count_divergences"): len(result.divergences),
-                _t(language, "count_plot_primitives"): len(result.plot_primitives),
-            }
-        )
-
-    with st.expander(_t(language, "raw_json_header"), expanded=False):
-        st.json(result.to_dict())
+        with st.expander(_t(language, "raw_json_header"), expanded=False):
+            st.json(result.to_dict())
 
 
 def _fetch_rows(
