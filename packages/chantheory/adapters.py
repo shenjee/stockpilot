@@ -9,6 +9,7 @@ from .config import ENGINE_NAME, PINNED_ENGINE_VERSION, get_default_parameters
 from .describe import build_summary
 from .normalize import NormalizationError, normalize_ohlcv_rows, normalize_tracker_klines
 from .plotting import build_plot_primitives
+from .segments import SEGMENT_MAPPING_STRATEGY, derive_segments
 from .schema import (
     AnalysisResult,
     AnalysisWarning,
@@ -108,7 +109,7 @@ def analyze_normalized(
             "engine_probe": {},
             "engine_assumptions": {
                 "engine_version": PINNED_ENGINE_VERSION,
-                "segment_strategy": "chan_odd_stroke_overlap_confirmation",
+                "segment_strategy": SEGMENT_MAPPING_STRATEGY,
                 "pivot_zone_strategy": "czsc.utils.sig.get_zs_seq on finished strokes",
                 "divergence_strategy": "conservative_empty_until project-level rule is finalized",
             },
@@ -132,7 +133,7 @@ def analyze_normalized(
         fractals = _map_fractals(analyzer=analyzer, normalized=normalized)
         strokes = _map_strokes(analyzer=analyzer)
         pending_stroke = _map_pending_stroke(analyzer=analyzer, strokes=strokes)
-        segments = _map_segments(strokes=strokes)
+        segments = derive_segments(strokes=strokes)
         pivot_zones = _map_pivot_zones(analyzer=analyzer, segments=segments)
         divergences = _map_divergences()
         structure_alerts = _build_structure_alerts(
@@ -218,7 +219,7 @@ def _frozen_result_after_normalization_failure(
             "engine_probe": {"status": "skipped", "reason": "normalization_failed"},
             "engine_assumptions": {
                 "engine_version": PINNED_ENGINE_VERSION,
-                "segment_strategy": "chan_odd_stroke_overlap_confirmation",
+                "segment_strategy": SEGMENT_MAPPING_STRATEGY,
                 "pivot_zone_strategy": "czsc.utils.sig.get_zs_seq on finished strokes",
                 "divergence_strategy": "conservative_empty_until project-level rule is finalized",
             },
@@ -473,109 +474,6 @@ def _map_pending_stroke(analyzer: object, strokes: Sequence[Stroke]) -> Stroke |
             "raw_direction": _enum_name(_safe_get(ubi, "direction", default="")),
         },
     )
-
-
-def _map_segments(strokes: Sequence[Stroke]) -> List[Segment]:
-    items: List[Segment] = []
-    if len(strokes) < 3:
-        return items
-
-    start_index = 0
-    while start_index + 2 < len(strokes):
-        first_three = list(strokes[start_index : start_index + 3])
-        direction = first_three[0].direction
-        if not _is_valid_segment_seed(first_three):
-            start_index += 1
-            continue
-
-        end_index = start_index + 2
-        while end_index + 2 < len(strokes):
-            next_start = end_index + 1
-            if _can_start_opposite_segment(strokes=strokes, start_index=next_start, direction=direction):
-                break
-
-            extend_index = end_index + 2
-            if extend_index >= len(strokes):
-                break
-            if strokes[extend_index].direction != direction:
-                break
-            end_index = extend_index
-
-        window = list(strokes[start_index : end_index + 1])
-        first = window[0]
-        last = window[-1]
-        if not first.start_timestamp or not last.end_timestamp:
-            start_index += 1
-            continue
-        direction = first.direction if first.direction == last.direction else direction
-        items.append(
-            Segment(
-                id=f"segment_{len(items) + 1:03d}_{first.start_timestamp}_{last.end_timestamp}",
-                direction=direction,
-                stroke_ids=[stroke.id for stroke in window],
-                start_timestamp=first.start_timestamp,
-                end_timestamp=last.end_timestamp,
-                start_price=first.start_price,
-                end_price=last.end_price,
-                confirmed=False,
-                meta={
-                    "mapping_strategy": "chan_odd_stroke_overlap_confirmation",
-                    "status": "pending",
-                    "stroke_count": len(window),
-                    "start_stroke_index": start_index,
-                    "end_stroke_index": end_index,
-                    "initial_three_overlap": True,
-                    "confirmed_by_segment_id": None,
-                },
-            )
-        )
-        start_index = end_index + 1
-
-    _apply_segment_confirmation(items)
-
-    return items
-
-
-def _strokes_have_overlap(strokes: Sequence[Stroke]) -> bool:
-    if len(strokes) < 3:
-        return False
-
-    lows = [min(stroke.start_price, stroke.end_price) for stroke in strokes[:3]]
-    highs = [max(stroke.start_price, stroke.end_price) for stroke in strokes[:3]]
-    return max(lows) <= min(highs)
-
-
-def _is_valid_segment_seed(strokes: Sequence[Stroke]) -> bool:
-    if len(strokes) < 3:
-        return False
-    direction = strokes[0].direction
-    if direction not in {"up", "down"}:
-        return False
-    return strokes[1].direction != direction and strokes[2].direction == direction and _strokes_have_overlap(strokes)
-
-
-def _can_start_opposite_segment(strokes: Sequence[Stroke], start_index: int, direction: str) -> bool:
-    if start_index + 2 >= len(strokes):
-        return False
-    first_three = list(strokes[start_index : start_index + 3])
-    opposite = "down" if direction == "up" else "up"
-    return first_three[0].direction == opposite and _is_valid_segment_seed(first_three)
-
-
-def _apply_segment_confirmation(segments: Sequence[Segment]) -> None:
-    for index, segment in enumerate(segments):
-        segment.confirmed = False
-        segment.meta["status"] = "pending"
-        segment.meta["confirmed_by_segment_id"] = None
-
-        if index + 1 >= len(segments):
-            continue
-
-        next_segment = segments[index + 1]
-        if next_segment.direction != segment.direction:
-            segment.confirmed = True
-            segment.meta["status"] = "confirmed"
-            segment.meta["confirmed_by_segment_id"] = next_segment.id
 
 
 def _map_pivot_zones(analyzer: object, segments: Sequence[Segment]) -> List[PivotZone]:

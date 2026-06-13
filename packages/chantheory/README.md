@@ -148,7 +148,7 @@ Current P2 mapping notes:
 
 - `fractals`: mapped from `CZSC.fx_list`
 - `strokes`: mapped from `CZSC.finished_bis`
-- `segments`: derived from same-timeframe finished strokes with a project-side rule requiring odd stroke counts, initial three-stroke overlap, connected endpoints, and next opposite segment confirmation
+- `segments`: derived from same-timeframe finished strokes with a project-side rule requiring odd stroke counts, initial three-stroke overlap, opposite endpoint progression, connected endpoints, and next opposite segment confirmation
 - `pivot_zones`: derived from `czsc.utils.sig.get_zs_seq` on finished strokes
 - `divergences`: conservatively empty until a project-stable rule is finalized
 - `candidate_buy_points` / `candidate_sell_points`: structure-only candidates with `meta.signal_scope = "structure_candidate_only"`; they are not trading instructions

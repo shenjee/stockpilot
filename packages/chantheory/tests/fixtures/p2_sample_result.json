@@ -125,7 +125,7 @@
       "end_price": 11.3,
       "confirmed": true,
       "meta": {
-        "mapping_strategy": "conservative_three_stroke_window",
+        "mapping_strategy": "chan_extreme_endpoint_overlap_confirmation",
         "window_size": 3
       }
     }
@@ -462,7 +462,7 @@
     },
     "engine_assumptions": {
       "engine_version": "0.10.12",
-      "segment_strategy": "conservative_three_stroke_window",
+      "segment_strategy": "chan_extreme_endpoint_overlap_confirmation",
       "pivot_zone_strategy": "czsc.utils.sig.get_zs_seq on finished strokes",
       "divergence_strategy": "conservative_empty_until project-level rule is finalized"
     },

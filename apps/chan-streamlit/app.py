@@ -686,6 +686,8 @@ def _build_figure(
                 )
             )
         elif primitive_type == "line":
+            primitive_meta = primitive.get("meta") or {}
+            width_multiplier = float(primitive_meta.get("width_multiplier", 1.0))
             figure.add_trace(
                 go.Scatter(
                     x=[primitive.get("x1"), primitive.get("x2")],
@@ -694,7 +696,7 @@ def _build_figure(
                     line={
                         "color": primitive.get("color", "#2563EB"),
                         "dash": "dash" if primitive.get("style") == "dashed" else "solid",
-                        "width": 3 if layer == "segments" else 2,
+                        "width": int(2 * width_multiplier),
                     },
                     name=layer,
                     showlegend=False,

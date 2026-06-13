@@ -110,12 +110,13 @@ def build_plot_primitives(result: AnalysisResult) -> List[PlotPrimitive]:
                 y1=segment.start_price,
                 x2=segment.end_timestamp,
                 y2=segment.end_price,
-                style="dashed",
-                color="#7C3AED" if segment.direction == "up" else "#9333EA",
+                style="solid",
+                color="rgba(124, 58, 237, 0.25)" if segment.direction == "up" else "rgba(147, 51, 234, 0.5)",
                 meta={
                     "reference_type": "segment",
                     "reference_id": segment.id,
                     "confirmed": segment.confirmed,
+                    "width_multiplier": 3,
                 },
             )
         )
