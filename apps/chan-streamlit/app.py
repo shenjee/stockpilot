@@ -46,7 +46,6 @@ TIMEFRAME_LABELS = {
 TEXT = {
     "zh": {
         "page_title": "缠论调试台",
-        "page_caption": "用于检查 Phase 2 结构映射、绘图原语、告警信息与原始 JSON 的 Streamlit 调试页面。",
         "language_label": "语言 / Language",
         "inputs_header": "参数",
         "symbol_label": "代码",
@@ -100,7 +99,6 @@ TEXT = {
     },
     "en": {
         "page_title": "Chan Theory Debug App",
-        "page_caption": "Phase 2 Streamlit tool for checking mapped structures, plot primitives, warnings, and raw JSON.",
         "language_label": "Language / 语言",
         "inputs_header": "Inputs",
         "symbol_label": "Symbol",
@@ -373,7 +371,6 @@ def main() -> None:
     )
 
     st.markdown(_page_title(_t(language, "page_title")), unsafe_allow_html=True)
-    st.caption(_t(language, "page_caption"))
 
     with st.sidebar:
         st.markdown(_sidebar_section_title(_t(language, "inputs_header")), unsafe_allow_html=True)
