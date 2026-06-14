@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import List
+from collections import defaultdict
 
 from .schema import AnalysisResult, PlotPrimitive
 
@@ -27,17 +28,17 @@ def build_plot_primitives(result: AnalysisResult) -> List[PlotPrimitive]:
         if fractal.fractal_type == "top":
             color = "#DC2626"
             style = "triangle_down"
-            text = "T"
+            text = ""
             textposition = "top center"
         elif fractal.fractal_type == "bottom":
             color = "#16A34A"
             style = "triangle_up"
-            text = "B"
+            text = ""
             textposition = "bottom center"
         else:
             color = "#6B7280"
             style = "circle"
-            text = "?"
+            text = ""
             textposition = "top center"
         primitives.append(
             PlotPrimitive(
@@ -144,46 +145,98 @@ def build_plot_primitives(result: AnalysisResult) -> List[PlotPrimitive]:
             )
         )
 
+    buy_points_by_ts = defaultdict(list)
     for point in result.candidate_buy_points:
+        buy_points_by_ts[point.timestamp].append(point)
+
+    for ts, points in buy_points_by_ts.items():
+        labels = []
+        for point in points:
+            if point.point_type == "first_buy":
+                labels.append("1B")
+            elif point.point_type == "second_buy":
+                labels.append("2B")
+            elif point.point_type == "third_buy":
+                labels.append("3B")
+            else:
+                labels.append("Buy?")
+                
+        unique_labels = list(dict.fromkeys(labels))
+        if len(unique_labels) > 1 and "Buy?" in unique_labels:
+            unique_labels.remove("Buy?")
+            
+        text = "<br>↑<br>" + ", ".join(unique_labels)
+        
+        base_point = points[0]
+        direction = base_point.meta.get("direction", "")
+        textposition = "bottom center" if direction == "down" else "top center"
+        
         primitives.append(
             PlotPrimitive(
-                id=f"primitive_{point.id}",
+                id=f"primitive_{base_point.id}",
                 type="marker",
                 layer="candidate_points",
-                x=point.timestamp,
-                y=point.price,
-                style="diamond",
+                x=base_point.timestamp,
+                y=base_point.price,
+                style="text",
                 color="#059669",
-                text="Buy?",
+                text=text,
                 meta={
                     "reference_type": "candidate_buy_point",
-                    "reference_id": point.id,
-                    "point_type": point.point_type,
-                    "source_reference_id": point.reference_id,
-                    "confirmed": point.confirmed,
-                    "signal_scope": point.meta.get("signal_scope", "structure_candidate_only"),
+                    "reference_id": base_point.id,
+                    "point_type": base_point.point_type,
+                    "source_reference_id": base_point.reference_id,
+                    "confirmed": base_point.confirmed,
+                    "signal_scope": base_point.meta.get("signal_scope", "structure_candidate_only"),
+                    "textposition": textposition,
                 },
             )
         )
 
+    sell_points_by_ts = defaultdict(list)
     for point in result.candidate_sell_points:
+        sell_points_by_ts[point.timestamp].append(point)
+
+    for ts, points in sell_points_by_ts.items():
+        labels = []
+        for point in points:
+            if point.point_type == "first_sell":
+                labels.append("1S")
+            elif point.point_type == "second_sell":
+                labels.append("2S")
+            elif point.point_type == "third_sell":
+                labels.append("3S")
+            else:
+                labels.append("Sell?")
+                
+        unique_labels = list(dict.fromkeys(labels))
+        if len(unique_labels) > 1 and "Sell?" in unique_labels:
+            unique_labels.remove("Sell?")
+            
+        text = ", ".join(unique_labels) + "<br>↓<br>"
+        
+        base_point = points[0]
+        direction = base_point.meta.get("direction", "")
+        textposition = "top center" if direction == "up" else "bottom center"
+        
         primitives.append(
             PlotPrimitive(
-                id=f"primitive_{point.id}",
+                id=f"primitive_{base_point.id}",
                 type="marker",
                 layer="candidate_points",
-                x=point.timestamp,
-                y=point.price,
-                style="diamond",
+                x=base_point.timestamp,
+                y=base_point.price,
+                style="text",
                 color="#B91C1C",
-                text="Sell?",
+                text=text,
                 meta={
                     "reference_type": "candidate_sell_point",
-                    "reference_id": point.id,
-                    "point_type": point.point_type,
-                    "source_reference_id": point.reference_id,
-                    "confirmed": point.confirmed,
-                    "signal_scope": point.meta.get("signal_scope", "structure_candidate_only"),
+                    "reference_id": base_point.id,
+                    "point_type": base_point.point_type,
+                    "source_reference_id": base_point.reference_id,
+                    "confirmed": base_point.confirmed,
+                    "signal_scope": base_point.meta.get("signal_scope", "structure_candidate_only"),
+                    "textposition": textposition,
                 },
             )
         )

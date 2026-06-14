@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "packages"))
 
 from chantheory.adapters import (
+    _build_candidate_points,
     _map_pending_stroke,
     _map_strokes,
     _normalize_direction,
@@ -269,6 +270,62 @@ class AdapterTests(unittest.TestCase):
         ubi = {"fx_a": fx, "direction": "Up", "high": 11.31, "high_bar": high_bar}
 
         self.assertIsNone(_map_pending_stroke(SimpleNamespace(ubi=ubi), strokes))
+
+
+    def test_short_input_without_bis_does_not_fail_engine_probe(self):
+        rows = [
+            {"date": "2025-01-01", "open": 10.0, "close": 10.4, "high": 10.5, "low": 9.9, "volume": 1000},
+            {"date": "2025-01-02", "open": 10.4, "close": 9.8, "high": 10.6, "low": 9.7, "volume": 1200},
+            {"date": "2025-01-03", "open": 9.8, "close": 10.8, "high": 10.9, "low": 9.6, "volume": 1500},
+        ]
+        analyzer = SimpleNamespace(fx_list=[], ubi_fxs=[], finished_bis=[], bi_list=[])
+
+        with patch("chantheory.adapters._run_engine", return_value=(analyzer, [object()] * 3)):
+            result = analyze_tracker_klines(rows=rows, code="000001", market="sz")
+
+        self.assertEqual(result.meta["engine_probe"]["status"], "ok")
+        self.assertFalse(any(item.warning_code == "ENGINE_PROBE_FAILED" for item in result.warnings))
+
+    def test_cxt_signal_points_use_default_versions_and_ignore_other(self):
+        fx1 = SimpleNamespace(dt="2025-01-01", mark="D", fx=10.0)
+        fx2 = SimpleNamespace(dt="2025-01-02", mark="G", fx=11.0)
+        fx3 = SimpleNamespace(dt="2025-01-03", mark="D", fx=10.2)
+        fx4 = SimpleNamespace(dt="2025-01-04", mark="G", fx=11.2)
+        bi1 = SimpleNamespace(fx_a=fx1, fx_b=fx2, direction="Up", high=11.0, low=10.0)
+        bi2 = SimpleNamespace(fx_a=fx3, fx_b=fx4, direction="Up", high=11.2, low=10.2)
+        strokes = [
+            _stroke("1", "up", "2025-01-01", 10.0, "2025-01-02", 11.0),
+            _stroke("2", "up", "2025-01-03", 10.2, "2025-01-04", 11.2),
+        ]
+        analyzer = SimpleNamespace(bi_list=[bi1, bi2])
+        calls = []
+
+        def signal(name, value):
+            def _func(_analyzer, **kwargs):
+                calls.append(name)
+                return {name: value}
+            return _func
+
+        sig_module = SimpleNamespace(
+            cxt_first_buy_V221126=signal("cxt_first_buy_V221126", "其他_任意_任意_0"),
+            cxt_first_sell_V221126=signal("cxt_first_sell_V221126", "一卖_5笔_任意_0"),
+            cxt_second_bs_V240524=signal("cxt_second_bs_V240524", "二买_任意_任意_0"),
+            cxt_third_bs_V230319=signal("cxt_third_bs_V230319", "三卖_均线新低_任意_0"),
+        )
+
+        with patch("chantheory.adapters.import_module", return_value=sig_module):
+            buy_points, sell_points = _build_candidate_points(strokes=strokes, pivot_zones=[], analyzer=analyzer)
+
+        self.assertNotIn("cxt_second_bs_V230320", calls)
+        self.assertNotIn("cxt_third_buy_V230228", calls)
+        self.assertEqual([point.point_type for point in buy_points], ["second_buy", "second_buy"])
+        self.assertTrue(all(point.reason == "二买_任意_任意_0" for point in buy_points))
+        self.assertTrue(all(point.meta["signal_name"] == "cxt_second_bs_V240524" for point in buy_points))
+        self.assertTrue(all(point.meta["signal_version"] == "V240524" for point in buy_points))
+        self.assertEqual([point.point_type for point in sell_points], ["first_sell", "third_sell", "first_sell", "third_sell"])
+        self.assertEqual(sell_points[0].meta["signal_name"], "cxt_first_sell_V221126")
+        self.assertEqual(sell_points[1].meta["signal_name"], "cxt_third_bs_V230319")
+        self.assertTrue(all(not point.reason.startswith("其他") for point in buy_points + sell_points))
 
     def test_candidate_points_are_structure_only(self):
         rows = [

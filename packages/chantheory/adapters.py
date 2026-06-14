@@ -144,6 +144,7 @@ def analyze_normalized(
         buy_points, sell_points = _build_candidate_points(
             strokes=strokes,
             pivot_zones=pivot_zones,
+            analyzer=analyzer,
         )
 
         result.fractals = fractals
@@ -159,7 +160,7 @@ def analyze_normalized(
             "raw_bar_count": len(raw_bars),
             "fractal_count": len(fractals),
             "finished_bi_count": len(strokes),
-            "last_bi_extend": bool(getattr(analyzer, "last_bi_extend", False)),
+            "last_bi_extend": _safe_last_bi_extend(analyzer),
         }
         result.meta["mapping"] = {
             "fractal_count": len(fractals),
@@ -529,13 +530,27 @@ def _map_divergences() -> List[Divergence]:
     return []
 
 
+def _safe_last_bi_extend(analyzer: object) -> bool:
+    bi_list = getattr(analyzer, "bi_list", None)
+    if bi_list is not None:
+        if not list(bi_list or []):
+            return False
+    elif not list(getattr(analyzer, "finished_bis", []) or []):
+        return False
+
+    try:
+        return bool(getattr(analyzer, "last_bi_extend", False))
+    except (IndexError, AttributeError):
+        return False
+
+
 def _build_structure_alerts(
     strokes: Sequence[Stroke],
     pivot_zones: Sequence[PivotZone],
     analyzer: object,
 ) -> List[StructureAlert]:
     alerts: List[StructureAlert] = []
-    if strokes and bool(getattr(analyzer, "last_bi_extend", False)):
+    if strokes and _safe_last_bi_extend(analyzer):
         last_stroke = strokes[-1]
         alerts.append(
             StructureAlert(
@@ -592,13 +607,119 @@ def _build_structure_alerts(
 def _build_candidate_points(
     strokes: Sequence[Stroke],
     pivot_zones: Sequence[PivotZone],
+    analyzer: object,
 ) -> Tuple[List[CandidatePoint], List[CandidatePoint]]:
     buy_points: List[CandidatePoint] = []
     sell_points: List[CandidatePoint] = []
-    if not strokes or not pivot_zones:
+    if not strokes:
         return buy_points, sell_points
 
     last_stroke = strokes[-1]
+
+    # Evaluate cxt signals
+    try:
+        sig_module = import_module("czsc.signals.cxt")
+        cxt_first_buy = getattr(sig_module, "cxt_first_buy_V221126", None)
+        cxt_first_sell = getattr(sig_module, "cxt_first_sell_V221126", None)
+        cxt_second_bs = getattr(sig_module, "cxt_second_bs_V240524", None)
+        cxt_third_bs = getattr(sig_module, "cxt_third_bs_V230319", None)
+
+        def _check(func: Any, **kwargs: Any) -> str:
+            if not func:
+                return ""
+            try:
+                res = func(analyzer, **kwargs)
+                if res and isinstance(res, dict):
+                    value = str(list(res.values())[0])
+                    return "" if value.startswith("其他") else value
+            except Exception:
+                pass
+            return ""
+
+        bi_list = list(getattr(analyzer, "bi_list", []) or [])
+        if not bi_list:
+            bi_list = list(getattr(analyzer, "finished_bis", []) or [])
+
+        strokes_by_end_ts = {s.end_timestamp: s for s in strokes}
+
+        def _add_point(
+            collection: List[CandidatePoint],
+            point_type: str,
+            reason: str,
+            end_ts: str,
+            price: float,
+            ref_id: str,
+            direction: str,
+            signal_name: str,
+        ) -> None:
+            collection.append(
+                CandidatePoint(
+                    id=f"{point_type}_{end_ts}",
+                    point_type=point_type,
+                    timestamp=end_ts,
+                    price=price,
+                    reference_id=ref_id,
+                    confirmed=False,
+                    reason=reason,
+                    meta={
+                        "direction": direction,
+                        "signal_scope": "cxt_signal",
+                        "signal_name": signal_name,
+                        "signal_version": signal_name.rsplit("_", 1)[-1] if "_" in signal_name else "",
+                    },
+                )
+            )
+
+        for di in range(1, len(bi_list) + 1):
+            bi = bi_list[-di]
+            
+            b1 = _check(cxt_first_buy, di=di)
+            s1 = _check(cxt_first_sell, di=di)
+            bs2 = _check(cxt_second_bs, di=di)
+            bs3 = _check(cxt_third_bs, di=di)
+
+            if not any([b1, s1, bs2, bs3]):
+                continue
+
+            fx_b = _safe_get(bi, "fx_b")
+            if not fx_b:
+                continue
+
+            end_ts = _to_timestamp(fx_b)
+            stroke = strokes_by_end_ts.get(end_ts)
+
+            if stroke:
+                ref_id = stroke.id
+                direction = stroke.direction
+                price = stroke.end_price
+            else:
+                direction = _normalize_direction(_safe_get(bi, "direction", default=""))
+                price = _to_float(_safe_get(fx_b, "fx", "high", "low", default=0.0))
+                fx_a = _safe_get(bi, "fx_a")
+                start_ts = _to_timestamp(fx_a) if fx_a else end_ts
+                ref_id = f"stroke_pending_{start_ts}_{end_ts}"
+
+            if b1 and b1.startswith("一买"):
+                _add_point(buy_points, "first_buy", b1, end_ts, price, ref_id, direction, "cxt_first_buy_V221126")
+            if s1 and s1.startswith("一卖"):
+                _add_point(sell_points, "first_sell", s1, end_ts, price, ref_id, direction, "cxt_first_sell_V221126")
+
+            if bs2 and "二买" in bs2:
+                _add_point(buy_points, "second_buy", bs2, end_ts, price, ref_id, direction, "cxt_second_bs_V240524")
+            if bs2 and "二卖" in bs2:
+                _add_point(sell_points, "second_sell", bs2, end_ts, price, ref_id, direction, "cxt_second_bs_V240524")
+
+            if bs3 and "三买" in bs3:
+                _add_point(buy_points, "third_buy", bs3, end_ts, price, ref_id, direction, "cxt_third_bs_V230319")
+            if bs3 and "三卖" in bs3:
+                _add_point(sell_points, "third_sell", bs3, end_ts, price, ref_id, direction, "cxt_third_bs_V230319")
+
+    except Exception:
+        pass
+
+    if not pivot_zones:
+        return buy_points, sell_points
+
     last_zone = pivot_zones[-1]
     if last_zone.low <= last_stroke.end_price <= last_zone.high:
         if last_stroke.direction not in {"up", "down"}:
@@ -641,7 +762,7 @@ def _build_mapping_warnings(result: AnalysisResult, analyzer: object) -> List[An
             )
         )
 
-    if result.strokes and bool(getattr(analyzer, "last_bi_extend", False)):
+    if result.strokes and _safe_last_bi_extend(analyzer):
         warnings.append(
             _warning(
                 warning_id="warning_unstable_tail_stroke",

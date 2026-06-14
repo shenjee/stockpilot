@@ -95,14 +95,66 @@ class PlottingTests(unittest.TestCase):
             candidate_buy_points=[
                 CandidatePoint(
                     id="buy_1",
-                    point_type="first_buy_point",
+                    point_type="first_buy",
                     timestamp="2025-01-07",
                     price=10.2,
                     reference_id="pivot_1",
                     confirmed=False,
                     reason="test",
-                    meta={"signal_scope": "structure_candidate_only"},
-                )
+                    meta={"signal_scope": "cxt_signal", "direction": "down"},
+                ),
+                CandidatePoint(
+                    id="buy_2",
+                    point_type="second_buy",
+                    timestamp="2025-01-07",
+                    price=10.2,
+                    reference_id="pivot_1",
+                    confirmed=False,
+                    reason="test",
+                    meta={"signal_scope": "cxt_signal", "direction": "down"},
+                ),
+                CandidatePoint(
+                    id="buy_3",
+                    point_type="third_buy",
+                    timestamp="2025-01-07",
+                    price=10.2,
+                    reference_id="pivot_1",
+                    confirmed=False,
+                    reason="test",
+                    meta={"signal_scope": "cxt_signal", "direction": "down"},
+                ),
+            ],
+            candidate_sell_points=[
+                CandidatePoint(
+                    id="sell_1",
+                    point_type="first_sell",
+                    timestamp="2025-01-08",
+                    price=11.5,
+                    reference_id="pivot_1",
+                    confirmed=False,
+                    reason="test",
+                    meta={"signal_scope": "cxt_signal", "direction": "up"},
+                ),
+                CandidatePoint(
+                    id="sell_2",
+                    point_type="second_sell",
+                    timestamp="2025-01-08",
+                    price=11.5,
+                    reference_id="pivot_1",
+                    confirmed=False,
+                    reason="test",
+                    meta={"signal_scope": "cxt_signal", "direction": "up"},
+                ),
+                CandidatePoint(
+                    id="sell_3",
+                    point_type="third_sell",
+                    timestamp="2025-01-08",
+                    price=11.5,
+                    reference_id="pivot_1",
+                    confirmed=False,
+                    reason="test",
+                    meta={"signal_scope": "cxt_signal", "direction": "up"},
+                ),
             ],
             meta={
                 "bar_count": 50,
@@ -130,14 +182,17 @@ class PlottingTests(unittest.TestCase):
         self.assertIn(("box", "pivot_zones"), layers)
         self.assertIn(("marker", "candidate_points"), layers)
         self.assertIn(("label", "alerts"), layers)
-        candidate = next(item for item in primitives if item.layer == "candidate_points")
-        self.assertEqual(candidate.meta["signal_scope"], "structure_candidate_only")
+        candidates = [item for item in primitives if item.layer == "candidate_points"]
+        self.assertEqual(len(candidates), 2)
+        self.assertEqual(candidates[0].text, "<br>↑<br>1B, 2B, 3B")
+        self.assertEqual(candidates[0].meta["signal_scope"], "cxt_signal")
+        self.assertEqual(candidates[1].text, "1S, 2S, 3S<br>↓<br>")
         bottom_fractal = next(item for item in primitives if item.id == "primitive_fractal_1")
         top_fractal = next(item for item in primitives if item.id == "primitive_fractal_2")
         pending_stroke = next(item for item in primitives if item.id == "primitive_stroke_pending_1")
-        self.assertEqual(bottom_fractal.text, "B")
+        self.assertEqual(bottom_fractal.text, "")
         self.assertEqual(bottom_fractal.meta["textposition"], "bottom center")
-        self.assertEqual(top_fractal.text, "T")
+        self.assertEqual(top_fractal.text, "")
         self.assertEqual(top_fractal.meta["textposition"], "top center")
         self.assertEqual(pending_stroke.style, "dashed")
         self.assertFalse(pending_stroke.meta["confirmed"])

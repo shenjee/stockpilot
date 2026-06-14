@@ -17,3 +17,8 @@ china-stock-daily-tracker.local.json
 
 # macOS
 .DS_Store
+
+# Temporary debugging and sandbox scripts in root
+/test_*.py
+/debug_*.py
+/test_*.html

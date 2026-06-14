@@ -33,7 +33,7 @@ SUPPORTED_LANGUAGES = {"zh": "中文", "en": "English"}
 TIMEFRAME_OPTIONS = ("1m", "5m", "30m", "60m", "day")
 DEFAULT_TIMEFRAME = "day"
 MINUTE_TIMEFRAMES = {"1m", "5m", "30m", "60m"}
-LAYER_KEYS = ("fractals", "strokes", "segments", "pivot_zones", "divergences", "alerts")
+LAYER_KEYS = ("fractals", "strokes", "segments", "pivot_zones", "divergences", "alerts", "candidate_points")
 X_WINDOW_STEPS = (20, 30, 45, 60, 90, 120, 180, 240, 360, 720)
 DEFAULT_X_WINDOW = 90
 Y_ZOOM_STEP = 1.2
@@ -79,6 +79,7 @@ TEXT = {
         "layer_pivot_zones": "显示中枢",
         "layer_divergences": "显示背驰",
         "layer_alerts": "显示提示",
+        "layer_candidate_points": "显示买卖点",
         "candles_name": "K线",
         "severity_warning": "警告",
         "severity_info": "提示",
@@ -132,6 +133,7 @@ TEXT = {
         "layer_pivot_zones": "Show Pivot Zones",
         "layer_divergences": "Show Divergences",
         "layer_alerts": "Show Alerts",
+        "layer_candidate_points": "Show Buy/Sell Points",
         "candles_name": "K-line",
         "severity_warning": "warning",
         "severity_info": "info",
@@ -302,9 +304,30 @@ def _build_display_summary(result: AnalysisResult, language: str) -> List[str]:
                 )
 
         if result.candidate_buy_points:
-            lines.append("存在一个保守买点候选，但尚未确认。" if language == "zh" else "A conservative buy-point candidate is present but not confirmed.")
+            zh_names = {"first_buy": "一买", "second_buy": "二买", "third_buy": "三买", "structure_buy_candidate": "保守买点"}
+            en_names = {"first_buy": "first-buy", "second_buy": "second-buy", "third_buy": "third-buy", "structure_buy_candidate": "conservative buy-point"}
+            
+            for p in sorted(result.candidate_buy_points, key=lambda x: x.timestamp):
+                t = p.point_type
+                if language == "zh":
+                    name = zh_names.get(t, "买点")
+                    lines.append(f"买点提示：在 {_display_timestamp(p.timestamp)} 发现【{name}】，价格 {p.price:.2f}。")
+                else:
+                    name = en_names.get(t, "buy-point")
+                    lines.append(f"Buy Point: [{name}] candidate at {_display_timestamp(p.timestamp)}, price {p.price:.2f}.")
+
         if result.candidate_sell_points:
-            lines.append("存在一个保守卖点候选，但尚未确认。" if language == "zh" else "A conservative sell-point candidate is present but not confirmed.")
+            zh_names = {"first_sell": "一卖", "second_sell": "二卖", "third_sell": "三卖", "structure_sell_candidate": "保守卖点"}
+            en_names = {"first_sell": "first-sell", "second_sell": "second-sell", "third_sell": "third-sell", "structure_sell_candidate": "conservative sell-point"}
+            
+            for p in sorted(result.candidate_sell_points, key=lambda x: x.timestamp):
+                t = p.point_type
+                if language == "zh":
+                    name = zh_names.get(t, "卖点")
+                    lines.append(f"卖点提示：在 {_display_timestamp(p.timestamp)} 发现【{name}】，价格 {p.price:.2f}。")
+                else:
+                    name = en_names.get(t, "sell-point")
+                    lines.append(f"Sell Point: [{name}] candidate at {_display_timestamp(p.timestamp)}, price {p.price:.2f}.")
         if any(item.warning_code == "UNSTABLE_TAIL_STROKE" for item in result.warnings):
             lines.append("最新结构仍在延伸，尾部应按未稳定结构处理。" if language == "zh" else "The newest structure is still extending, so the tail should be treated as unstable.")
         return lines
@@ -654,6 +677,66 @@ def _build_figure(
     visible_rows = ordered_rows[-x_window:] if x_window else ordered_rows
     visible_x_values = [item["date"] for item in visible_rows]
     use_continuous_bar_axis = _is_minute_timeframe(timeframe)
+    
+    customdata = []
+    for item in ordered_rows:
+        date_str = str(item["date"])
+        day = date_str[:10]
+        time_part = date_str[11:16]
+        
+        if timeframe == "60m":
+            if time_part == "10:30":
+                t_start = "09:30"
+            elif time_part == "11:30":
+                t_start = "10:30"
+            elif time_part == "14:00":
+                t_start = "13:00"
+            elif time_part == "15:00":
+                t_start = "14:00"
+            else:
+                t_start = ""
+            time_range = f"{t_start} - {time_part}" if t_start else time_part
+        elif timeframe == "30m":
+            if time_part == "10:00":
+                t_start = "09:30"
+            elif time_part == "10:30":
+                t_start = "10:00"
+            elif time_part == "11:00":
+                t_start = "10:30"
+            elif time_part == "11:30":
+                t_start = "11:00"
+            elif time_part == "13:30":
+                t_start = "13:00"
+            elif time_part == "14:00":
+                t_start = "13:30"
+            elif time_part == "14:30":
+                t_start = "14:00"
+            elif time_part == "15:00":
+                t_start = "14:30"
+            else:
+                t_start = ""
+            time_range = f"{t_start} - {time_part}" if t_start else time_part
+        else:
+            time_range = time_part
+            
+        direction_icon = "▲" if float(item["close"]) >= float(item["open"]) else "▼"
+        customdata.append([day, time_range, direction_icon])
+        
+    hovertemplate = (
+        "<b>%{customdata[0]}</b><br>"
+        "%{customdata[1]}<br>"
+        "open: %{open}<br>"
+        "high: %{high}<br>"
+        "low: %{low}<br>"
+        "close: %{close} %{customdata[2]}<extra></extra>"
+    ) if use_continuous_bar_axis else (
+        "<b>%{x}</b><br>"
+        "open: %{open}<br>"
+        "high: %{high}<br>"
+        "low: %{low}<br>"
+        "close: %{close} %{customdata[2]}<extra></extra>"
+    )
+
     figure = go.Figure()
     figure.add_trace(
         go.Candlestick(
@@ -663,6 +746,8 @@ def _build_figure(
             low=[float(item["low"]) for item in ordered_rows],
             close=[float(item["close"]) for item in ordered_rows],
             name=_t(language, "candles_name"),
+            customdata=customdata,
+            hovertemplate=hovertemplate,
         )
     )
 
@@ -673,18 +758,43 @@ def _build_figure(
         primitive_type = primitive.get("type")
         if primitive_type == "marker":
             primitive_meta = dict(primitive.get("meta", {}) or {})
-            figure.add_trace(
-                go.Scatter(
-                    x=[primitive.get("x")],
-                    y=[primitive.get("y")],
-                    mode="markers+text",
-                    text=[primitive.get("text", "")],
-                    textposition=str(primitive_meta.get("textposition", "top center")),
-                    marker={"color": primitive.get("color", "#2563EB"), "size": 10},
-                    name=layer,
-                    showlegend=False,
+            style = primitive.get("style", "circle")
+            
+            if style == "text":
+                figure.add_trace(
+                    go.Scatter(
+                        x=[primitive.get("x")],
+                        y=[primitive.get("y")],
+                        mode="text",
+                        text=[primitive.get("text", "")],
+                        textposition=str(primitive_meta.get("textposition", "top center")),
+                        textfont={"color": primitive.get("color", "#2563EB")},
+                        name=layer,
+                        showlegend=False,
+                    )
                 )
-            )
+            else:
+                style_mapping = {
+                    "triangle_up": "triangle-up",
+                    "triangle_down": "triangle-down",
+                    "circle": "circle",
+                    "diamond": "diamond",
+                }
+                marker_symbol = style_mapping.get(style, "circle")
+                
+                figure.add_trace(
+                    go.Scatter(
+                        x=[primitive.get("x")],
+                        y=[primitive.get("y")],
+                        mode="markers+text",
+                        text=[primitive.get("text", "")],
+                        textposition=str(primitive_meta.get("textposition", "top center")),
+                        marker={"color": primitive.get("color", "#2563EB"), "size": 10, "symbol": marker_symbol},
+                        textfont={"color": primitive.get("color", "#2563EB")},
+                        name=layer,
+                        showlegend=False,
+                    )
+                )
         elif primitive_type == "line":
             primitive_meta = primitive.get("meta") or {}
             width_multiplier = float(primitive_meta.get("width_multiplier", 1.0))
