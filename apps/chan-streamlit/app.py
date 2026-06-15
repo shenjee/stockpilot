@@ -406,7 +406,7 @@ def main() -> None:
         strict_validation = st.checkbox(_t(language, "strict_validation_label"), value=True)
         st.markdown(_sidebar_section_title(_t(language, "layers_header")), unsafe_allow_html=True)
         visibility = {
-            layer: st.checkbox(_layer_label(layer, language), value=True)
+            layer: st.checkbox(_layer_label(layer, language), value=(layer != "segments"))
             for layer in LAYER_KEYS
         }
         run = st.button(_t(language, "run_button"), type="primary")
