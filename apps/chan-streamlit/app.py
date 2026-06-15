@@ -20,7 +20,7 @@ chan_chart_widget = components.declare_component("chan_chart_widget", path=str(_
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "packages"))
-sys.path.insert(0, str(ROOT / "skills" / "china-stock-daily-tracker" / "scripts"))
+sys.path.insert(0, str(ROOT / "skills" / "china-stock-analysis" / "scripts"))
 
 from chantheory import analyze_tracker_klines  # noqa: E402
 from chantheory.schema import AnalysisResult, AnalysisWarning  # noqa: E402

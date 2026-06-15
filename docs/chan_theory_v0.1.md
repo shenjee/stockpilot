@@ -84,7 +84,7 @@
 
 - Phase 2 的目标是回答“这只股票现在处于什么走势结构”
 - 图形化输出是主输出，文字说明只是辅助输出
-- 不在 `china-stock-daily-tracker` 的日报脚本中直接堆叠缠论核心逻辑
+- 不在 `china-stock-analysis` 的日报脚本中直接堆叠缠论核心逻辑
 - 不从零自研 `分型 / 笔 / 线段 / 中枢` 全套核心算法
 - 默认采用开源 `czsc` 作为底层缠论分析引擎
 - 项目保留自己的 `chantheory` 适配层，统一输入、输出、图形数据和告警语义
@@ -100,7 +100,7 @@ chantheory 适配层
   ├─ 调用 czsc
   └─ 映射为项目 schema / plot_primitives / summary / warnings
         ->
-  ├─ china-stock-daily-tracker
+  ├─ china-stock-analysis
   ├─ Streamlit debug app
   ├─ desktop / local app
   └─ agent / app integrations
@@ -112,7 +112,7 @@ chantheory 适配层
   负责底层缠论核心分析，包括分型、笔、中枢等核心对象与多周期能力
 - `chantheory`
   负责输入标准化、参数约束、调用 `czsc`、结果清洗、统一 schema、图形数据输出、摘要和告警
-- `china-stock-daily-tracker`
+- `china-stock-analysis`
   负责业务编排、日报生成、结构摘要接入和配置管理
 - `Streamlit`
   负责调试、验算、可视化检查和参数试验
@@ -585,7 +585,7 @@ packages/chantheory/
 - `config.py`
   管理 `czsc` 版本锁定、参数默认值和兼容性开关
 
-## 10. 与 china-stock-daily-tracker 的集成方式
+## 10. 与 china-stock-analysis 的集成方式
 
 推荐流程：
 
@@ -605,7 +605,7 @@ packages/chantheory/
 
 集成原则：
 
-- `china-stock-daily-tracker` 不直接操作 `czsc` 原生对象
+- `china-stock-analysis` 不直接操作 `czsc` 原生对象
 - skill 层只消费 `chantheory` 的稳定结果
 - skill 失败时要能优雅降级，不因为缠论失败而中断整份日报
 
@@ -637,7 +637,7 @@ Phase 2 中，Streamlit 应承担：
 - 项目必须保留自己的 `chantheory` 适配层
 - 图形化结果是主输出，文字是辅助输出
 - Streamlit 是调试与验算界面，不是长期正式宿主
-- `china-stock-daily-tracker` 通过 `chantheory` 接入缠论结果，而不是直接依赖 `czsc`
+- `china-stock-analysis` 通过 `chantheory` 接入缠论结果，而不是直接依赖 `czsc`
 - Phase 2 中的买卖点字段只表示结构候选点，不能绕过 Phase 3 信号系统直接形成交易指令
 
 ## 14. 后续待定问题

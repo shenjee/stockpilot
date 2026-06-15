@@ -8,7 +8,7 @@ The repository is organized as a skill collection. Each installable skill lives 
 
 | Skill | Description |
 | --- | --- |
-| `china-stock-daily-tracker` | Generates factual China A-share daily market reports for indexes, watchlists, and portfolios. |
+| `china-stock-analysis` | Generates factual China A-share daily market reports for indexes, watchlists, and portfolios. |
 
 ## Phase 2: Chan Structure Analysis
 
@@ -57,7 +57,7 @@ stockpilotskills/
 |       |-- README.md
 |       `-- sample_data/
 `-- skills/
-    `-- china-stock-daily-tracker/
+    `-- china-stock-analysis/
         |-- SKILL.md
         |-- scripts/
         |-- references/
@@ -69,14 +69,14 @@ stockpilotskills/
 Install one skill by copying its directory into the target client's skills directory:
 
 ```bash
-cp -R skills/china-stock-daily-tracker <target-skills-dir>/
+cp -R skills/china-stock-analysis <target-skills-dir>/
 ```
 
 Expected installed layout:
 
 ```text
 <target-skills-dir>/
-`-- china-stock-daily-tracker/
+`-- china-stock-analysis/
     |-- SKILL.md
     |-- scripts/
     |-- references/
@@ -121,7 +121,7 @@ runtime data:
 
 ```text
 <target-skills-dir>/
-`-- china-stock-daily-tracker/
+`-- china-stock-analysis/
     |-- SKILL.md
     |-- scripts/
     |-- references/

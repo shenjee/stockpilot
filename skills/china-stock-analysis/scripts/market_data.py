@@ -1,5 +1,5 @@
 """
-Market data providers for china-stock-daily-tracker.
+Market data providers for china-stock-analysis.
 
 The report generator depends on this module's provider interface instead of
 Tencent-specific HTTP details, so future data sources can be added without

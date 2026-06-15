@@ -2,7 +2,7 @@
 
 ## 目标
 
-围绕开源 `czsc` 构建 Phase 2，不重复自研完整 Chan Theory 核心算法，而是在项目内建立 `chantheory` 适配层，完成输入标准化、结果统一、可视化输出与 `china-stock-daily-tracker` 集成。
+围绕开源 `czsc` 构建 Phase 2，不重复自研完整 Chan Theory 核心算法，而是在项目内建立 `chantheory` 适配层，完成输入标准化、结果统一、可视化输出与 `china-stock-analysis` 集成。
 
 ## 范围
 
@@ -11,7 +11,7 @@
 - 主输出：可视化结构结果
 - 辅助输出：简短摘要与告警
 - 调试界面：Streamlit 验证界面
-- 集成目标：`skills/china-stock-daily-tracker`
+- 集成目标：`skills/china-stock-analysis`
 
 ## 非目标
 
@@ -36,7 +36,7 @@
 4. 再封装 `czsc` 并映射到统一 schema
 5. 再冻结 `plot_primitives`、摘要与告警语义
 6. 再建设 Streamlit 验证流程
-7. 最后接入 `china-stock-daily-tracker`
+7. 最后接入 `china-stock-analysis`
 8. 收尾阶段补齐测试、性能检查与文档
 
 ## 核心交付物
@@ -46,7 +46,7 @@
 - [x] 冻结 Phase 2 对外 schema，统一使用 `snake_case`
 - [x] 冻结 `plot_primitives` 绘图契约
 - [x] 提供 Streamlit 调试与验算界面
-- [ ] 提供 `china-stock-daily-tracker` 的稳定接入路径
+- [ ] 提供 `china-stock-analysis` 的稳定接入路径
 - [ ] 建立完整测试样例、回归基线与运行时预算
 
 ## P1：基础落地
@@ -158,7 +158,7 @@
 
 ### 目标
 
-把 Phase 2 能力稳定接入 `china-stock-daily-tracker`，并通过测试、性能、文档完成收口。
+把 Phase 2 能力稳定接入 `china-stock-analysis`，并通过测试、性能、文档完成收口。
 
 ### 交付物
 
@@ -169,7 +169,7 @@
 
 ### 必须完成
 
-- [ ] 在 `china-stock-daily-tracker` 中增加 Phase 2 集成点
+- [ ] 在 `china-stock-analysis` 中增加 Phase 2 集成点
 - [ ] 在调用前完成 K 线输入标准化
 - [ ] skill 只调用 `chantheory`，不直接调用 `czsc`
 - [ ] 把结构结果接入日报流水线
@@ -180,7 +180,7 @@
 - [ ] 增加 normalization 和 schema conversion 单元测试
 - [ ] 增加代表性 Chan Theory 结构回归样例
 - [ ] 增加 `czsc` 结果映射测试
-- [ ] 增加 `china-stock-daily-tracker` 集成测试
+- [ ] 增加 `china-stock-analysis` 集成测试
 - [ ] 增加 Streamlit 数据流 smoke tests
 - [ ] 检查相同输入下输出是否具备确定性
 - [ ] 测量真实 watchlist 规模下的运行耗时
@@ -192,13 +192,13 @@
 - [ ] 记录 `chantheory` API 和统一 schema
 - [ ] 记录 `plot_primitives` 契约
 - [ ] 记录 Streamlit 验证流程
-- [ ] 记录与 `china-stock-daily-tracker` 的集成流
+- [ ] 记录与 `china-stock-analysis` 的集成流
 - [ ] 记录已知限制与 Phase 3 交接点
 - [ ] 将 Phase 2 剩余数据口径 gaps 记录到用户可读文档：复权、交易日历、停牌 / 缺失 K 线、分钟级聚合
 
 ### 完成标准
 
-- [ ] `china-stock-daily-tracker` 已通过 `chantheory` 稳定消费 Phase 2 能力
+- [ ] `china-stock-analysis` 已通过 `chantheory` 稳定消费 Phase 2 能力
 - [ ] 关键测试、回归样例、运行时基线已具备
 - [ ] 文档足够支撑后续实现和维护
 - [ ] Phase 2 达到可验收状态
@@ -210,7 +210,7 @@
 - [x] 再完成 day bar 标准化与 `czsc` 封装
 - [x] 再冻结统一 schema 和 `plot_primitives`
 - [x] 再完成 Streamlit 验证界面
-- [ ] 再接入 `china-stock-daily-tracker`
+- [ ] 再接入 `china-stock-analysis`
 - [ ] 最后补齐测试、性能与文档
 
 ## 验收标准
@@ -220,7 +220,7 @@
 - [x] 同一份样例 K 线输入能得到确定性的适配结果
 - [x] `plot_primitives` 足以支撑 Phase 2 可视化验算
 - [x] Streamlit 能渲染并检查主要结构结果
-- [ ] `china-stock-daily-tracker` 已通过 `chantheory` 接入，而非直接绑定 `czsc`
+- [ ] `china-stock-analysis` 已通过 `chantheory` 接入，而非直接绑定 `czsc`
 - [ ] Phase 2 的文本输出保持简短辅助，图形输出保持主导地位
 - [ ] Phase 2 的结构候选买卖点不会被日报或 skill 输出升级为直接交易指令
 - [ ] 复权、交易日历、停牌 / 缺失 K 线、分钟级聚合等数据口径 gaps 已有明确处理或限制说明

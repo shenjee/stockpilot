@@ -8,7 +8,7 @@ Initial Stock Pilot skill release.
 
 ### Added
 
-- Added installable `china-stock-daily-tracker` skill structure.
+- Added installable `china-stock-analysis` skill structure.
 - Added product design documents in English and Chinese.
 - Added factual A-share daily report workflow.
 - Added watchlist and portfolio configuration support.

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-中国A股每日行情追踪 - 报告生成脚本
+中国A股个股分析与行情报告 - 报告生成脚本
 生成事实型行情报告，不做买卖建议
 支持实时数据和历史数据
 """
@@ -19,14 +19,23 @@ from market_data import INDICES, create_market_data_provider, get_market_prefix
 # 配置路径
 SKILL_DIR = Path(__file__).parent.parent
 DEFAULT_LOOKBACK_DAYS = 140
-LOCAL_CONFIG_NAMES = ("china-stock-daily-tracker.local.json", "china-stock-daily-tracker.json")
+LOCAL_CONFIG_NAMES = (
+    "china-stock-analysis.local.json",
+    "china-stock-analysis.json",
+    "china-stock-daily-tracker.local.json",
+    "china-stock-daily-tracker.json",
+)
 
 class RuntimePaths:
     """运行期路径：skill目录和私有工作区分离。"""
 
     def __init__(self, config_file: str = None):
         config = self._load_runtime_config(config_file)
-        root_value = os.environ.get("CHINA_STOCK_DAILY_TRACKER_WORKSPACE") or config.get("workspace")
+        root_value = (
+            os.environ.get("CHINA_STOCK_ANALYSIS_WORKSPACE")
+            or os.environ.get("CHINA_STOCK_DAILY_TRACKER_WORKSPACE")
+            or config.get("workspace")
+        )
         root = Path(root_value).expanduser().resolve() if root_value else Path.cwd().resolve()
         runtime_value = config.get("runtime_dir", "stockpilot")
 
@@ -40,7 +49,11 @@ class RuntimePaths:
         self.market_data_provider = config.get("market_data_provider") or data_source.get("provider", "tencent")
 
     def _load_runtime_config(self, config_file: str = None) -> dict:
-        path = config_file or os.environ.get("CHINA_STOCK_DAILY_TRACKER_CONFIG")
+        path = (
+            config_file
+            or os.environ.get("CHINA_STOCK_ANALYSIS_CONFIG")
+            or os.environ.get("CHINA_STOCK_DAILY_TRACKER_CONFIG")
+        )
         if path:
             return self._read_json_config(Path(path).expanduser())
 
@@ -528,7 +541,26 @@ class ReportGenerator:
         """
         self.paths = paths or RuntimePaths()
         self.market_data = market_data_provider or create_market_data_provider(self.paths.market_data_provider)
-        self.kline_store = KLineStore(self.paths.db_dir / "china_stock_daily_tracker.sqlite")
+        
+        # 使用通用名称，避免数据库文件名与 Skill 名称强绑定
+        generic_db_path = self.paths.db_dir / "market_data.sqlite"
+        legacy_db_paths = [
+            self.paths.db_dir / "china_stock_analysis.sqlite",
+            self.paths.db_dir / "china_stock_daily_tracker.sqlite"
+        ]
+        
+        if not generic_db_path.exists():
+            for legacy_path in legacy_db_paths:
+                if legacy_path.exists():
+                    try:
+                        legacy_path.rename(generic_db_path)
+                        break  # 成功迁移一个后就跳出
+                    except Exception as e:
+                        print(f"[WARN] 无法重命名旧版数据库文件 {legacy_path}: {e}")
+                        generic_db_path = legacy_path
+                        break
+                        
+        self.kline_store = KLineStore(generic_db_path)
         
         if target_date:
             self.target_date = datetime.strptime(target_date, '%Y-%m-%d')
@@ -1319,13 +1351,13 @@ class ReportGenerator:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='A股每日行情报告生成器')
+    parser = argparse.ArgumentParser(description='A股个股分析与行情报告生成器')
     parser.add_argument('--type', choices=['close', 'review'], default='close',
                        help='报告类型：close=收盘简报, review=复盘报告')
     parser.add_argument('--date', '-d', help='指定日期，格式：2025-05-22（默认今天）')
     parser.add_argument('--output', '-o', help='输出文件路径（默认保存到reports目录）')
     parser.add_argument('--config',
-                       help='运行配置JSON路径；默认查找 CHINA_STOCK_DAILY_TRACKER_CONFIG、当前目录 china-stock-daily-tracker.local.json、china-stock-daily-tracker.json')
+                       help='运行配置JSON路径；默认查找 CHINA_STOCK_ANALYSIS_CONFIG、CHINA_STOCK_DAILY_TRACKER_CONFIG、当前目录 china-stock-analysis.local.json、china-stock-analysis.json 及旧版 china-stock-daily-tracker*.json')
     parser.add_argument('--force', action='store_true',
                        help='强制生成报告（忽略交易日检查）')
     args = parser.parse_args()

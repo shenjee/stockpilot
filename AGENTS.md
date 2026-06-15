@@ -29,7 +29,7 @@ which python
 - `packages/chantheory/`: project-owned adapter layer around `czsc`. This is the main reusable Python package in the repo.
 - `packages/chantheory/tests/`: unit tests and JSON fixtures for the adapter layer.
 - `apps/chan-streamlit/`: Streamlit debug app used to validate `chantheory` output and chart overlays.
-- `skills/china-stock-daily-tracker/`: installable agent skill with scripts, config templates, and references.
+- `skills/china-stock-analysis/`: installable agent skill with scripts, config templates, and references.
 - `docs/`: product and phase design notes. Treat these as source-of-truth context for intent and boundaries.
 
 ## Architecture Rules
@@ -67,10 +67,10 @@ Run the Streamlit app smoke tests:
 python -m unittest apps/chan-streamlit/test_app.py
 ```
 
-Run the daily tracker script tests:
+Run the stock analysis skill script tests:
 
 ```bash
-python -m unittest skills/china-stock-daily-tracker/scripts/test_market_data.py
+python -m unittest skills/china-stock-analysis/scripts/test_market_data.py
 ```
 
 Start the debug app:
@@ -98,7 +98,7 @@ python -m pip install streamlit plotly
 
 - For changes under `packages/chantheory/`, run the `chantheory` test suite first.
 - For changes under `apps/chan-streamlit/`, run the app test and, if relevant, launch the app for a quick manual smoke check.
-- For changes under `skills/china-stock-daily-tracker/scripts/`, run the local script tests that cover the edited module.
+- For changes under `skills/china-stock-analysis/scripts/`, run the local script tests that cover the edited module.
 - Add or update tests when behavior changes or regression risk is non-trivial.
 
 ## Data And Domain Notes

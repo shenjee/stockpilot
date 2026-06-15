@@ -104,7 +104,7 @@ Project timeframe to `czsc` mapping:
 | `week` | `W` |
 | `month` | `M` |
 
-Current repo validation only covers day bars because `china-stock-daily-tracker` persists day K-lines today.
+Current repo validation only covers day bars because `china-stock-analysis` persists day K-lines today.
 
 ## Result Schema
 
@@ -186,7 +186,7 @@ Style rules:
 
 ## Current Data Fit
 
-Current `china-stock-daily-tracker` day-bar records already provide:
+Current `china-stock-analysis` day-bar records already provide:
 
 - `date`
 - `open`

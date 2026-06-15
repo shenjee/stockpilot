@@ -1,8 +1,8 @@
-# china-stock-daily-tracker Product Design v0.1
+# Stock Pilot Product Design v0.1
 
 ## 1. Product Positioning
 
-china-stock-daily-tracker is an A-share research and quantitative decision-support system for individual investors who are developing toward a junior fund-manager workflow.
+Stock Pilot is an A-share research and quantitative decision-support system for individual investors who are developing toward a junior fund-manager workflow.
 
 It is not designed for automated trading or black-box stock picking. Its purpose is to help users build an explainable, reviewable, and gradually improving stock analysis process.
 
@@ -20,7 +20,7 @@ The long-term product form is:
 
 ## 2. Non-Goals
 
-china-stock-daily-tracker needs explicit boundaries to avoid uncontrolled scope growth.
+Stock Pilot needs explicit boundaries to avoid uncontrolled scope growth.
 
 Short-term non-goals:
 
@@ -52,7 +52,7 @@ The current user can be described as someone who:
 
 ## 4. Core Workflow
 
-china-stock-daily-tracker should be designed around a fund-manager-style daily workflow.
+Stock Pilot should be designed around a fund-manager-style daily workflow.
 
 After market close:
 
@@ -85,7 +85,7 @@ During manual trading:
 
 ## 5. Capability Layers
 
-china-stock-daily-tracker can be divided into eight capability domains.
+Stock Pilot can be divided into eight capability domains.
 
 ### 5.1 Data System
 
@@ -640,7 +640,7 @@ Output:
 In the short term, continue using one main skill:
 
 ```text
-china-stock-daily-tracker
+china-stock-analysis
 ```
 
 Reasons:
@@ -653,7 +653,7 @@ Reasons:
 
 Additional guidance:
 
-- Keep `china-stock-daily-tracker` as the main skill entry in the short term
+- Keep `china-stock-analysis` as the main skill entry in the short term
 - Let new Phase 2 Chan capability land first as a project-owned `chantheory` adapter layer consumed by the main skill
 - Let `chantheory` integrate `czsc` by default while exposing a stable project schema and plotting data to the outside
 - Decide whether Chan should become a separate skill only after the analysis interfaces and parameter boundaries stabilize
@@ -705,7 +705,7 @@ stockpilotskills/
 │       ├── app.py
 │       └── pages/
 └── skills/
-    └── china-stock-daily-tracker/
+    └── china-stock-analysis/
         ├── SKILL.md
         ├── scripts/
         │   ├── generate_report.py
@@ -759,7 +759,7 @@ P3:
 
 ## 10. Design Principles
 
-Future china-stock-daily-tracker iterations should follow these principles:
+Future Stock Pilot iterations should follow these principles:
 
 - Data before analysis
 - Observation before signals
@@ -773,7 +773,7 @@ Future china-stock-daily-tracker iterations should follow these principles:
 
 ## 11. Minimum Viable Product
 
-The china-stock-daily-tracker MVP does not need to recommend stocks.
+The Stock Pilot MVP does not need to recommend stocks.
 
 The first usable version should be able to:
 

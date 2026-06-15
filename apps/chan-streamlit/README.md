@@ -34,6 +34,6 @@ streamlit run apps/chan-streamlit/app.py
 
 ## Notes
 
-- The app imports `packages/` and `skills/china-stock-daily-tracker/scripts/` directly from the repo.
+- The app imports `packages/` and `skills/china-stock-analysis/scripts/` directly from the repo.
 - The current data provider path uses `TencentStockDataProvider`.
 - `divergences` stay conservatively empty in the current Phase 2 mapper until a stable project rule is finalized.
