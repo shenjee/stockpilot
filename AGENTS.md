@@ -29,7 +29,9 @@ which python
 - `packages/chantheory/`: project-owned adapter layer around `czsc`. This is the main reusable Python package in the repo.
 - `packages/chantheory/tests/`: unit tests and JSON fixtures for the adapter layer.
 - `apps/chan-streamlit/`: Streamlit debug app used to validate `chantheory` output and chart overlays.
+- `apps/chan-streamlit/tests/`: app-focused tests.
 - `skills/china-stock-analysis/`: installable agent skill with scripts, config templates, and references.
+- `skills/china-stock-analysis/tests/`: skill-focused tests kept outside the installable `scripts/` tree.
 - `docs/`: product and phase design notes. Treat these as source-of-truth context for intent and boundaries.
 
 ## Architecture Rules
@@ -64,13 +66,13 @@ python -m unittest discover -s packages/chantheory/tests -p 'test_*.py'
 Run the Streamlit app smoke tests:
 
 ```bash
-python -m unittest apps/chan-streamlit/test_app.py
+python -m unittest discover -s apps/chan-streamlit/tests -p 'test_*.py'
 ```
 
 Run the stock analysis skill script tests:
 
 ```bash
-python -m unittest skills/china-stock-analysis/scripts/test_market_data.py
+python -m unittest discover -s skills/china-stock-analysis/tests -p 'test_*.py'
 ```
 
 Start the debug app:
@@ -97,8 +99,8 @@ python -m pip install streamlit plotly
 ## Testing Expectations
 
 - For changes under `packages/chantheory/`, run the `chantheory` test suite first.
-- For changes under `apps/chan-streamlit/`, run the app test and, if relevant, launch the app for a quick manual smoke check.
-- For changes under `skills/china-stock-analysis/scripts/`, run the local script tests that cover the edited module.
+- For changes under `apps/chan-streamlit/`, run the relevant tests under `apps/chan-streamlit/tests/` and, if relevant, launch the app for a quick manual smoke check.
+- For changes under `skills/china-stock-analysis/scripts/`, run the relevant tests under `skills/china-stock-analysis/tests/`.
 - Add or update tests when behavior changes or regression risk is non-trivial.
 
 ## Data And Domain Notes

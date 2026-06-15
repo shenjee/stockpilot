@@ -2,6 +2,17 @@
 
 All notable changes to Stock Pilot Skills are documented here.
 
+## [1.2.0] - 2026-06-15
+
+### Changed
+
+- Refactored the Streamlit debug app into smaller UI, service, and chart modules.
+- Refactored the stock analysis report pipeline into orchestrator, service, renderer, repository, and CLI modules.
+- Unified app-side and report-side K-line access behind the shared `KLineDataService`.
+- Extended the shared local K-line store to support both daily and minute timeframes.
+- Moved app and skill tests into dedicated `tests/` directories instead of mixing them with production modules.
+- Hardened SQLite connection handling so the local K-line store closes connections cleanly without `ResourceWarning`.
+
 ## [1.0.0] - 2026-06-06
 
 Initial Stock Pilot skill release.

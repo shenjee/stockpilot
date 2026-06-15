@@ -5,7 +5,8 @@ from datetime import date
 from pathlib import Path
 
 
-APP_PATH = Path(__file__).resolve().parent / "app.py"
+APP_DIR = Path(__file__).resolve().parents[1]
+APP_PATH = APP_DIR / "app.py"
 SPEC = importlib.util.spec_from_file_location("chan_streamlit_app", APP_PATH)
 app = importlib.util.module_from_spec(SPEC)
 assert SPEC and SPEC.loader
@@ -75,6 +76,10 @@ class ChartAxisTests(unittest.TestCase):
 
         self.assertEqual([row["date"] for row in ordered], ["2026-06-10", "2026-06-11", "2026-06-12"])
         self.assertTrue(key.endswith("|3|2026-06-10|2026-06-12"))
+
+    def test_frontend_template_preserves_scale_placeholder(self):
+        self.assertEqual(app._frontend_template("zh", "y_zoom_caption"), "{scale}x 区间")
+        self.assertEqual(app._frontend_template("en", "y_zoom_caption"), "{scale}x range")
 
 
 if __name__ == "__main__":

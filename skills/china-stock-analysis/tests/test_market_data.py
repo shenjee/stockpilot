@@ -4,7 +4,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
+sys.path.insert(0, str(SCRIPTS_DIR))
 
 from market_data import TencentStockDataProvider
 

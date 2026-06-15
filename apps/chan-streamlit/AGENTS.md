@@ -38,7 +38,7 @@ Run the app test from the repo root with the validated environment active:
 
 ```bash
 source ~/.venvs/czsc/bin/activate
-python -m unittest apps/chan-streamlit/test_app.py
+python -m unittest discover -s apps/chan-streamlit/tests -p 'test_*.py'
 ```
 
 For manual validation, launch the app:

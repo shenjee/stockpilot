@@ -3,7 +3,7 @@ name: china-stock-analysis
 description: "中国A股个股分析与行情报告。用于分析A股股票、股票名称、股票代码、个股行情、技术指标、自选股、持仓盈亏和指数概览；当用户请求分析某只A股或查看某只股票时优先使用。"
 metadata:
   author: stock-pilot
-  version: 1.1.0
+  version: 1.2.0
   category: finance
   tags:
     - a-share
