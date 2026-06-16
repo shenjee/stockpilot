@@ -63,6 +63,28 @@ class MarketServiceTests(unittest.TestCase):
         self.assertEqual(fake_service.calls[0]["timeframe"], "5m")
         self.assertEqual(fake_service.calls[0]["end_date"], "2026-06-12")
 
+    def test_fetch_rows_for_timeframes_groups_non_empty_payloads(self):
+        fake_service = FakeKLineDataService()
+
+        def fake_get_klines(**kwargs):
+            fake_service.calls.append(kwargs)
+            if kwargs["timeframe"] == "week":
+                return []
+            return [{"date": "2026-06-12", "open": 10, "close": 11, "high": 11.2, "low": 9.8, "volume": 100}]
+
+        fake_service.get_klines = fake_get_klines
+        with patch.object(market_service, "_get_kline_data_service", return_value=fake_service):
+            rows_by_timeframe = market_service.fetch_rows_for_timeframes(
+                symbol="000001",
+                market="sz",
+                timeframes=["day", "week", "day", "month"],
+                start_date=date(2026, 6, 1),
+                end_date=date(2026, 6, 12),
+            )
+
+        self.assertEqual(list(rows_by_timeframe.keys()), ["day", "month"])
+        self.assertEqual([call["timeframe"] for call in fake_service.calls], ["day", "week", "month"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 from functools import lru_cache
-from typing import Dict, List
+from typing import Dict, List, Sequence
 
 from market_data import TencentStockDataProvider
 from repositories.kline_store import KLineStore, resolve_market_data_db_path
@@ -40,6 +40,31 @@ def fetch_rows(
         start_date=start_date.strftime("%Y-%m-%d"),
         limit=500,
     )
+
+
+def fetch_rows_for_timeframes(
+    symbol: str,
+    market: str,
+    timeframes: Sequence[str],
+    start_date: date,
+    end_date: date,
+) -> Dict[str, List[Dict[str, object]]]:
+    rows_by_timeframe: Dict[str, List[Dict[str, object]]] = {}
+    seen: set[str] = set()
+    for timeframe in timeframes:
+        if timeframe in seen:
+            continue
+        seen.add(timeframe)
+        rows = fetch_rows(
+            symbol=symbol,
+            market=market,
+            timeframe=timeframe,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        if rows:
+            rows_by_timeframe[timeframe] = rows
+    return rows_by_timeframe
 
 
 def probe_market_suggestions(

@@ -28,7 +28,7 @@ Observed validation result:
 Phase 2 P2 adds:
 
 - project-level mapping for `fractals`, `strokes`, `segments`, and `pivot_zones`
-- conservative `divergences` output as an intentionally empty list with explicit warnings
+- project-level `divergences` mapping based on weaker same-direction stroke extensions around pivot zones
 - stable `plot_primitives` for markers, lines, boxes, labels, and structure-only candidate points
 - short summary and warning generation for unstable tail strokes and insufficient bars
 - a Streamlit debug app under `apps/chan-streamlit/`
@@ -40,9 +40,11 @@ Current public entry points:
 
 - `normalize_ohlcv_rows(...)`
 - `normalize_tracker_klines(...)`
-- `analyze(...)`
-- `analyze_tracker_klines(...)`
-- `analyze_normalized(...)`
+- `analyze(..., signals_config=None)`
+- `analyze_multi_timeframe(..., base_timeframe, signals_config=None)`
+- `analyze_tracker_klines(..., signals_config=None)`
+- `analyze_multi_timeframe_tracker_klines(..., base_timeframe, signals_config=None)`
+- `analyze_normalized(..., signals_config=None)`
 
 All public fields use `snake_case`.
 
@@ -129,6 +131,10 @@ P1 freezes the top-level schema and P2 fills the stable structure mapping.
   "pivot_zones": [],
   "divergences": [],
   "structure_alerts": [],
+  "signal_series": [],
+  "signal_events": [],
+  "signal_snapshots": [],
+  "candidate_point_events": [],
   "candidate_buy_points": [],
   "candidate_sell_points": [],
   "plot_primitives": [],
@@ -138,8 +144,41 @@ P1 freezes the top-level schema and P2 fills the stable structure mapping.
 }
 ```
 
+Multi-timeframe analysis uses a project-owned grouped container instead of leaking `czsc` trader objects:
+
+```json
+{
+  "symbol": "000001.SZ",
+  "source": "tencent",
+  "engine": "czsc",
+  "engine_version": "0.10.12",
+  "base_timeframe": "day",
+  "timeframes": ["day", "week", "month"],
+  "levels": [
+    {
+      "timeframe": "day",
+      "role": "base",
+      "bar_count": 120,
+      "analysis": {}
+    }
+  ],
+  "summary": [],
+  "warnings": [],
+  "meta": {
+    "higher_timeframes": ["week", "month"],
+    "lower_timeframes": [],
+    "roles": {"day": "base", "week": "higher", "month": "higher"}
+  }
+}
+```
+
 Responsibilities are split as follows:
 
+- `signal_series`: per-signal replay points across finished strokes / bars
+- `signal_events`: signal lifecycle transitions such as triggered, switched, and invalidated
+- `signal_snapshots`: per-bar signal values for hover, replay, and debug surfaces
+- `candidate_point_events`: buy/sell replay events derived from project candidate-point mapping
+- `levels`: ordered per-timeframe `AnalysisResult` payloads with explicit `base` / `higher` / `lower` roles
 - `plot_primitives`: visualization-ready points, lines, boxes, labels, markers
 - `summary`: short sentences for skills and agents
 - `warnings`: normalization gaps, engine failures, and runtime degradation details
@@ -150,8 +189,22 @@ Current P2 mapping notes:
 - `strokes`: mapped from `CZSC.finished_bis`
 - `segments`: derived from same-timeframe finished strokes with a project-side rule requiring odd stroke counts, initial three-stroke overlap, opposite endpoint progression, connected endpoints, and next opposite segment confirmation
 - `pivot_zones`: derived from `czsc.utils.sig.get_zs_seq` on finished strokes
-- `divergences`: conservatively empty until a project-stable rule is finalized
-- `candidate_buy_points` / `candidate_sell_points`: structure-only candidates with `meta.signal_scope = "structure_candidate_only"`; they are not trading instructions
+- `divergences`: mapped from same-direction stroke extensions that push beyond a pivot zone on weaker stroke magnitude after a retracement
+- `signal_series` / `signal_events` / `signal_snapshots`: project-owned signal schema built from `signals_config`
+- `candidate_point_events`: project replay of candidate-point trigger, switch, and invalidate history
+- `candidate_buy_points` / `candidate_sell_points`: latest project interpretation results derived from signal replay or structure-only context; they are not trading instructions
+
+`signals_config` accepts either:
+
+- `None`: use the project default `cxt_*` buy/sell signal set
+- a list of strings: treat each string as a function name under `czsc.signals.cxt`
+- a list of mappings: each item may provide `module`, `name`, `key`, `kwargs`, and optional `enabled`
+
+Multi-timeframe notes:
+
+- `analyze_multi_timeframe(...)` expects a mapping like `{timeframe: rows}`
+- `base_timeframe` identifies the chart timeframe that downstream apps should render first
+- higher / lower timeframe roles are derived from the project timeframe ordering instead of `czsc.BarGenerator` / `CzscTrader`
 
 ## Plot Contract
 
@@ -181,6 +234,7 @@ Style rules:
 - down strokes: orange solid lines
 - segments: purple dashed lines
 - active pivot zones: amber filled boxes
+- divergences: green or red text markers at divergence endpoints
 - candidate points: green or red diamond markers
 - alerts: teal or red labels depending on severity
 

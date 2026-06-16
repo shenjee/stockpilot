@@ -11,15 +11,20 @@ sys.path.insert(0, str(ROOT / "packages"))
 
 from chantheory.adapters import (
     _build_candidate_points,
+    _build_candidate_point_events,
+    _map_divergences,
+    _build_signal_payloads,
     _map_pending_stroke,
     _map_strokes,
     _normalize_direction,
     _normalize_fractal_type,
+    _normalize_signals_config,
     _to_timestamp,
+    analyze_multi_timeframe_tracker_klines,
     analyze_tracker_klines,
     load_czsc,
 )
-from chantheory.schema import Stroke
+from chantheory.schema import AnalysisResult, AnalysisWarning, Stroke
 from chantheory.segments import SEGMENT_MAPPING_STRATEGY
 
 
@@ -42,6 +47,32 @@ def _stroke(
         end_price=end_price,
         confirmed=True,
     )
+
+
+def _analysis_result(timeframe: str, bar_count: int, warning_code: str = "") -> AnalysisResult:
+    warnings = []
+    if warning_code:
+        warnings.append(
+            AnalysisWarning(
+                id=f"warning_{timeframe}_{warning_code.lower()}",
+                warning_code=warning_code,
+                severity="warning",
+                message=f"{timeframe} warning",
+                field="bars",
+            )
+        )
+    result = AnalysisResult(
+        symbol="000001.SZ",
+        timeframe=timeframe,
+        source="tencent",
+        engine="czsc",
+        engine_version="0.10.12",
+        parameters={"max_bi_num": 50},
+        warnings=warnings,
+        meta={"bar_count": bar_count, "engine_probe": {"status": "ok"}},
+    )
+    result.summary = [f"{timeframe} summary"]
+    return result
 
 
 class AdapterTests(unittest.TestCase):
@@ -178,7 +209,13 @@ class AdapterTests(unittest.TestCase):
         with patch("chantheory.adapters._run_engine", return_value=(analyzer, [object()] * 5)), patch(
             "chantheory.adapters.load_czsc_utils", return_value=sig_module
         ):
-            result = analyze_tracker_klines(rows=rows, code="000001", market="sz", parameters={"min_bars": 10})
+            result = analyze_tracker_klines(
+                rows=rows,
+                code="000001",
+                market="sz",
+                parameters={"min_bars": 10},
+                signals_config=[],
+            )
 
         self.assertEqual(result.symbol, "000001.SZ")
         self.assertEqual(len(result.fractals), 4)
@@ -198,6 +235,89 @@ class AdapterTests(unittest.TestCase):
         self.assertTrue(any(item.warning_code == "INSUFFICIENT_BARS" for item in result.warnings))
         self.assertTrue(any(item.warning_code == "UNSTABLE_TAIL_STROKE" for item in result.warnings))
         self.assertTrue(result.summary)
+
+    def test_map_divergences_detects_bullish_and_bearish_cases(self):
+        bearish_strokes = [
+            _stroke("1", "up", "2025-01-02", 10.0, "2025-01-03", 13.0),
+            _stroke("2", "down", "2025-01-03", 13.0, "2025-01-06", 10.8),
+            _stroke("3", "up", "2025-01-06", 10.8, "2025-01-07", 13.4),
+        ]
+        bullish_strokes = [
+            _stroke("4", "down", "2025-01-08", 13.1, "2025-01-09", 9.6),
+            _stroke("5", "up", "2025-01-09", 9.6, "2025-01-10", 11.2),
+            _stroke("6", "down", "2025-01-10", 11.2, "2025-01-13", 9.2),
+        ]
+        pivot_zones = [
+            SimpleNamespace(
+                id="pivot_bearish",
+                start_timestamp="2025-01-03",
+                end_timestamp="2025-01-06",
+                high=12.0,
+                low=10.8,
+            ),
+            SimpleNamespace(
+                id="pivot_bullish",
+                start_timestamp="2025-01-09",
+                end_timestamp="2025-01-10",
+                high=11.2,
+                low=9.8,
+            ),
+        ]
+
+        divergences = _map_divergences(
+            strokes=[*bearish_strokes, *bullish_strokes],
+            pivot_zones=pivot_zones,
+        )
+
+        self.assertEqual([item.divergence_type for item in divergences], ["bearish", "bullish"])
+        self.assertEqual(divergences[0].reference_id, "stroke_3")
+        self.assertEqual(divergences[0].meta["pivot_zone_id"], "pivot_bearish")
+        self.assertEqual(divergences[1].reference_id, "stroke_6")
+        self.assertEqual(divergences[1].meta["pivot_zone_id"], "pivot_bullish")
+        self.assertLess(divergences[0].meta["magnitude_ratio"], 1.0)
+        self.assertIn("ratio", divergences[1].description)
+
+    def test_p2_mapping_can_emit_divergence_output_and_primitives(self):
+        rows = [
+            {"date": "2025-01-02", "open": 10.0, "close": 11.8, "high": 12.0, "low": 9.9, "volume": 1000},
+            {"date": "2025-01-03", "open": 11.8, "close": 13.0, "high": 13.1, "low": 11.7, "volume": 1200},
+            {"date": "2025-01-06", "open": 12.9, "close": 10.8, "high": 13.0, "low": 10.7, "volume": 1300},
+            {"date": "2025-01-07", "open": 10.8, "close": 13.4, "high": 13.5, "low": 10.7, "volume": 1400},
+        ]
+
+        fx1 = SimpleNamespace(dt="2025-01-02", mark="D", fx=10.0)
+        fx2 = SimpleNamespace(dt="2025-01-03", mark="G", fx=13.0)
+        fx3 = SimpleNamespace(dt="2025-01-06", mark="D", fx=10.8)
+        fx4 = SimpleNamespace(dt="2025-01-07", mark="G", fx=13.4)
+        bi1 = SimpleNamespace(fx_a=fx1, fx_b=fx2, direction="Up", high=13.0, low=10.0)
+        bi2 = SimpleNamespace(fx_a=fx2, fx_b=fx3, direction="Down", high=13.0, low=10.8)
+        bi3 = SimpleNamespace(fx_a=fx3, fx_b=fx4, direction="Up", high=13.4, low=10.8)
+        analyzer = SimpleNamespace(
+            fx_list=[fx1, fx2, fx3, fx4],
+            ubi_fxs=[],
+            finished_bis=[bi1, bi2, bi3],
+            last_bi_extend=False,
+        )
+        zs = SimpleNamespace(sdt="2025-01-03", edt="2025-01-06", zg=12.0, zd=10.8, gg=13.0, dd=10.8, zz=11.4)
+        sig_module = SimpleNamespace(get_zs_seq=lambda bis: [zs])
+
+        with patch("chantheory.adapters._run_engine", return_value=(analyzer, [object()] * 4)), patch(
+            "chantheory.adapters.load_czsc_utils", return_value=sig_module
+        ):
+            result = analyze_tracker_klines(
+                rows=rows,
+                code="000001",
+                market="sz",
+                parameters={"min_bars": 2},
+                signals_config=[],
+            )
+
+        self.assertEqual(len(result.divergences), 1)
+        self.assertEqual(result.divergences[0].divergence_type, "bearish")
+        self.assertEqual(result.meta["mapping"]["divergence_count"], 1)
+        self.assertTrue(any(item.layer == "divergences" for item in result.plot_primitives))
+        self.assertFalse(any(item.warning_code == "DIVERGENCE_CONSERVATIVE_EMPTY" for item in result.warnings))
+        self.assertTrue(any("confirmed divergence" in line for line in result.summary))
 
     def test_map_strokes_repairs_adjacent_endpoint_gap(self):
         fx1 = SimpleNamespace(dt="2025-01-02", mark="D", fx=9.7)
@@ -281,10 +401,34 @@ class AdapterTests(unittest.TestCase):
         analyzer = SimpleNamespace(fx_list=[], ubi_fxs=[], finished_bis=[], bi_list=[])
 
         with patch("chantheory.adapters._run_engine", return_value=(analyzer, [object()] * 3)):
-            result = analyze_tracker_klines(rows=rows, code="000001", market="sz")
+            result = analyze_tracker_klines(rows=rows, code="000001", market="sz", signals_config=[])
 
         self.assertEqual(result.meta["engine_probe"]["status"], "ok")
         self.assertFalse(any(item.warning_code == "ENGINE_PROBE_FAILED" for item in result.warnings))
+
+    def test_document_style_signals_config_removes_di_and_builds_distinct_keys(self):
+        config = _normalize_signals_config(
+            [
+                {"name": "cxt_bi_status_V230101", "freq": "30分钟"},
+                {"name": "cxt_bi_status_V230101", "freq": "日线"},
+                {"name": "tas_ma_base_V221101", "freq": "日线", "di": 2, "timeperiod": 5, "ma_type": "SMA"},
+                {"name": "bar_zdt_V230331", "freq": "30分钟", "di": 1},
+            ]
+        )
+
+        self.assertEqual(
+            [item["key"] for item in config],
+            [
+                "30分钟_cxt_bi_status_V230101",
+                "日线_cxt_bi_status_V230101",
+                "日线_tas_ma_base_V221101_ma_type=SMA_timeperiod=5",
+                "30分钟_bar_zdt_V230331",
+            ],
+        )
+        self.assertEqual(config[2]["di"], 2)
+        self.assertNotIn("di", config[2]["kwargs"])
+        self.assertEqual(config[2]["kwargs"]["freq"], "日线")
+        self.assertEqual(config[2]["kwargs"]["timeperiod"], 5)
 
     def test_cxt_signal_points_use_default_versions_and_ignore_other(self):
         fx1 = SimpleNamespace(dt="2025-01-01", mark="D", fx=10.0)
@@ -297,13 +441,30 @@ class AdapterTests(unittest.TestCase):
             _stroke("1", "up", "2025-01-01", 10.0, "2025-01-02", 11.0),
             _stroke("2", "up", "2025-01-03", 10.2, "2025-01-04", 11.2),
         ]
-        analyzer = SimpleNamespace(bi_list=[bi1, bi2])
+        bars_raw = [
+            SimpleNamespace(dt="2025-01-01", close=10.0),
+            SimpleNamespace(dt="2025-01-02", close=11.0),
+            SimpleNamespace(dt="2025-01-03", close=10.2),
+            SimpleNamespace(dt="2025-01-04", close=11.2),
+        ]
+        class MockAnalyzer:
+            def __init__(self, bars, max_bi_num=50):
+                self.bars_raw = list(bars)
+                self.bi_list = [bi1, bi2]
+            def update(self, bar):
+                if bar not in self.bars_raw:
+                    self.bars_raw.append(bar)
+
+        analyzer = MockAnalyzer(bars_raw)
         calls = []
 
         def signal(name, value):
             def _func(_analyzer, **kwargs):
                 calls.append(name)
-                return {name: value}
+                dt_str = _analyzer.bars_raw[-1].dt.strftime("%Y-%m-%d") if hasattr(_analyzer.bars_raw[-1].dt, "strftime") else str(_analyzer.bars_raw[-1].dt)
+                if dt_str in ("2025-01-02", "2025-01-04"):
+                    return {name: value}
+                return {name: "其他_任意_任意_0"}
             return _func
 
         sig_module = SimpleNamespace(
@@ -314,18 +475,32 @@ class AdapterTests(unittest.TestCase):
         )
 
         with patch("chantheory.adapters.import_module", return_value=sig_module):
-            buy_points, sell_points = _build_candidate_points(strokes=strokes, pivot_zones=[], analyzer=analyzer)
+            signal_evaluations, signal_series, signal_events, signal_snapshots, warnings, _ = _build_signal_payloads(
+                strokes=strokes,
+                analyzer=analyzer,
+                index_by_timestamp={
+                    "2025-01-02": 1,
+                    "2025-01-04": 3,
+                },
+                signals_config=None,
+            )
+        candidate_point_events = _build_candidate_point_events(signal_evaluations)
+        buy_points, sell_points = _build_candidate_points(
+            strokes=strokes,
+            pivot_zones=[],
+            candidate_point_events=candidate_point_events,
+        )
 
         self.assertNotIn("cxt_second_bs_V230320", calls)
         self.assertNotIn("cxt_third_buy_V230228", calls)
-        self.assertEqual([point.point_type for point in buy_points], ["second_buy", "second_buy"])
-        self.assertTrue(all(point.reason == "二买_任意_任意_0" for point in buy_points))
-        self.assertTrue(all(point.meta["signal_name"] == "cxt_second_bs_V240524" for point in buy_points))
-        self.assertTrue(all(point.meta["signal_version"] == "V240524" for point in buy_points))
-        self.assertEqual([point.point_type for point in sell_points], ["first_sell", "third_sell", "first_sell", "third_sell"])
-        self.assertEqual(sell_points[0].meta["signal_name"], "cxt_first_sell_V221126")
-        self.assertEqual(sell_points[1].meta["signal_name"], "cxt_third_bs_V230319")
-        self.assertTrue(all(not point.reason.startswith("其他") for point in buy_points + sell_points))
+        self.assertFalse(warnings)
+        if not signal_series:
+            print("EVALUATIONS:", signal_evaluations)
+        self.assertEqual([series.signal_key for series in signal_series], ["first_buy", "first_sell", "second_bs", "third_bs"])
+        self.assertEqual(len(signal_snapshots), 4)
+        self.assertEqual(len(signal_events), 9)
+        candidate_events = _build_candidate_point_events(signal_evaluations)
+        self.assertEqual(len(candidate_events), 9)
 
     def test_candidate_points_are_structure_only(self):
         rows = [
@@ -343,12 +518,226 @@ class AdapterTests(unittest.TestCase):
         with patch("chantheory.adapters._run_engine", return_value=(analyzer, [object()] * 3)), patch(
             "chantheory.adapters.load_czsc_utils", return_value=sig_module
         ):
-            result = analyze_tracker_klines(rows=rows, code="000001", market="sz")
+            result = analyze_tracker_klines(rows=rows, code="000001", market="sz", signals_config=[])
 
         self.assertEqual(len(result.candidate_buy_points), 1)
         candidate = result.candidate_buy_points[0]
         self.assertEqual(candidate.point_type, "structure_buy_candidate")
         self.assertEqual(candidate.meta["signal_scope"], "structure_candidate_only")
+
+    def test_analyze_tracker_klines_emits_generic_signal_layers_from_explicit_config(self):
+        rows = [
+            {"date": "2025-01-01", "open": 10.0, "close": 10.2, "high": 10.3, "low": 9.9, "volume": 1000},
+            {"date": "2025-01-02", "open": 10.2, "close": 10.5, "high": 10.6, "low": 10.1, "volume": 1100},
+            {"date": "2025-01-03", "open": 10.5, "close": 10.1, "high": 10.6, "low": 10.0, "volume": 1200},
+            {"date": "2025-01-04", "open": 10.1, "close": 10.8, "high": 10.9, "low": 10.0, "volume": 1300},
+            {"date": "2025-01-05", "open": 10.8, "close": 10.3, "high": 10.9, "low": 10.2, "volume": 1400},
+        ]
+        fx1 = SimpleNamespace(dt="2025-01-01", mark="D", fx=9.9)
+        fx2 = SimpleNamespace(dt="2025-01-02", mark="G", fx=10.6)
+        fx3 = SimpleNamespace(dt="2025-01-03", mark="D", fx=10.0)
+        fx4 = SimpleNamespace(dt="2025-01-04", mark="G", fx=10.9)
+        fx5 = SimpleNamespace(dt="2025-01-05", mark="D", fx=10.2)
+        bi1 = SimpleNamespace(fx_a=fx1, fx_b=fx2, direction="Up", high=10.6, low=9.9)
+        bi2 = SimpleNamespace(fx_a=fx2, fx_b=fx3, direction="Down", high=10.6, low=10.0)
+        bi3 = SimpleNamespace(fx_a=fx3, fx_b=fx4, direction="Up", high=10.9, low=10.0)
+        bi4 = SimpleNamespace(fx_a=fx4, fx_b=fx5, direction="Down", high=10.9, low=10.2)
+        bars_raw = [
+            SimpleNamespace(dt="2025-01-01", close=10.2),
+            SimpleNamespace(dt="2025-01-02", close=10.5),
+            SimpleNamespace(dt="2025-01-03", close=10.1),
+            SimpleNamespace(dt="2025-01-04", close=10.8),
+            SimpleNamespace(dt="2025-01-05", close=10.3),
+        ]
+        class MockAnalyzer2:
+            def __init__(self, bars, max_bi_num=50):
+                self.bars_raw = list(bars)
+                self.bi_list = [bi1, bi2, bi3, bi4]
+            def update(self, bar):
+                if bar not in self.bars_raw:
+                    self.bars_raw.append(bar)
+
+        analyzer = MockAnalyzer2(bars_raw)
+        analyzer.fx_list = [fx1, fx2, fx3, fx4, fx5]
+        analyzer.ubi_fxs = []
+        analyzer.finished_bis = [bi1, bi2, bi3, bi4]
+        analyzer.last_bi_extend = False
+
+        def trend_signal(_analyzer, di=1, **_kwargs):
+            dt_str = _analyzer.bars_raw[-1].dt.strftime("%Y-%m-%d") if hasattr(_analyzer.bars_raw[-1].dt, "strftime") else str(_analyzer.bars_raw[-1].dt)
+            values = {
+                "2025-01-02": "其他_任意_任意_0",
+                "2025-01-03": "看多_低位_任意_0",
+                "2025-01-04": "看多_加速_任意_0",
+                "2025-01-05": "其他_任意_任意_0",
+            }
+            return {"trend_signal": values.get(dt_str, "其他_任意_任意_0")}
+
+        signal_module = SimpleNamespace(trend_signal=trend_signal)
+
+        def fake_import(name):
+            if name == "custom.signals":
+                return signal_module
+            raise ImportError(name)
+
+        with patch("chantheory.adapters._run_engine", return_value=(analyzer, [object()] * 5)), patch(
+            "chantheory.adapters.load_czsc_utils", return_value=SimpleNamespace(get_zs_seq=lambda bis: [])
+        ), patch("chantheory.adapters.import_module", side_effect=fake_import):
+            result = analyze_tracker_klines(
+                rows=rows,
+                code="000001",
+                market="sz",
+                signals_config=[
+                    {
+                        "module": "custom.signals",
+                        "name": "trend_signal",
+                        "key": "trend_bias",
+                    }
+                ],
+            )
+
+        self.assertEqual([series.signal_key for series in result.signal_series], ["trend_bias"])
+        self.assertEqual([point.value for point in result.signal_series[0].points], ["其他_任意_任意_0", "其他_任意_任意_0", "看多_低位_任意_0", "看多_加速_任意_0", "其他_任意_任意_0"])
+        self.assertEqual([event.event_type for event in result.signal_events], ["triggered", "switched", "invalidated"])
+        self.assertEqual(result.signal_snapshots[2].active_signals, {"trend_bias": "看多_低位_任意_0"})
+        self.assertEqual(result.meta["signals"]["config"][0]["key"], "trend_bias")
+        self.assertEqual(result.meta["signals"]["event_count"], 3)
+        self.assertEqual(result.candidate_point_events, [])
+        self.assertEqual(result.candidate_buy_points, [])
+        self.assertEqual(result.candidate_sell_points, [])
+
+    def test_invalid_signals_config_adds_warning_without_breaking_analysis(self):
+        rows = [
+            {"date": "2025-01-01", "open": 10.0, "close": 10.2, "high": 10.3, "low": 9.9, "volume": 1000},
+            {"date": "2025-01-02", "open": 10.2, "close": 10.5, "high": 10.6, "low": 10.1, "volume": 1100},
+        ]
+        analyzer = SimpleNamespace(fx_list=[], ubi_fxs=[], finished_bis=[], bi_list=[], last_bi_extend=False)
+
+        with patch("chantheory.adapters._run_engine", return_value=(analyzer, [object()] * 2)):
+            result = analyze_tracker_klines(
+                rows=rows,
+                code="000001",
+                market="sz",
+                signals_config={"signals": "bad"},
+            )
+
+        self.assertTrue(any(item.warning_code == "INVALID_SIGNALS_CONFIG" for item in result.warnings))
+        self.assertEqual(result.signal_series, [])
+        self.assertEqual(result.signal_events, [])
+        self.assertEqual(result.signal_snapshots, [])
+
+    def test_candidate_point_events_capture_trigger_switch_and_invalidate(self):
+        evaluations = [
+            {
+                "signal_key": "second_bs",
+                "signal_name": "cxt_second_bs_V240524",
+                "module": "czsc.signals.cxt",
+                "timestamp": "2025-01-02",
+                "bar_index": 1,
+                "reference_id": "stroke_1",
+                "price": 10.2,
+                "direction": "down",
+                "value": "其他_任意_任意_0",
+                "active": False,
+            },
+            {
+                "signal_key": "second_bs",
+                "signal_name": "cxt_second_bs_V240524",
+                "module": "czsc.signals.cxt",
+                "timestamp": "2025-01-03",
+                "bar_index": 2,
+                "reference_id": "stroke_2",
+                "price": 10.1,
+                "direction": "down",
+                "value": "二买_任意_任意_0",
+                "active": True,
+            },
+            {
+                "signal_key": "second_bs",
+                "signal_name": "cxt_second_bs_V240524",
+                "module": "czsc.signals.cxt",
+                "timestamp": "2025-01-04",
+                "bar_index": 3,
+                "reference_id": "stroke_3",
+                "price": 11.4,
+                "direction": "up",
+                "value": "二卖_任意_任意_0",
+                "active": True,
+            },
+            {
+                "signal_key": "second_bs",
+                "signal_name": "cxt_second_bs_V240524",
+                "module": "czsc.signals.cxt",
+                "timestamp": "2025-01-05",
+                "bar_index": 4,
+                "reference_id": "stroke_4",
+                "price": 11.2,
+                "direction": "up",
+                "value": "其他_任意_任意_0",
+                "active": False,
+            },
+        ]
+
+        candidate_events = _build_candidate_point_events(evaluations)
+
+        self.assertEqual([event.event_type for event in candidate_events], ["triggered", "switched", "invalidated"])
+        self.assertEqual([event.point_type for event in candidate_events], ["second_buy", "second_sell", "second_sell"])
+        self.assertEqual(candidate_events[1].meta["previous_point_type"], "second_buy")
+        self.assertEqual(candidate_events[2].meta["previous_value"], "二卖_任意_任意_0")
+
+    def test_analyze_multi_timeframe_tracker_klines_orders_levels_and_aggregates_warnings(self):
+        rows_by_timeframe = {
+            "week": [{"date": "2025-01-10", "open": 10, "close": 11, "high": 11.2, "low": 9.8, "volume": 1000}],
+            "day": [{"date": "2025-01-10", "open": 10, "close": 11, "high": 11.2, "low": 9.8, "volume": 1000}],
+            "month": [{"date": "2025-01-31", "open": 10, "close": 11, "high": 11.5, "low": 9.5, "volume": 2000}],
+        }
+
+        def fake_analyze_tracker_klines(rows, code, market, timeframe, source="tencent", parameters=None, signals_config=None, strict=True):
+            if timeframe == "day":
+                result = _analysis_result("day", 120, warning_code="UNSTABLE_TAIL_STROKE")
+                result.signal_events = [SimpleNamespace(id="signal_event_day")]
+                result.candidate_point_events = [SimpleNamespace(id="candidate_event_day")]
+                return result
+            if timeframe == "week":
+                result = _analysis_result("week", 24)
+                result.signal_events = [SimpleNamespace(id="signal_event_week_1"), SimpleNamespace(id="signal_event_week_2")]
+                return result
+            return _analysis_result("month", 6)
+
+        with patch("chantheory.adapters.analyze_tracker_klines", side_effect=fake_analyze_tracker_klines):
+            result = analyze_multi_timeframe_tracker_klines(
+                rows_by_timeframe=rows_by_timeframe,
+                code="000001",
+                market="sz",
+                base_timeframe="day",
+            )
+
+        self.assertEqual(result.symbol, "000001.SZ")
+        self.assertEqual(result.timeframes, ["day", "week", "month"])
+        self.assertEqual([level.role for level in result.levels], ["base", "higher", "higher"])
+        self.assertEqual(result.meta["higher_timeframes"], ["week", "month"])
+        self.assertEqual(result.meta["bar_count_by_timeframe"], {"day": 120, "week": 24, "month": 6})
+        self.assertEqual(result.meta["signal_event_count"], 3)
+        self.assertEqual(result.meta["candidate_point_event_count"], 1)
+        self.assertTrue(any(item.warning_code == "UNSTABLE_TAIL_STROKE" for item in result.warnings))
+        self.assertTrue(result.summary)
+
+    def test_analyze_multi_timeframe_tracker_klines_warns_when_base_timeframe_missing(self):
+        rows_by_timeframe = {
+            "week": [{"date": "2025-01-10", "open": 10, "close": 11, "high": 11.2, "low": 9.8, "volume": 1000}],
+        }
+
+        with patch("chantheory.adapters.analyze_tracker_klines", return_value=_analysis_result("week", 24)):
+            result = analyze_multi_timeframe_tracker_klines(
+                rows_by_timeframe=rows_by_timeframe,
+                code="000001",
+                market="sz",
+                base_timeframe="day",
+            )
+
+        self.assertEqual(result.timeframes, ["week"])
+        self.assertTrue(any(item.warning_code == "MULTI_TIMEFRAME_BASE_MISSING" for item in result.warnings))
+        self.assertEqual(result.meta["roles"], {"week": "higher"})
 
     def test_fixture_engine_version_matches_pin(self):
         fixture_path = Path(__file__).resolve().parent / "fixtures" / "p2_sample_result.json"

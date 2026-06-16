@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Tuple
+from typing import Dict, List, Tuple
 
 
 ENGINE_NAME = "czsc"
@@ -17,6 +17,29 @@ DEFAULT_PARAMETERS = {
     "strict_validation": True,
     "derive_amount_from_close_volume": True,
 }
+
+DEFAULT_SIGNALS_CONFIG = (
+    {
+        "module": "czsc.signals.cxt",
+        "name": "cxt_first_buy_V221126",
+        "key": "first_buy",
+    },
+    {
+        "module": "czsc.signals.cxt",
+        "name": "cxt_first_sell_V221126",
+        "key": "first_sell",
+    },
+    {
+        "module": "czsc.signals.cxt",
+        "name": "cxt_second_bs_V240524",
+        "key": "second_bs",
+    },
+    {
+        "module": "czsc.signals.cxt",
+        "name": "cxt_third_bs_V230319",
+        "key": "third_bs",
+    },
+)
 
 TIMEFRAME_TO_CZSC_FREQ = {
     "1m": "F1",
@@ -83,3 +106,7 @@ def get_engine_compatibility() -> EngineCompatibility:
 
 def get_default_parameters() -> Dict[str, object]:
     return dict(DEFAULT_PARAMETERS)
+
+
+def get_default_signals_config() -> List[Dict[str, object]]:
+    return [dict(item) for item in DEFAULT_SIGNALS_CONFIG]

@@ -119,6 +119,70 @@ class CandidatePoint:
 
 
 @dataclass
+class CandidatePointEvent:
+    id: str
+    point_type: str
+    event_type: str
+    timestamp: str
+    bar_index: int
+    active: bool
+    reference_id: str = ""
+    price: Optional[float] = None
+    reason: str = ""
+    meta: Dict[str, Any] = dc_field(default_factory=dict)
+
+
+@dataclass
+class SignalSeriesPoint:
+    timestamp: str
+    bar_index: int
+    value: str
+    active: bool
+    price: Optional[float] = None
+    reference_id: str = ""
+    meta: Dict[str, Any] = dc_field(default_factory=dict)
+
+
+@dataclass
+class SignalSeries:
+    signal_key: str
+    signal_name: str
+    module: str
+    latest_value: str
+    latest_timestamp: str
+    points: List[SignalSeriesPoint] = dc_field(default_factory=list)
+    meta: Dict[str, Any] = dc_field(default_factory=dict)
+
+
+@dataclass
+class SignalEvent:
+    id: str
+    signal_key: str
+    signal_name: str
+    module: str
+    event_type: str
+    timestamp: str
+    bar_index: int
+    value: str
+    active: bool
+    reference_id: str = ""
+    price: Optional[float] = None
+    meta: Dict[str, Any] = dc_field(default_factory=dict)
+
+
+@dataclass
+class SignalSnapshot:
+    id: str
+    timestamp: str
+    bar_index: int
+    values: Dict[str, str]
+    active_signals: Dict[str, str] = dc_field(default_factory=dict)
+    reference_id: str = ""
+    price: Optional[float] = None
+    meta: Dict[str, Any] = dc_field(default_factory=dict)
+
+
+@dataclass
 class PlotPrimitive:
     id: str
     type: str
@@ -160,9 +224,39 @@ class AnalysisResult:
     pivot_zones: List[PivotZone] = dc_field(default_factory=list)
     divergences: List[Divergence] = dc_field(default_factory=list)
     structure_alerts: List[StructureAlert] = dc_field(default_factory=list)
+    signal_series: List[SignalSeries] = dc_field(default_factory=list)
+    signal_events: List[SignalEvent] = dc_field(default_factory=list)
+    signal_snapshots: List[SignalSnapshot] = dc_field(default_factory=list)
+    candidate_point_events: List[CandidatePointEvent] = dc_field(default_factory=list)
     candidate_buy_points: List[CandidatePoint] = dc_field(default_factory=list)
     candidate_sell_points: List[CandidatePoint] = dc_field(default_factory=list)
     plot_primitives: List[PlotPrimitive] = dc_field(default_factory=list)
+    summary: List[str] = dc_field(default_factory=list)
+    warnings: List[AnalysisWarning] = dc_field(default_factory=list)
+    meta: Dict[str, Any] = dc_field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class MultiTimeframeLevel:
+    timeframe: str
+    role: str
+    bar_count: int
+    analysis: AnalysisResult
+    meta: Dict[str, Any] = dc_field(default_factory=dict)
+
+
+@dataclass
+class MultiTimeframeAnalysisResult:
+    symbol: str
+    source: str
+    engine: str
+    engine_version: str
+    base_timeframe: str
+    timeframes: List[str] = dc_field(default_factory=list)
+    levels: List[MultiTimeframeLevel] = dc_field(default_factory=list)
     summary: List[str] = dc_field(default_factory=list)
     warnings: List[AnalysisWarning] = dc_field(default_factory=list)
     meta: Dict[str, Any] = dc_field(default_factory=dict)

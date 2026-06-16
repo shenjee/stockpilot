@@ -36,4 +36,4 @@ streamlit run apps/chan-streamlit/app.py
 
 - The app imports `packages/` and `skills/china-stock-analysis/scripts/` directly from the repo.
 - The current data provider path uses `TencentStockDataProvider`.
-- `divergences` stay conservatively empty in the current Phase 2 mapper until a stable project rule is finalized.
+- `divergences` now surface as `plot_primitives` overlays when the project stroke-and-pivot divergence rule is satisfied.

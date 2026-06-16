@@ -67,7 +67,7 @@ Current tests cover chart-axis and row-order behavior. If your change affects:
 
 - Sample input lives under `sample_data/`.
 - The app currently supports day and selected minute timeframes in the UI.
-- `divergences` remain conservatively empty unless project rules change upstream.
+- `divergences` depend on the project stroke-and-pivot divergence rule and should appear as overlays when the structure matches.
 
 ## Review Checklist
 

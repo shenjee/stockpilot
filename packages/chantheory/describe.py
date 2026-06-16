@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import List
 
-from .schema import AnalysisResult
+from .schema import AnalysisResult, MultiTimeframeAnalysisResult
 
 
 def build_summary(result: AnalysisResult) -> List[str]:
@@ -29,6 +29,20 @@ def build_summary(result: AnalysisResult) -> List[str]:
                 f"Phase 2 produced {int(mapping.get('segment_count', len(result.segments)))} segments and "
                 f"{int(mapping.get('pivot_zone_count', len(result.pivot_zones)))} pivot zones."
             )
+        if result.divergences:
+            lines.append(
+                f"Divergence mapping identified {len(result.divergences)} confirmed "
+                f"{'divergence' if len(result.divergences) == 1 else 'divergences'}."
+            )
+        if result.signal_series:
+            lines.append(
+                f"Signal replay tracks {len(result.signal_series)} series, {len(result.signal_snapshots)} snapshots, "
+                f"and {len(result.signal_events)} transition events."
+            )
+        if result.candidate_point_events:
+            lines.append(
+                f"Candidate replay records {len(result.candidate_point_events)} buy/sell lifecycle events."
+            )
         if result.strokes:
             last_stroke = result.strokes[-1]
             lines.append(
@@ -45,4 +59,36 @@ def build_summary(result: AnalysisResult) -> List[str]:
     lines.append("czsc probe is unavailable, so the adapter returns the frozen schema with warnings.")
     if result.warnings:
         lines.append(f"{len(result.warnings)} warning(s) recorded for normalization or engine readiness.")
+    return lines
+
+
+def build_multi_timeframe_summary(result: MultiTimeframeAnalysisResult) -> List[str]:
+    lines: List[str] = []
+    level_count = len(result.levels)
+    if level_count:
+        lines.append(
+            f"{result.symbol} aggregated {level_count} timeframe analyses around base timeframe {result.base_timeframe}."
+        )
+    else:
+        lines.append(
+            f"{result.symbol} has no multi-timeframe analyses available for base timeframe {result.base_timeframe}."
+        )
+
+    if result.levels:
+        higher_timeframes = [level.timeframe for level in result.levels if level.role == "higher"]
+        lower_timeframes = [level.timeframe for level in result.levels if level.role == "lower"]
+        base_level = next((level for level in result.levels if level.role == "base"), None)
+        if base_level is not None:
+            lines.append(
+                f"Base timeframe {base_level.timeframe} carries {base_level.bar_count} bars, "
+                f"{len(base_level.analysis.signal_events)} signal events, and "
+                f"{len(base_level.analysis.candidate_point_events)} candidate replay events."
+            )
+        if higher_timeframes:
+            lines.append(f"Higher timeframe context is available for: {', '.join(higher_timeframes)}.")
+        if lower_timeframes:
+            lines.append(f"Lower timeframe context is available for: {', '.join(lower_timeframes)}.")
+
+    if result.warnings:
+        lines.append(f"{len(result.warnings)} warning(s) were aggregated across timeframe levels.")
     return lines

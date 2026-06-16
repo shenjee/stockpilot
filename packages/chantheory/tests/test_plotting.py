@@ -10,6 +10,7 @@ from chantheory.plotting import build_plot_primitives
 from chantheory.schema import (
     AnalysisResult,
     CandidatePoint,
+    Divergence,
     Fractal,
     PivotZone,
     Segment,
@@ -80,6 +81,19 @@ class PlottingTests(unittest.TestCase):
                     segment_ids=["segment_1"],
                     level="stroke",
                     active=True,
+                )
+            ],
+            divergences=[
+                Divergence(
+                    id="divergence_1",
+                    divergence_type="bearish",
+                    reference_type="stroke",
+                    reference_id="stroke_1",
+                    timestamp="2025-01-07",
+                    strength="normal",
+                    confirmed=True,
+                    description="test divergence",
+                    meta={"price": 11.3},
                 )
             ],
             structure_alerts=[
@@ -181,12 +195,16 @@ class PlottingTests(unittest.TestCase):
         self.assertIn(("line", "segments"), layers)
         self.assertIn(("box", "pivot_zones"), layers)
         self.assertIn(("marker", "candidate_points"), layers)
+        self.assertIn(("marker", "divergences"), layers)
         self.assertIn(("label", "alerts"), layers)
         candidates = [item for item in primitives if item.layer == "candidate_points"]
+        divergence = next(item for item in primitives if item.layer == "divergences")
         self.assertEqual(len(candidates), 2)
         self.assertEqual(candidates[0].text, "<br>↑<br>1B, 2B, 3B")
         self.assertEqual(candidates[0].meta["signal_scope"], "cxt_signal")
         self.assertEqual(candidates[1].text, "1S, 2S, 3S<br>↓<br>")
+        self.assertEqual(divergence.text, "Bear Div")
+        self.assertEqual(divergence.meta["strength"], "normal")
         bottom_fractal = next(item for item in primitives if item.id == "primitive_fractal_1")
         top_fractal = next(item for item in primitives if item.id == "primitive_fractal_2")
         pending_stroke = next(item for item in primitives if item.id == "primitive_stroke_pending_1")

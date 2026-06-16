@@ -145,6 +145,32 @@ def build_plot_primitives(result: AnalysisResult) -> List[PlotPrimitive]:
             )
         )
 
+    for divergence in result.divergences:
+        is_bullish = divergence.divergence_type == "bullish"
+        text = "Bull Div" if is_bullish else "Bear Div"
+        textposition = "bottom center" if is_bullish else "top center"
+        primitives.append(
+            PlotPrimitive(
+                id=f"primitive_{divergence.id}",
+                type="marker",
+                layer="divergences",
+                x=divergence.timestamp,
+                y=float(divergence.meta.get("price", 0.0)),
+                style="text",
+                color="#059669" if is_bullish else "#B91C1C",
+                text=text,
+                meta={
+                    "reference_type": "divergence",
+                    "reference_id": divergence.id,
+                    "divergence_type": divergence.divergence_type,
+                    "strength": divergence.strength,
+                    "confirmed": divergence.confirmed,
+                    "source_reference_id": divergence.reference_id,
+                    "textposition": textposition,
+                },
+            )
+        )
+
     buy_points_by_ts = defaultdict(list)
     for point in result.candidate_buy_points:
         buy_points_by_ts[point.timestamp].append(point)

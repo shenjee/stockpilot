@@ -4,7 +4,7 @@ from typing import Dict
 
 import plotly.graph_objects as go
 
-from ui_text import _format_alert_message
+from ui_text import _format_alert_message, _layer_label
 
 
 def _to_rgba(hex_color: str, alpha: float) -> str:
@@ -17,12 +17,26 @@ def _to_rgba(hex_color: str, alpha: float) -> str:
     return f"rgba({red}, {green}, {blue}, {alpha})"
 
 
-def render_plot_primitives(figure: go.Figure, result_payload: Dict[str, object], visibility: Dict[str, bool], language: str) -> None:
+def render_plot_primitives(
+    figure: go.Figure,
+    result_payload: Dict[str, object],
+    visibility: Dict[str, bool],
+    language: str,
+    row: int | None = None,
+    col: int | None = None,
+    show_legend: bool = False,
+) -> None:
+    trace_kwargs = {"row": row, "col": col} if row is not None and col is not None else {}
+    layout_kwargs = {"row": row, "col": col} if row is not None and col is not None else {}
+    legend_layers: set[str] = set()
     for primitive in result_payload.get("plot_primitives", []):
         layer = str(primitive.get("layer", ""))
         if not visibility.get(layer, True):
             continue
+        legend_name = _layer_label(layer, language)
+        trace_showlegend = show_legend and layer not in legend_layers
         primitive_type = primitive.get("type")
+        handled_trace = False
         if primitive_type == "marker":
             primitive_meta = dict(primitive.get("meta", {}) or {})
             style = primitive.get("style", "circle")
@@ -35,9 +49,11 @@ def render_plot_primitives(figure: go.Figure, result_payload: Dict[str, object],
                         text=[primitive.get("text", "")],
                         textposition=str(primitive_meta.get("textposition", "top center")),
                         textfont={"color": primitive.get("color", "#2563EB")},
-                        name=layer,
-                        showlegend=False,
-                    )
+                        name=legend_name,
+                        legendgroup=layer,
+                        showlegend=trace_showlegend,
+                    ),
+                    **trace_kwargs,
                 )
             else:
                 style_mapping = {
@@ -56,10 +72,13 @@ def render_plot_primitives(figure: go.Figure, result_payload: Dict[str, object],
                         textposition=str(primitive_meta.get("textposition", "top center")),
                         marker={"color": primitive.get("color", "#2563EB"), "size": 10, "symbol": marker_symbol},
                         textfont={"color": primitive.get("color", "#2563EB")},
-                        name=layer,
-                        showlegend=False,
-                    )
+                        name=legend_name,
+                        legendgroup=layer,
+                        showlegend=trace_showlegend,
+                    ),
+                    **trace_kwargs,
                 )
+            handled_trace = True
         elif primitive_type == "line":
             primitive_meta = primitive.get("meta") or {}
             width_multiplier = float(primitive_meta.get("width_multiplier", 1.0))
@@ -73,10 +92,13 @@ def render_plot_primitives(figure: go.Figure, result_payload: Dict[str, object],
                         "dash": "dash" if primitive.get("style") == "dashed" else "solid",
                         "width": int(2 * width_multiplier),
                     },
-                    name=layer,
-                    showlegend=False,
-                )
+                    name=legend_name,
+                    legendgroup=layer,
+                    showlegend=trace_showlegend,
+                ),
+                **trace_kwargs,
             )
+            handled_trace = True
         elif primitive_type == "box":
             figure.add_shape(
                 type="rect",
@@ -86,6 +108,7 @@ def render_plot_primitives(figure: go.Figure, result_payload: Dict[str, object],
                 y1=primitive.get("y1"),
                 line={"color": primitive.get("color", "#F59E0B"), "width": 2},
                 fillcolor=_to_rgba(str(primitive.get("color", "#F59E0B")), 0.18),
+                **layout_kwargs,
             )
             if primitive.get("text"):
                 figure.add_annotation(
@@ -94,6 +117,7 @@ def render_plot_primitives(figure: go.Figure, result_payload: Dict[str, object],
                     text="中枢" if language == "zh" else primitive.get("text"),
                     showarrow=False,
                     font={"color": primitive.get("color", "#F59E0B")},
+                    **layout_kwargs,
                 )
         elif primitive_type == "label":
             figure.add_annotation(
@@ -110,4 +134,7 @@ def render_plot_primitives(figure: go.Figure, result_payload: Dict[str, object],
                 showarrow=True,
                 arrowcolor=primitive.get("color", "#0F766E"),
                 font={"color": primitive.get("color", "#0F766E")},
+                **layout_kwargs,
             )
+        if handled_trace and trace_showlegend:
+            legend_layers.add(layer)
