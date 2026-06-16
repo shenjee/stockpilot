@@ -344,7 +344,7 @@ def _format_warning_message(item: AnalysisWarning, language: str) -> str:
         return item.message
 
     if item.warning_code == "AMOUNT_DERIVED":
-        return "缺失的 amount 会在 Phase 1 中暂时用 close * volume 推导。"
+        return "缺失的成交额 (amount) 会在 Phase 1 中暂时用收盘价乘以成交量 (close * volume) 推导。"
     if item.warning_code == "DIVERGENCE_CONSERVATIVE_EMPTY":
         return "Phase 2 中背驰结果暂保持保守为空，等待项目级稳定规则落定。"
     if item.warning_code == "INSUFFICIENT_BARS":
