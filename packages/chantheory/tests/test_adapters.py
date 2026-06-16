@@ -16,13 +16,15 @@ from chantheory.adapters import (
     _build_signal_payloads,
     _map_pending_stroke,
     _map_strokes,
-    _normalize_direction,
-    _normalize_fractal_type,
     _normalize_signals_config,
-    _to_timestamp,
     analyze_multi_timeframe_tracker_klines,
     analyze_tracker_klines,
-    load_czsc,
+)
+from chantheory.engine import load_czsc
+from chantheory.structure_mapping import (
+    normalize_direction as _normalize_direction,
+    normalize_fractal_type as _normalize_fractal_type,
+    to_timestamp as _to_timestamp,
 )
 from chantheory.schema import AnalysisResult, AnalysisWarning, Stroke
 from chantheory.segments import SEGMENT_MAPPING_STRATEGY
@@ -113,7 +115,7 @@ class AdapterTests(unittest.TestCase):
                 return core_module
             raise ImportError(name)
 
-        with patch("chantheory.adapters.import_module", side_effect=fake_import):
+        with patch("chantheory.engine.import_module", side_effect=fake_import):
             actual_raw_bar, actual_freq, actual_czsc = load_czsc()
 
         self.assertIs(actual_raw_bar, RawBar)
@@ -142,7 +144,7 @@ class AdapterTests(unittest.TestCase):
                 return py_analyze_module
             raise ImportError(name)
 
-        with patch("chantheory.adapters.import_module", side_effect=fake_import):
+        with patch("chantheory.engine.import_module", side_effect=fake_import):
             actual_raw_bar, actual_freq, actual_czsc = load_czsc()
 
         self.assertIs(actual_raw_bar, py_raw_bar)
@@ -155,7 +157,7 @@ class AdapterTests(unittest.TestCase):
             {"date": "2025-01-03", "open": 11, "close": 11.4, "high": 11.5, "low": 10.9, "volume": 1200},
         ]
 
-        with patch("chantheory.adapters.load_czsc", side_effect=ImportError("czsc not installed")):
+        with patch("chantheory.engine.load_czsc", side_effect=ImportError("czsc not installed")):
             result = analyze_tracker_klines(rows=rows, code="000001", market="sz")
 
         self.assertEqual(result.symbol, "000001.SZ")
@@ -207,7 +209,7 @@ class AdapterTests(unittest.TestCase):
         sig_module = SimpleNamespace(get_zs_seq=lambda bis: [zs])
 
         with patch("chantheory.adapters._run_engine", return_value=(analyzer, [object()] * 5)), patch(
-            "chantheory.adapters.load_czsc_utils", return_value=sig_module
+            "chantheory.engine.load_czsc_utils", return_value=sig_module
         ):
             result = analyze_tracker_klines(
                 rows=rows,
@@ -302,7 +304,7 @@ class AdapterTests(unittest.TestCase):
         sig_module = SimpleNamespace(get_zs_seq=lambda bis: [zs])
 
         with patch("chantheory.adapters._run_engine", return_value=(analyzer, [object()] * 4)), patch(
-            "chantheory.adapters.load_czsc_utils", return_value=sig_module
+            "chantheory.engine.load_czsc_utils", return_value=sig_module
         ):
             result = analyze_tracker_klines(
                 rows=rows,
@@ -474,7 +476,7 @@ class AdapterTests(unittest.TestCase):
             cxt_third_bs_V230319=signal("cxt_third_bs_V230319", "三卖_均线新低_任意_0"),
         )
 
-        with patch("chantheory.adapters.import_module", return_value=sig_module):
+        with patch("chantheory.signals.import_module", return_value=sig_module):
             signal_evaluations, signal_series, signal_events, signal_snapshots, warnings, _ = _build_signal_payloads(
                 strokes=strokes,
                 analyzer=analyzer,
@@ -516,7 +518,7 @@ class AdapterTests(unittest.TestCase):
         sig_module = SimpleNamespace(get_zs_seq=lambda bis: [zs])
 
         with patch("chantheory.adapters._run_engine", return_value=(analyzer, [object()] * 3)), patch(
-            "chantheory.adapters.load_czsc_utils", return_value=sig_module
+            "chantheory.engine.load_czsc_utils", return_value=sig_module
         ):
             result = analyze_tracker_klines(rows=rows, code="000001", market="sz", signals_config=[])
 
@@ -581,8 +583,8 @@ class AdapterTests(unittest.TestCase):
             raise ImportError(name)
 
         with patch("chantheory.adapters._run_engine", return_value=(analyzer, [object()] * 5)), patch(
-            "chantheory.adapters.load_czsc_utils", return_value=SimpleNamespace(get_zs_seq=lambda bis: [])
-        ), patch("chantheory.adapters.import_module", side_effect=fake_import):
+            "chantheory.engine.load_czsc_utils", return_value=SimpleNamespace(get_zs_seq=lambda bis: [])
+        ), patch("chantheory.signals.import_module", side_effect=fake_import):
             result = analyze_tracker_klines(
                 rows=rows,
                 code="000001",

@@ -52,6 +52,23 @@ TIMEFRAME_TO_CZSC_FREQ = {
     "month": "M",
 }
 
+TIMEFRAME_ORDER = {
+    "1m": 0,
+    "5m": 1,
+    "15m": 2,
+    "30m": 3,
+    "60m": 4,
+    "day": 5,
+    "week": 6,
+    "month": 7,
+}
+
+
+def get_freq_name(timeframe: str) -> str:
+    """Return the czsc ``Freq`` attribute name for a given *timeframe* string."""
+    return TIMEFRAME_TO_CZSC_FREQ[timeframe]
+
+
 MARKET_SUFFIX = {
     "sh": "SH",
     "sz": "SZ",
