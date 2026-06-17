@@ -182,15 +182,13 @@ class ChartAxisTests(unittest.TestCase):
             },
             plot_primitives=[{"id": "primitive_1"}],
         )
-        multi_result = SimpleNamespace(meta={"level_count": 3, "higher_timeframes": ["week", "month"]})
 
-        payload = app._build_debug_payload(result, multi_result=multi_result)
+        payload = app._build_debug_payload(result)
 
         self.assertEqual(payload["engine_probe"]["status"], "ok")
         self.assertEqual(payload["mapping"]["signal_event_count"], 3)
         self.assertEqual(payload["rendering"]["count_plot_primitives"], 1)
         self.assertEqual(payload["signals"]["candidate_point_event_count"], 2)
-        self.assertEqual(payload["multi_timeframe"]["level_count"], 3)
 
     def test_build_signal_timeline_payload_aggregates_snapshots_and_events(self):
         result = SimpleNamespace(
@@ -475,54 +473,7 @@ class ChartAxisTests(unittest.TestCase):
         self.assertIn("笔中枢", annotation_texts)
         self.assertIn("段中枢", annotation_texts)
 
-    def test_build_multi_timeframe_payload_aggregates_levels(self):
-        base_analysis = SimpleNamespace(
-            warnings=[SimpleNamespace()],
-            strokes=[SimpleNamespace()],
-            segments=[],
-            pivot_zones=[],
-            signal_series=[SimpleNamespace()],
-            signal_snapshots=[SimpleNamespace(active_signals={"trend_bias": "bullish"})],
-            candidate_buy_points=[SimpleNamespace()],
-            candidate_sell_points=[],
-        )
-        higher_analysis = SimpleNamespace(
-            warnings=[],
-            strokes=[SimpleNamespace(), SimpleNamespace()],
-            segments=[SimpleNamespace()],
-            pivot_zones=[SimpleNamespace()],
-            signal_series=[],
-            signal_snapshots=[],
-            candidate_buy_points=[],
-            candidate_sell_points=[SimpleNamespace()],
-        )
-        multi_result = SimpleNamespace(
-            base_timeframe="day",
-            levels=[
-                SimpleNamespace(timeframe="day", role="base", bar_count=2, analysis=base_analysis),
-                SimpleNamespace(timeframe="week", role="higher", bar_count=1, analysis=higher_analysis),
-            ],
-        )
-
-        payload = app._build_multi_timeframe_payload(
-            multi_result,
-            rows_by_timeframe={
-                "day": [
-                    {"date": "2026-06-11", "close": 10.2},
-                    {"date": "2026-06-12", "close": 10.8},
-                ],
-                "week": [{"date": "2026-06-12", "close": 10.8}],
-            },
-        )
-
-        self.assertEqual(payload["meta"]["base_timeframe"], "day")
-        self.assertEqual(payload["meta"]["level_count"], 2)
-        self.assertEqual(payload["meta"]["higher_count"], 1)
-        self.assertEqual(payload["levels"][0]["active_signal_count"], 1)
-        self.assertEqual(payload["levels"][0]["latest_timestamp"], "2026-06-12")
-        self.assertEqual(payload["levels"][1]["candidate_count"], 1)
-
-    def test_build_overview_and_multi_timeframe_card_rows_format_display_data(self):
+    def test_build_overview_card_rows_format_display_data(self):
         result = SimpleNamespace(
             timeframe="day",
             strokes=[SimpleNamespace()],
@@ -533,43 +484,16 @@ class ChartAxisTests(unittest.TestCase):
             candidate_buy_points=[SimpleNamespace()],
             candidate_sell_points=[SimpleNamespace()],
         )
-        multi_result = SimpleNamespace(
-            levels=[
-                SimpleNamespace(timeframe="day"),
-                SimpleNamespace(timeframe="week"),
-                SimpleNamespace(timeframe="month"),
-            ]
-        )
         overview_rows = app._build_overview_card_rows(
             result,
             chart_rows=[{"date": "2026-06-12", "close": 10.8}],
-            multi_result=multi_result,
             current_bar_payload={"meta": {"active_signal_count": 1, "timestamp": "2026-06-12", "price": 10.8}},
-            language="en",
-        )
-        card_rows = app._build_multi_timeframe_card_rows(
-            {
-                "role": "higher",
-                "latest_timestamp": "2026-06-12",
-                "latest_close": 10.8,
-                "bar_count": 10,
-                "stroke_count": 4,
-                "segment_count": 2,
-                "pivot_zone_count": 1,
-                "signal_series_count": 3,
-                "active_signal_count": 1,
-                "warning_count": 2,
-                "candidate_count": 1,
-            },
             language="en",
         )
 
         self.assertEqual(overview_rows[0]["Field"], "Base Timeframe")
-        self.assertEqual(overview_rows[1]["Value"], "day | week | month")
-        self.assertEqual(overview_rows[3]["Value"], "10.8")
-        self.assertEqual(card_rows[0]["Field"], "Role")
-        self.assertEqual(card_rows[0]["Value"], "higher")
-        self.assertEqual(card_rows[-1]["Value"], "1")
+        self.assertEqual(overview_rows[1]["Field"], "Latest Bar")
+        self.assertEqual(overview_rows[2]["Value"], "10.8")
 
 
 if __name__ == "__main__":

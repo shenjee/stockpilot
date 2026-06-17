@@ -25,8 +25,8 @@ from charts.axis_policy import (  # noqa: E402
     is_minute_timeframe,
 )
 from charts.figure_builder import build_figure  # noqa: E402
-from services.analysis_service import run_multi_timeframe_analysis  # noqa: E402
-from services.market_service import fetch_rows_for_timeframes, fetch_stock_name, probe_market_suggestions  # noqa: E402
+from services.analysis_service import run_analysis  # noqa: E402
+from services.market_service import fetch_rows, fetch_stock_name, probe_market_suggestions  # noqa: E402
 from ui_text import (  # noqa: E402
     SUPPORTED_LANGUAGES,
     _build_display_summary,
@@ -47,14 +47,6 @@ DEFAULT_END = date.today()
 DEFAULT_START = DEFAULT_END - timedelta(days=240)
 TIMEFRAME_OPTIONS = ("1m", "5m", "30m", "60m", "day")
 DEFAULT_TIMEFRAME = "day"
-MULTI_TIMEFRAME_LINKS = {
-    "1m": ("1m", "5m", "30m"),
-    "5m": ("5m", "30m", "day"),
-    "15m": ("15m", "60m", "day"),
-    "30m": ("30m", "60m", "day"),
-    "60m": ("60m", "day", "week"),
-    "day": ("day", "week", "month"),
-}
 LAYER_KEYS = (
     "fractals",
     "strokes",
@@ -72,7 +64,7 @@ Y_ZOOM_STEP = 1.2
 MIN_Y_ZOOM = 0.45
 MAX_Y_ZOOM = 3.0
 
-_fetch_rows_for_timeframes = fetch_rows_for_timeframes
+_fetch_rows = fetch_rows
 _probe_market_suggestions = probe_market_suggestions
 _build_figure = build_figure
 _is_minute_timeframe = is_minute_timeframe
@@ -80,7 +72,7 @@ _build_x_axis_range = build_x_axis_range
 _build_intraday_date_ticks = build_intraday_date_ticks
 _build_y_axis_range = build_y_axis_range
 _build_daily_rangebreaks = build_daily_rangebreaks
-_run_multi_timeframe_analysis = run_multi_timeframe_analysis
+_run_analysis = run_analysis
 
 
 def _ordered_rows(rows: Iterable[Dict[str, object]]) -> List[Dict[str, object]]:
@@ -109,35 +101,14 @@ def _build_chart_key(
     ])
 
 
-def _build_linked_timeframes(timeframe: str) -> List[str]:
-    linked = MULTI_TIMEFRAME_LINKS.get(timeframe, (timeframe,))
-    ordered: List[str] = []
-    for item in linked:
-        if item not in ordered:
-            ordered.append(item)
-    if timeframe not in ordered:
-        ordered.insert(0, timeframe)
-    return ordered
-
-
-def _extract_primary_analysis(multi_result: object, timeframe: str) -> object | None:
-    for level in list(getattr(multi_result, "levels", []) or []):
-        if getattr(level, "timeframe", "") == timeframe:
-            return getattr(level, "analysis", None)
-    return None
-
-
-def _build_debug_payload(result: object, multi_result: object | None = None) -> Dict[str, object]:
-    payload = {
+def _build_debug_payload(result: object) -> Dict[str, object]:
+    return {
         "engine_probe": result.meta.get("engine_probe", {}),
         "mapping": result.meta.get("mapping", {}),
         "rendering": {"count_plot_primitives": len(result.plot_primitives)},
         "engine_assumptions": result.meta.get("engine_assumptions", {}),
         "signals": result.meta.get("signals", {}),
     }
-    if multi_result is not None:
-        payload["multi_timeframe"] = getattr(multi_result, "meta", {})
-    return payload
 
 
 def _build_signal_timeline_payload(result: object) -> Dict[str, object]:
@@ -398,17 +369,11 @@ def _format_pivot_zone_count(result: object) -> str:
 def _build_overview_card_rows(
     result: object,
     chart_rows: List[Dict[str, object]],
-    multi_result: object | None,
     current_bar_payload: Dict[str, object],
     language: str,
 ) -> List[Dict[str, object]]:
     meta = dict(current_bar_payload.get("meta", {}) or {})
     latest_row = dict(chart_rows[-1]) if chart_rows else {}
-    linked_timeframes = [
-        _format_timeframe(str(getattr(level, "timeframe", "")), language)
-        for level in list(getattr(multi_result, "levels", []) or [])
-        if getattr(level, "timeframe", "")
-    ]
     candidate_count = len(list(getattr(result, "candidate_buy_points", []) or [])) + len(
         list(getattr(result, "candidate_sell_points", []) or [])
     )
@@ -416,10 +381,6 @@ def _build_overview_card_rows(
         {
             _t(language, "overview_col_field"): _t(language, "overview_field_timeframe"),
             _t(language, "overview_col_value"): str(_format_timeframe(str(getattr(result, "timeframe", "")), language)),
-        },
-        {
-            _t(language, "overview_col_field"): _t(language, "overview_field_linked_timeframes"),
-            _t(language, "overview_col_value"): str(" | ".join(linked_timeframes) or _t(language, "signal_timeline_none")),
         },
         {
             _t(language, "overview_col_field"): _t(language, "overview_field_latest_bar"),
@@ -460,115 +421,6 @@ def _build_overview_card_rows(
         {
             _t(language, "overview_col_field"): _t(language, "overview_field_candidate_count"),
             _t(language, "overview_col_value"): str(candidate_count),
-        },
-    ]
-
-
-def _build_multi_timeframe_payload(
-    multi_result: object | None,
-    rows_by_timeframe: Dict[str, List[Dict[str, object]]] | None = None,
-) -> Dict[str, object]:
-    levels = list(getattr(multi_result, "levels", []) or []) if multi_result is not None else []
-    rows_by_timeframe = rows_by_timeframe or {}
-    payload_levels: List[Dict[str, object]] = []
-    higher_count = 0
-    lower_count = 0
-    for level in levels:
-        timeframe = str(getattr(level, "timeframe", ""))
-        role = str(getattr(level, "role", ""))
-        if role == "higher":
-            higher_count += 1
-        elif role == "lower":
-            lower_count += 1
-        analysis = getattr(level, "analysis", None)
-        level_rows = _ordered_rows(rows_by_timeframe.get(timeframe, []))
-        latest_row = dict(level_rows[-1]) if level_rows else {}
-        active_signal_count = 0
-        signal_snapshots = list(getattr(analysis, "signal_snapshots", []) or []) if analysis is not None else []
-        if signal_snapshots:
-            active_signal_count = len(dict(getattr(signal_snapshots[-1], "active_signals", {}) or {}))
-        payload_levels.append(
-            {
-                "timeframe": timeframe,
-                "role": role,
-                "bar_count": int(getattr(level, "bar_count", len(level_rows))),
-                "latest_timestamp": str(latest_row.get("date", "")),
-                "latest_close": latest_row.get("close"),
-                "warning_count": len(list(getattr(analysis, "warnings", []) or [])) if analysis is not None else 0,
-                "stroke_count": len(list(getattr(analysis, "strokes", []) or [])) if analysis is not None else 0,
-                "segment_count": len(list(getattr(analysis, "segments", []) or [])) if analysis is not None else 0,
-                "pivot_zone_count": len(list(getattr(analysis, "pivot_zones", []) or [])) if analysis is not None else 0,
-                "signal_series_count": len(list(getattr(analysis, "signal_series", []) or [])) if analysis is not None else 0,
-                "active_signal_count": active_signal_count,
-                "candidate_count": (
-                    len(list(getattr(analysis, "candidate_buy_points", []) or []))
-                    + len(list(getattr(analysis, "candidate_sell_points", []) or []))
-                )
-                if analysis is not None
-                else 0,
-                "analysis": analysis,
-                "rows": level_rows,
-            }
-        )
-    return {
-        "meta": {
-            "base_timeframe": str(getattr(multi_result, "base_timeframe", "")) if multi_result is not None else "",
-            "level_count": len(payload_levels),
-            "higher_count": higher_count,
-            "lower_count": lower_count,
-        },
-        "levels": payload_levels,
-    }
-
-
-def _build_multi_timeframe_card_rows(level_payload: Dict[str, object], language: str) -> List[Dict[str, object]]:
-    return [
-        {
-            _t(language, "multi_timeframe_card_field"): _t(language, "multi_timeframe_field_role"),
-            _t(language, "multi_timeframe_card_value"): str(_t(
-                language,
-                f"multi_timeframe_role_{level_payload.get('role', '')}",
-            )),
-        },
-        {
-            _t(language, "multi_timeframe_card_field"): _t(language, "multi_timeframe_field_latest_bar"),
-            _t(language, "multi_timeframe_card_value"): str(_display_timestamp(str(level_payload.get("latest_timestamp", "")))),
-        },
-        {
-            _t(language, "multi_timeframe_card_field"): _t(language, "multi_timeframe_field_latest_close"),
-            _t(language, "multi_timeframe_card_value"): str(level_payload.get("latest_close", _t(language, "signal_timeline_none"))),
-        },
-        {
-            _t(language, "multi_timeframe_card_field"): _t(language, "multi_timeframe_field_bar_count"),
-            _t(language, "multi_timeframe_card_value"): str(int(level_payload.get("bar_count", 0))),
-        },
-        {
-            _t(language, "multi_timeframe_card_field"): _t(language, "multi_timeframe_field_stroke_count"),
-            _t(language, "multi_timeframe_card_value"): str(int(level_payload.get("stroke_count", 0))),
-        },
-        {
-            _t(language, "multi_timeframe_card_field"): _t(language, "multi_timeframe_field_segment_count"),
-            _t(language, "multi_timeframe_card_value"): str(int(level_payload.get("segment_count", 0))),
-        },
-        {
-            _t(language, "multi_timeframe_card_field"): _t(language, "multi_timeframe_field_pivot_zone_count"),
-            _t(language, "multi_timeframe_card_value"): str(int(level_payload.get("pivot_zone_count", 0))),
-        },
-        {
-            _t(language, "multi_timeframe_card_field"): _t(language, "multi_timeframe_field_signal_series_count"),
-            _t(language, "multi_timeframe_card_value"): str(int(level_payload.get("signal_series_count", 0))),
-        },
-        {
-            _t(language, "multi_timeframe_card_field"): _t(language, "multi_timeframe_field_active_signal_count"),
-            _t(language, "multi_timeframe_card_value"): str(int(level_payload.get("active_signal_count", 0))),
-        },
-        {
-            _t(language, "multi_timeframe_card_field"): _t(language, "multi_timeframe_field_warning_count"),
-            _t(language, "multi_timeframe_card_value"): str(int(level_payload.get("warning_count", 0))),
-        },
-        {
-            _t(language, "multi_timeframe_card_field"): _t(language, "multi_timeframe_field_candidate_count"),
-            _t(language, "multi_timeframe_card_value"): str(int(level_payload.get("candidate_count", 0))),
         },
     ]
 
@@ -643,20 +495,16 @@ def main() -> None:
     )
 
     if should_analyze:
-        linked_timeframes = _build_linked_timeframes(timeframe)
-        rows_by_timeframe = _fetch_rows_for_timeframes(
+        rows = _fetch_rows(
             symbol=symbol.strip(),
             market=market,
-            timeframes=linked_timeframes,
+            timeframe=timeframe,
             start_date=start_date,
             end_date=end_date,
         )
-        rows = rows_by_timeframe.get(timeframe, [])
         if not rows:
             st.session_state.pop("chan_chart_rows", None)
             st.session_state.pop("chan_chart_result", None)
-            st.session_state.pop("chan_chart_multi_result", None)
-            st.session_state.pop("chan_chart_rows_by_timeframe", None)
             st.session_state.pop("chan_chart_timeframe", None)
             st.session_state.pop("chan_chart_inputs", None)
             st.session_state.pop("chan_chart_stock_name", None)
@@ -675,35 +523,23 @@ def main() -> None:
                 st.warning(_t(language, "no_data_selected"))
             return
 
-        multi_result = _run_multi_timeframe_analysis(
-            rows_by_timeframe=rows_by_timeframe,
+        result = _run_analysis(
+            rows=rows,
             symbol=symbol.strip(),
             market=market,
-            base_timeframe=timeframe,
+            timeframe=timeframe,
             max_bi_num=int(max_bi_num),
             min_bars=int(min_bars),
             strict_validation=bool(strict_validation),
         )
-        result = _extract_primary_analysis(multi_result, timeframe)
-        if result is None:
-            st.markdown(_page_title(_t(language, "page_title")), unsafe_allow_html=True)
-            st.warning(_t(language, "no_multi_timeframe_base", timeframe=_format_timeframe(timeframe, language)))
-            return
         st.session_state.chan_chart_rows = rows
         st.session_state.chan_chart_result = result
-        st.session_state.chan_chart_multi_result = multi_result
-        st.session_state.chan_chart_rows_by_timeframe = {
-            key: _ordered_rows(value)
-            for key, value in rows_by_timeframe.items()
-        }
         st.session_state.chan_chart_timeframe = timeframe
         st.session_state.chan_chart_inputs = analysis_inputs
         st.session_state.chan_chart_stock_name = fetch_stock_name(symbol.strip(), market)
     elif "chan_chart_rows" in st.session_state and "chan_chart_result" in st.session_state:
         rows = st.session_state.chan_chart_rows
         result = st.session_state.chan_chart_result
-        multi_result = st.session_state.get("chan_chart_multi_result")
-        rows_by_timeframe = st.session_state.get("chan_chart_rows_by_timeframe", {timeframe: rows})
         timeframe = str(st.session_state.get("chan_chart_timeframe", timeframe))
     else:
         st.markdown(_page_title(_t(language, "page_title")), unsafe_allow_html=True)
@@ -777,20 +613,17 @@ def main() -> None:
 
     timeline_payload = _build_signal_timeline_payload(result)
     current_bar_payload = _build_current_bar_signal_payload(timeline_payload)
-    multi_timeframe_payload = _build_multi_timeframe_payload(multi_result, rows_by_timeframe=rows_by_timeframe)
     overview_rows = _build_overview_card_rows(
         result,
         chart_rows=chart_rows,
-        multi_result=multi_result,
         current_bar_payload=current_bar_payload,
         language=language,
     )
 
     st.markdown("---")
-    tab_struct, tab_summary, tab_multi, tab_warn, tab_timeline, tab_current_bar, tab_debug = st.tabs([
+    tab_struct, tab_summary, tab_warn, tab_timeline, tab_current_bar, tab_debug = st.tabs([
         _t(language, "tab_structure"),
         _t(language, "tab_summary"),
-        _t(language, "tab_multi_timeframe"),
         _t(language, "tab_warnings"),
         _t(language, "tab_signal_timeline"),
         _t(language, "tab_current_bar_signals"),
@@ -805,74 +638,9 @@ def main() -> None:
             st.write(_t(language, "no_alerts"))
 
     with tab_summary:
-        meta = multi_timeframe_payload["meta"]
-        st.caption(
-            _t(
-                language,
-                "overview_summary",
-                timeframe=_format_timeframe(timeframe, language),
-                level_count=int(meta.get("level_count", 0)),
-                timeframes=" | ".join(
-                    _format_timeframe(str(level["timeframe"]), language)
-                    for level in list(multi_timeframe_payload.get("levels", []) or [])
-                )
-                or _t(language, "signal_timeline_none"),
-            )
-        )
         st.dataframe(overview_rows, width="stretch")
         for line in _build_display_summary(result, language):
             st.write(f"- {line}")
-
-    with tab_multi:
-        levels = list(multi_timeframe_payload.get("levels", []) or [])
-        meta = dict(multi_timeframe_payload.get("meta", {}) or {})
-        if levels:
-            st.caption(
-                _t(
-                    language,
-                    "multi_timeframe_summary",
-                    level_count=int(meta.get("level_count", 0)),
-                    higher_count=int(meta.get("higher_count", 0)),
-                    lower_count=int(meta.get("lower_count", 0)),
-                )
-            )
-            level_tabs = st.tabs([
-                _format_timeframe(str(level["timeframe"]), language)
-                for level in levels
-            ])
-            for level_tab, level_payload in zip(level_tabs, levels):
-                with level_tab:
-                    level_analysis = level_payload.get("analysis")
-                    level_rows = list(level_payload.get("rows", []) or [])
-                    st.caption(
-                        _t(
-                            language,
-                            "multi_timeframe_level_summary",
-                            role=_t(language, f"multi_timeframe_role_{level_payload.get('role', '')}"),
-                            bar_count=int(level_payload.get("bar_count", 0)),
-                            warning_count=int(level_payload.get("warning_count", 0)),
-                            signal_count=int(level_payload.get("signal_series_count", 0)),
-                        )
-                    )
-                    if level_analysis is not None and level_rows:
-                        level_figure = _build_figure(
-                            rows=level_rows,
-                            result_payload=level_analysis.to_dict(),
-                            visibility=visibility,
-                            timeframe=str(level_payload.get("timeframe", "")),
-                            language=language,
-                            x_window=min(DEFAULT_X_WINDOW, max(len(level_rows), 1)),
-                            y_zoom=1.0,
-                            show_legend=show_legend,
-                            unified_hover=unified_hover,
-                        )
-                        st.plotly_chart(level_figure, width="stretch", key=f"multi_tf_chart_{level_payload.get('timeframe', '')}")
-                    st.dataframe(_build_multi_timeframe_card_rows(level_payload, language), width="stretch")
-                    if level_analysis is not None:
-                        for line in _build_display_summary(level_analysis, language):
-                            st.write(f"- {line}")
-        else:
-            st.write(_t(language, "multi_timeframe_empty"))
 
     with tab_warn:
         if result.warnings:
@@ -927,7 +695,7 @@ def main() -> None:
 
     with tab_debug:
         with st.expander(_t(language, "diagnostics_header"), expanded=False):
-            st.json(_build_debug_payload(result, multi_result=multi_result))
+            st.json(_build_debug_payload(result))
         with st.expander(_t(language, "signals_header"), expanded=False):
             if result.signal_series or result.signal_events or result.signal_snapshots:
                 st.json(
@@ -944,18 +712,8 @@ def main() -> None:
                 st.json({"candidate_point_events": result.candidate_point_events})
             else:
                 st.write(_t(language, "no_candidate_replay"))
-        with st.expander(_t(language, "multi_timeframe_header"), expanded=False):
-            if multi_result is not None:
-                st.json(multi_result.to_dict())
-            else:
-                st.write(_t(language, "no_multi_timeframe"))
         with st.expander(_t(language, "raw_json_header"), expanded=False):
-            st.json(
-                {
-                    "analysis": result.to_dict(),
-                    "multi_timeframe": multi_result.to_dict() if multi_result is not None else None,
-                }
-            )
+            st.json({"analysis": result.to_dict()})
 
 
 if __name__ == "__main__":
