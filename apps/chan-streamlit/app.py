@@ -26,7 +26,7 @@ from charts.axis_policy import (  # noqa: E402
 )
 from charts.figure_builder import build_figure  # noqa: E402
 from services.analysis_service import run_multi_timeframe_analysis  # noqa: E402
-from services.market_service import fetch_rows_for_timeframes, probe_market_suggestions  # noqa: E402
+from services.market_service import fetch_rows_for_timeframes, fetch_stock_name, probe_market_suggestions  # noqa: E402
 from ui_text import (  # noqa: E402
     SUPPORTED_LANGUAGES,
     _build_display_summary,
@@ -600,7 +600,6 @@ def main() -> None:
         """,
         unsafe_allow_html=True,
     )
-    st.markdown(_page_title(_t(language, "page_title")), unsafe_allow_html=True)
 
     with st.sidebar:
         st.markdown(_sidebar_section_title(_t(language, "inputs_header")), unsafe_allow_html=True)
@@ -660,6 +659,8 @@ def main() -> None:
             st.session_state.pop("chan_chart_rows_by_timeframe", None)
             st.session_state.pop("chan_chart_timeframe", None)
             st.session_state.pop("chan_chart_inputs", None)
+            st.session_state.pop("chan_chart_stock_name", None)
+            st.markdown(_page_title(_t(language, "page_title")), unsafe_allow_html=True)
             suggestions = _probe_market_suggestions(
                 symbol=symbol.strip(),
                 selected_market=market,
@@ -685,6 +686,7 @@ def main() -> None:
         )
         result = _extract_primary_analysis(multi_result, timeframe)
         if result is None:
+            st.markdown(_page_title(_t(language, "page_title")), unsafe_allow_html=True)
             st.warning(_t(language, "no_multi_timeframe_base", timeframe=_format_timeframe(timeframe, language)))
             return
         st.session_state.chan_chart_rows = rows
@@ -696,6 +698,7 @@ def main() -> None:
         }
         st.session_state.chan_chart_timeframe = timeframe
         st.session_state.chan_chart_inputs = analysis_inputs
+        st.session_state.chan_chart_stock_name = fetch_stock_name(symbol.strip(), market)
     elif "chan_chart_rows" in st.session_state and "chan_chart_result" in st.session_state:
         rows = st.session_state.chan_chart_rows
         result = st.session_state.chan_chart_result
@@ -703,8 +706,18 @@ def main() -> None:
         rows_by_timeframe = st.session_state.get("chan_chart_rows_by_timeframe", {timeframe: rows})
         timeframe = str(st.session_state.get("chan_chart_timeframe", timeframe))
     else:
+        st.markdown(_page_title(_t(language, "page_title")), unsafe_allow_html=True)
         st.info(_t(language, "choose_inputs"))
         return
+
+    stock_name = str(st.session_state.get("chan_chart_stock_name", "")).strip()
+    if stock_name:
+        st.markdown(
+            _page_title(_t(language, "page_title_with_symbol", name=stock_name, code=symbol.strip())),
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(_page_title(_t(language, "page_title")), unsafe_allow_html=True)
 
     chart_rows = _ordered_rows(rows)
     figure = _build_figure(

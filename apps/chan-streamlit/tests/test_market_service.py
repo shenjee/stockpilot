@@ -85,6 +85,26 @@ class MarketServiceTests(unittest.TestCase):
         self.assertEqual(list(rows_by_timeframe.keys()), ["day", "month"])
         self.assertEqual([call["timeframe"] for call in fake_service.calls], ["day", "week", "month"])
 
+    def test_fetch_stock_name_returns_name_from_realtime(self):
+        with patch.object(
+            market_service.TencentStockDataProvider,
+            "realtime",
+            return_value={"name": "北方稀土", "code": "600111"},
+        ):
+            name = market_service.fetch_stock_name("600111", "sh")
+
+        self.assertEqual(name, "北方稀土")
+
+    def test_fetch_stock_name_returns_empty_on_failure(self):
+        with patch.object(
+            market_service.TencentStockDataProvider,
+            "realtime",
+            side_effect=RuntimeError("network error"),
+        ):
+            name = market_service.fetch_stock_name("600111", "sh")
+
+        self.assertEqual(name, "")
+
 
 if __name__ == "__main__":
     unittest.main()

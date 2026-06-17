@@ -67,6 +67,21 @@ def fetch_rows_for_timeframes(
     return rows_by_timeframe
 
 
+def fetch_stock_name(symbol: str, market: str) -> str:
+    """Fetch the display name of a stock via the realtime quote endpoint.
+
+    Returns an empty string when the name cannot be resolved so callers can
+    fall back to a symbol-only title.
+    """
+    try:
+        result = TencentStockDataProvider.realtime(symbol, markets=[market])
+        if isinstance(result, dict):
+            return str(result.get("name", "")).strip()
+    except Exception:
+        pass
+    return ""
+
+
 def probe_market_suggestions(
     symbol: str,
     selected_market: str,

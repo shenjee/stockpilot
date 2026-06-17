@@ -14,6 +14,7 @@ TIMEFRAME_LABELS = {
 TEXT = {
     "zh": {
         "page_title": "缠论调试台",
+        "page_title_with_symbol": "缠论调试台 {name} {code}",
         "language_label": "语言 / Language",
         "inputs_header": "参数",
         "symbol_label": "代码",
@@ -157,6 +158,7 @@ TEXT = {
     },
     "en": {
         "page_title": "Chan Theory Debug App",
+        "page_title_with_symbol": "Chan Theory Debug App {name} {code}",
         "language_label": "Language / 语言",
         "inputs_header": "Inputs",
         "symbol_label": "Symbol",
