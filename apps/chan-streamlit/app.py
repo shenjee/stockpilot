@@ -621,8 +621,7 @@ def main() -> None:
     )
 
     st.markdown("---")
-    tab_struct, tab_summary, tab_warn, tab_timeline, tab_current_bar, tab_debug = st.tabs([
-        _t(language, "tab_structure"),
+    tab_summary, tab_warn, tab_timeline, tab_current_bar, tab_debug = st.tabs([
         _t(language, "tab_summary"),
         _t(language, "tab_warnings"),
         _t(language, "tab_signal_timeline"),
@@ -630,15 +629,14 @@ def main() -> None:
         _t(language, "tab_debug"),
     ])
 
-    with tab_struct:
+    with tab_summary:
+        st.dataframe(overview_rows, width="stretch")
+        st.caption(_t(language, "alerts_header"))
         if result.structure_alerts:
             for alert in result.structure_alerts:
                 st.write(f"- {_format_alert_message(alert.__dict__, language)}")
         else:
             st.write(_t(language, "no_alerts"))
-
-    with tab_summary:
-        st.dataframe(overview_rows, width="stretch")
         for line in _build_display_summary(result, language):
             st.write(f"- {line}")
 

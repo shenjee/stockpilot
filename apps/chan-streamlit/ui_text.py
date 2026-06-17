@@ -150,7 +150,6 @@ TEXT = {
         "no_data_selected": "No K-line data returned for the selected input.",
         "no_data_market": "No K-line data returned for `{symbol}` on market `{market}`. Try: {suggestions}.",
         "kline_overlay": "K-Line Overlay",
-        "tab_structure": "Structure",
         "tab_summary": "Summary",
         "tab_warnings": "Warnings",
         "tab_signal_timeline": "Signal Timeline",
