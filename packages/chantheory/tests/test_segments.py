@@ -135,23 +135,54 @@ class DeriveSegmentsTests(unittest.TestCase):
         self.assertTrue(any(s.confirmed for s in up_segments), "应至少有一个被确认的上升段")
 
     def test_gap_feature_fractal_pending_until_followup(self):
-        # 第一二特征元素有缺口、暂时没有后续反向分型 → 段应保持 pending
+        # 缺口分型出现但后续反向笔不够形成分型 → 段保持 pending
+        # s1: up 10->12, s2: down 12->11 (f1=[11,12])
+        # s3: up 11->15, s4: down 15->13 (f2=[13,15], gap: 12<13)
+        # s5: up 13->20 (new peak), s6: down 20->16 (f2'=[16,20], gap: 15<16)
+        # s7: up 16->17, s8: down 17->14 (f3'=[14,17])
+        # 顶分型确认 + gap → 触发 followup，但只有 2 根后续 down 笔 → pending
         strokes = _build_strokes([
-            ("t0", 10.0),
-            ("t1", 15.0),
-            ("t2", 13.0),
-            ("t3", 16.0),  # 段顶
-            ("t4", 8.0),   # 反向 f1，下跌幅度极大造成与下一根缺口
-            ("t5", 11.0),
-            ("t6", 9.5),   # 反向 f2
+            ("t0", 10.0), ("t1", 12.0), ("t2", 11.0), ("t3", 15.0),
+            ("t4", 13.0), ("t5", 20.0), ("t6", 16.0), ("t7", 17.0),
+            ("t8", 14.0),
         ])
         segments = derive_segments(strokes)
-        # 至少有一个段，最末段如果存在带 gap 的特征序列，则应处于 pending（非 confirmed）
-        if segments:
-            last = segments[-1]
-            feature_break = last.meta.get("feature_sequence_break")
-            if isinstance(feature_break, dict) and feature_break.get("first_second_has_gap"):
-                self.assertFalse(last.confirmed)
+        self.assertTrue(segments, "应至少识别出一个段")
+        pending_segments = [
+            s for s in segments
+            if isinstance(s.meta.get("feature_sequence_break"), dict)
+            and s.meta["feature_sequence_break"].get("pending_reason")
+            == "gap_feature_fractal_waiting_for_followup_reverse_fractal"
+        ]
+        self.assertTrue(
+            pending_segments,
+            "应存在一个 pending_reason == gap_feature_fractal_waiting_for_followup_reverse_fractal 的段",
+        )
+        for segment in pending_segments:
+            self.assertFalse(segment.confirmed, "pending 段不应被 confirmed")
+
+    def test_gap_feature_fractal_confirmed_after_followup(self):
+        # 缺口分型 + 后续反向笔形成底分型 → 段被确认结束
+        # 同 pending case，但加第 3 根 down 笔形成底分型
+        # followup indices=[5,7,9]: s6=[16,20], s8=[14,17], s10=[14.5,15]
+        # 底分型：s8.low=14 < s6.low=16, s8.low=14 < s10.low=14.5 → 确认
+        strokes = _build_strokes([
+            ("t0", 10.0), ("t1", 12.0), ("t2", 11.0), ("t3", 15.0),
+            ("t4", 13.0), ("t5", 20.0), ("t6", 16.0), ("t7", 17.0),
+            ("t8", 14.0), ("t9", 15.0), ("t10", 14.5),
+        ])
+        segments = derive_segments(strokes)
+        self.assertTrue(segments, "应至少识别出一个段")
+        followup_confirmed = [
+            s for s in segments
+            if s.direction == "up"
+            and s.confirmed
+            and isinstance(s.meta.get("feature_sequence_break"), dict)
+            and s.meta["feature_sequence_break"].get("confirmation_case")
+            == "gap_feature_fractal_with_followup_reverse_fractal"
+            and s.meta["feature_sequence_break"].get("followup_reverse_fractal") is True
+        ]
+        self.assertTrue(followup_confirmed, "应存在一个通过 gap + followup 分支确认的上升段")
 
     def test_unfinished_tail_segment_marked_growing(self):
         # 最后一段尚未完成时，应追加一个 status=growing 的尾段

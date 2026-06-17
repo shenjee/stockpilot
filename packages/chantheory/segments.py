@@ -313,7 +313,9 @@ def _enforce_segment_contract(segments: Sequence[Segment], strokes: Sequence[Str
         valid.append(segment)
 
     if dropped and valid:
-        # 把被丢弃段的摘要挂到最末有效段的 meta 上，便于上游排查"段消失"问题
+        # 把被丢弃段的摘要挂到最末有效段的 meta 上，便于上游排查"段消失"问题。
+        # 如果所有候选段都被丢掉，derive_segments 当前返回 []；后续如需暴露诊断，
+        # 应通过显式返回结构或 analysis warnings 传递，避免模块级全局状态。
         valid[-1].meta["dropped_segments_summary"] = dropped
     return valid
 
@@ -708,15 +710,20 @@ def _has_gap_followup_reverse_fractal(
     current_end_index: int,
     direction: str,
 ) -> FeatureBreakSignal:
-    """缺口特征分型出现后，等待一组反向特征序列形成反向分型再确认。
+    """缺口特征分型出现后，等待反向段特征序列形成分型再确认。
 
-    direction 是当前段方向；反向段方向与之相反。
-    本函数用反向段方向的特征序列（步长 2、起点 current_end_index + 2）做分型校验。
+    direction 是当前段方向。缺口分型在反向特征序列中出现后，
+    需要用反向段方向的特征序列（反向笔）再形成一个分型来确认段结束。
+
+    反向段特征序列起点 = current_end_index + 1（第一根反向笔），
+    步长 2，取三元素：current_end_index + 1, +3, +5。
+    分型方向 = 反向段方向（与当前段方向相反）。
     """
+    opposite_direction = "down" if direction == "up" else "up"
     reverse_feature_indices = [
-        current_end_index + 2,
-        current_end_index + 4,
-        current_end_index + 6,
+        current_end_index + 1,
+        current_end_index + 3,
+        current_end_index + 5,
     ]
     if reverse_feature_indices[-1] >= len(strokes):
         return FeatureBreakSignal(
@@ -725,8 +732,8 @@ def _has_gap_followup_reverse_fractal(
             {"followup_reverse_feature_indices": reverse_feature_indices},
         )
 
-    # 反向特征序列的方向应等于当前段方向（与反向段方向相反的那个）
-    if any(strokes[index].direction != direction for index in reverse_feature_indices):
+    # 反向段特征序列的方向应等于 opposite_direction
+    if any(strokes[index].direction != opposite_direction for index in reverse_feature_indices):
         return FeatureBreakSignal(
             False,
             "followup_reverse_direction_mismatch",
@@ -734,8 +741,9 @@ def _has_gap_followup_reverse_fractal(
         )
 
     ranges = [_stroke_range(index, strokes[index]) for index in reverse_feature_indices]
-    reverse_direction = "down" if direction == "up" else "up"
-    confirmed = _is_feature_break_fractal(direction=reverse_direction, ranges=ranges)
+    # 反向段分型：opposite_direction == 'down' → 底分型（中间最低）
+    #            opposite_direction == 'up' → 顶分型（中间最高）
+    confirmed = _is_feature_break_fractal(direction=opposite_direction, ranges=ranges)
     return FeatureBreakSignal(
         confirmed,
         "followup_reverse_fractal" if confirmed else "no_followup_reverse_fractal",
