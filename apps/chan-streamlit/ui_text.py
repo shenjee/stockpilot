@@ -125,6 +125,8 @@ TEXT = {
         "layer_strokes": "显示笔",
         "layer_segments": "显示线段",
         "layer_pivot_zones": "显示中枢",
+        "layer_stroke_pivot_zones": "显示笔中枢",
+        "layer_segment_pivot_zones": "显示段中枢",
         "layer_divergences": "显示背驰",
         "layer_alerts": "显示提示",
         "layer_candidate_points": "显示买卖点",
@@ -266,6 +268,8 @@ TEXT = {
         "layer_strokes": "Show Strokes",
         "layer_segments": "Show Segments",
         "layer_pivot_zones": "Show Pivot Zones",
+        "layer_stroke_pivot_zones": "Show Stroke Pivot Zones",
+        "layer_segment_pivot_zones": "Show Segment Pivot Zones",
         "layer_divergences": "Show Divergences",
         "layer_alerts": "Show Alerts",
         "layer_candidate_points": "Show Buy/Sell Points",
@@ -429,10 +433,12 @@ def _build_display_summary(result: AnalysisResult, language: str) -> List[str]:
         if result.segments or result.pivot_zones:
             segment_count = int(mapping.get("segment_count", len(result.segments)))
             pivot_zone_count = int(mapping.get("pivot_zone_count", len(result.pivot_zones)))
+            stroke_pivot_count = int(mapping.get("stroke_pivot_zone_count", pivot_zone_count))
+            segment_pivot_count = int(mapping.get("segment_pivot_zone_count", 0))
             if language == "zh":
-                lines.append(f"Phase 2 产出 {segment_count} 个线段和 {pivot_zone_count} 个中枢。")
+                lines.append(f"Phase 2 产出 {segment_count} 个线段和 {pivot_zone_count} 个中枢（笔：{stroke_pivot_count}，段：{segment_pivot_count}）。")
             else:
-                lines.append(f"Phase 2 produced {segment_count} segments and {pivot_zone_count} pivot zones.")
+                lines.append(f"Phase 2 produced {segment_count} segments and {pivot_zone_count} pivot zones (stroke: {stroke_pivot_count}, segment: {segment_pivot_count}).")
 
         if result.divergences:
             if language == "zh":

@@ -21,6 +21,7 @@ from .structure_mapping import (
     map_fractals as _map_fractals,
     map_pending_stroke as _map_pending_stroke,
     map_pivot_zones as _map_pivot_zones,
+    map_segment_pivot_zones as _map_segment_pivot_zones,
     map_strokes as _map_strokes,
     safe_last_bi_extend as _safe_last_bi_extend,
 )
@@ -184,7 +185,7 @@ def analyze_normalized(
             "engine_assumptions": {
                 "engine_version": PINNED_ENGINE_VERSION,
                 "segment_strategy": SEGMENT_MAPPING_STRATEGY,
-                "pivot_zone_strategy": "czsc.utils.sig.get_zs_seq on finished strokes",
+                "pivot_zone_strategy": "czsc.utils.sig.get_zs_seq on finished strokes plus chantheory segment pivots",
                 "divergence_strategy": "same_direction_stroke_extension_with_weaker_magnitude_around_pivot_zone",
             },
             "signals": {
@@ -213,11 +214,13 @@ def analyze_normalized(
         strokes = _map_strokes(analyzer=analyzer)
         pending_stroke = _map_pending_stroke(analyzer=analyzer, strokes=strokes)
         segments = derive_segments(strokes=strokes)
-        pivot_zones = _map_pivot_zones(analyzer=analyzer, segments=segments)
-        divergences = _map_divergences(strokes=strokes, pivot_zones=pivot_zones)
+        stroke_pivot_zones = _map_pivot_zones(analyzer=analyzer, segments=segments)
+        segment_pivot_zones = _map_segment_pivot_zones(segments=segments)
+        pivot_zones = stroke_pivot_zones + segment_pivot_zones
+        divergences = _map_divergences(strokes=strokes, pivot_zones=stroke_pivot_zones)
         structure_alerts = _build_structure_alerts(
             strokes=strokes,
-            pivot_zones=pivot_zones,
+            pivot_zones=stroke_pivot_zones,
             analyzer=analyzer,
         )
         signal_evaluations, signal_series, signal_events, signal_snapshots, signal_warnings, resolved_signals_config = (
@@ -231,7 +234,7 @@ def analyze_normalized(
         candidate_point_events = _build_candidate_point_events(signal_evaluations=signal_evaluations)
         buy_points, sell_points = _build_candidate_points(
             strokes=strokes,
-            pivot_zones=pivot_zones,
+            pivot_zones=stroke_pivot_zones,
             candidate_point_events=candidate_point_events,
         )
 
@@ -259,6 +262,8 @@ def analyze_normalized(
             "stroke_count": len(strokes),
             "segment_count": len(segments),
             "pivot_zone_count": len(pivot_zones),
+            "stroke_pivot_zone_count": len(stroke_pivot_zones),
+            "segment_pivot_zone_count": len(segment_pivot_zones),
             "divergence_count": len(divergences),
             "signal_series_count": len(signal_series),
             "signal_event_count": len(signal_events),
@@ -327,7 +332,7 @@ def _frozen_result_after_normalization_failure(
             "engine_assumptions": {
                 "engine_version": PINNED_ENGINE_VERSION,
                 "segment_strategy": SEGMENT_MAPPING_STRATEGY,
-                "pivot_zone_strategy": "czsc.utils.sig.get_zs_seq on finished strokes",
+                "pivot_zone_strategy": "czsc.utils.sig.get_zs_seq on finished strokes plus chantheory segment pivots",
                 "divergence_strategy": "same_direction_stroke_extension_with_weaker_magnitude_around_pivot_zone",
             },
             "signals": {

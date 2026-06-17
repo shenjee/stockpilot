@@ -22,11 +22,12 @@ from chantheory.adapters import (
 )
 from chantheory.engine import load_czsc
 from chantheory.structure_mapping import (
+    map_segment_pivot_zones,
     normalize_direction as _normalize_direction,
     normalize_fractal_type as _normalize_fractal_type,
     to_timestamp as _to_timestamp,
 )
-from chantheory.schema import AnalysisResult, AnalysisWarning, Stroke
+from chantheory.schema import AnalysisResult, AnalysisWarning, Segment, Stroke
 from chantheory.segments import SEGMENT_MAPPING_STRATEGY
 
 
@@ -48,6 +49,27 @@ def _stroke(
         start_price=start_price,
         end_price=end_price,
         confirmed=True,
+    )
+
+
+def _segment(
+    suffix: str,
+    direction: str,
+    start_timestamp: str,
+    start_price: float,
+    end_timestamp: str,
+    end_price: float,
+    confirmed: bool = True,
+) -> Segment:
+    return Segment(
+        id=f"segment_{suffix}",
+        direction=direction,
+        stroke_ids=[f"stroke_{suffix}_1", f"stroke_{suffix}_2", f"stroke_{suffix}_3"],
+        start_timestamp=start_timestamp,
+        end_timestamp=end_timestamp,
+        start_price=start_price,
+        end_price=end_price,
+        confirmed=confirmed,
     )
 
 
@@ -78,6 +100,111 @@ def _analysis_result(timeframe: str, bar_count: int, warning_code: str = "") -> 
 
 
 class AdapterTests(unittest.TestCase):
+    def test_map_segment_pivot_zones_builds_segment_level_zone(self):
+        segments = [
+            _segment("1", "down", "2025-01-01", 20.0, "2025-01-02", 10.0),
+            _segment("2", "up", "2025-01-02", 10.0, "2025-01-03", 18.0),
+            _segment("3", "down", "2025-01-03", 18.0, "2025-01-04", 12.0),
+        ]
+
+        zones = map_segment_pivot_zones(segments)
+
+        self.assertEqual(len(zones), 1)
+        zone = zones[0]
+        self.assertEqual(zone.level, "segment")
+        self.assertEqual(zone.low, 12.0)
+        self.assertEqual(zone.high, 18.0)
+        self.assertEqual(zone.segment_ids, ["segment_1", "segment_2", "segment_3"])
+        self.assertTrue(zone.active)
+        self.assertEqual(zone.meta["core_segment_count"], 3)
+        self.assertEqual(zone.meta["extension_segment_count"], 0)
+
+    def test_map_segment_pivot_zones_skips_non_overlapping_segments(self):
+        segments = [
+            _segment("1", "down", "2025-01-01", 30.0, "2025-01-02", 20.0),
+            _segment("2", "up", "2025-01-02", 20.0, "2025-01-03", 25.0),
+            _segment("3", "down", "2025-01-03", 19.0, "2025-01-04", 10.0),
+        ]
+
+        self.assertEqual(map_segment_pivot_zones(segments), [])
+
+    def test_map_segment_pivot_zones_extends_and_consumes_segments(self):
+        segments = [
+            _segment("1", "down", "2025-01-01", 20.0, "2025-01-02", 10.0),
+            _segment("2", "up", "2025-01-02", 10.0, "2025-01-03", 18.0),
+            _segment("3", "down", "2025-01-03", 18.0, "2025-01-04", 12.0),
+            _segment("4", "up", "2025-01-04", 12.0, "2025-01-05", 19.0),
+            _segment("5", "down", "2025-01-05", 19.0, "2025-01-06", 18.5),
+        ]
+
+        zones = map_segment_pivot_zones(segments)
+
+        self.assertEqual(len(zones), 1)
+        self.assertEqual(zones[0].segment_ids, ["segment_1", "segment_2", "segment_3", "segment_4"])
+        self.assertEqual(zones[0].meta["extension_segment_ids"], ["segment_4"])
+        self.assertFalse(zones[0].active)
+        self.assertEqual(zones[0].meta["leave_segment_id"], "segment_5")
+
+    def test_map_segment_pivot_zones_pending_leave_keeps_active(self):
+        # 离开段为 pending（未确认）时，active 应保持 True。
+        segments = [
+            _segment("1", "down", "2025-01-01", 20.0, "2025-01-02", 10.0),
+            _segment("2", "up", "2025-01-02", 10.0, "2025-01-03", 18.0),
+            _segment("3", "down", "2025-01-03", 18.0, "2025-01-04", 12.0),
+            _segment("4", "up", "2025-01-04", 12.0, "2025-01-05", 19.0),
+            _segment("5", "down", "2025-01-05", 19.0, "2025-01-06", 18.5),
+        ]
+        segments[4].meta["status"] = "pending"
+        segments[4].confirmed = False
+
+        zones = map_segment_pivot_zones(segments)
+
+        self.assertEqual(len(zones), 1)
+        self.assertEqual(zones[0].meta["leave_segment_id"], "segment_5")
+        self.assertEqual(zones[0].meta["leave_segment_status"], "pending")
+        self.assertTrue(zones[0].active, "pending 离开段不应让 active=False")
+
+    def test_map_segment_pivot_zones_excludes_growing_segments(self):
+        segments = [
+            _segment("1", "down", "2025-01-01", 20.0, "2025-01-02", 10.0),
+            _segment("2", "up", "2025-01-02", 10.0, "2025-01-03", 18.0),
+            _segment("3", "down", "2025-01-03", 18.0, "2025-01-04", 12.0),
+        ]
+        segments[2].meta["status"] = "growing"
+
+        self.assertEqual(map_segment_pivot_zones(segments), [])
+
+    def test_map_segment_pivot_zones_includes_pending_segments_with_flag(self):
+        # pending 段（方向已确定，端点未确认）应参与中枢构造，
+        # 且 meta.contains_pending_segments=True 标记中枢不稳定。
+        segments = [
+            _segment("1", "down", "2025-01-01", 20.0, "2025-01-02", 10.0),
+            _segment("2", "up", "2025-01-02", 10.0, "2025-01-03", 18.0),
+            _segment("3", "down", "2025-01-03", 18.0, "2025-01-04", 12.0),
+        ]
+        segments[2].meta["status"] = "pending"
+        segments[2].confirmed = False
+
+        zones = map_segment_pivot_zones(segments)
+
+        self.assertEqual(len(zones), 1)
+        self.assertTrue(zones[0].meta["contains_pending_segments"])
+
+    def test_map_segment_pivot_zones_all_confirmed_has_no_pending_flag(self):
+        segments = [
+            _segment("1", "down", "2025-01-01", 20.0, "2025-01-02", 10.0),
+            _segment("2", "up", "2025-01-02", 10.0, "2025-01-03", 18.0),
+            _segment("3", "down", "2025-01-03", 18.0, "2025-01-04", 12.0),
+        ]
+        for seg in segments:
+            seg.meta["status"] = "confirmed"
+            seg.confirmed = True
+
+        zones = map_segment_pivot_zones(segments)
+
+        self.assertEqual(len(zones), 1)
+        self.assertFalse(zones[0].meta["contains_pending_segments"])
+
     def test_to_timestamp_normalizes_spacing_around_colons(self):
         self.assertEqual(_to_timestamp("2026-05-28 16:00 :00"), "2026-05-28 16:00:00")
 
@@ -747,6 +874,78 @@ class AdapterTests(unittest.TestCase):
 
         self.assertEqual(payload["engine_version"], "0.10.12")
         self.assertEqual(payload["meta"]["engine_assumptions"]["engine_version"], "0.10.12")
+
+    def test_adapter_emits_both_stroke_and_segment_pivot_zones_with_input_isolation(self):
+        # 构造 12 根交替笔，形成 4 个交替段（up/down/up/down），
+        # 前 3 段重叠 → 产生 1 个段中枢；同时 mock get_zs_seq 返回 1 个笔中枢。
+        # 验证：pivot_zones 同时包含 level=stroke 和 level=segment；
+        #       mapping 计数正确；divergences/alerts/candidates 只引用 stroke pivot。
+        prices = [10.0, 20.0, 15.0, 22.0, 16.0, 19.0, 12.0, 18.0, 14.0, 21.0, 17.0, 19.0, 15.0]
+        fx_list = [
+            SimpleNamespace(dt=f"2025-01-{i+1:02d}", mark=("G" if i % 2 == 1 else "D"), fx=prices[i])
+            for i in range(len(prices))
+        ]
+        bis = [
+            SimpleNamespace(
+                fx_a=fx_list[i],
+                fx_b=fx_list[i+1],
+                direction=("Up" if prices[i+1] > prices[i] else "Down"),
+                high=max(prices[i], prices[i+1]),
+                low=min(prices[i], prices[i+1]),
+            )
+            for i in range(len(prices) - 1)
+        ]
+        analyzer = SimpleNamespace(fx_list=fx_list, ubi_fxs=[], finished_bis=bis, last_bi_extend=False)
+        zs = SimpleNamespace(sdt="2025-01-02", edt="2025-01-05", zg=20.0, zd=15.0, gg=22.0, dd=10.0, zz=17.5)
+        sig_module = SimpleNamespace(get_zs_seq=lambda bis: [zs])
+        rows = [
+            {"date": f"2025-01-{i+1:02d}", "open": p - 0.5, "close": p + 0.3, "high": p + 0.5, "low": p - 0.7, "volume": 1000}
+            for i, p in enumerate(prices)
+        ]
+
+        with patch("chantheory.adapters._run_engine", return_value=(analyzer, [object()] * len(prices))), patch(
+            "chantheory.engine.load_czsc_utils", return_value=sig_module
+        ):
+            result = analyze_tracker_klines(
+                rows=rows,
+                code="000001",
+                market="sz",
+                parameters={"min_bars": 2},
+                signals_config=[],
+            )
+
+        levels = {zone.level for zone in result.pivot_zones}
+        self.assertIn("stroke", levels, "应包含笔中枢")
+        self.assertIn("segment", levels, "应包含段中枢")
+
+        stroke_zones = [z for z in result.pivot_zones if z.level == "stroke"]
+        segment_zones = [z for z in result.pivot_zones if z.level == "segment"]
+        self.assertEqual(len(stroke_zones), 1)
+        self.assertEqual(len(segment_zones), 1)
+
+        mapping = result.meta["mapping"]
+        self.assertEqual(mapping["stroke_pivot_zone_count"], 1)
+        self.assertEqual(mapping["segment_pivot_zone_count"], 1)
+        self.assertEqual(mapping["pivot_zone_count"], 2)
+
+        stroke_zone_ids = {z.id for z in stroke_zones}
+        segment_zone_ids = {z.id for z in segment_zones}
+
+        # divergences 只引用 stroke pivot
+        for div in result.divergences:
+            self.assertIn(div.meta.get("pivot_zone_id"), stroke_zone_ids)
+
+        # structure_alerts 只引用 stroke pivot（通过 meta.pivot_zone_id 或 related_ids）
+        for alert in result.structure_alerts:
+            related = set(alert.related_ids) | {alert.meta.get("pivot_zone_id")}
+            self.assertTrue(
+                related & stroke_zone_ids or not (related & segment_zone_ids),
+                "structure_alerts 不应引用段中枢",
+            )
+
+        # candidate points 只引用 stroke pivot
+        for point in result.candidate_buy_points + result.candidate_sell_points:
+            self.assertIn(point.reference_id, stroke_zone_ids | {""})
 
 
 if __name__ == "__main__":

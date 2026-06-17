@@ -59,7 +59,8 @@ LAYER_KEYS = (
     "fractals",
     "strokes",
     "segments",
-    "pivot_zones",
+    "stroke_pivot_zones",
+    "segment_pivot_zones",
     "divergences",
     "alerts",
     "candidate_points",
@@ -384,6 +385,16 @@ def _build_current_bar_event_table_rows(current_payload: Dict[str, object], lang
     ]
 
 
+def _format_pivot_zone_count(result: object) -> str:
+    meta = getattr(result, "meta", {}) or {}
+    mapping = meta.get("mapping", {}) if isinstance(meta, dict) else {}
+    fallback_total = len(list(getattr(result, "pivot_zones", []) or []))
+    total = int(mapping.get("pivot_zone_count", fallback_total))
+    stroke_count = int(mapping.get("stroke_pivot_zone_count", total))
+    segment_count = int(mapping.get("segment_pivot_zone_count", 0))
+    return f"{total} (stroke: {stroke_count}, segment: {segment_count})"
+
+
 def _build_overview_card_rows(
     result: object,
     chart_rows: List[Dict[str, object]],
@@ -432,7 +443,7 @@ def _build_overview_card_rows(
         },
         {
             _t(language, "overview_col_field"): _t(language, "overview_field_pivot_zone_count"),
-            _t(language, "overview_col_value"): str(len(list(getattr(result, "pivot_zones", []) or []))),
+            _t(language, "overview_col_value"): _format_pivot_zone_count(result),
         },
         {
             _t(language, "overview_col_field"): _t(language, "overview_field_signal_series_count"),

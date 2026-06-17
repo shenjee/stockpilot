@@ -25,9 +25,12 @@ def build_summary(result: AnalysisResult) -> List[str]:
             f"czsc {result.engine_version} mapped {fractal_count} fractals and {finished_bi_count} finished strokes."
         )
         if result.segments or result.pivot_zones:
+            pivot_count = int(mapping.get('pivot_zone_count', len(result.pivot_zones)))
+            stroke_pivot_count = int(mapping.get('stroke_pivot_zone_count', pivot_count))
+            segment_pivot_count = int(mapping.get('segment_pivot_zone_count', 0))
             lines.append(
                 f"Phase 2 produced {int(mapping.get('segment_count', len(result.segments)))} segments and "
-                f"{int(mapping.get('pivot_zone_count', len(result.pivot_zones)))} pivot zones."
+                f"{pivot_count} pivot zones (stroke: {stroke_pivot_count}, segment: {segment_pivot_count})."
             )
         if result.divergences:
             lines.append(

@@ -31,10 +31,20 @@ def render_plot_primitives(
     legend_layers: set[str] = set()
     for primitive in result_payload.get("plot_primitives", []):
         layer = str(primitive.get("layer", ""))
-        if not visibility.get(layer, True):
-            continue
-        legend_name = _layer_label(layer, language)
-        trace_showlegend = show_legend and layer not in legend_layers
+        primitive_meta = dict(primitive.get("meta", {}) or {})
+        if layer == "pivot_zones":
+            pivot_level = str(primitive_meta.get("level", "stroke"))
+            visibility_key = "segment_pivot_zones" if pivot_level == "segment" else "stroke_pivot_zones"
+            if not visibility.get(visibility_key, True):
+                continue
+            legend_name = _layer_label(visibility_key, language)
+            legend_group = visibility_key
+        else:
+            if not visibility.get(layer, True):
+                continue
+            legend_name = _layer_label(layer, language)
+            legend_group = layer
+        trace_showlegend = show_legend and legend_group not in legend_layers
         primitive_type = primitive.get("type")
         handled_trace = False
         if primitive_type == "marker":
@@ -50,7 +60,7 @@ def render_plot_primitives(
                         textposition=str(primitive_meta.get("textposition", "top center")),
                         textfont={"color": primitive.get("color", "#2563EB")},
                         name=legend_name,
-                        legendgroup=layer,
+                        legendgroup=legend_group,
                         showlegend=trace_showlegend,
                     ),
                     **trace_kwargs,
@@ -73,7 +83,7 @@ def render_plot_primitives(
                         marker={"color": primitive.get("color", "#2563EB"), "size": 10, "symbol": marker_symbol},
                         textfont={"color": primitive.get("color", "#2563EB")},
                         name=legend_name,
-                        legendgroup=layer,
+                        legendgroup=legend_group,
                         showlegend=trace_showlegend,
                     ),
                     **trace_kwargs,
@@ -93,7 +103,7 @@ def render_plot_primitives(
                         "width": int(2 * width_multiplier),
                     },
                     name=legend_name,
-                    legendgroup=layer,
+                    legendgroup=legend_group,
                     showlegend=trace_showlegend,
                 ),
                 **trace_kwargs,
@@ -111,10 +121,15 @@ def render_plot_primitives(
                 **layout_kwargs,
             )
             if primitive.get("text"):
+                if language == "zh":
+                    pivot_level = str(primitive_meta.get("level", "stroke"))
+                    box_label = "段中枢" if pivot_level == "segment" else "笔中枢"
+                else:
+                    box_label = primitive.get("text")
                 figure.add_annotation(
                     x=primitive.get("x2"),
                     y=primitive.get("y1"),
-                    text="中枢" if language == "zh" else primitive.get("text"),
+                    text=box_label,
                     showarrow=False,
                     font={"color": primitive.get("color", "#F59E0B")},
                     **layout_kwargs,
@@ -137,4 +152,4 @@ def render_plot_primitives(
                 **layout_kwargs,
             )
         if handled_trace and trace_showlegend:
-            legend_layers.add(layer)
+            legend_layers.add(legend_group)

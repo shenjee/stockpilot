@@ -386,6 +386,125 @@ def map_pivot_zones(
     return items
 
 
+def _segment_price_range(segment: Segment) -> tuple[float, float]:
+    return (
+        min(segment.start_price, segment.end_price),
+        max(segment.start_price, segment.end_price),
+    )
+
+
+def map_segment_pivot_zones(segments: Sequence[Segment]) -> List[PivotZone]:
+    """根据线段三段重叠构造段级别中枢。
+
+    输入段筛选规则（第一版语义，明确写出）：
+    - 包含 status="confirmed" 段（方向与端点均已确认）
+    - 包含 status="pending" 段（方向已确定，端点未最终确认）
+    - 排除 status="growing" 段（仍在生长，方向可能未定）
+
+    之所以包含 pending 段：实际行情中多数段在分析时刻仍为 pending，
+    若仅取 confirmed 段，段中枢几乎无法生成。pending 段的方向已经确定，
+    其价格区间可用于中枢重叠判定。
+
+    active 语义：active=True 当且仅当没有已确认离开段。即 leave_segment 为 None
+    （没有离开段），或 leave_segment 仍是 pending（离开未确认）。若中枢的成员段中
+    含 pending 段，meta.contains_pending_segments=True，提示该中枢本身也是不稳定的。
+
+    调试可见性：meta.leave_segment_status 记录离开段的 status，取值为 None（无离开段）、
+    "confirmed"（已确认离开）、"pending"（未确认离开），便于 JSON 调试时直接区分
+    active=True 的两种来源。
+    """
+    usable_segments = [
+        segment for segment in segments
+        if segment.meta.get("status") != "growing"
+    ]
+    items: List[PivotZone] = []
+    if len(usable_segments) < 3:
+        return items
+
+    index = 0
+    zone_index = 1
+    while index + 2 < len(usable_segments):
+        core_segments = usable_segments[index : index + 3]
+        if not (
+            core_segments[0].direction != core_segments[1].direction
+            and core_segments[1].direction != core_segments[2].direction
+        ):
+            index += 1
+            continue
+
+        ranges = [_segment_price_range(segment) for segment in core_segments]
+        zd = max(low for low, _high in ranges)
+        zg = min(high for _low, high in ranges)
+        if zg <= zd:
+            index += 1
+            continue
+
+        member_segments = list(core_segments)
+        end_index = index + 2
+        gg = max(high for _low, high in ranges)
+        dd = min(low for low, _high in ranges)
+
+        scan_index = end_index + 1
+        while scan_index < len(usable_segments):
+            segment = usable_segments[scan_index]
+            low, high = _segment_price_range(segment)
+            if high < zd or low > zg:
+                break
+            member_segments.append(segment)
+            end_index = scan_index
+            gg = max(gg, high)
+            dd = min(dd, low)
+            scan_index += 1
+
+        enter_segment = usable_segments[index - 1] if index > 0 else None
+        leave_segment = usable_segments[end_index + 1] if end_index + 1 < len(usable_segments) else None
+        core_segment_ids = [segment.id for segment in core_segments]
+        extension_segment_ids = [segment.id for segment in member_segments[3:]]
+        start_segment = usable_segments[index]
+        end_segment = usable_segments[end_index]
+        # active=True 当且仅当没有已确认离开段：
+        # leave_segment 为 None，或 leave_segment 仍是 pending（离开未确认）。
+        active = leave_segment is None or leave_segment.meta.get("status") == "pending"
+        contains_pending_segments = any(
+            segment.meta.get("status") == "pending" for segment in member_segments
+        )
+
+        items.append(
+            PivotZone(
+                id=f"segment_pivot_zone_{zone_index:03d}_{start_segment.start_timestamp}_{end_segment.end_timestamp}",
+                start_timestamp=start_segment.start_timestamp,
+                end_timestamp=end_segment.end_timestamp,
+                high=zg,
+                low=zd,
+                segment_ids=[segment.id for segment in member_segments],
+                level="segment",
+                active=active,
+                meta={
+                    "mapping_strategy": "chantheory_segment_pivot",
+                    "zg": zg,
+                    "zd": zd,
+                    "gg": gg,
+                    "dd": dd,
+                    "zz": (zg + zd) / 2,
+                    "core_segment_ids": core_segment_ids,
+                    "extension_segment_ids": extension_segment_ids,
+                    "core_segment_count": len(core_segment_ids),
+                    "extension_segment_count": len(extension_segment_ids),
+                    "enter_segment_id": enter_segment.id if enter_segment else None,
+                    "enter_direction": enter_segment.direction if enter_segment else None,
+                    "leave_segment_id": leave_segment.id if leave_segment else None,
+                    "leave_direction": leave_segment.direction if leave_segment else None,
+                    "leave_segment_status": leave_segment.meta.get("status") if leave_segment else None,
+                    "contains_pending_segments": contains_pending_segments,
+                },
+            )
+        )
+        zone_index += 1
+        index = end_index + 1
+
+    return items
+
+
 def map_divergences(
     strokes: Sequence[Stroke],
     pivot_zones: Sequence[PivotZone],

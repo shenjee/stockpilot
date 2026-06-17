@@ -132,6 +132,19 @@ def derive_segments(strokes: Sequence[Stroke]) -> List[Segment]:
                     start_index += 1
                 continue
 
+            # 段起点必须是 window 内的绝对极值。
+            # 如果起点不是极值（未被上方 violation 检查处理的情况），
+            # 从 window 内的真正极值点重新开始找段。
+            extreme_start = _find_window_extreme_start_index(
+                strokes=strokes,
+                start_index=start_index,
+                end_index=end_index,
+                direction=direction,
+            )
+            if extreme_start > start_index:
+                start_index = extreme_start
+                continue
+
             segments.append(segment)
             start_index = end_index + 1
         else:
@@ -434,6 +447,64 @@ def _is_more_extreme(direction: str, current_price: float, candidate_price: floa
     if direction == "down":
         return candidate_price < current_price
     return False
+
+
+def _find_window_extreme_start_index(
+    strokes: Sequence[Stroke],
+    start_index: int,
+    end_index: int,
+    direction: str,
+) -> int:
+    """找到段 window 内的真正极值起点。
+
+    对于向上段，起点应该是 window 最低点之后的第一根向上笔。
+    对于向下段，起点应该是 window 最高点之后的第一根向下笔。
+
+    返回真正起点的 stroke index。如果当前起点已经是极值，返回 start_index。
+    """
+    window = list(strokes[start_index : end_index + 1])
+    if not window:
+        return start_index
+
+    first = window[0]
+    eps = 1e-9
+
+    if direction == "up":
+        first_low = min(first.start_price, first.end_price)
+        window_min = min(min(s.start_price, s.end_price) for s in window)
+        if first_low <= window_min + eps:
+            return start_index
+        # 找到最低点对应的笔
+        for idx in range(start_index, end_index + 1):
+            s = strokes[idx]
+            if abs(min(s.start_price, s.end_price) - window_min) > eps:
+                continue
+            # 最低点在 down 笔的终点 → 下一根 up 笔是真正起点
+            if s.direction == "down" and abs(s.end_price - window_min) < eps:
+                return idx + 1
+            # 最低点在 up 笔的起点 → 这根 up 笔就是真正起点
+            if s.direction == "up" and abs(s.start_price - window_min) < eps:
+                return idx
+            return idx + 1
+        return start_index
+
+    if direction == "down":
+        first_high = max(first.start_price, first.end_price)
+        window_max = max(max(s.start_price, s.end_price) for s in window)
+        if first_high >= window_max - eps:
+            return start_index
+        for idx in range(start_index, end_index + 1):
+            s = strokes[idx]
+            if abs(max(s.start_price, s.end_price) - window_max) > eps:
+                continue
+            if s.direction == "up" and abs(s.end_price - window_max) < eps:
+                return idx + 1
+            if s.direction == "down" and abs(s.start_price - window_max) < eps:
+                return idx
+            return idx + 1
+        return start_index
+
+    return start_index
 
 
 def _potential_endpoint_indices(strokes: Sequence[Stroke]) -> Set[int]:

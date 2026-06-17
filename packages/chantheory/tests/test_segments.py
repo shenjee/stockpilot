@@ -222,6 +222,56 @@ class DeriveSegmentsRegressionTests(unittest.TestCase):
         for index in range(1, len(segments)):
             self.assertNotEqual(segments[index - 1].direction, segments[index].direction)
 
+    def test_segment_relocates_start_to_window_extreme(self):
+        # 段起点不是 window 极值时，应从 window 内真正极值点重新开始找段。
+        # stroke6 终点 46.28 是 window 最低点（向下笔终点），真正起点应是 stroke7（46.28→56）。
+        strokes = _build_strokes([
+            ("t0", 48.0),
+            ("t1", 51.0),
+            ("t2", 49.0),
+            ("t3", 50.0),
+            ("t4", 46.5),    # 向下笔终点，非最低
+            ("t5", 47.0),
+            ("t6", 46.28),   # window 最低点（向下笔终点）
+            ("t7", 56.0),    # 真正上升段起点
+            ("t8", 53.0),
+            ("t9", 58.0),    # 段终点候选
+            ("t10", 54.0),   # 反向特征 f1
+            ("t11", 56.0),
+            ("t12", 52.0),   # 反向特征 f3 → 分型确认
+        ])
+        segments = derive_segments(strokes)
+        up_segments = [s for s in segments if s.direction == "up"]
+        self.assertTrue(up_segments, "应至少识别出一个上升段")
+        first_up = up_segments[0]
+        self.assertAlmostEqual(first_up.start_price, 46.28, places=2,
+                               msg="上升段起点应重定位到 window 最低点 46.28")
+        self.assertEqual(first_up.meta.get("start_stroke_index"), 6,
+                         msg="上升段起点 stroke index 应为 6（46.28 所在向下笔的下一根向上笔）")
+
+    def test_segment_keeps_start_when_already_extreme(self):
+        # 段起点已经是 window 极值时，结果不变。
+        # stroke0 起点 10.0 是 window 最低点（向上笔起点）。
+        strokes = _build_strokes([
+            ("t0", 10.0),
+            ("t1", 12.0),
+            ("t2", 11.0),
+            ("t3", 13.0),    # 段终点候选
+            ("t4", 11.0),    # 反向特征 f1
+            ("t5", 12.0),
+            ("t6", 10.5),    # 反向特征 f2
+            ("t7", 11.5),
+            ("t8", 9.5),     # 反向特征 f3
+        ])
+        segments = derive_segments(strokes)
+        up_segments = [s for s in segments if s.direction == "up"]
+        self.assertTrue(up_segments, "应至少识别出一个上升段")
+        first_up = up_segments[0]
+        self.assertAlmostEqual(first_up.start_price, 10.0, places=2,
+                               msg="上升段起点应保持 10.0（已是 window 最低点）")
+        self.assertEqual(first_up.meta.get("start_stroke_index"), 0,
+                         msg="上升段起点 stroke index 应为 0")
+
 
 if __name__ == "__main__":
     unittest.main()

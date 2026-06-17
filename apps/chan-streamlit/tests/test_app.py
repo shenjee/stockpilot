@@ -378,6 +378,103 @@ class ChartAxisTests(unittest.TestCase):
         self.assertTrue(figure.data[1].showlegend)
         self.assertFalse(figure.data[2].showlegend)
 
+    def test_build_figure_filters_pivot_zones_by_level(self):
+        rows = [
+            {"date": "2026-06-10", "open": 10.0, "close": 10.5, "high": 10.6, "low": 9.9, "volume": 100},
+            {"date": "2026-06-11", "open": 10.5, "close": 10.2, "high": 10.7, "low": 10.0, "volume": 140},
+        ]
+        result_payload = {
+            "plot_primitives": [
+                {
+                    "type": "box",
+                    "layer": "pivot_zones",
+                    "x1": "2026-06-10",
+                    "x2": "2026-06-11",
+                    "y1": 10.6,
+                    "y2": 10.0,
+                    "color": "#F59E0B",
+                    "meta": {"level": "stroke"},
+                },
+                {
+                    "type": "box",
+                    "layer": "pivot_zones",
+                    "x1": "2026-06-10",
+                    "x2": "2026-06-11",
+                    "y1": 10.7,
+                    "y2": 9.9,
+                    "color": "#8B5CF6",
+                    "meta": {"level": "segment"},
+                },
+            ]
+        }
+
+        stroke_only = app._build_figure(
+            rows=rows,
+            result_payload=result_payload,
+            visibility={"stroke_pivot_zones": True, "segment_pivot_zones": False, "volume_panel": False, "macd_panel": False},
+            timeframe="day",
+            language="en",
+            x_window=2,
+        )
+        segment_only = app._build_figure(
+            rows=rows,
+            result_payload=result_payload,
+            visibility={"stroke_pivot_zones": False, "segment_pivot_zones": True, "volume_panel": False, "macd_panel": False},
+            timeframe="day",
+            language="en",
+            x_window=2,
+        )
+
+        self.assertEqual(len(stroke_only.layout.shapes), 1)
+        self.assertEqual(stroke_only.layout.shapes[0].line.color, "#F59E0B")
+        self.assertEqual(len(segment_only.layout.shapes), 1)
+        self.assertEqual(segment_only.layout.shapes[0].line.color, "#8B5CF6")
+
+    def test_build_figure_zh_box_label_distinguishes_pivot_level(self):
+        rows = [
+            {"date": "2026-06-10", "open": 10.0, "close": 10.5, "high": 10.6, "low": 9.9, "volume": 100},
+            {"date": "2026-06-11", "open": 10.5, "close": 10.2, "high": 10.7, "low": 10.0, "volume": 140},
+        ]
+        result_payload = {
+            "plot_primitives": [
+                {
+                    "type": "box",
+                    "layer": "pivot_zones",
+                    "x1": "2026-06-10",
+                    "x2": "2026-06-11",
+                    "y1": 10.6,
+                    "y2": 10.0,
+                    "color": "#F59E0B",
+                    "text": "Pivot Zone",
+                    "meta": {"level": "stroke"},
+                },
+                {
+                    "type": "box",
+                    "layer": "pivot_zones",
+                    "x1": "2026-06-10",
+                    "x2": "2026-06-11",
+                    "y1": 10.7,
+                    "y2": 9.9,
+                    "color": "#8B5CF6",
+                    "text": "Segment Pivot Zone",
+                    "meta": {"level": "segment"},
+                },
+            ]
+        }
+
+        figure = app._build_figure(
+            rows=rows,
+            result_payload=result_payload,
+            visibility={"stroke_pivot_zones": True, "segment_pivot_zones": True, "volume_panel": False, "macd_panel": False},
+            timeframe="day",
+            language="zh",
+            x_window=2,
+        )
+
+        annotation_texts = [ann.text for ann in figure.layout.annotations]
+        self.assertIn("笔中枢", annotation_texts)
+        self.assertIn("段中枢", annotation_texts)
+
     def test_build_multi_timeframe_payload_aggregates_levels(self):
         base_analysis = SimpleNamespace(
             warnings=[SimpleNamespace()],

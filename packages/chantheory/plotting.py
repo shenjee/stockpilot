@@ -124,6 +124,7 @@ def build_plot_primitives(result: AnalysisResult) -> List[PlotPrimitive]:
         )
 
     for zone in result.pivot_zones:
+        is_segment_pivot = zone.level == "segment"
         primitives.append(
             PlotPrimitive(
                 id=f"primitive_{zone.id}",
@@ -134,8 +135,8 @@ def build_plot_primitives(result: AnalysisResult) -> List[PlotPrimitive]:
                 x2=zone.end_timestamp,
                 y2=zone.low,
                 style="fill" if zone.active else "outline",
-                color="#F59E0B" if zone.active else "#FCD34D",
-                text="Pivot Zone" if zone.active else "",
+                color=("#8B5CF6" if zone.active else "#C4B5FD") if is_segment_pivot else ("#F59E0B" if zone.active else "#FCD34D"),
+                text=("Segment Pivot Zone" if is_segment_pivot else "Pivot Zone") if zone.active else "",
                 meta={
                     "reference_type": "pivot_zone",
                     "reference_id": zone.id,
