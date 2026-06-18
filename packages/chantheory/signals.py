@@ -149,6 +149,7 @@ def build_signal_payloads(
     analyzer: object,
     index_by_timestamp: Mapping[str, int],
     signals_config: Sequence[object] | Mapping[str, object] | None,
+    raw_bars: Sequence[object] | None = None,
 ) -> Tuple[List[Dict[str, Any]], List[SignalSeries], List[SignalEvent], List[SignalSnapshot], List[AnalysisWarning], List[Dict[str, Any]]]:
     """Run bar-by-bar signal replay and return evaluations, series, events, snapshots, warnings, and resolved config."""
     warnings: List[AnalysisWarning] = []
@@ -168,7 +169,7 @@ def build_signal_payloads(
     if not signal_definitions:
         return [], [], [], [], warnings, []
 
-    bars_raw = list(getattr(analyzer, "bars_raw", []) or [])
+    bars_raw = list(raw_bars) if raw_bars is not None else list(getattr(analyzer, "bars_raw", []) or [])
     if not bars_raw:
         return [], [], [], [], warnings, signal_definitions
 
@@ -255,7 +256,10 @@ def build_signal_payloads(
 
             try:
                 signal_value = _evaluate_signal_function(func=func, analyzer=replay_analyzer, di=di, kwargs=kwargs)
+                status = "active" if _signal_value_is_active(signal_value) else "inactive"
             except Exception as exc:
+                signal_value = ""
+                status = "not_ready" if isinstance(exc, (IndexError, KeyError, AttributeError)) else "error"
                 failed_key = (module_name, signal_name)
                 if failed_key not in failed_functions:
                     failed_functions.add(failed_key)
@@ -263,11 +267,10 @@ def build_signal_payloads(
                         _warning(
                             warning_id=f"warning_signal_eval_failed_{signal_name}",
                             code="SIGNAL_EVALUATION_FAILED",
-                            message=f"Signal function `{module_name}.{signal_name}` failed: {exc}",
+                            message=f"Signal function `{module_name}.{signal_name}` {status}: {exc}",
                             field="signals",
                         )
                     )
-                continue
 
             evaluations.append(
                 {
@@ -280,7 +283,8 @@ def build_signal_payloads(
                     "price": price,
                     "direction": direction,
                     "value": signal_value,
-                    "active": _signal_value_is_active(signal_value),
+                    "active": status == "active",
+                    "status": status,
                     "di": di,
                     "meta": {
                         "kwargs": kwargs,
@@ -302,6 +306,16 @@ def build_signal_payloads(
 # Signal series / events / snapshots builders
 # ---------------------------------------------------------------------------
 
+def _evaluation_status(evaluation: Mapping[str, Any]) -> str:
+    """Resolve the status of an evaluation, deriving from the active flag when absent.
+
+    Legacy or hand-built evaluations may omit the ``status`` field; fall back to
+    ``active``/``inactive`` based on the ``active`` flag instead of assuming
+    ``active`` (which would mislabel inactive evaluations).
+    """
+    return str(evaluation.get("status") or ("active" if evaluation.get("active") else "inactive"))
+
+
 def build_signal_series(
     evaluations: Sequence[Mapping[str, Any]],
     signal_definitions: Sequence[Mapping[str, Any]],
@@ -319,6 +333,7 @@ def build_signal_series(
                 bar_index=int(evaluation["bar_index"]),
                 value=str(evaluation["value"]),
                 active=bool(evaluation["active"]),
+                status=_evaluation_status(evaluation),
                 price=float(evaluation["price"]) if evaluation.get("price") is not None else None,
                 reference_id=str(evaluation["reference_id"]),
                 meta={
@@ -379,6 +394,7 @@ def build_signal_events(evaluations: Sequence[Mapping[str, Any]]) -> List[Signal
                         bar_index=int(item["bar_index"]),
                         value=current_value,
                         active=current_active,
+                        status=_evaluation_status(item),
                         reference_id=str(item["reference_id"]),
                         price=float(item["price"]) if item.get("price") is not None else None,
                         meta={
@@ -410,6 +426,7 @@ def build_signal_snapshots(evaluations: Sequence[Mapping[str, Any]]) -> List[Sig
                 "price": float(evaluation["price"]) if evaluation.get("price") is not None else None,
                 "values": {},
                 "active_signals": {},
+                "statuses": {},
                 "signal_names": {},
             },
         )
@@ -417,6 +434,7 @@ def build_signal_snapshots(evaluations: Sequence[Mapping[str, Any]]) -> List[Sig
         signal_value = str(evaluation["value"])
         snapshot["values"][signal_key] = signal_value
         snapshot["signal_names"][signal_key] = str(evaluation["signal_name"])
+        snapshot["statuses"][signal_key] = _evaluation_status(evaluation)
         if bool(evaluation["active"]):
             snapshot["active_signals"][signal_key] = signal_value
 
@@ -427,6 +445,7 @@ def build_signal_snapshots(evaluations: Sequence[Mapping[str, Any]]) -> List[Sig
             bar_index=int(item["bar_index"]),
             values=dict(item["values"]),
             active_signals=dict(item["active_signals"]),
+            statuses=dict(item["statuses"]),
             reference_id=str(item["reference_id"]),
             price=float(item["price"]) if item.get("price") is not None else None,
             meta={

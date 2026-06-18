@@ -199,6 +199,7 @@ class ChartAxisTests(unittest.TestCase):
                     bar_index=3,
                     values={"trend_bias": "bullish"},
                     active_signals={"trend_bias": "bullish"},
+                    statuses={"trend_bias": "active"},
                     reference_id="stroke_3",
                     price=10.8,
                     meta={"signal_names": {"trend_bias": "Trend Bias"}},

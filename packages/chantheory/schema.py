@@ -138,6 +138,7 @@ class SignalSeriesPoint:
     bar_index: int
     value: str
     active: bool
+    status: str = "active"
     price: Optional[float] = None
     reference_id: str = ""
     meta: Dict[str, Any] = dc_field(default_factory=dict)
@@ -165,6 +166,7 @@ class SignalEvent:
     bar_index: int
     value: str
     active: bool
+    status: str = "active"
     reference_id: str = ""
     price: Optional[float] = None
     meta: Dict[str, Any] = dc_field(default_factory=dict)
@@ -177,6 +179,7 @@ class SignalSnapshot:
     bar_index: int
     values: Dict[str, str]
     active_signals: Dict[str, str] = dc_field(default_factory=dict)
+    statuses: Dict[str, str] = dc_field(default_factory=dict)
     reference_id: str = ""
     price: Optional[float] = None
     meta: Dict[str, Any] = dc_field(default_factory=dict)

@@ -335,7 +335,7 @@ class AdapterTests(unittest.TestCase):
         zs = SimpleNamespace(sdt="2025-01-02", edt="2025-01-07", zg=11.0, zd=10.0, gg=11.3, dd=9.7, zz=10.5)
         sig_module = SimpleNamespace(get_zs_seq=lambda bis: [zs])
 
-        with patch("chantheory.adapters._run_engine", return_value=(analyzer, [object()] * 5)), patch(
+        with patch("chantheory.adapters._run_engine", return_value=(analyzer, [object()] * 3)), patch(
             "chantheory.engine.load_czsc_utils", return_value=sig_module
         ):
             result = analyze_tracker_klines(
@@ -631,6 +631,110 @@ class AdapterTests(unittest.TestCase):
         candidate_events = _build_candidate_point_events(signal_evaluations)
         self.assertEqual(len(candidate_events), 9)
 
+    def test_signal_status_distinguishes_active_inactive_not_ready_error(self):
+        strokes = [
+            _stroke("1", "up", "2025-01-01", 10.0, "2025-01-02", 11.0),
+        ]
+        bars_raw = [
+            SimpleNamespace(dt="2025-01-01", close=10.0),
+            SimpleNamespace(dt="2025-01-02", close=11.0),
+        ]
+
+        class MockAnalyzer:
+            def __init__(self, bars, max_bi_num=50):
+                self.bars_raw = list(bars)
+                self.bi_list = []
+                self.max_bi_num = max_bi_num
+
+            def update(self, bar):
+                if bar not in self.bars_raw:
+                    self.bars_raw.append(bar)
+
+        analyzer = MockAnalyzer(bars_raw)
+
+        def not_ready_func(_a, **kw):
+            raise IndexError("list index out of range")
+
+        def error_func(_a, **kw):
+            raise ValueError("unexpected error")
+
+        sig_module = SimpleNamespace(
+            cxt_first_buy_V221126=lambda _a, **kw: {"cxt_first_buy_V221126": "一买_5笔_任意_0"},
+            cxt_first_sell_V221126=lambda _a, **kw: {"cxt_first_sell_V221126": "其他_任意_任意_0"},
+            cxt_second_bs_V240524=not_ready_func,
+            cxt_third_bs_V230319=error_func,
+        )
+
+        with patch("chantheory.signals.import_module", return_value=sig_module):
+            evaluations, series, events, snapshots, warnings, _ = _build_signal_payloads(
+                strokes=strokes,
+                analyzer=analyzer,
+                index_by_timestamp={"2025-01-01": 0, "2025-01-02": 1},
+                signals_config=None,
+            )
+
+        first_bar = [e for e in evaluations if e["bar_index"] == 0]
+        status_by_key = {e["signal_key"]: e["status"] for e in first_bar}
+        self.assertEqual(status_by_key["first_buy"], "active")
+        self.assertEqual(status_by_key["first_sell"], "inactive")
+        self.assertEqual(status_by_key["second_bs"], "not_ready")
+        self.assertEqual(status_by_key["third_bs"], "error")
+
+        for snapshot in snapshots:
+            self.assertEqual(snapshot.statuses.get("first_buy"), "active")
+            self.assertEqual(snapshot.statuses.get("second_bs"), "not_ready")
+            self.assertEqual(snapshot.statuses.get("third_bs"), "error")
+
+        self.assertTrue(any(w.warning_code == "SIGNAL_EVALUATION_FAILED" for w in warnings))
+
+    def test_build_signal_payloads_uses_raw_bars_over_truncated_bars_raw(self):
+        # Regression: czsc's CZSC.update() truncates analyzer.bars_raw after
+        # bi_list forms (keeping only bars from the first stroke's start onward).
+        # build_signal_payloads must replay over the complete raw_bars sequence
+        # passed by the caller, not the truncated analyzer.bars_raw.
+        full_bars = [
+            SimpleNamespace(dt=f"2025-01-{day:02d}", close=10.0 + day)
+            for day in range(1, 11)  # 10 bars: 2025-01-01 .. 2025-01-10
+        ]
+        index_by_timestamp = {bar.dt: idx for idx, bar in enumerate(full_bars)}
+
+        class ReplayAnalyzer:
+            def __init__(self, bars, max_bi_num=50):
+                self.bars_raw = list(bars)
+                self.bi_list = []
+                self.max_bi_num = max_bi_num
+
+            def update(self, bar):
+                if bar not in self.bars_raw:
+                    self.bars_raw.append(bar)
+
+        analyzer = ReplayAnalyzer(full_bars)
+        # Simulate czsc truncation: analyzer.bars_raw keeps only a tail slice.
+        analyzer.bars_raw = list(full_bars[5:])
+
+        sig_module = SimpleNamespace(
+            cxt_first_buy_V221126=lambda _a, **kw: {"cxt_first_buy_V221126": "其他_任意_任意_0"},
+            cxt_first_sell_V221126=lambda _a, **kw: {"cxt_first_sell_V221126": "其他_任意_任意_0"},
+            cxt_second_bs_V240524=lambda _a, **kw: {"cxt_second_bs_V240524": "其他_任意_任意_0"},
+            cxt_third_bs_V230319=lambda _a, **kw: {"cxt_third_bs_V230319": "其他_任意_任意_0"},
+        )
+
+        with patch("chantheory.signals.import_module", return_value=sig_module):
+            evaluations, series, events, snapshots, warnings, _ = _build_signal_payloads(
+                strokes=[],
+                analyzer=analyzer,
+                index_by_timestamp=index_by_timestamp,
+                signals_config=None,
+                raw_bars=full_bars,
+            )
+
+        # All 10 bars must produce snapshots, starting at bar index 0.
+        self.assertEqual(len(snapshots), len(full_bars))
+        self.assertEqual(snapshots[0].bar_index, 0)
+        self.assertEqual(snapshots[-1].bar_index, len(full_bars) - 1)
+        # The truncated analyzer.bars_raw (5 bars) must not drive the count.
+        self.assertGreater(len(snapshots), len(analyzer.bars_raw))
+
     def test_candidate_points_are_structure_only(self):
         rows = [
             {"date": "2025-01-01", "open": 10.0, "close": 10.4, "high": 10.5, "low": 9.9, "volume": 1000},
@@ -709,7 +813,7 @@ class AdapterTests(unittest.TestCase):
                 return signal_module
             raise ImportError(name)
 
-        with patch("chantheory.adapters._run_engine", return_value=(analyzer, [object()] * 5)), patch(
+        with patch("chantheory.adapters._run_engine", return_value=(analyzer, bars_raw)), patch(
             "chantheory.engine.load_czsc_utils", return_value=SimpleNamespace(get_zs_seq=lambda bis: [])
         ), patch("chantheory.signals.import_module", side_effect=fake_import):
             result = analyze_tracker_klines(

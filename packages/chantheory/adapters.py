@@ -229,6 +229,7 @@ def analyze_normalized(
                 analyzer=analyzer,
                 index_by_timestamp=index_by_timestamp,
                 signals_config=signals_config,
+                raw_bars=raw_bars,
             )
         )
         candidate_point_events = _build_candidate_point_events(signal_evaluations=signal_evaluations)

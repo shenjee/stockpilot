@@ -140,11 +140,13 @@ def _build_signal_timeline_payload(result: object) -> Dict[str, object]:
                 "price": getattr(snapshot, "price", None),
                 "values": [],
                 "active_signals": [],
+                "not_ready_signals": [],
                 "events": [],
             },
         )
         values = dict(getattr(snapshot, "values", {}) or {})
         active_signals = dict(getattr(snapshot, "active_signals", {}) or {})
+        statuses = dict(getattr(snapshot, "statuses", {}) or {})
         row["values"] = [
             {
                 "signal_key": signal_key,
@@ -161,6 +163,15 @@ def _build_signal_timeline_payload(result: object) -> Dict[str, object]:
                 "value": value,
             }
             for signal_key, value in sorted(active_signals.items())
+        ]
+        row["not_ready_signals"] = [
+            {
+                "signal_key": signal_key,
+                "signal_name": signal_names.get(signal_key, signal_key),
+                "status": status,
+            }
+            for signal_key, status in sorted(statuses.items())
+            if status in ("not_ready", "error")
         ]
 
     for event in signal_events:
@@ -180,6 +191,7 @@ def _build_signal_timeline_payload(result: object) -> Dict[str, object]:
                 "price": getattr(event, "price", None),
                 "values": [],
                 "active_signals": [],
+                "not_ready_signals": [],
                 "events": [],
             },
         )
@@ -231,6 +243,7 @@ def _build_signal_timeline_table_rows(timeline_payload: Dict[str, object], langu
     display_rows: List[Dict[str, object]] = []
     for item in list(timeline_payload.get("rows", []) or []):
         active_signals = list(item.get("active_signals", []) or [])
+        not_ready_signals = list(item.get("not_ready_signals", []) or [])
         events = list(item.get("events", []) or [])
         display_rows.append(
             {
@@ -241,6 +254,13 @@ def _build_signal_timeline_table_rows(timeline_payload: Dict[str, object], langu
                     " | ".join(
                         f"{signal['signal_name']}={signal['value']}"
                         for signal in active_signals
+                    )
+                    or _t(language, "signal_timeline_none")
+                ),
+                _t(language, "signal_timeline_col_not_ready"): (
+                    " | ".join(
+                        f"{sig['signal_name']}({_t(language, 'signal_status_' + sig['status'])})"
+                        for sig in not_ready_signals
                     )
                     or _t(language, "signal_timeline_none")
                 ),
