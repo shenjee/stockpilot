@@ -55,6 +55,7 @@ class KLineDataServiceTests(unittest.TestCase):
                 code="600519",
                 end_date="2026-06-30",
                 market="sh",
+                start_date="2026-05-01",
                 min_local_count=60,
                 limit=120,
             )
@@ -132,6 +133,70 @@ class KLineDataServiceTests(unittest.TestCase):
 
             self.assertEqual(len(provider.calls), 1)
             self.assertEqual([row["date"] for row in result], ["2026-06-12 09:30:00", "2026-06-12 15:00:00"])
+
+    def test_minute_timeframe_refetches_when_local_count_below_range_estimate(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = KLineStore(Path(tmpdir) / "market_data.sqlite")
+            # Seed the store with only 3 bars covering 2026-06-17 ~ 2026-06-18 (60m).
+            # The requested range (2026-03-01 ~ 2026-06-18) needs far more than 3 bars,
+            # so the cache check must trigger a refetch even though latest == end_date.
+            seed_rows = [
+                {"date": f"2026-06-1{d} 15:00:00", "open": 10.0, "close": 10.5, "high": 10.6, "low": 9.9, "volume": 100}
+                for d in [6, 7, 8]
+            ]
+            store.upsert_many("600519", "sh", seed_rows, source="local", timeframe="60m")
+
+            remote_rows = seed_rows + [
+                {"date": f"2026-03-{d:02d} 15:00:00", "open": 9.0, "close": 9.5, "high": 9.6, "low": 8.9, "volume": 200}
+                for d in range(1, 31)
+            ]
+            provider = FakeProvider(rows=remote_rows)
+            service = KLineDataService(provider, store)
+
+            result = service.get_klines(
+                code="600519",
+                end_date="2026-06-18",
+                market="sh",
+                timeframe="60m",
+                start_date="2026-03-01",
+                limit=500,
+            )
+
+            # Provider must be called because local 3 bars < estimated required count.
+            self.assertEqual(len(provider.calls), 1)
+            self.assertGreater(len(result), 3)
+
+    def test_minute_timeframe_refetches_when_earliest_does_not_cover_start_date(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = KLineStore(Path(tmpdir) / "market_data.sqlite")
+            # Seed 5 bars on 2026-06-16 ~ 2026-06-18 (60m). The requested range
+            # starts on 2026-03-01, so earliest (2026-06-16) is far later than
+            # start_date — the cache must miss even though latest == end_date.
+            seed_rows = [
+                {"date": f"2026-06-{d} 15:00:00", "open": 10.0, "close": 10.5, "high": 10.6, "low": 9.9, "volume": 100}
+                for d in [16, 17, 18]
+            ]
+            store.upsert_many("600519", "sh", seed_rows, source="local", timeframe="60m")
+
+            remote_rows = seed_rows + [
+                {"date": f"2026-03-{d:02d} 15:00:00", "open": 9.0, "close": 9.5, "high": 9.6, "low": 8.9, "volume": 200}
+                for d in range(1, 31)
+            ]
+            provider = FakeProvider(rows=remote_rows)
+            service = KLineDataService(provider, store)
+
+            result = service.get_klines(
+                code="600519",
+                end_date="2026-06-18",
+                market="sh",
+                timeframe="60m",
+                start_date="2026-03-01",
+                limit=500,
+            )
+
+            # Provider must be called because earliest 2026-06-16 > start_date 2026-03-01.
+            self.assertEqual(len(provider.calls), 1)
+            self.assertGreater(len(result), 3)
 
 
 if __name__ == "__main__":

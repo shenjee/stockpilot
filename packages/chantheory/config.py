@@ -18,6 +18,9 @@ DEFAULT_PARAMETERS = {
     "derive_amount_from_close_volume": True,
 }
 
+MINUTE_TIMEFRAMES_FOR_MAX_BI = {"1m", "5m", "15m", "30m", "60m"}
+DEFAULT_MAX_BI_NUM_MINUTE = 500
+
 DEFAULT_SIGNALS_CONFIG = (
     {
         "module": "czsc.signals.cxt",
@@ -123,6 +126,19 @@ def get_engine_compatibility() -> EngineCompatibility:
 
 def get_default_parameters() -> Dict[str, object]:
     return dict(DEFAULT_PARAMETERS)
+
+
+def get_default_max_bi_num(timeframe: str | None = None) -> int:
+    """Return the default max_bi_num for a given timeframe.
+
+    Minute timeframes produce far more strokes than daily bars over the same
+    calendar range, so they need a larger limit to avoid discarding early
+    structure (strokes, segments, pivot zones) that falls outside the engine's
+    retention window.
+    """
+    if timeframe in MINUTE_TIMEFRAMES_FOR_MAX_BI:
+        return DEFAULT_MAX_BI_NUM_MINUTE
+    return DEFAULT_PARAMETERS["max_bi_num"]
 
 
 def get_default_signals_config() -> List[Dict[str, object]]:

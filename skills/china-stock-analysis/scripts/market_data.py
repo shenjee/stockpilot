@@ -68,6 +68,8 @@ class TencentStockDataProvider(MarketDataProvider):
         "30m": "m30",
         "60m": "m60",
     }
+    MINUTE_KLINE_PAGE_SIZE = 800
+    MINUTE_KLINE_MAX_PAGES = 100
 
     @staticmethod
     def _get_prefix(code: str, market: str = None) -> str:
@@ -194,54 +196,70 @@ class TencentStockDataProvider(MarketDataProvider):
             return []
 
         prefix = cls._get_prefix(code, market)
-        count = cls._estimate_minute_bar_count(start_date=start_date, end_date=end_date, ktype=ktype)
-        url = f"https://ifzq.gtimg.cn/appstock/app/kline/mkline?param={prefix}{code},{tx_ktype},,{count}"
-
-        try:
-            data = json.loads(cls._fetch_with_retry(url, decode="utf-8"))
-        except Exception as e:
-            print(f"[ERROR] 获取分钟K线数据失败 {code}: {e}")
-            return []
-
-        if data.get("code") != 0:
-            return []
-
-        raw_items = data.get("data", {}).get(f"{prefix}{code}", {}).get(tx_ktype, [])
         start_day = cls._parse_date(start_date)
         end_day = cls._parse_date(end_date)
+
+        # The mkline API caps each response at ~800 bars and silently falls back
+        # to ~320 when a larger count is requested. Paginate backwards using the
+        # oldest bar of each page as the ref (start_time) for the next request
+        # until the requested start_date is covered or history is exhausted.
+        merged = {}
+        ref = ""
+        for _ in range(cls.MINUTE_KLINE_MAX_PAGES):
+            url = f"https://ifzq.gtimg.cn/appstock/app/kline/mkline?param={prefix}{code},{tx_ktype},{ref},{cls.MINUTE_KLINE_PAGE_SIZE}"
+            try:
+                data = json.loads(cls._fetch_with_retry(url, decode="utf-8"))
+            except Exception as e:
+                print(f"[ERROR] 获取分钟K线数据失败 {code}: {e}")
+                break
+
+            if data.get("code") != 0:
+                break
+
+            raw_items = data.get("data", {}).get(f"{prefix}{code}", {}).get(tx_ktype, [])
+            if not raw_items:
+                break
+
+            page_oldest_raw = None
+            added_in_page = 0
+            for item in raw_items:
+                if len(item) < 6:
+                    continue
+                raw_ts = str(item[0])
+                timestamp = cls._format_minute_timestamp(raw_ts)
+                if not timestamp or timestamp in merged:
+                    continue
+                merged[timestamp] = {
+                    "date": timestamp,
+                    "open": round(float(item[1]), 2),
+                    "close": round(float(item[2]), 2),
+                    "high": round(float(item[3]), 2),
+                    "low": round(float(item[4]), 2),
+                    "volume": int(float(item[5])),
+                }
+                added_in_page += 1
+                if page_oldest_raw is None or raw_ts < page_oldest_raw:
+                    page_oldest_raw = raw_ts
+
+            # Stop when no new bars are returned (avoids infinite loops).
+            if added_in_page == 0 or page_oldest_raw is None:
+                break
+
+            # Stop once the oldest bar in this page reaches the requested start_date.
+            oldest_day = datetime.strptime(page_oldest_raw[:8], "%Y%m%d").date()
+            if oldest_day <= start_day:
+                break
+
+            ref = page_oldest_raw
+
         results = []
-        for item in raw_items:
-            if len(item) < 6:
-                continue
-            timestamp = cls._format_minute_timestamp(str(item[0]))
-            if not timestamp:
-                continue
+        for timestamp in sorted(merged.keys()):
             row_day = datetime.strptime(timestamp[:10], "%Y-%m-%d").date()
             if row_day < start_day or row_day > end_day:
                 continue
-            results.append({
-                "date": timestamp,
-                "open": round(float(item[1]), 2),
-                "close": round(float(item[2]), 2),
-                "high": round(float(item[3]), 2),
-                "low": round(float(item[4]), 2),
-                "volume": int(float(item[5])),
-            })
+            results.append(merged[timestamp])
 
         return results
-
-    @classmethod
-    def _estimate_minute_bar_count(cls, start_date: str, end_date: str, ktype: str) -> int:
-        start_day = cls._parse_date(start_date)
-        end_day = cls._parse_date(end_date)
-        day_count = max((end_day - start_day).days + 1, 1)
-        bars_per_day = {
-            "1m": 240,
-            "5m": 48,
-            "30m": 8,
-            "60m": 4,
-        }.get(ktype, 240)
-        return min(max(day_count * bars_per_day, 10), 5000)
 
     @staticmethod
     def _parse_date(value: str):

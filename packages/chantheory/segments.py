@@ -85,6 +85,13 @@ def derive_segments(strokes: Sequence[Stroke]) -> List[Segment]:
             if break_signal.reason == "insufficient_feature_sequence":
                 break
 
+            # 有足够特征序列元素但未形成分型：按缠论规则（文档 2.1.8），线段
+            # 结束必须由特征序列分型确认。标记此段为 no_feature_fractal，后续
+            # 确认逻辑不会确认它，避免在没有顶/底分型的情况下把段标记为已完成。
+            if break_signal.reason == "no_feature_fractal":
+                feature_break_meta = {"pending_reason": "no_feature_fractal"}
+                break
+
             # 其他未明确分支：保守退出，避免死循环
             break
 
@@ -396,39 +403,43 @@ def _make_unfinished_tail_segment(
         ):
             drawable_end_index = index
 
-    window = list(strokes[start_index : drawable_end_index + 1])
-    last = window[-1]
-    if not first.start_timestamp or not last.end_timestamp:
+    # growing 段的 endpoint 取同方向最极端的笔，但 stroke_ids 必须延伸到最新笔，
+    # 否则 drawable_end_index 之后的笔不会出现在任何线段中，导致线段不覆盖最新数据。
+    endpoint_stroke = strokes[drawable_end_index]
+    if not first.start_timestamp or not endpoint_stroke.end_timestamp:
         return None
     if not _segment_has_directional_price_span(
         segment_direction=direction,
         start_price=first.start_price,
-        end_price=last.end_price,
+        end_price=endpoint_stroke.end_price,
     ):
         return None
 
+    full_window = list(strokes[start_index : end_index + 1])
+
     return Segment(
-        id=f"segment_growing_{start_index + 1:03d}_{first.start_timestamp}_{last.end_timestamp}",
+        id=f"segment_growing_{start_index + 1:03d}_{first.start_timestamp}_{endpoint_stroke.end_timestamp}",
         direction=direction,
-        stroke_ids=[stroke.id for stroke in window],
+        stroke_ids=[stroke.id for stroke in full_window],
         start_timestamp=first.start_timestamp,
-        end_timestamp=last.end_timestamp,
+        end_timestamp=endpoint_stroke.end_timestamp,
         start_price=first.start_price,
-        end_price=last.end_price,
+        end_price=endpoint_stroke.end_price,
         confirmed=False,
         meta={
             "mapping_strategy": SEGMENT_MAPPING_STRATEGY,
             "status": "growing",
             "provisional": True,
-            "stroke_count": len(window),
+            "stroke_count": len(full_window),
             "start_stroke_index": start_index,
-            "end_stroke_index": drawable_end_index,
+            "end_stroke_index": end_index,
+            "drawable_end_stroke_index": drawable_end_index,
             "available_tail_end_stroke_index": end_index,
             "endpoint_is_potential_extreme": drawable_end_index in potential_endpoints,
             "endpoint_direction_valid": _segment_has_directional_price_span(
                 segment_direction=direction,
                 start_price=first.start_price,
-                end_price=last.end_price,
+                end_price=endpoint_stroke.end_price,
             ),
             "endpoint_update_indices": [],
             "feature_sequence_break": None,
@@ -634,31 +645,9 @@ def _opposite_segment_break_signal(
                 return FeatureBreakSignal(False, "new_peak_found", {"new_peak_index": last_idx})
         return FeatureBreakSignal(False, "insufficient_feature_sequence", {})
 
-    # Merge feature strokes with containment, respecting the 1-2 exemption
-    processed_features = []
-    for i, (idx, r) in enumerate(feature_strokes):
-        if not processed_features:
-            processed_features.append((idx, r, [idx]))
-            continue
-            
-        last_idx, last_r, original_indices = processed_features[-1]
-        
-        # Check containment
-        # Is this comparing raw element 2 against element 1?
-        is_f1_f2 = (len(processed_features) == 1 and original_indices == [feature_strokes[0][0]])
-        
-        if is_f1_f2 and _range_contains(r, last_r):
-            # Exemption: 2 containing 1 is allowed, do not merge
-            processed_features.append((idx, r, [idx]))
-        elif _range_contains(last_r, r) or _range_contains(r, last_r):
-            # Standard merge for 2 and 3, or any other containment
-            if direction == "down":
-                merged_r = StrokeRange(idx, min(last_r.low, r.low), min(last_r.high, r.high))
-            else:
-                merged_r = StrokeRange(idx, max(last_r.low, r.low), max(last_r.high, r.high))
-            processed_features[-1] = (idx, merged_r, original_indices + [idx])
-        else:
-            processed_features.append((idx, r, [idx]))
+    # 特征序列不做包含合并：每根反向笔作为独立元素参与分型判断。
+    # 缠论特征序列分型只要求中间元素相对左右元素成极值，不需要像 K 线那样先做包含合并。
+    processed_features = [(idx, r, [idx]) for idx, r in feature_strokes]
 
     # Find the first chronological new peak
     first_new_peak_idx = None
@@ -757,7 +746,11 @@ def _opposite_segment_break_signal(
     elif first_fractal_signal is not None:
         return first_fractal_signal
 
-    return FeatureBreakSignal(False, "insufficient_feature_sequence", {})
+    # 到这里说明特征序列已有足够元素（len(feature_strokes) >= 3），但既没有
+    # 形成分型，也没有出现新峰值。与 "insufficient_feature_sequence"（特征序列
+    # 元素不足，数据不够）区分开：这里是"有足够特征序列但未形成分型"，按缠论
+    # 规则线段未被破坏，应保持 growing 而不是固定终点。
+    return FeatureBreakSignal(False, "no_feature_fractal", {})
 
 
 def _stroke_range(index: int, stroke: Stroke) -> StrokeRange:
@@ -852,8 +845,14 @@ def _apply_segment_confirmation(segments: Sequence[Segment]) -> None:
 
         next_segment = segments[index + 1]
         feature_break = segment.meta.get("feature_sequence_break")
-        if isinstance(feature_break, dict) and feature_break.get("pending_reason") == "gap_feature_fractal_waiting_for_followup_reverse_fractal":
-            continue
+        if isinstance(feature_break, dict):
+            pending_reason = feature_break.get("pending_reason")
+            # 缺口分型等待后续反向分型：保持 pending
+            if pending_reason == "gap_feature_fractal_waiting_for_followup_reverse_fractal":
+                continue
+            # 有足够特征序列但未形成分型：按缠论规则线段未被破坏，保持 pending
+            if pending_reason == "no_feature_fractal":
+                continue
         if next_segment.direction != segment.direction:
             segment.confirmed = True
             segment.meta["status"] = "confirmed"

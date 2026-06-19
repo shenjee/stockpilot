@@ -272,6 +272,38 @@ class DeriveSegmentsRegressionTests(unittest.TestCase):
         self.assertEqual(first_up.meta.get("start_stroke_index"), 0,
                          msg="上升段起点 stroke index 应为 0")
 
+    def test_segment_without_feature_fractal_not_confirmed(self):
+        # 回归 002149.sz 5分钟案例：上升段已有足够反向特征序列元素（3 根向下笔），
+        # 但特征序列不成顶分型（f2.low 不大于 f3.low），按缠论规则线段未被破坏，
+        # 段应保持 pending 且不被确认（confirmed=False）。
+        #
+        # 特征序列：f1=[58.82,60.28] f2=[59.25,63.6] f3=[60.17,61.38]
+        # 顶分型要求 f2.low>f3.low，但 59.25 > 60.17 为 False → 不成顶分型。
+        strokes = _build_strokes([
+            ("t0", 55.0),   # 上升段起点
+            ("t1", 57.0),
+            ("t2", 56.0),
+            ("t3", 60.28),
+            ("t4", 58.82),  # f1 向下笔
+            ("t5", 63.60),  # 上升段最高点
+            ("t6", 59.25),  # f2 向下笔
+            ("t7", 61.38),
+            ("t8", 60.17),  # f3 向下笔
+        ])
+        segments = derive_segments(strokes)
+        self.assertTrue(segments, "应至少识别出一个段")
+        up = segments[0]
+        self.assertEqual(up.direction, "up")
+        self.assertAlmostEqual(up.end_price, 63.60, places=2,
+                               msg="上升段终点应取同方向最高点 63.60")
+        # 关键：特征序列不成顶分型时，段不应被确认
+        self.assertFalse(up.confirmed, "无顶分型确认时上升段不应被 confirmed")
+        feature_break = up.meta.get("feature_sequence_break")
+        self.assertIsInstance(feature_break, dict,
+                              "feature_sequence_break 应为 dict")
+        self.assertEqual(feature_break.get("pending_reason"), "no_feature_fractal",
+                         "pending_reason 应为 no_feature_fractal")
+
 
 if __name__ == "__main__":
     unittest.main()

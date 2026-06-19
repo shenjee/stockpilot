@@ -2,6 +2,7 @@ from .adapters import analyze, analyze_multi_timeframe, analyze_multi_timeframe_
 from .config import (
     ENGINE_NAME,
     PINNED_ENGINE_VERSION,
+    get_default_max_bi_num,
     get_default_parameters,
     get_default_signals_config,
     get_engine_compatibility,
@@ -23,6 +24,7 @@ __all__ = [
     "analyze_normalized",
     "analyze_tracker_klines",
     "build_symbol",
+    "get_default_max_bi_num",
     "get_default_parameters",
     "get_default_signals_config",
     "get_engine_compatibility",

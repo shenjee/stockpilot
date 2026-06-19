@@ -30,6 +30,27 @@ class KLineStoreTests(unittest.TestCase):
             self.assertEqual(store.latest_date("600519", "sh"), "2026-06-11")
             self.assertEqual(store.count_since("600519", "2026-06-10", "sh"), 2)
 
+    def test_earliest_timestamp_and_bounded_count(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = KLineStore(Path(tmpdir) / "market_data.sqlite")
+            store.upsert_many(
+                code="600519",
+                market="sh",
+                klines=[
+                    {"date": "2026-06-10", "open": 10.0, "close": 10.5, "high": 10.6, "low": 9.9, "volume": 100},
+                    {"date": "2026-06-11", "open": 10.5, "close": 11.0, "high": 11.1, "low": 10.4, "volume": 120},
+                    {"date": "2026-06-12", "open": 11.0, "close": 11.5, "high": 11.6, "low": 10.9, "volume": 130},
+                ],
+                source="test",
+            )
+
+            self.assertEqual(store.earliest_timestamp("600519", "sh"), "2026-06-10")
+            # count_since without end_date counts everything from start onward
+            self.assertEqual(store.count_since("600519", "2026-06-10", "sh"), 3)
+            # count_since with end_date bounds the range
+            self.assertEqual(store.count_since("600519", "2026-06-10", "sh", end_date="2026-06-11"), 2)
+            self.assertEqual(store.count_since("600519", "2026-06-11", "sh", end_date="2026-06-11"), 1)
+
     def test_upsert_and_get_minute_klines_roundtrip(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             store = KLineStore(Path(tmpdir) / "market_data.sqlite")

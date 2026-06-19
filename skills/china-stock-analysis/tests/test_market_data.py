@@ -71,6 +71,56 @@ class TencentStockDataProviderTests(unittest.TestCase):
             [],
         )
 
+    def test_get_minute_kline_paginates_to_cover_start_date(self):
+        page1 = {
+            "code": 0,
+            "data": {
+                "sh600519": {
+                    "m60": [
+                        ["202603101500", "1790.00", "1791.00", "1792.00", "1789.00", "900.00"],
+                        ["202603131500", "1800.00", "1801.00", "1802.00", "1799.00", "1000.00"],
+                        ["202603161030", "1801.00", "1802.00", "1803.00", "1800.00", "1100.00"],
+                    ],
+                }
+            },
+        }
+        page2 = {
+            "code": 0,
+            "data": {
+                "sh600519": {
+                    "m60": [
+                        ["202510211030", "1700.00", "1701.00", "1702.00", "1699.00", "500.00"],
+                        ["202510211130", "1701.00", "1702.00", "1703.00", "1700.00", "600.00"],
+                    ],
+                }
+            },
+        }
+
+        with patch.object(
+            TencentStockDataProvider,
+            "_fetch_with_retry",
+            side_effect=[json.dumps(page1), json.dumps(page2)],
+        ) as fetch:
+            rows = TencentStockDataProvider.get_kline(
+                code="600519",
+                market="sh",
+                start_date="2025-10-21",
+                end_date="2026-03-16",
+                ktype="60m",
+            )
+
+        # Two pages fetched: first with empty ref, second using page1's oldest bar as ref
+        self.assertEqual(fetch.call_count, 2)
+        first_url = fetch.call_args_list[0].args[0]
+        second_url = fetch.call_args_list[1].args[0]
+        self.assertIn(",m60,,800", first_url)
+        self.assertIn("202603101500", second_url)
+
+        # All 5 bars from both pages, filtered to the date range, sorted ascending
+        self.assertEqual(len(rows), 5)
+        self.assertEqual(rows[0]["date"], "2025-10-21 10:30:00")
+        self.assertEqual(rows[-1]["date"], "2026-03-16 10:30:00")
+
 
 if __name__ == "__main__":
     unittest.main()

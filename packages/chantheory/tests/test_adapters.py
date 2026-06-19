@@ -29,6 +29,19 @@ from chantheory.structure_mapping import (
 )
 from chantheory.schema import AnalysisResult, AnalysisWarning, Segment, Stroke
 from chantheory.segments import SEGMENT_MAPPING_STRATEGY
+from chantheory.config import get_default_max_bi_num
+
+
+class GetDefaultMaxBiNumTests(unittest.TestCase):
+    def test_minute_timeframes_return_elevated_default(self):
+        for tf in ["1m", "5m", "15m", "30m", "60m"]:
+            self.assertGreater(get_default_max_bi_num(tf), get_default_max_bi_num("day"))
+
+    def test_day_timeframe_keeps_standard_default(self):
+        self.assertEqual(get_default_max_bi_num("day"), 50)
+
+    def test_none_timeframe_keeps_standard_default(self):
+        self.assertEqual(get_default_max_bi_num(None), 50)
 
 
 def _stroke(

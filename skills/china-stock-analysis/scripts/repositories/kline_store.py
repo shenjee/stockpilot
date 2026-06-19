@@ -112,16 +112,31 @@ class KLineStore:
             ).fetchone()
         return row[0] if row and row[0] else None
 
-    def latest_date(self, code: str, market: str | None = None, timeframe: str = "day") -> str | None:
-        return self.latest_timestamp(code, market=market, timeframe=timeframe)
-
-    def count_since(self, code: str, start_date: str, market: str | None = None, timeframe: str = "day") -> int:
+    def earliest_timestamp(self, code: str, market: str | None = None, timeframe: str = "day") -> str | None:
         symbol = self.symbol(code, market)
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT COUNT(*) FROM klines WHERE symbol = ? AND timeframe = ? AND timestamp >= ?",
-                (symbol, timeframe, start_date),
+                "SELECT MIN(timestamp) FROM klines WHERE symbol = ? AND timeframe = ?",
+                (symbol, timeframe),
             ).fetchone()
+        return row[0] if row and row[0] else None
+
+    def latest_date(self, code: str, market: str | None = None, timeframe: str = "day") -> str | None:
+        return self.latest_timestamp(code, market=market, timeframe=timeframe)
+
+    def count_since(self, code: str, start_date: str, market: str | None = None, timeframe: str = "day", end_date: str | None = None) -> int:
+        symbol = self.symbol(code, market)
+        with self._connect() as conn:
+            if end_date:
+                row = conn.execute(
+                    "SELECT COUNT(*) FROM klines WHERE symbol = ? AND timeframe = ? AND timestamp >= ? AND timestamp <= ?",
+                    (symbol, timeframe, start_date, end_date),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT COUNT(*) FROM klines WHERE symbol = ? AND timeframe = ? AND timestamp >= ?",
+                    (symbol, timeframe, start_date),
+                ).fetchone()
         return int(row[0] or 0)
 
     def upsert_many(self, code: str, market: str | None, klines: list, source: str = "unknown", timeframe: str = "day") -> None:

@@ -24,6 +24,7 @@ from charts.axis_policy import (  # noqa: E402
     build_y_axis_range,
     is_minute_timeframe,
 )
+from chantheory import get_default_max_bi_num  # noqa: E402
 from charts.figure_builder import build_figure  # noqa: E402
 from services.analysis_service import run_analysis  # noqa: E402
 from services.market_service import fetch_rows, fetch_stock_name, probe_market_suggestions  # noqa: E402
@@ -59,7 +60,28 @@ LAYER_KEYS = (
     "volume_panel",
     "macd_panel",
 )
-DEFAULT_X_WINDOW = 90
+_BARS_PER_DAY = {"1m": 240, "5m": 48, "15m": 16, "30m": 8, "60m": 4, "day": 1, "week": 1, "month": 1}
+_X_WINDOW_CAP = 5000
+
+
+def _default_x_window(timeframe: str, row_count: int) -> int:
+    """默认可见 K 线数量，按周期换算到约 90 个交易日，上限 5000 根。"""
+    bars_per_day = _BARS_PER_DAY.get(timeframe, 1)
+    target = min(90 * bars_per_day, _X_WINDOW_CAP)
+    return min(target, max(row_count, 1))
+
+
+def _x_window_steps(timeframe: str, row_count: int) -> list[int]:
+    """可选窗口步进，日线用原步进，分钟线按交易日倍数生成。"""
+    bars_per_day = _BARS_PER_DAY.get(timeframe, 1)
+    if bars_per_day == 1:
+        base_steps = [30, 60, 90, 120, 240, 360, 480]
+    else:
+        base_steps = [d * bars_per_day for d in (5, 10, 20, 40, 60, 90, 120)]
+    steps = [n for n in base_steps if n <= row_count]
+    if row_count not in steps:
+        steps.append(row_count)
+    return steps
 Y_ZOOM_STEP = 1.2
 MIN_Y_ZOOM = 0.45
 MAX_Y_ZOOM = 3.0
@@ -479,7 +501,8 @@ def main() -> None:
         market = st.selectbox(_t(language, "market_label"), ["sz", "sh", "bj"], index=0)
         start_date = st.date_input(_t(language, "start_date_label"), value=DEFAULT_START)
         end_date = st.date_input(_t(language, "end_date_label"), value=DEFAULT_END)
-        max_bi_num = st.number_input(_t(language, "max_bi_num_label"), min_value=10, max_value=200, value=50, step=10)
+        _default_max_bi = get_default_max_bi_num(st.session_state.chan_selected_timeframe)
+        max_bi_num = st.number_input(_t(language, "max_bi_num_label"), min_value=10, max_value=1000, value=_default_max_bi, step=10)
         min_bars = st.number_input(_t(language, "min_bars_label"), min_value=10, max_value=500, value=60, step=10)
         strict_validation = st.checkbox(_t(language, "strict_validation_label"), value=True)
         st.markdown(_sidebar_section_title(_t(language, "layers_header")), unsafe_allow_html=True)
@@ -576,22 +599,21 @@ def main() -> None:
         st.markdown(_page_title(_t(language, "page_title")), unsafe_allow_html=True)
 
     chart_rows = _ordered_rows(rows)
+    row_count = len(chart_rows)
+    _x_window = _default_x_window(timeframe, row_count)
     figure = _build_figure(
         rows=chart_rows,
         result_payload=result.to_dict(),
         visibility=visibility,
         timeframe=timeframe,
         language=language,
-        x_window=min(DEFAULT_X_WINDOW, max(len(chart_rows), 1)),
+        x_window=_x_window,
         y_zoom=1.0,
         show_legend=show_legend,
         unified_hover=unified_hover,
     )
 
-    row_count = len(chart_rows)
-    x_steps = [n for n in [30, 60, 90, 120, 240, 360, 480, row_count] if n <= row_count]
-    if row_count not in x_steps:
-        x_steps.append(row_count)
+    x_steps = _x_window_steps(timeframe, row_count)
 
     payload = {
         "figure": json.loads(figure.to_json()),
@@ -608,7 +630,7 @@ def main() -> None:
         "activeTimeframe": timeframe,
         "useContinuousBarAxis": _is_minute_timeframe(timeframe),
         "xWindowSteps": x_steps,
-        "defaultXWindow": min(DEFAULT_X_WINDOW, max(row_count, 1)),
+        "defaultXWindow": _x_window,
         "defaultYZoom": 1.0,
         "yZoomStep": Y_ZOOM_STEP,
         "minYZoom": MIN_Y_ZOOM,

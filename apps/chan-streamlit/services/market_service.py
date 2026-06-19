@@ -9,6 +9,8 @@ from repositories.kline_store import KLineStore, resolve_market_data_db_path
 from runtime_paths import RuntimePaths
 from services.kline_data_service import KLineDataService
 
+_BARS_PER_DAY = {"1m": 240, "5m": 48, "30m": 8, "60m": 4, "day": 1}
+
 
 @lru_cache(maxsize=1)
 def _get_runtime_paths() -> RuntimePaths:
@@ -22,6 +24,12 @@ def _get_kline_data_service() -> KLineDataService:
     store = KLineStore(db_path)
     provider = TencentStockDataProvider()
     return KLineDataService(provider, store)
+
+
+def _estimate_limit(start_date: date, end_date: date, timeframe: str) -> int:
+    bars_per_day = _BARS_PER_DAY.get(timeframe, 1)
+    day_count = max((end_date - start_date).days + 1, 1)
+    return max(day_count * bars_per_day, 500)
 
 
 def fetch_rows(
@@ -38,7 +46,7 @@ def fetch_rows(
         market=market,
         timeframe=timeframe,
         start_date=start_date.strftime("%Y-%m-%d"),
-        limit=500,
+        limit=_estimate_limit(start_date, end_date, timeframe),
     )
 
 

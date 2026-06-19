@@ -63,6 +63,23 @@ class MarketServiceTests(unittest.TestCase):
         self.assertEqual(fake_service.calls[0]["timeframe"], "5m")
         self.assertEqual(fake_service.calls[0]["end_date"], "2026-06-12")
 
+    def test_fetch_rows_limit_scales_with_range_and_timeframe(self):
+        fake_service = FakeKLineDataService()
+        with patch.object(market_service, "_get_kline_data_service", return_value=fake_service):
+            market_service.fetch_rows(
+                symbol="000001",
+                market="sz",
+                timeframe="30m",
+                start_date=date(2025, 10, 21),
+                end_date=date(2026, 6, 18),
+            )
+
+        limit = fake_service.calls[0]["limit"]
+        # 241 calendar days * 8 bars/day = 1928; limit must be >= this to avoid truncation
+        self.assertGreaterEqual(limit, 1928)
+        # Must also exceed the old fixed 500 cap that truncated minute data
+        self.assertGreater(limit, 500)
+
     def test_fetch_rows_for_timeframes_groups_non_empty_payloads(self):
         fake_service = FakeKLineDataService()
 
