@@ -285,7 +285,13 @@ def _enforce_segment_contract(segments: Sequence[Segment], strokes: Sequence[Str
             dropped.append({"segment_id": segment.id, "reason": "endpoint_direction_invalid"})
             continue
 
-        # Enforce that the start and end are the absolute extremes of the segment
+        # Record whether the start and end are the absolute extremes of the segment.
+        #
+        # This used to be a hard rejection. In real 5m data it can drop the first
+        # opposite segment after a confirmed segment, leaving valid[-1] stuck on
+        # an old segment and causing a same-direction / not-connected cascade.
+        # Keep the diagnostic metadata, but let the later connection and
+        # direction rules decide whether the candidate can participate.
         if strokes:
             start_idx = int(segment.meta.get("start_stroke_index", -1))
             end_idx = int(segment.meta.get("end_stroke_index", -1))
@@ -299,29 +305,18 @@ def _enforce_segment_contract(segments: Sequence[Segment], strokes: Sequence[Str
                 # We use a small epsilon for floating point comparison
                 eps = 1e-9
                 if segment.direction == "up":
-                    if segment.start_price > min_price + eps or segment.end_price < max_price - eps:
-                        dropped.append({
-                            "segment_id": segment.id,
-                            "reason": "endpoint_not_absolute_extreme",
-                            "direction": "up",
-                            "segment_start_price": segment.start_price,
-                            "segment_end_price": segment.end_price,
-                            "window_min_price": min_price,
-                            "window_max_price": max_price,
-                        })
-                        continue
+                    endpoint_is_absolute_extreme = segment.start_price <= min_price + eps and segment.end_price >= max_price - eps
                 else:
-                    if segment.start_price < max_price - eps or segment.end_price > min_price + eps:
-                        dropped.append({
-                            "segment_id": segment.id,
-                            "reason": "endpoint_not_absolute_extreme",
-                            "direction": "down",
-                            "segment_start_price": segment.start_price,
-                            "segment_end_price": segment.end_price,
-                            "window_min_price": min_price,
-                            "window_max_price": max_price,
-                        })
-                        continue
+                    endpoint_is_absolute_extreme = segment.start_price >= max_price - eps and segment.end_price <= min_price + eps
+                segment.meta["endpoint_is_absolute_extreme"] = endpoint_is_absolute_extreme
+                if not endpoint_is_absolute_extreme:
+                    segment.meta["endpoint_absolute_extreme_diagnostic"] = {
+                        "direction": segment.direction,
+                        "segment_start_price": segment.start_price,
+                        "segment_end_price": segment.end_price,
+                        "window_min_price": min_price,
+                        "window_max_price": max_price,
+                    }
 
         if valid and not _segments_are_connected(valid[-1], segment):
             dropped.append({

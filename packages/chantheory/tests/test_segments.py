@@ -304,6 +304,65 @@ class DeriveSegmentsRegressionTests(unittest.TestCase):
         self.assertEqual(feature_break.get("pending_reason"), "no_feature_fractal",
                          "pending_reason 应为 no_feature_fractal")
 
+    def test_endpoint_extreme_diagnostic_does_not_cascade_drop_later_feature_fractal(self):
+        # 回归 002149.sz 5分钟案例：04-27 之后第一个 down 候选的终点不是
+        # window 绝对低点，旧版 _enforce_segment_contract 会把它丢弃，随后
+        # valid[-1] 卡住并级联丢弃后续线段，导致 05-13 13:50 的顶分型不显示。
+        strokes = _build_strokes([
+            ("2026-04-27 09:35:00", 56.78),
+            ("2026-04-27 14:25:00", 59.18),
+            ("2026-04-28 09:35:00", 55.0),
+            ("2026-04-28 10:55:00", 58.79),
+            ("2026-04-28 13:40:00", 56.0),
+            ("2026-04-29 09:40:00", 58.58),
+            ("2026-04-29 11:10:00", 57.07),
+            ("2026-04-29 13:15:00", 58.78),
+            ("2026-04-29 13:40:00", 57.6),
+            ("2026-04-29 14:00:00", 58.31),
+            ("2026-04-29 14:40:00", 57.56),
+            ("2026-05-07 11:30:00", 74.57),
+            ("2026-05-07 13:25:00", 71.77),
+            ("2026-05-07 14:00:00", 74.49),
+            ("2026-05-08 14:15:00", 72.01),
+            ("2026-05-11 09:55:00", 75.9),
+            ("2026-05-11 10:10:00", 73.76),
+            ("2026-05-12 09:45:00", 78.84),
+            ("2026-05-12 10:20:00", 72.8),
+            ("2026-05-12 11:00:00", 75.18),
+            ("2026-05-12 13:05:00", 73.01),
+            ("2026-05-12 13:20:00", 74.2),
+            ("2026-05-12 13:45:00", 73.07),
+            ("2026-05-12 14:05:00", 74.15),
+            ("2026-05-12 14:20:00", 72.57),
+            ("2026-05-13 10:50:00", 75.2),
+            ("2026-05-13 11:30:00", 73.34),
+            ("2026-05-13 13:50:00", 77.14),
+            ("2026-05-13 14:15:00", 74.29),
+            ("2026-05-14 09:35:00", 76.13),
+            ("2026-05-14 13:40:00", 69.57),
+            ("2026-05-14 14:20:00", 71.22),
+        ])
+
+        segments = derive_segments(strokes)
+        target_segments = [
+            segment for segment in segments
+            if segment.direction == "up"
+            and segment.end_timestamp == "2026-05-13 13:50:00"
+            and abs(segment.end_price - 77.14) < 1e-9
+        ]
+
+        self.assertTrue(target_segments, "应识别 05-13 13:50 @77.14 的上升线段终点")
+        feature_break = target_segments[0].meta.get("feature_sequence_break")
+        self.assertIsInstance(feature_break, dict)
+        self.assertEqual(feature_break.get("feature_sequence_indices"), [25, 27, 29])
+        self.assertEqual(feature_break.get("confirmation_case"), "no_gap_feature_fractal")
+
+        non_absolute_segments = [
+            segment for segment in segments
+            if segment.meta.get("endpoint_is_absolute_extreme") is False
+        ]
+        self.assertTrue(non_absolute_segments, "非绝对极值端点应保留为诊断，而不是触发级联丢弃")
+
 
 if __name__ == "__main__":
     unittest.main()
