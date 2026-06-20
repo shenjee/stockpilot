@@ -49,12 +49,13 @@ SUPPORTED_SECTOR_SORTS: Tuple[str, ...] = (
     "score",
 )
 
-# 板块状态枚举。
+# 板块状态枚举。顺序与 sector_rotation._resolve_state 的优先级一致：
+# overheated > strong > low_level_active > improving > neutral。
 SECTOR_STATES: Tuple[str, ...] = (
-    "strong",
-    "improving",
     "overheated",
+    "strong",
     "low_level_active",
+    "improving",
     "neutral",
 )
 

@@ -3,7 +3,7 @@
 覆盖：
 - 收益计算
 - 相对大盘（可正可负、固定 20 日窗口）
-- 状态优先级（overheated > strong > improving > low_level_active > neutral）
+- 状态优先级（overheated > strong > low_level_active > improving > neutral）
 - 排序（按 SUPPORTED_SECTOR_SORTS 中的字段）
 - 数据缺失时的 warnings 与字段为 None 行为
 """
@@ -112,7 +112,7 @@ class ReturnsAndRelativeReturnTests(unittest.TestCase):
 
 
 class StatePriorityTests(unittest.TestCase):
-    """覆盖状态规则：overheated > strong > improving > low_level_active > neutral。"""
+    """覆盖状态规则：overheated > strong > low_level_active > improving > neutral。"""
 
     def _build_snapshot(
         self,

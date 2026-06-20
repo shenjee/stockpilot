@@ -71,11 +71,15 @@ def _add_classification_arg(parser: argparse.ArgumentParser) -> None:
     )
 
 
+class CLIArgumentError(Exception):
+    """CLI 参数语义错误。由 main() 统一映射到退出码 2 + stderr。"""
+
+
 def _parse_periods(raw: Optional[str]) -> List[int]:
     """解析 ``--periods`` 为正整数列表。
 
     Skill/CLI 调用方不应在 stdout 上看到 Python traceback，因此非法值统一通过
-    ``SystemExit`` 报错（argparse 会自动写入 stderr，退出码 2）。
+    ``CLIArgumentError`` 抛出，并由 ``main()`` 转换成 ``rc=2`` + stderr。
     """
 
     if not raw:
@@ -86,14 +90,18 @@ def _parse_periods(raw: Optional[str]) -> List[int]:
         try:
             value = int(p)
         except ValueError as exc:
-            raise SystemExit(f"invalid --periods value: {p!r} (must be a positive integer)") from exc
+            raise CLIArgumentError(
+                f"invalid --periods value: {p!r} (must be a positive integer)"
+            ) from exc
         if value <= 0:
-            raise SystemExit(
+            raise CLIArgumentError(
                 f"invalid --periods value: {p!r} (must be a positive integer)"
             )
         out.append(value)
     if not out:
-        raise SystemExit("invalid --periods value: (must contain at least one positive integer)")
+        raise CLIArgumentError(
+            "invalid --periods value: (must contain at least one positive integer)"
+        )
     return out
 
 
@@ -421,6 +429,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         sys.stderr.write(f"fixture_not_found: {exc}\n")
         return 2
     except BenchmarkMismatchError as exc:
+        sys.stderr.write(f"{exc}\n")
+        return 2
+    except CLIArgumentError as exc:
         sys.stderr.write(f"{exc}\n")
         return 2
     sys.stdout.write(output)

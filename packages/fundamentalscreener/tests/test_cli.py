@@ -45,7 +45,9 @@ def _run_expect_failure(argv: List[str]) -> tuple[int, str, str]:
         try:
             rc = main(argv)
         except SystemExit as exc:
-            # argparse 或 _parse_periods 走 SystemExit；统一映射为退出码。
+            # argparse 自身会通过 SystemExit 报错（例如未知子命令、缺少必填参数）；
+            # _parse_periods 等业务校验已改为抛 CLIArgumentError，由 main() 内部
+            # 捕获并返回 rc=2，这里只兜底 argparse 的退出。
             code = exc.code
             if isinstance(code, int):
                 rc = code
@@ -367,7 +369,7 @@ class CLIInvalidFixtureTests(unittest.TestCase):
 
 
 class CLIInvalidPeriodsTests(unittest.TestCase):
-    """覆盖：--periods 必须是正整数；非法值应通过 stderr + 非零退出码报错，不能 traceback。"""
+    """覆盖：--periods 必须是正整数；非法值应通过 stderr + rc=2 报错，不能 traceback。"""
 
     def _assert_invalid(self, periods: str) -> None:
         rc, out, err = _run_expect_failure(
@@ -381,7 +383,7 @@ class CLIInvalidPeriodsTests(unittest.TestCase):
                 "json",
             ]
         )
-        self.assertNotEqual(rc, 0, f"--periods {periods!r} should fail")
+        self.assertEqual(rc, 2, f"--periods {periods!r} should exit with rc=2, got {rc}")
         self.assertEqual(out, "")
         self.assertNotIn("Traceback", err, f"unexpected traceback for --periods {periods!r}")
         self.assertIn("invalid --periods value", err)
