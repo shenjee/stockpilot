@@ -49,6 +49,36 @@ SUPPORTED_SECTOR_SORTS: Tuple[str, ...] = (
     "score",
 )
 
+# companies 命令默认排序字段。
+DEFAULT_COMPANY_SORT: str = "combined_score"
+
+# companies 命令支持的排序字段。
+SUPPORTED_COMPANY_SORTS: Tuple[str, ...] = (
+    "combined_score",
+    "leader_score",
+    "attention_score",
+    "market_cap",
+    "turnover_amount",
+    "turnover_rate",
+    "sector_return_rank",
+)
+
+# 排序方向：默认 desc，sector_return_rank 用 asc（rank=1 表示最强）。
+COMPANY_SORT_ASCENDING: Tuple[str, ...] = ("sector_return_rank",)
+
+# Phase 2 第一版 combined_score 权重（财务/估值未接入）：
+#   combined_score = leader_score * 0.4 + attention_score * 0.6
+# Phase 5 接入财务/估值后会切换到 §14 的升级版权重。
+COMBINED_SCORE_WEIGHTS_PHASE2: Tuple[Tuple[str, float], ...] = (
+    ("leader_score", 0.4),
+    ("attention_score", 0.6),
+)
+
+# 候选分组阈值（基于 combined_score）。Phase 2 仅依赖板块内强弱信号，
+# 不带财务/估值约束；Phase 5 会引入 flags 与硬伤判断。
+COMPANY_GROUP_PRIORITY_THRESHOLD: float = 70.0
+COMPANY_GROUP_WATCH_THRESHOLD: float = 50.0
+
 # 板块状态枚举。顺序与 sector_rotation._resolve_state 的优先级一致：
 # overheated > strong > low_level_active > improving > neutral。
 SECTOR_STATES: Tuple[str, ...] = (
@@ -73,14 +103,20 @@ VALUATION_LABELS: Tuple[str, ...] = (
 
 __all__ = [
     "CANDIDATE_GROUPS",
+    "COMBINED_SCORE_WEIGHTS_PHASE2",
+    "COMPANY_GROUP_PRIORITY_THRESHOLD",
+    "COMPANY_GROUP_WATCH_THRESHOLD",
+    "COMPANY_SORT_ASCENDING",
     "DEFAULT_BENCHMARK",
     "DEFAULT_CLASSIFICATION_SYSTEM",
+    "DEFAULT_COMPANY_SORT",
     "DEFAULT_FORMAT",
     "DEFAULT_PERIODS",
     "DEFAULT_SECTOR_SORT",
     "DEFAULT_TOP",
     "SECTOR_STATES",
     "SUPPORTED_CLASSIFICATION_SYSTEMS",
+    "SUPPORTED_COMPANY_SORTS",
     "SUPPORTED_FORMATS",
     "SUPPORTED_SECTOR_SORTS",
     "VALUATION_LABELS",

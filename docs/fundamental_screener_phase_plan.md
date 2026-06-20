@@ -703,16 +703,16 @@ overheated -> strong -> low_level_active -> improving -> neutral
 
 ### 必须实现
 
-- [ ] `company_ranking.py`。
-- [ ] `companies --sector <sector>`。
-- [ ] 输出公司 `code`、`name`、`market_cap`、`turnover_amount`、`turnover_rate`、`sector_return_rank`。
-- [ ] 计算 `leader_score`。
-- [ ] 计算 `attention_score`。
-- [ ] `financial_quality_score` 和 `valuation_score` 在未接入时输出 `null`。
-- [ ] 计算 `combined_score`。
-- [ ] 输出 `group`：`priority`、`watch`、`cautious`。
-- [ ] 支持 `--top`。
-- [ ] 支持 JSON、Markdown、CSV。
+- [x] `company_ranking.py`。
+- [x] `companies --sector <sector>`。
+- [x] 输出公司 `code`、`name`、`market_cap`、`turnover_amount`、`turnover_rate`、`sector_return_rank`。
+- [x] 计算 `leader_score`。
+- [x] 计算 `attention_score`。
+- [x] `financial_quality_score` 和 `valuation_score` 在未接入时输出 `null`。
+- [x] 计算 `combined_score`。
+- [x] 输出 `group`：`priority`、`watch`、`cautious`。
+- [x] 支持 `--top`。
+- [x] 支持 JSON、Markdown、CSV。
 
 ### 第一版评分
 
@@ -734,10 +734,10 @@ combined_score =
 
 ### DoD
 
-- [ ] `companies --sector <sector> --top 10 --format json` 正常。
-- [ ] 每家公司都有原始指标和分项分数。
-- [ ] 未接入财务/估值时不能崩溃。
-- [ ] 不输出买入/卖出建议。
+- [x] `companies --sector <sector> --top 10 --format json` 正常。
+- [x] 每家公司都有原始指标和分项分数。
+- [x] 未接入财务/估值时不能崩溃。
+- [x] 不输出买入/卖出建议。
 
 ## 15. Phase 3：财务质量对比
 

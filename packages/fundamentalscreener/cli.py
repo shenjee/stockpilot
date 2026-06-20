@@ -19,14 +19,17 @@ from typing import List, Optional, Sequence
 from .config import (
     DEFAULT_BENCHMARK,
     DEFAULT_CLASSIFICATION_SYSTEM,
+    DEFAULT_COMPANY_SORT,
     DEFAULT_FORMAT,
     DEFAULT_PERIODS,
     DEFAULT_SECTOR_SORT,
     DEFAULT_TOP,
     SUPPORTED_CLASSIFICATION_SYSTEMS,
+    SUPPORTED_COMPANY_SORTS,
     SUPPORTED_FORMATS,
     SUPPORTED_SECTOR_SORTS,
 )
+from .company_ranking import compute_company_ranking, sort_companies
 from .formatting import format_output
 from .repositories import FixtureRepository
 from .schema import (
@@ -149,7 +152,12 @@ def build_parser() -> argparse.ArgumentParser:
     _add_classification_arg(p_companies)
     p_companies.add_argument("--sector", required=True, help="板块 sector_id 或 sector_name。")
     p_companies.add_argument("--top", type=int, default=DEFAULT_TOP)
-    p_companies.add_argument("--sort", default="combined_score")
+    p_companies.add_argument(
+        "--sort",
+        default=DEFAULT_COMPANY_SORT,
+        choices=SUPPORTED_COMPANY_SORTS,
+        help="排序字段，默认 combined_score。",
+    )
 
     # financials
     p_fin = sub.add_parser("financials", help="财务质量横向对比。")
@@ -327,6 +335,7 @@ def _cmd_companies(args: argparse.Namespace) -> str:
     sector_id: Optional[str] = None
     sector_name: Optional[str] = None
     warnings: List[str] = []
+    companies: List = []
     if repo is None:
         warnings.append("no_data_source: pass --fixture to load market data")
     else:
@@ -336,6 +345,13 @@ def _cmd_companies(args: argparse.Namespace) -> str:
         else:
             sector_id = target.sector_id
             sector_name = target.sector_name
+            snapshot = repo.load_snapshot()
+            result = compute_company_ranking(snapshot, target.sector_id)
+            ordered = sort_companies(result.companies, args.sort)
+            if args.top is not None and args.top >= 0:
+                ordered = ordered[: args.top]
+            companies = list(ordered)
+            warnings.extend(result.warnings)
     payload = CompaniesPayload(
         command="companies",
         date=_resolve_date(args.date, repo),
@@ -343,7 +359,7 @@ def _cmd_companies(args: argparse.Namespace) -> str:
         sector_id=sector_id,
         sector_name=sector_name,
         sort=args.sort,
-        companies=[],
+        companies=companies,
         warnings=warnings,
     )
     return format_output(payload.to_dict(), args.fmt)

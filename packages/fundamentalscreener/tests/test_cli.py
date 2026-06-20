@@ -133,7 +133,9 @@ class CLISmokeTests(unittest.TestCase):
         self.assertEqual(d["sector_id"], "semiconductor")
         self.assertEqual(d["sector_name"], "半导体")
         self.assertIn("classification_system", d)
-        self.assertEqual(d["companies"], [])
+        # Phase 2 起 companies 已有真实计算，半导体板块在 fixture 里有 2 家公司。
+        codes = {c["code"] for c in d["companies"]}
+        self.assertEqual(codes, {"002371", "600584"})
 
     def test_financials_command_omits_classification_system(self) -> None:
         d = _run(
@@ -456,6 +458,154 @@ class CLIBenchmarkMismatchTests(unittest.TestCase):
         self.assertNotEqual(rc, 0)
         self.assertEqual(out, "")
         self.assertIn("benchmark_mismatch", err)
+
+
+class CLIPhase2CompaniesTests(unittest.TestCase):
+    """Phase 2: companies 命令真实计算、排序、--top、markdown / csv 输出。"""
+
+    def test_companies_default_sort_is_combined_score_descending(self) -> None:
+        d = _run(
+            [
+                "companies",
+                "--fixture",
+                str(FIXTURE),
+                "--sector",
+                "semiconductor",
+                "--format",
+                "json",
+            ]
+        )
+        self.assertEqual(d["sort"], "combined_score")
+        scores = [c["combined_score"] for c in d["companies"]]
+        self.assertEqual(scores, sorted(scores, reverse=True))
+        # Phase 3/4 未接入，financial_quality_score / valuation_score 必须为 None。
+        for c in d["companies"]:
+            self.assertIsNone(c["financial_quality_score"])
+            self.assertIsNone(c["valuation_score"])
+            self.assertIn(c["group"], (None, "priority", "watch", "cautious"))
+
+    def test_companies_market_cap_drives_leader_score(self) -> None:
+        d = _run(
+            [
+                "companies",
+                "--fixture",
+                str(FIXTURE),
+                "--sector",
+                "semiconductor",
+                "--sort",
+                "leader_score",
+                "--format",
+                "json",
+            ]
+        )
+        # 002371 市值 1200 亿 > 600584 市值 800 亿，leader_score 排序应把 002371 放在前面。
+        self.assertEqual(d["companies"][0]["code"], "002371")
+        self.assertEqual(d["companies"][-1]["code"], "600584")
+
+    def test_companies_top_truncates(self) -> None:
+        d = _run(
+            [
+                "companies",
+                "--fixture",
+                str(FIXTURE),
+                "--sector",
+                "semiconductor",
+                "--top",
+                "1",
+                "--format",
+                "json",
+            ]
+        )
+        self.assertEqual(len(d["companies"]), 1)
+
+    def test_companies_sector_return_rank_is_ascending(self) -> None:
+        d = _run(
+            [
+                "companies",
+                "--fixture",
+                str(FIXTURE),
+                "--sector",
+                "semiconductor",
+                "--sort",
+                "sector_return_rank",
+                "--format",
+                "json",
+            ]
+        )
+        ranks = [c["sector_return_rank"] for c in d["companies"]]
+        # rank=1 应在前面（升序）。
+        self.assertEqual(ranks, sorted(ranks))
+        self.assertEqual(ranks[0], 1)
+
+    def test_companies_unknown_sort_rejected_by_argparse(self) -> None:
+        rc, out, err = _run_expect_failure(
+            [
+                "companies",
+                "--fixture",
+                str(FIXTURE),
+                "--sector",
+                "semiconductor",
+                "--sort",
+                "unknown_field",
+                "--format",
+                "json",
+            ]
+        )
+        self.assertNotEqual(rc, 0)
+        self.assertEqual(out, "")
+
+    def test_companies_markdown_renders_table(self) -> None:
+        out = _run_text(
+            [
+                "companies",
+                "--fixture",
+                str(FIXTURE),
+                "--sector",
+                "semiconductor",
+                "--format",
+                "markdown",
+            ]
+        )
+        self.assertIn("# fundamental-screener: companies", out)
+        self.assertIn("| code | name |", out)
+        self.assertIn("002371", out)
+        self.assertIn("600584", out)
+        self.assertIn("sector_id: `semiconductor`", out)
+
+    def test_companies_csv_has_header_and_rows(self) -> None:
+        out = _run_text(
+            [
+                "companies",
+                "--fixture",
+                str(FIXTURE),
+                "--sector",
+                "semiconductor",
+                "--format",
+                "csv",
+            ]
+        )
+        lines = [ln for ln in out.splitlines() if ln.strip()]
+        self.assertTrue(lines[0].startswith("code,name,market_cap,"))
+        self.assertEqual(len(lines), 1 + 2)  # header + 2 公司
+        self.assertTrue(any(ln.startswith("002371,") for ln in lines))
+        self.assertTrue(any(ln.startswith("600584,") for ln in lines))
+
+    def test_companies_unknown_sector_warns(self) -> None:
+        d = _run(
+            [
+                "companies",
+                "--fixture",
+                str(FIXTURE),
+                "--sector",
+                "no_such_sector",
+                "--format",
+                "json",
+            ]
+        )
+        self.assertIsNone(d["sector_id"])
+        self.assertIsNone(d["sector_name"])
+        self.assertEqual(d["companies"], [])
+        self.assertTrue(any("sector_not_found" in w for w in d["warnings"]))
 
 
 if __name__ == "__main__":  # pragma: no cover
