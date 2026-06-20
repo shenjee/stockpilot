@@ -1,0 +1,2445 @@
+{
+  "date": "2026-06-19",
+  "classification_system": "concept",
+  "benchmark": {
+    "id": "hs300",
+    "name": "沪深300",
+    "daily": [
+      {
+        "date": "2026-04-20",
+        "close": 100.0,
+        "turnover_amount": 100000000000.0
+      },
+      {
+        "date": "2026-04-21",
+        "close": 100.1,
+        "turnover_amount": 101000000000.0
+      },
+      {
+        "date": "2026-04-22",
+        "close": 100.2,
+        "turnover_amount": 102000000000.0
+      },
+      {
+        "date": "2026-04-23",
+        "close": 100.3,
+        "turnover_amount": 103000000000.0
+      },
+      {
+        "date": "2026-04-24",
+        "close": 100.4,
+        "turnover_amount": 104000000000.0
+      },
+      {
+        "date": "2026-04-25",
+        "close": 100.5,
+        "turnover_amount": 105000000000.0
+      },
+      {
+        "date": "2026-04-26",
+        "close": 100.6,
+        "turnover_amount": 106000000000.0
+      },
+      {
+        "date": "2026-04-27",
+        "close": 100.7,
+        "turnover_amount": 107000000000.0
+      },
+      {
+        "date": "2026-04-28",
+        "close": 100.8,
+        "turnover_amount": 108000000000.0
+      },
+      {
+        "date": "2026-04-29",
+        "close": 100.9,
+        "turnover_amount": 109000000000.0
+      },
+      {
+        "date": "2026-04-30",
+        "close": 101.0,
+        "turnover_amount": 110000000000.0
+      },
+      {
+        "date": "2026-05-01",
+        "close": 101.1,
+        "turnover_amount": 111000000000.0
+      },
+      {
+        "date": "2026-05-02",
+        "close": 101.2,
+        "turnover_amount": 112000000000.0
+      },
+      {
+        "date": "2026-05-03",
+        "close": 101.3,
+        "turnover_amount": 113000000000.0
+      },
+      {
+        "date": "2026-05-04",
+        "close": 101.4,
+        "turnover_amount": 114000000000.0
+      },
+      {
+        "date": "2026-05-05",
+        "close": 101.5,
+        "turnover_amount": 115000000000.0
+      },
+      {
+        "date": "2026-05-06",
+        "close": 101.6,
+        "turnover_amount": 116000000000.0
+      },
+      {
+        "date": "2026-05-07",
+        "close": 101.7,
+        "turnover_amount": 117000000000.0
+      },
+      {
+        "date": "2026-05-08",
+        "close": 101.8,
+        "turnover_amount": 118000000000.0
+      },
+      {
+        "date": "2026-05-09",
+        "close": 101.9,
+        "turnover_amount": 119000000000.0
+      },
+      {
+        "date": "2026-05-10",
+        "close": 102.0,
+        "turnover_amount": 120000000000.0
+      },
+      {
+        "date": "2026-05-11",
+        "close": 102.1,
+        "turnover_amount": 121000000000.0
+      },
+      {
+        "date": "2026-05-12",
+        "close": 102.2,
+        "turnover_amount": 122000000000.0
+      },
+      {
+        "date": "2026-05-13",
+        "close": 102.3,
+        "turnover_amount": 123000000000.0
+      },
+      {
+        "date": "2026-05-14",
+        "close": 102.4,
+        "turnover_amount": 124000000000.0
+      },
+      {
+        "date": "2026-05-15",
+        "close": 102.5,
+        "turnover_amount": 125000000000.0
+      },
+      {
+        "date": "2026-05-16",
+        "close": 102.6,
+        "turnover_amount": 126000000000.0
+      },
+      {
+        "date": "2026-05-17",
+        "close": 102.7,
+        "turnover_amount": 127000000000.0
+      },
+      {
+        "date": "2026-05-18",
+        "close": 102.8,
+        "turnover_amount": 128000000000.0
+      },
+      {
+        "date": "2026-05-19",
+        "close": 102.9,
+        "turnover_amount": 129000000000.0
+      },
+      {
+        "date": "2026-05-20",
+        "close": 103.0,
+        "turnover_amount": 130000000000.0
+      },
+      {
+        "date": "2026-05-21",
+        "close": 103.1,
+        "turnover_amount": 131000000000.0
+      },
+      {
+        "date": "2026-05-22",
+        "close": 103.2,
+        "turnover_amount": 132000000000.0
+      },
+      {
+        "date": "2026-05-23",
+        "close": 103.3,
+        "turnover_amount": 133000000000.0
+      },
+      {
+        "date": "2026-05-24",
+        "close": 103.4,
+        "turnover_amount": 134000000000.0
+      },
+      {
+        "date": "2026-05-25",
+        "close": 103.5,
+        "turnover_amount": 135000000000.0
+      },
+      {
+        "date": "2026-05-26",
+        "close": 103.6,
+        "turnover_amount": 136000000000.0
+      },
+      {
+        "date": "2026-05-27",
+        "close": 103.7,
+        "turnover_amount": 137000000000.0
+      },
+      {
+        "date": "2026-05-28",
+        "close": 103.8,
+        "turnover_amount": 138000000000.0
+      },
+      {
+        "date": "2026-05-29",
+        "close": 103.9,
+        "turnover_amount": 139000000000.0
+      },
+      {
+        "date": "2026-05-30",
+        "close": 104.0,
+        "turnover_amount": 140000000000.0
+      },
+      {
+        "date": "2026-05-31",
+        "close": 104.1,
+        "turnover_amount": 141000000000.0
+      },
+      {
+        "date": "2026-06-01",
+        "close": 104.2,
+        "turnover_amount": 142000000000.0
+      },
+      {
+        "date": "2026-06-02",
+        "close": 104.3,
+        "turnover_amount": 143000000000.0
+      },
+      {
+        "date": "2026-06-03",
+        "close": 104.4,
+        "turnover_amount": 144000000000.0
+      },
+      {
+        "date": "2026-06-04",
+        "close": 104.5,
+        "turnover_amount": 145000000000.0
+      },
+      {
+        "date": "2026-06-05",
+        "close": 104.6,
+        "turnover_amount": 146000000000.0
+      },
+      {
+        "date": "2026-06-06",
+        "close": 104.7,
+        "turnover_amount": 147000000000.0
+      },
+      {
+        "date": "2026-06-07",
+        "close": 104.8,
+        "turnover_amount": 148000000000.0
+      },
+      {
+        "date": "2026-06-08",
+        "close": 104.9,
+        "turnover_amount": 149000000000.0
+      },
+      {
+        "date": "2026-06-09",
+        "close": 105.0,
+        "turnover_amount": 150000000000.0
+      },
+      {
+        "date": "2026-06-10",
+        "close": 105.1,
+        "turnover_amount": 151000000000.0
+      },
+      {
+        "date": "2026-06-11",
+        "close": 105.2,
+        "turnover_amount": 152000000000.0
+      },
+      {
+        "date": "2026-06-12",
+        "close": 105.3,
+        "turnover_amount": 153000000000.0
+      },
+      {
+        "date": "2026-06-13",
+        "close": 105.4,
+        "turnover_amount": 154000000000.0
+      },
+      {
+        "date": "2026-06-14",
+        "close": 105.5,
+        "turnover_amount": 155000000000.0
+      },
+      {
+        "date": "2026-06-15",
+        "close": 105.6,
+        "turnover_amount": 156000000000.0
+      },
+      {
+        "date": "2026-06-16",
+        "close": 105.7,
+        "turnover_amount": 157000000000.0
+      },
+      {
+        "date": "2026-06-17",
+        "close": 105.8,
+        "turnover_amount": 158000000000.0
+      },
+      {
+        "date": "2026-06-18",
+        "close": 105.9,
+        "turnover_amount": 159000000000.0
+      },
+      {
+        "date": "2026-06-19",
+        "close": 106.0,
+        "turnover_amount": 160000000000.0
+      }
+    ]
+  },
+  "sectors": [
+    {
+      "sector_id": "semiconductor",
+      "sector_name": "半导体",
+      "constituents": [
+        "002371",
+        "600584"
+      ],
+      "daily": [
+        {
+          "date": "2026-04-20",
+          "close": 100.0,
+          "turnover_amount": 10000000000.0
+        },
+        {
+          "date": "2026-04-21",
+          "close": 100.2,
+          "turnover_amount": 10100000000.0
+        },
+        {
+          "date": "2026-04-22",
+          "close": 100.4,
+          "turnover_amount": 10200000000.0
+        },
+        {
+          "date": "2026-04-23",
+          "close": 100.6,
+          "turnover_amount": 10300000000.0
+        },
+        {
+          "date": "2026-04-24",
+          "close": 100.8,
+          "turnover_amount": 10400000000.0
+        },
+        {
+          "date": "2026-04-25",
+          "close": 101.0,
+          "turnover_amount": 10500000000.0
+        },
+        {
+          "date": "2026-04-26",
+          "close": 101.2,
+          "turnover_amount": 10600000000.0
+        },
+        {
+          "date": "2026-04-27",
+          "close": 101.4,
+          "turnover_amount": 10700000000.0
+        },
+        {
+          "date": "2026-04-28",
+          "close": 101.6,
+          "turnover_amount": 10800000000.0
+        },
+        {
+          "date": "2026-04-29",
+          "close": 101.8,
+          "turnover_amount": 10900000000.0
+        },
+        {
+          "date": "2026-04-30",
+          "close": 102.0,
+          "turnover_amount": 11000000000.0
+        },
+        {
+          "date": "2026-05-01",
+          "close": 102.2,
+          "turnover_amount": 11100000000.0
+        },
+        {
+          "date": "2026-05-02",
+          "close": 102.4,
+          "turnover_amount": 11200000000.0
+        },
+        {
+          "date": "2026-05-03",
+          "close": 102.6,
+          "turnover_amount": 11300000000.0
+        },
+        {
+          "date": "2026-05-04",
+          "close": 102.8,
+          "turnover_amount": 11400000000.0
+        },
+        {
+          "date": "2026-05-05",
+          "close": 103.0,
+          "turnover_amount": 11500000000.0
+        },
+        {
+          "date": "2026-05-06",
+          "close": 103.2,
+          "turnover_amount": 11600000000.0
+        },
+        {
+          "date": "2026-05-07",
+          "close": 103.4,
+          "turnover_amount": 11700000000.0
+        },
+        {
+          "date": "2026-05-08",
+          "close": 103.6,
+          "turnover_amount": 11800000000.0
+        },
+        {
+          "date": "2026-05-09",
+          "close": 103.8,
+          "turnover_amount": 11900000000.0
+        },
+        {
+          "date": "2026-05-10",
+          "close": 104.0,
+          "turnover_amount": 12000000000.0
+        },
+        {
+          "date": "2026-05-11",
+          "close": 104.2,
+          "turnover_amount": 12100000000.0
+        },
+        {
+          "date": "2026-05-12",
+          "close": 104.4,
+          "turnover_amount": 12200000000.0
+        },
+        {
+          "date": "2026-05-13",
+          "close": 104.6,
+          "turnover_amount": 12300000000.0
+        },
+        {
+          "date": "2026-05-14",
+          "close": 104.8,
+          "turnover_amount": 12400000000.0
+        },
+        {
+          "date": "2026-05-15",
+          "close": 105.0,
+          "turnover_amount": 12500000000.0
+        },
+        {
+          "date": "2026-05-16",
+          "close": 105.2,
+          "turnover_amount": 12600000000.0
+        },
+        {
+          "date": "2026-05-17",
+          "close": 105.4,
+          "turnover_amount": 12700000000.0
+        },
+        {
+          "date": "2026-05-18",
+          "close": 105.6,
+          "turnover_amount": 12800000000.0
+        },
+        {
+          "date": "2026-05-19",
+          "close": 105.8,
+          "turnover_amount": 12900000000.0
+        },
+        {
+          "date": "2026-05-20",
+          "close": 106.0,
+          "turnover_amount": 13000000000.0
+        },
+        {
+          "date": "2026-05-21",
+          "close": 106.2,
+          "turnover_amount": 13100000000.0
+        },
+        {
+          "date": "2026-05-22",
+          "close": 106.4,
+          "turnover_amount": 13200000000.0
+        },
+        {
+          "date": "2026-05-23",
+          "close": 106.6,
+          "turnover_amount": 13300000000.0
+        },
+        {
+          "date": "2026-05-24",
+          "close": 106.8,
+          "turnover_amount": 13400000000.0
+        },
+        {
+          "date": "2026-05-25",
+          "close": 107.0,
+          "turnover_amount": 13500000000.0
+        },
+        {
+          "date": "2026-05-26",
+          "close": 107.2,
+          "turnover_amount": 13600000000.0
+        },
+        {
+          "date": "2026-05-27",
+          "close": 107.4,
+          "turnover_amount": 13700000000.0
+        },
+        {
+          "date": "2026-05-28",
+          "close": 107.6,
+          "turnover_amount": 13800000000.0
+        },
+        {
+          "date": "2026-05-29",
+          "close": 107.8,
+          "turnover_amount": 13900000000.0
+        },
+        {
+          "date": "2026-05-30",
+          "close": 108.0,
+          "turnover_amount": 14000000000.0
+        },
+        {
+          "date": "2026-05-31",
+          "close": 108.2,
+          "turnover_amount": 14100000000.0
+        },
+        {
+          "date": "2026-06-01",
+          "close": 108.4,
+          "turnover_amount": 14200000000.0
+        },
+        {
+          "date": "2026-06-02",
+          "close": 108.6,
+          "turnover_amount": 14300000000.0
+        },
+        {
+          "date": "2026-06-03",
+          "close": 108.8,
+          "turnover_amount": 14400000000.0
+        },
+        {
+          "date": "2026-06-04",
+          "close": 109.0,
+          "turnover_amount": 14500000000.0
+        },
+        {
+          "date": "2026-06-05",
+          "close": 109.2,
+          "turnover_amount": 14600000000.0
+        },
+        {
+          "date": "2026-06-06",
+          "close": 109.4,
+          "turnover_amount": 14700000000.0
+        },
+        {
+          "date": "2026-06-07",
+          "close": 109.6,
+          "turnover_amount": 14800000000.0
+        },
+        {
+          "date": "2026-06-08",
+          "close": 109.8,
+          "turnover_amount": 14900000000.0
+        },
+        {
+          "date": "2026-06-09",
+          "close": 110.0,
+          "turnover_amount": 15000000000.0
+        },
+        {
+          "date": "2026-06-10",
+          "close": 110.2,
+          "turnover_amount": 15100000000.0
+        },
+        {
+          "date": "2026-06-11",
+          "close": 110.4,
+          "turnover_amount": 15200000000.0
+        },
+        {
+          "date": "2026-06-12",
+          "close": 110.6,
+          "turnover_amount": 15300000000.0
+        },
+        {
+          "date": "2026-06-13",
+          "close": 110.8,
+          "turnover_amount": 15400000000.0
+        },
+        {
+          "date": "2026-06-14",
+          "close": 111.0,
+          "turnover_amount": 15500000000.0
+        },
+        {
+          "date": "2026-06-15",
+          "close": 111.2,
+          "turnover_amount": 15600000000.0
+        },
+        {
+          "date": "2026-06-16",
+          "close": 111.4,
+          "turnover_amount": 15700000000.0
+        },
+        {
+          "date": "2026-06-17",
+          "close": 111.6,
+          "turnover_amount": 15800000000.0
+        },
+        {
+          "date": "2026-06-18",
+          "close": 111.8,
+          "turnover_amount": 15900000000.0
+        },
+        {
+          "date": "2026-06-19",
+          "close": 112.0,
+          "turnover_amount": 16000000000.0
+        }
+      ]
+    },
+    {
+      "sector_id": "machinery",
+      "sector_name": "工程机械",
+      "constituents": [
+        "000001",
+        "000002"
+      ],
+      "daily": [
+        {
+          "date": "2026-04-20",
+          "close": 100.0,
+          "turnover_amount": 8000000000.0
+        },
+        {
+          "date": "2026-04-21",
+          "close": 99.95,
+          "turnover_amount": 8050000000.0
+        },
+        {
+          "date": "2026-04-22",
+          "close": 99.9,
+          "turnover_amount": 8100000000.0
+        },
+        {
+          "date": "2026-04-23",
+          "close": 99.85,
+          "turnover_amount": 8150000000.0
+        },
+        {
+          "date": "2026-04-24",
+          "close": 99.8,
+          "turnover_amount": 8200000000.0
+        },
+        {
+          "date": "2026-04-25",
+          "close": 99.75,
+          "turnover_amount": 8250000000.0
+        },
+        {
+          "date": "2026-04-26",
+          "close": 99.7,
+          "turnover_amount": 8300000000.0
+        },
+        {
+          "date": "2026-04-27",
+          "close": 99.65,
+          "turnover_amount": 8350000000.0
+        },
+        {
+          "date": "2026-04-28",
+          "close": 99.6,
+          "turnover_amount": 8400000000.0
+        },
+        {
+          "date": "2026-04-29",
+          "close": 99.55,
+          "turnover_amount": 8450000000.0
+        },
+        {
+          "date": "2026-04-30",
+          "close": 99.5,
+          "turnover_amount": 8500000000.0
+        },
+        {
+          "date": "2026-05-01",
+          "close": 99.45,
+          "turnover_amount": 8550000000.0
+        },
+        {
+          "date": "2026-05-02",
+          "close": 99.4,
+          "turnover_amount": 8600000000.0
+        },
+        {
+          "date": "2026-05-03",
+          "close": 99.35,
+          "turnover_amount": 8650000000.0
+        },
+        {
+          "date": "2026-05-04",
+          "close": 99.3,
+          "turnover_amount": 8700000000.0
+        },
+        {
+          "date": "2026-05-05",
+          "close": 99.25,
+          "turnover_amount": 8750000000.0
+        },
+        {
+          "date": "2026-05-06",
+          "close": 99.2,
+          "turnover_amount": 8800000000.0
+        },
+        {
+          "date": "2026-05-07",
+          "close": 99.15,
+          "turnover_amount": 8850000000.0
+        },
+        {
+          "date": "2026-05-08",
+          "close": 99.1,
+          "turnover_amount": 8900000000.0
+        },
+        {
+          "date": "2026-05-09",
+          "close": 99.05,
+          "turnover_amount": 8950000000.0
+        },
+        {
+          "date": "2026-05-10",
+          "close": 99.0,
+          "turnover_amount": 9000000000.0
+        },
+        {
+          "date": "2026-05-11",
+          "close": 98.95,
+          "turnover_amount": 9050000000.0
+        },
+        {
+          "date": "2026-05-12",
+          "close": 98.9,
+          "turnover_amount": 9100000000.0
+        },
+        {
+          "date": "2026-05-13",
+          "close": 98.85,
+          "turnover_amount": 9150000000.0
+        },
+        {
+          "date": "2026-05-14",
+          "close": 98.8,
+          "turnover_amount": 9200000000.0
+        },
+        {
+          "date": "2026-05-15",
+          "close": 98.75,
+          "turnover_amount": 9250000000.0
+        },
+        {
+          "date": "2026-05-16",
+          "close": 98.7,
+          "turnover_amount": 9300000000.0
+        },
+        {
+          "date": "2026-05-17",
+          "close": 98.65,
+          "turnover_amount": 9350000000.0
+        },
+        {
+          "date": "2026-05-18",
+          "close": 98.6,
+          "turnover_amount": 9400000000.0
+        },
+        {
+          "date": "2026-05-19",
+          "close": 98.55,
+          "turnover_amount": 9450000000.0
+        },
+        {
+          "date": "2026-05-20",
+          "close": 98.5,
+          "turnover_amount": 9500000000.0
+        },
+        {
+          "date": "2026-05-21",
+          "close": 98.45,
+          "turnover_amount": 9550000000.0
+        },
+        {
+          "date": "2026-05-22",
+          "close": 98.4,
+          "turnover_amount": 9600000000.0
+        },
+        {
+          "date": "2026-05-23",
+          "close": 98.35,
+          "turnover_amount": 9650000000.0
+        },
+        {
+          "date": "2026-05-24",
+          "close": 98.3,
+          "turnover_amount": 9700000000.0
+        },
+        {
+          "date": "2026-05-25",
+          "close": 98.25,
+          "turnover_amount": 9750000000.0
+        },
+        {
+          "date": "2026-05-26",
+          "close": 98.2,
+          "turnover_amount": 9800000000.0
+        },
+        {
+          "date": "2026-05-27",
+          "close": 98.15,
+          "turnover_amount": 9850000000.0
+        },
+        {
+          "date": "2026-05-28",
+          "close": 98.1,
+          "turnover_amount": 9900000000.0
+        },
+        {
+          "date": "2026-05-29",
+          "close": 98.05,
+          "turnover_amount": 9950000000.0
+        },
+        {
+          "date": "2026-05-30",
+          "close": 98.0,
+          "turnover_amount": 10000000000.0
+        },
+        {
+          "date": "2026-05-31",
+          "close": 97.95,
+          "turnover_amount": 10050000000.0
+        },
+        {
+          "date": "2026-06-01",
+          "close": 97.9,
+          "turnover_amount": 10100000000.0
+        },
+        {
+          "date": "2026-06-02",
+          "close": 97.85,
+          "turnover_amount": 10150000000.0
+        },
+        {
+          "date": "2026-06-03",
+          "close": 97.8,
+          "turnover_amount": 10200000000.0
+        },
+        {
+          "date": "2026-06-04",
+          "close": 97.75,
+          "turnover_amount": 10250000000.0
+        },
+        {
+          "date": "2026-06-05",
+          "close": 97.7,
+          "turnover_amount": 10300000000.0
+        },
+        {
+          "date": "2026-06-06",
+          "close": 97.65,
+          "turnover_amount": 10350000000.0
+        },
+        {
+          "date": "2026-06-07",
+          "close": 97.6,
+          "turnover_amount": 10400000000.0
+        },
+        {
+          "date": "2026-06-08",
+          "close": 97.55,
+          "turnover_amount": 10450000000.0
+        },
+        {
+          "date": "2026-06-09",
+          "close": 97.5,
+          "turnover_amount": 10500000000.0
+        },
+        {
+          "date": "2026-06-10",
+          "close": 97.45,
+          "turnover_amount": 10550000000.0
+        },
+        {
+          "date": "2026-06-11",
+          "close": 97.4,
+          "turnover_amount": 10600000000.0
+        },
+        {
+          "date": "2026-06-12",
+          "close": 97.35,
+          "turnover_amount": 10650000000.0
+        },
+        {
+          "date": "2026-06-13",
+          "close": 97.3,
+          "turnover_amount": 10700000000.0
+        },
+        {
+          "date": "2026-06-14",
+          "close": 97.25,
+          "turnover_amount": 10750000000.0
+        },
+        {
+          "date": "2026-06-15",
+          "close": 97.2,
+          "turnover_amount": 10800000000.0
+        },
+        {
+          "date": "2026-06-16",
+          "close": 97.15,
+          "turnover_amount": 10850000000.0
+        },
+        {
+          "date": "2026-06-17",
+          "close": 97.1,
+          "turnover_amount": 10900000000.0
+        },
+        {
+          "date": "2026-06-18",
+          "close": 97.05,
+          "turnover_amount": 10950000000.0
+        },
+        {
+          "date": "2026-06-19",
+          "close": 97.0,
+          "turnover_amount": 11000000000.0
+        }
+      ]
+    }
+  ],
+  "companies": [
+    {
+      "code": "002371",
+      "name": "示例公司A",
+      "sector_id": "semiconductor",
+      "market_cap": 120000000000.0,
+      "daily": [
+        {
+          "date": "2026-04-20",
+          "close": 10.0,
+          "turnover_amount": 1000000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-04-21",
+          "close": 10.05,
+          "turnover_amount": 1010000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-04-22",
+          "close": 10.1,
+          "turnover_amount": 1020000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-04-23",
+          "close": 10.15,
+          "turnover_amount": 1030000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-04-24",
+          "close": 10.2,
+          "turnover_amount": 1040000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-04-25",
+          "close": 10.25,
+          "turnover_amount": 1050000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-04-26",
+          "close": 10.3,
+          "turnover_amount": 1060000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-04-27",
+          "close": 10.35,
+          "turnover_amount": 1070000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-04-28",
+          "close": 10.4,
+          "turnover_amount": 1080000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-04-29",
+          "close": 10.45,
+          "turnover_amount": 1090000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-04-30",
+          "close": 10.5,
+          "turnover_amount": 1100000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-05-01",
+          "close": 10.55,
+          "turnover_amount": 1110000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-05-02",
+          "close": 10.6,
+          "turnover_amount": 1120000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-05-03",
+          "close": 10.65,
+          "turnover_amount": 1130000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-05-04",
+          "close": 10.7,
+          "turnover_amount": 1140000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-05-05",
+          "close": 10.75,
+          "turnover_amount": 1150000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-05-06",
+          "close": 10.8,
+          "turnover_amount": 1160000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-05-07",
+          "close": 10.85,
+          "turnover_amount": 1170000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-05-08",
+          "close": 10.9,
+          "turnover_amount": 1180000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-05-09",
+          "close": 10.95,
+          "turnover_amount": 1190000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-05-10",
+          "close": 11.0,
+          "turnover_amount": 1200000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-05-11",
+          "close": 11.05,
+          "turnover_amount": 1210000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-05-12",
+          "close": 11.1,
+          "turnover_amount": 1220000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-05-13",
+          "close": 11.15,
+          "turnover_amount": 1230000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-05-14",
+          "close": 11.2,
+          "turnover_amount": 1240000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-05-15",
+          "close": 11.25,
+          "turnover_amount": 1250000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-05-16",
+          "close": 11.3,
+          "turnover_amount": 1260000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-05-17",
+          "close": 11.35,
+          "turnover_amount": 1270000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-05-18",
+          "close": 11.4,
+          "turnover_amount": 1280000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-05-19",
+          "close": 11.45,
+          "turnover_amount": 1290000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-05-20",
+          "close": 11.5,
+          "turnover_amount": 1300000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-05-21",
+          "close": 11.55,
+          "turnover_amount": 1310000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-05-22",
+          "close": 11.6,
+          "turnover_amount": 1320000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-05-23",
+          "close": 11.65,
+          "turnover_amount": 1330000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-05-24",
+          "close": 11.7,
+          "turnover_amount": 1340000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-05-25",
+          "close": 11.75,
+          "turnover_amount": 1350000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-05-26",
+          "close": 11.8,
+          "turnover_amount": 1360000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-05-27",
+          "close": 11.85,
+          "turnover_amount": 1370000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-05-28",
+          "close": 11.9,
+          "turnover_amount": 1380000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-05-29",
+          "close": 11.95,
+          "turnover_amount": 1390000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-05-30",
+          "close": 12.0,
+          "turnover_amount": 1400000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-05-31",
+          "close": 12.05,
+          "turnover_amount": 1410000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-06-01",
+          "close": 12.1,
+          "turnover_amount": 1420000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-06-02",
+          "close": 12.15,
+          "turnover_amount": 1430000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-06-03",
+          "close": 12.2,
+          "turnover_amount": 1440000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-06-04",
+          "close": 12.25,
+          "turnover_amount": 1450000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-06-05",
+          "close": 12.3,
+          "turnover_amount": 1460000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-06-06",
+          "close": 12.35,
+          "turnover_amount": 1470000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-06-07",
+          "close": 12.4,
+          "turnover_amount": 1480000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-06-08",
+          "close": 12.45,
+          "turnover_amount": 1490000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-06-09",
+          "close": 12.5,
+          "turnover_amount": 1500000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-06-10",
+          "close": 12.55,
+          "turnover_amount": 1510000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-06-11",
+          "close": 12.6,
+          "turnover_amount": 1520000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-06-12",
+          "close": 12.65,
+          "turnover_amount": 1530000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-06-13",
+          "close": 12.7,
+          "turnover_amount": 1540000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-06-14",
+          "close": 12.75,
+          "turnover_amount": 1550000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-06-15",
+          "close": 12.8,
+          "turnover_amount": 1560000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-06-16",
+          "close": 12.85,
+          "turnover_amount": 1570000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-06-17",
+          "close": 12.9,
+          "turnover_amount": 1580000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-06-18",
+          "close": 12.95,
+          "turnover_amount": 1590000000.0,
+          "turnover_rate": 0.02
+        },
+        {
+          "date": "2026-06-19",
+          "close": 13.0,
+          "turnover_amount": 1600000000.0,
+          "turnover_rate": 0.02
+        }
+      ]
+    },
+    {
+      "code": "600584",
+      "name": "示例公司B",
+      "sector_id": "semiconductor",
+      "market_cap": 80000000000.0,
+      "daily": [
+        {
+          "date": "2026-04-20",
+          "close": 12.0,
+          "turnover_amount": 1200000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-04-21",
+          "close": 12.04,
+          "turnover_amount": 1208000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-04-22",
+          "close": 12.08,
+          "turnover_amount": 1216000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-04-23",
+          "close": 12.12,
+          "turnover_amount": 1224000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-04-24",
+          "close": 12.16,
+          "turnover_amount": 1232000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-04-25",
+          "close": 12.2,
+          "turnover_amount": 1240000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-04-26",
+          "close": 12.24,
+          "turnover_amount": 1248000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-04-27",
+          "close": 12.28,
+          "turnover_amount": 1256000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-04-28",
+          "close": 12.32,
+          "turnover_amount": 1264000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-04-29",
+          "close": 12.36,
+          "turnover_amount": 1272000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-04-30",
+          "close": 12.4,
+          "turnover_amount": 1280000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-05-01",
+          "close": 12.44,
+          "turnover_amount": 1288000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-05-02",
+          "close": 12.48,
+          "turnover_amount": 1296000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-05-03",
+          "close": 12.52,
+          "turnover_amount": 1304000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-05-04",
+          "close": 12.56,
+          "turnover_amount": 1312000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-05-05",
+          "close": 12.6,
+          "turnover_amount": 1320000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-05-06",
+          "close": 12.64,
+          "turnover_amount": 1328000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-05-07",
+          "close": 12.68,
+          "turnover_amount": 1336000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-05-08",
+          "close": 12.72,
+          "turnover_amount": 1344000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-05-09",
+          "close": 12.76,
+          "turnover_amount": 1352000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-05-10",
+          "close": 12.8,
+          "turnover_amount": 1360000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-05-11",
+          "close": 12.84,
+          "turnover_amount": 1368000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-05-12",
+          "close": 12.88,
+          "turnover_amount": 1376000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-05-13",
+          "close": 12.92,
+          "turnover_amount": 1384000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-05-14",
+          "close": 12.96,
+          "turnover_amount": 1392000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-05-15",
+          "close": 13.0,
+          "turnover_amount": 1400000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-05-16",
+          "close": 13.04,
+          "turnover_amount": 1408000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-05-17",
+          "close": 13.08,
+          "turnover_amount": 1416000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-05-18",
+          "close": 13.12,
+          "turnover_amount": 1424000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-05-19",
+          "close": 13.16,
+          "turnover_amount": 1432000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-05-20",
+          "close": 13.2,
+          "turnover_amount": 1440000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-05-21",
+          "close": 13.24,
+          "turnover_amount": 1448000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-05-22",
+          "close": 13.28,
+          "turnover_amount": 1456000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-05-23",
+          "close": 13.32,
+          "turnover_amount": 1464000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-05-24",
+          "close": 13.36,
+          "turnover_amount": 1472000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-05-25",
+          "close": 13.4,
+          "turnover_amount": 1480000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-05-26",
+          "close": 13.44,
+          "turnover_amount": 1488000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-05-27",
+          "close": 13.48,
+          "turnover_amount": 1496000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-05-28",
+          "close": 13.52,
+          "turnover_amount": 1504000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-05-29",
+          "close": 13.56,
+          "turnover_amount": 1512000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-05-30",
+          "close": 13.6,
+          "turnover_amount": 1520000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-05-31",
+          "close": 13.64,
+          "turnover_amount": 1528000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-06-01",
+          "close": 13.68,
+          "turnover_amount": 1536000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-06-02",
+          "close": 13.72,
+          "turnover_amount": 1544000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-06-03",
+          "close": 13.76,
+          "turnover_amount": 1552000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-06-04",
+          "close": 13.8,
+          "turnover_amount": 1560000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-06-05",
+          "close": 13.84,
+          "turnover_amount": 1568000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-06-06",
+          "close": 13.88,
+          "turnover_amount": 1576000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-06-07",
+          "close": 13.92,
+          "turnover_amount": 1584000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-06-08",
+          "close": 13.96,
+          "turnover_amount": 1592000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-06-09",
+          "close": 14.0,
+          "turnover_amount": 1600000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-06-10",
+          "close": 14.04,
+          "turnover_amount": 1608000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-06-11",
+          "close": 14.08,
+          "turnover_amount": 1616000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-06-12",
+          "close": 14.12,
+          "turnover_amount": 1624000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-06-13",
+          "close": 14.16,
+          "turnover_amount": 1632000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-06-14",
+          "close": 14.2,
+          "turnover_amount": 1640000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-06-15",
+          "close": 14.24,
+          "turnover_amount": 1648000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-06-16",
+          "close": 14.28,
+          "turnover_amount": 1656000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-06-17",
+          "close": 14.32,
+          "turnover_amount": 1664000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-06-18",
+          "close": 14.36,
+          "turnover_amount": 1672000000.0,
+          "turnover_rate": 0.025
+        },
+        {
+          "date": "2026-06-19",
+          "close": 14.4,
+          "turnover_amount": 1680000000.0,
+          "turnover_rate": 0.025
+        }
+      ]
+    },
+    {
+      "code": "000001",
+      "name": "示例公司C",
+      "sector_id": "machinery",
+      "market_cap": 60000000000.0,
+      "daily": [
+        {
+          "date": "2026-04-20",
+          "close": 8.0,
+          "turnover_amount": 800000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-04-21",
+          "close": 8.02,
+          "turnover_amount": 805000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-04-22",
+          "close": 8.04,
+          "turnover_amount": 810000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-04-23",
+          "close": 8.06,
+          "turnover_amount": 815000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-04-24",
+          "close": 8.08,
+          "turnover_amount": 820000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-04-25",
+          "close": 8.1,
+          "turnover_amount": 825000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-04-26",
+          "close": 8.12,
+          "turnover_amount": 830000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-04-27",
+          "close": 8.14,
+          "turnover_amount": 835000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-04-28",
+          "close": 8.16,
+          "turnover_amount": 840000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-04-29",
+          "close": 8.18,
+          "turnover_amount": 845000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-04-30",
+          "close": 8.2,
+          "turnover_amount": 850000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-05-01",
+          "close": 8.22,
+          "turnover_amount": 855000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-05-02",
+          "close": 8.24,
+          "turnover_amount": 860000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-05-03",
+          "close": 8.26,
+          "turnover_amount": 865000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-05-04",
+          "close": 8.28,
+          "turnover_amount": 870000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-05-05",
+          "close": 8.3,
+          "turnover_amount": 875000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-05-06",
+          "close": 8.32,
+          "turnover_amount": 880000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-05-07",
+          "close": 8.34,
+          "turnover_amount": 885000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-05-08",
+          "close": 8.36,
+          "turnover_amount": 890000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-05-09",
+          "close": 8.38,
+          "turnover_amount": 895000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-05-10",
+          "close": 8.4,
+          "turnover_amount": 900000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-05-11",
+          "close": 8.42,
+          "turnover_amount": 905000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-05-12",
+          "close": 8.44,
+          "turnover_amount": 910000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-05-13",
+          "close": 8.46,
+          "turnover_amount": 915000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-05-14",
+          "close": 8.48,
+          "turnover_amount": 920000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-05-15",
+          "close": 8.5,
+          "turnover_amount": 925000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-05-16",
+          "close": 8.52,
+          "turnover_amount": 930000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-05-17",
+          "close": 8.54,
+          "turnover_amount": 935000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-05-18",
+          "close": 8.56,
+          "turnover_amount": 940000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-05-19",
+          "close": 8.58,
+          "turnover_amount": 945000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-05-20",
+          "close": 8.6,
+          "turnover_amount": 950000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-05-21",
+          "close": 8.62,
+          "turnover_amount": 955000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-05-22",
+          "close": 8.64,
+          "turnover_amount": 960000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-05-23",
+          "close": 8.66,
+          "turnover_amount": 965000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-05-24",
+          "close": 8.68,
+          "turnover_amount": 970000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-05-25",
+          "close": 8.7,
+          "turnover_amount": 975000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-05-26",
+          "close": 8.72,
+          "turnover_amount": 980000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-05-27",
+          "close": 8.74,
+          "turnover_amount": 985000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-05-28",
+          "close": 8.76,
+          "turnover_amount": 990000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-05-29",
+          "close": 8.78,
+          "turnover_amount": 995000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-05-30",
+          "close": 8.8,
+          "turnover_amount": 1000000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-05-31",
+          "close": 8.82,
+          "turnover_amount": 1005000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-06-01",
+          "close": 8.84,
+          "turnover_amount": 1010000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-06-02",
+          "close": 8.86,
+          "turnover_amount": 1015000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-06-03",
+          "close": 8.88,
+          "turnover_amount": 1020000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-06-04",
+          "close": 8.9,
+          "turnover_amount": 1025000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-06-05",
+          "close": 8.92,
+          "turnover_amount": 1030000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-06-06",
+          "close": 8.94,
+          "turnover_amount": 1035000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-06-07",
+          "close": 8.96,
+          "turnover_amount": 1040000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-06-08",
+          "close": 8.98,
+          "turnover_amount": 1045000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-06-09",
+          "close": 9.0,
+          "turnover_amount": 1050000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-06-10",
+          "close": 9.02,
+          "turnover_amount": 1055000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-06-11",
+          "close": 9.04,
+          "turnover_amount": 1060000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-06-12",
+          "close": 9.06,
+          "turnover_amount": 1065000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-06-13",
+          "close": 9.08,
+          "turnover_amount": 1070000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-06-14",
+          "close": 9.1,
+          "turnover_amount": 1075000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-06-15",
+          "close": 9.12,
+          "turnover_amount": 1080000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-06-16",
+          "close": 9.14,
+          "turnover_amount": 1085000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-06-17",
+          "close": 9.16,
+          "turnover_amount": 1090000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-06-18",
+          "close": 9.18,
+          "turnover_amount": 1095000000.0,
+          "turnover_rate": 0.018
+        },
+        {
+          "date": "2026-06-19",
+          "close": 9.2,
+          "turnover_amount": 1100000000.0,
+          "turnover_rate": 0.018
+        }
+      ]
+    },
+    {
+      "code": "000002",
+      "name": "示例公司D",
+      "sector_id": "machinery",
+      "market_cap": 50000000000.0,
+      "daily": [
+        {
+          "date": "2026-04-20",
+          "close": 6.0,
+          "turnover_amount": 600000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-04-21",
+          "close": 5.99,
+          "turnover_amount": 603000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-04-22",
+          "close": 5.98,
+          "turnover_amount": 606000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-04-23",
+          "close": 5.97,
+          "turnover_amount": 609000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-04-24",
+          "close": 5.96,
+          "turnover_amount": 612000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-04-25",
+          "close": 5.95,
+          "turnover_amount": 615000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-04-26",
+          "close": 5.94,
+          "turnover_amount": 618000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-04-27",
+          "close": 5.93,
+          "turnover_amount": 621000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-04-28",
+          "close": 5.92,
+          "turnover_amount": 624000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-04-29",
+          "close": 5.91,
+          "turnover_amount": 627000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-04-30",
+          "close": 5.9,
+          "turnover_amount": 630000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-05-01",
+          "close": 5.89,
+          "turnover_amount": 633000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-05-02",
+          "close": 5.88,
+          "turnover_amount": 636000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-05-03",
+          "close": 5.87,
+          "turnover_amount": 639000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-05-04",
+          "close": 5.86,
+          "turnover_amount": 642000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-05-05",
+          "close": 5.85,
+          "turnover_amount": 645000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-05-06",
+          "close": 5.84,
+          "turnover_amount": 648000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-05-07",
+          "close": 5.83,
+          "turnover_amount": 651000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-05-08",
+          "close": 5.82,
+          "turnover_amount": 654000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-05-09",
+          "close": 5.81,
+          "turnover_amount": 657000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-05-10",
+          "close": 5.8,
+          "turnover_amount": 660000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-05-11",
+          "close": 5.79,
+          "turnover_amount": 663000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-05-12",
+          "close": 5.78,
+          "turnover_amount": 666000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-05-13",
+          "close": 5.77,
+          "turnover_amount": 669000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-05-14",
+          "close": 5.76,
+          "turnover_amount": 672000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-05-15",
+          "close": 5.75,
+          "turnover_amount": 675000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-05-16",
+          "close": 5.74,
+          "turnover_amount": 678000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-05-17",
+          "close": 5.73,
+          "turnover_amount": 681000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-05-18",
+          "close": 5.72,
+          "turnover_amount": 684000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-05-19",
+          "close": 5.71,
+          "turnover_amount": 687000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-05-20",
+          "close": 5.7,
+          "turnover_amount": 690000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-05-21",
+          "close": 5.69,
+          "turnover_amount": 693000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-05-22",
+          "close": 5.68,
+          "turnover_amount": 696000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-05-23",
+          "close": 5.67,
+          "turnover_amount": 699000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-05-24",
+          "close": 5.66,
+          "turnover_amount": 702000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-05-25",
+          "close": 5.65,
+          "turnover_amount": 705000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-05-26",
+          "close": 5.64,
+          "turnover_amount": 708000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-05-27",
+          "close": 5.63,
+          "turnover_amount": 711000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-05-28",
+          "close": 5.62,
+          "turnover_amount": 714000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-05-29",
+          "close": 5.61,
+          "turnover_amount": 717000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-05-30",
+          "close": 5.6,
+          "turnover_amount": 720000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-05-31",
+          "close": 5.59,
+          "turnover_amount": 723000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-06-01",
+          "close": 5.58,
+          "turnover_amount": 726000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-06-02",
+          "close": 5.57,
+          "turnover_amount": 729000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-06-03",
+          "close": 5.56,
+          "turnover_amount": 732000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-06-04",
+          "close": 5.55,
+          "turnover_amount": 735000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-06-05",
+          "close": 5.54,
+          "turnover_amount": 738000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-06-06",
+          "close": 5.53,
+          "turnover_amount": 741000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-06-07",
+          "close": 5.52,
+          "turnover_amount": 744000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-06-08",
+          "close": 5.51,
+          "turnover_amount": 747000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-06-09",
+          "close": 5.5,
+          "turnover_amount": 750000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-06-10",
+          "close": 5.49,
+          "turnover_amount": 753000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-06-11",
+          "close": 5.48,
+          "turnover_amount": 756000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-06-12",
+          "close": 5.47,
+          "turnover_amount": 759000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-06-13",
+          "close": 5.46,
+          "turnover_amount": 762000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-06-14",
+          "close": 5.45,
+          "turnover_amount": 765000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-06-15",
+          "close": 5.44,
+          "turnover_amount": 768000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-06-16",
+          "close": 5.43,
+          "turnover_amount": 771000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-06-17",
+          "close": 5.42,
+          "turnover_amount": 774000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-06-18",
+          "close": 5.41,
+          "turnover_amount": 777000000.0,
+          "turnover_rate": 0.015
+        },
+        {
+          "date": "2026-06-19",
+          "close": 5.4,
+          "turnover_amount": 780000000.0,
+          "turnover_rate": 0.015
+        }
+      ]
+    }
+  ]
+}
