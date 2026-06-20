@@ -674,16 +674,18 @@ packages/fundamentalscreener/tests/test_cli.py
 | 状态 | 规则 |
 | --- | --- |
 | `strong` | `return_5d > 0` 且 `return_20d > 0` 且 `relative_return > 0` |
-| `improving` | `return_5d > 0` 且 `turnover_amount_change > 0` 且不满足 `strong` |
-| `overheated` | `return_20d` 在样本前 20% 且 `return_5d` 在样本前 20% |
 | `low_level_active` | `return_60d <= 0` 且 `return_5d > 0` 且 `turnover_amount_change > 0` |
+| `improving` | `return_5d > 0` 且 `turnover_amount_change > 0` 且不满足 `strong`、不满足 `low_level_active` |
+| `overheated` | `return_20d` 在样本前 20% 且 `return_5d` 在样本前 20% |
 | `neutral` | 其他 |
 
 如果多个规则同时命中，优先级：
 
 ```text
-overheated -> strong -> improving -> low_level_active -> neutral
+overheated -> strong -> low_level_active -> improving -> neutral
 ```
+
+`low_level_active` 放在 `improving` 之前，是为了让"60 日仍弱、近 5 日上涨并放量"的早期低位信号不被通用的 `improving` 抢占。
 
 ### DoD
 

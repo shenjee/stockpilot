@@ -37,6 +37,7 @@ from .schema import (
     SectorsPayload,
     ValuationsPayload,
 )
+from .sector_rotation import compute_sector_rotation, sort_entries
 
 
 # ---------------------------------------------------------------------------
@@ -71,15 +72,28 @@ def _add_classification_arg(parser: argparse.ArgumentParser) -> None:
 
 
 def _parse_periods(raw: Optional[str]) -> List[int]:
+    """解析 ``--periods`` 为正整数列表。
+
+    Skill/CLI 调用方不应在 stdout 上看到 Python traceback，因此非法值统一通过
+    ``SystemExit`` 报错（argparse 会自动写入 stderr，退出码 2）。
+    """
+
     if not raw:
         return list(DEFAULT_PERIODS)
     parts = [p.strip() for p in raw.split(",") if p.strip()]
     out: List[int] = []
     for p in parts:
         try:
-            out.append(int(p))
+            value = int(p)
         except ValueError as exc:
-            raise SystemExit(f"invalid --periods value: {p!r}") from exc
+            raise SystemExit(f"invalid --periods value: {p!r} (must be a positive integer)") from exc
+        if value <= 0:
+            raise SystemExit(
+                f"invalid --periods value: {p!r} (must be a positive integer)"
+            )
+        out.append(value)
+    if not out:
+        raise SystemExit("invalid --periods value: (must contain at least one positive integer)")
     return out
 
 
@@ -100,7 +114,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_sectors = sub.add_parser("sectors", help="板块轮动指标。")
     _add_common_args(p_sectors)
     _add_classification_arg(p_sectors)
-    p_sectors.add_argument("--benchmark", default=DEFAULT_BENCHMARK)
+    p_sectors.add_argument(
+        "--benchmark",
+        default=None,
+        help="基准指数 ID。Phase 1 必须与 fixture 中 benchmark.id 一致；缺省时使用 fixture 值。",
+    )
     p_sectors.add_argument("--periods", default=None, help="逗号分隔的整数周期列表，默认 1,5,20,60。")
     p_sectors.add_argument("--sort", default=DEFAULT_SECTOR_SORT, choices=SUPPORTED_SECTOR_SORTS)
     p_sectors.add_argument("--top", type=int, default=DEFAULT_TOP)
@@ -110,7 +128,11 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common_args(p_detail)
     _add_classification_arg(p_detail)
     p_detail.add_argument("--sector", required=True, help="板块 sector_id 或 sector_name。")
-    p_detail.add_argument("--benchmark", default=DEFAULT_BENCHMARK)
+    p_detail.add_argument(
+        "--benchmark",
+        default=None,
+        help="基准指数 ID。Phase 1 必须与 fixture 中 benchmark.id 一致；缺省时使用 fixture 值。",
+    )
     p_detail.add_argument("--periods", default=None)
 
     # companies
@@ -137,7 +159,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_screen = sub.add_parser("screen", help="完整筛选编排。")
     _add_common_args(p_screen)
     _add_classification_arg(p_screen)
-    p_screen.add_argument("--benchmark", default=DEFAULT_BENCHMARK)
+    p_screen.add_argument(
+        "--benchmark",
+        default=None,
+        help="基准指数 ID。Phase 1 必须与 fixture 中 benchmark.id 一致；缺省时使用 fixture 值。",
+    )
     p_screen.add_argument("--sector-top", dest="sector_top", type=int, default=10)
     p_screen.add_argument("--company-top", dest="company_top", type=int, default=5)
 
@@ -182,6 +208,39 @@ def _resolve_classification(
     return DEFAULT_CLASSIFICATION_SYSTEM
 
 
+class BenchmarkMismatchError(Exception):
+    """显式 ``--benchmark`` 与 fixture 内 benchmark.id 不一致。"""
+
+
+def _resolve_benchmark(
+    explicit: Optional[str], repo: Optional[FixtureRepository]
+) -> str:
+    """决定权威 benchmark id，并阻止"显示一个基准、计算另一个"的不一致。
+
+    Phase 1 只支持 fixture 内置的单个基准：
+    - 没传 ``--benchmark`` 时，返回 fixture 的 ``benchmark.id``。
+    - 传了 ``--benchmark`` 但 fixture 没有可用 ID 时，返回参数值，仅作为字段透传。
+    - 传了 ``--benchmark`` 且与 fixture ID 不一致时，抛
+      ``BenchmarkMismatchError``，由 ``main()`` 统一转成退出码 2。
+    """
+
+    fixture_id: Optional[str] = None
+    if repo is not None:
+        snap = repo.load_snapshot()
+        fixture_id = snap.benchmark.id or None
+
+    if not explicit:
+        if fixture_id:
+            return fixture_id
+        return DEFAULT_BENCHMARK
+
+    if fixture_id and explicit != fixture_id:
+        raise BenchmarkMismatchError(
+            f"benchmark_mismatch: --benchmark={explicit!r} but fixture benchmark.id={fixture_id!r}"
+        )
+    return explicit
+
+
 def _now_iso() -> str:
     tz = timezone(timedelta(hours=8))
     return datetime.now(tz).replace(microsecond=0).isoformat()
@@ -198,7 +257,7 @@ def _cmd_sectors(args: argparse.Namespace) -> str:
         command="sectors",
         date=_resolve_date(args.date, repo),
         classification_system=_resolve_classification(args.classification_system, repo),
-        benchmark=args.benchmark,
+        benchmark=_resolve_benchmark(args.benchmark, repo),
         sort=args.sort,
         periods=_parse_periods(args.periods),
         sectors=[],
@@ -208,8 +267,14 @@ def _cmd_sectors(args: argparse.Namespace) -> str:
     if repo is None:
         payload.warnings.append("no_data_source: pass --fixture to load market data")
     else:
-        # Phase 0 仅校验 fixture 可加载，不计算业务字段。
-        repo.load_snapshot()
+        snapshot = repo.load_snapshot()
+        result = compute_sector_rotation(snapshot, periods=tuple(payload.periods))
+        ordered = sort_entries(result.sectors, args.sort)
+        if args.top is not None and args.top >= 0:
+            ordered = ordered[: args.top]
+        payload.sectors = list(ordered)
+        payload.chart_series = list(result.chart_series)
+        payload.warnings.extend(result.warnings)
     return format_output(payload.to_dict(), args.fmt)
 
 
@@ -219,7 +284,7 @@ def _cmd_sector_detail(args: argparse.Namespace) -> str:
         command="sector-detail",
         date=_resolve_date(args.date, repo),
         classification_system=_resolve_classification(args.classification_system, repo),
-        benchmark=args.benchmark,
+        benchmark=_resolve_benchmark(args.benchmark, repo),
         sort="return_1d",
         periods=_parse_periods(args.periods),
         sectors=[],
@@ -228,10 +293,24 @@ def _cmd_sector_detail(args: argparse.Namespace) -> str:
     )
     if repo is None:
         payload.warnings.append("no_data_source: pass --fixture to load market data")
-    else:
-        target = repo.find_sector(args.sector)
-        if target is None:
-            payload.warnings.append(f"sector_not_found: {args.sector}")
+        return format_output(payload.to_dict(), args.fmt)
+
+    snapshot = repo.load_snapshot()
+    target = repo.find_sector(args.sector)
+    if target is None:
+        payload.warnings.append(f"sector_not_found: {args.sector}")
+        return format_output(payload.to_dict(), args.fmt)
+
+    result = compute_sector_rotation(snapshot, periods=tuple(payload.periods))
+    target_entries = [e for e in result.sectors if e.sector_id == target.sector_id]
+    target_series = [
+        s
+        for s in result.chart_series
+        if s.type == "benchmark" or s.series_id == target.sector_id
+    ]
+    payload.sectors = target_entries
+    payload.chart_series = target_series
+    payload.warnings.extend(result.warnings)
     return format_output(payload.to_dict(), args.fmt)
 
 
@@ -305,7 +384,7 @@ def _cmd_screen(args: argparse.Namespace) -> str:
         command="screen",
         date=_resolve_date(args.date, repo),
         classification_system=_resolve_classification(args.classification_system, repo),
-        benchmark=args.benchmark,
+        benchmark=_resolve_benchmark(args.benchmark, repo),
         selected_sectors=[],
         candidates=CandidatesPayload(),
         warnings=warnings,
@@ -340,6 +419,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         output = handler(args)
     except FileNotFoundError as exc:
         sys.stderr.write(f"fixture_not_found: {exc}\n")
+        return 2
+    except BenchmarkMismatchError as exc:
+        sys.stderr.write(f"{exc}\n")
         return 2
     sys.stdout.write(output)
     if not output.endswith("\n"):
