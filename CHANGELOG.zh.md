@@ -1,6 +1,6 @@
 # 变更日志
 
-Stock Pilot Skills 的所有重要变更都会记录在这里。
+StockPilot 的所有重要变更都会记录在这里。
 
 ## [1.2.0] - 2026-06-15
 
@@ -15,7 +15,7 @@ Stock Pilot Skills 的所有重要变更都会记录在这里。
 
 ## [1.0.0] - 2026-06-06
 
-首次发布 Stock Pilot skill。
+首次发布 StockPilot skill。
 
 ### 新增
 

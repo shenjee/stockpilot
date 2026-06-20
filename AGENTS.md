@@ -1,6 +1,6 @@
 # AGENT.md
 
-This file gives coding agents the minimum repo-specific context needed to work safely and efficiently in `stockpilotskills`.
+This file gives coding agents the minimum repo-specific context needed to work safely and efficiently in `stockpilot`.
 
 ## Scope
 

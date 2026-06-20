@@ -2,7 +2,7 @@
 
 ## 1. 文档目的
 
-本文档描述 `stockpilotskills` 当前已落地的软件架构，重点覆盖以下两个重构热点：
+本文档描述 `stockpilot` 当前已落地的软件架构，重点覆盖以下两个重构热点：
 
 - `apps/chan-streamlit`
 - `skills/china-stock-analysis/scripts`

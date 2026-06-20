@@ -3,7 +3,7 @@ import sys
 import json
 from pathlib import Path
 
-ROOT = Path("/Users/jishen/development/stockpilotskills")
+ROOT = Path("/Users/jishen/development/stockpilot")
 sys.path.insert(0, str(ROOT / "packages"))
 sys.path.insert(0, str(ROOT / "skills" / "china-stock-analysis" / "scripts"))
 

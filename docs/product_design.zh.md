@@ -680,10 +680,10 @@ stock-portfolio-pilot
 
 ## 8. 建议目录结构
 
-本仓库是 Stock Pilot skill collection。仓库级设计文档放在 `docs/`，每个可安装 skill 放在 `skills/<skill-name>/`，项目自有适配层放在 `packages/`，可视化应用放在 `apps/`：
+本仓库是 StockPilot 产品代码库。仓库级设计文档放在 `docs/`，每个可安装 skill 放在 `skills/<skill-name>/`，项目自有适配层放在 `packages/`，可视化应用放在 `apps/`，可复用 CLI/core 能力应在这些消费者之间共享：
 
 ```text
-stockpilotskills/
+stockpilot/
 ├── README.md
 ├── docs/
 │   ├── product_design.md

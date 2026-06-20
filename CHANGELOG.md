@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Stock Pilot Skills are documented here.
+All notable changes to StockPilot are documented here.
 
 ## [1.2.0] - 2026-06-15
 

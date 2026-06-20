@@ -680,10 +680,10 @@ Split when:
 
 ## 8. Suggested Directory Structure
 
-This repository is a Stock Pilot skill collection. Repository-level design documents stay under `docs/`, installable skills stay under `skills/<skill-name>/`, project-owned adapters stay under `packages/`, and visualization apps stay under `apps/`:
+This repository is the StockPilot product codebase. Repository-level design documents stay under `docs/`, installable skills stay under `skills/<skill-name>/`, project-owned adapters stay under `packages/`, visualization apps stay under `apps/`, and reusable CLI/core capabilities should remain shared across these consumers:
 
 ```text
-stockpilotskills/
+stockpilot/
 ├── README.md
 ├── docs/
 │   ├── product_design.md

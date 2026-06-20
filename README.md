@@ -1,8 +1,8 @@
-# Stock Pilot Skills
+# StockPilot
 
-Stock Pilot Skills is a collection of Agent Skills for stock-focused workflows. The skills are intended to work with clients that support the `SKILL.md` skill format, including OpenClaw, Codex, and Claude.
+StockPilot is the core project for stock-focused analysis workflows. It contains reusable analysis packages, CLI modules, local validation apps, installable agent skills, and future agent-facing applications.
 
-The repository is organized as a skill collection. Each installable skill lives under `skills/<skill-name>/` and contains its own `SKILL.md`, scripts, references, and assets.
+The repository is organized as a product codebase, not only a skill collection. Installable skills live under `skills/<skill-name>/`, reusable Python packages live under `packages/`, local apps live under `apps/`, and CLI capabilities should be exposed through shared core logic instead of being duplicated in skills or apps.
 
 ## Skills
 
@@ -35,7 +35,7 @@ See [CHANGELOG.md](CHANGELOG.md).
 ## Repository Layout
 
 ```text
-stockpilotskills/
+stockpilot/
 |-- README.md
 |-- CHANGELOG.md
 |-- docs/
