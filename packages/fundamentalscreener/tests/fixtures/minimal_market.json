@@ -2441,5 +2441,75 @@
         }
       ]
     }
+  ],
+  "financials": [
+    {
+      "code": "002371",
+      "name": "示例公司A",
+      "revenue_yoy": 0.18,
+      "net_profit_yoy": 0.25,
+      "deducted_net_profit_yoy": 0.21,
+      "gross_margin": 0.36,
+      "net_margin": 0.12,
+      "roe": 0.14,
+      "operating_cashflow_to_profit": 1.2,
+      "free_cashflow": 1000000000.0,
+      "debt_to_asset": 0.42,
+      "interest_bearing_debt_ratio": 0.18,
+      "accounts_receivable_yoy": 0.10,
+      "inventory_yoy": 0.08,
+      "gross_margin_yoy_change": 0.01
+    },
+    {
+      "code": "600584",
+      "name": "示例公司B",
+      "revenue_yoy": 0.05,
+      "net_profit_yoy": 0.20,
+      "deducted_net_profit_yoy": 0.18,
+      "gross_margin": 0.28,
+      "net_margin": 0.05,
+      "roe": 0.07,
+      "operating_cashflow_to_profit": 0.30,
+      "free_cashflow": -100000000.0,
+      "debt_to_asset": 0.50,
+      "interest_bearing_debt_ratio": 0.25,
+      "accounts_receivable_yoy": 0.40,
+      "inventory_yoy": 0.10,
+      "gross_margin_yoy_change": -0.03
+    },
+    {
+      "code": "000001",
+      "name": "示例公司C",
+      "revenue_yoy": 0.10,
+      "net_profit_yoy": 0.50,
+      "deducted_net_profit_yoy": 0.05,
+      "gross_margin": 0.22,
+      "net_margin": 0.03,
+      "roe": 0.04,
+      "operating_cashflow_to_profit": 1.0,
+      "free_cashflow": -500000000.0,
+      "debt_to_asset": 0.75,
+      "interest_bearing_debt_ratio": 0.40,
+      "accounts_receivable_yoy": 0.12,
+      "inventory_yoy": 0.40,
+      "gross_margin_yoy_change": 0.00
+    },
+    {
+      "code": "000002",
+      "name": "示例公司D",
+      "revenue_yoy": 0.08,
+      "net_profit_yoy": -0.05,
+      "deducted_net_profit_yoy": -0.10,
+      "gross_margin": 0.20,
+      "net_margin": 0.02,
+      "roe": 0.05,
+      "operating_cashflow_to_profit": 0.60,
+      "free_cashflow": 200000000.0,
+      "debt_to_asset": 0.55,
+      "interest_bearing_debt_ratio": 0.30,
+      "accounts_receivable_yoy": 0.10,
+      "inventory_yoy": 0.05,
+      "gross_margin_yoy_change": -0.05
+    }
   ]
 }

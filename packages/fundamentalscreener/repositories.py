@@ -69,6 +69,58 @@ class CompanyData:
 
 
 @dataclass
+class FinancialData:
+    """fixture 中单家公司的财务质量指标。
+
+    字段与 docs/fundamental_screener_phase_plan.md §7.3 / §15 对齐。
+    所有比例字段都是小数（0.18 表示 18%），便于直接参与计算。
+
+    ``gross_margin_yoy_change`` 是可选字段：MVP 不要求所有数据源都有，缺失时
+    ``gross_margin_decline`` flag 跳过判定（不报误警）。
+    """
+
+    code: str
+    revenue_yoy: Optional[float] = None
+    net_profit_yoy: Optional[float] = None
+    deducted_net_profit_yoy: Optional[float] = None
+    gross_margin: Optional[float] = None
+    net_margin: Optional[float] = None
+    roe: Optional[float] = None
+    operating_cashflow_to_profit: Optional[float] = None
+    free_cashflow: Optional[float] = None
+    debt_to_asset: Optional[float] = None
+    interest_bearing_debt_ratio: Optional[float] = None
+    accounts_receivable_yoy: Optional[float] = None
+    inventory_yoy: Optional[float] = None
+    gross_margin_yoy_change: Optional[float] = None
+    name: Optional[str] = None  # 可选：fixture 不传时由 CompanyData 兜底
+
+    @classmethod
+    def from_dict(cls, raw: Dict[str, Any]) -> "FinancialData":
+        def _opt(name: str) -> Optional[float]:
+            value = raw.get(name)
+            return float(value) if value is not None else None
+
+        return cls(
+            code=str(raw["code"]),
+            revenue_yoy=_opt("revenue_yoy"),
+            net_profit_yoy=_opt("net_profit_yoy"),
+            deducted_net_profit_yoy=_opt("deducted_net_profit_yoy"),
+            gross_margin=_opt("gross_margin"),
+            net_margin=_opt("net_margin"),
+            roe=_opt("roe"),
+            operating_cashflow_to_profit=_opt("operating_cashflow_to_profit"),
+            free_cashflow=_opt("free_cashflow"),
+            debt_to_asset=_opt("debt_to_asset"),
+            interest_bearing_debt_ratio=_opt("interest_bearing_debt_ratio"),
+            accounts_receivable_yoy=_opt("accounts_receivable_yoy"),
+            inventory_yoy=_opt("inventory_yoy"),
+            gross_margin_yoy_change=_opt("gross_margin_yoy_change"),
+            name=(str(raw["name"]) if raw.get("name") is not None else None),
+        )
+
+
+@dataclass
 class MarketSnapshot:
     """fixture 加载后的市场快照。"""
 
@@ -77,6 +129,7 @@ class MarketSnapshot:
     benchmark: BenchmarkData
     sectors: List[SectorData] = field(default_factory=list)
     companies: List[CompanyData] = field(default_factory=list)
+    financials: List[FinancialData] = field(default_factory=list)
 
 
 class Repository:
@@ -152,6 +205,7 @@ class FixtureRepository(Repository):
             benchmark=benchmark,
             sectors=sectors,
             companies=companies,
+            financials=[FinancialData.from_dict(f) for f in raw.get("financials", [])],
         )
         self._snapshot = snapshot
         return snapshot
@@ -180,11 +234,27 @@ class FixtureRepository(Repository):
         index = {c.code: c for c in self.load_snapshot().companies}
         return [index[code] for code in wanted if code in index]
 
+    def get_financials_by_codes(
+        self, codes: Iterable[str]
+    ) -> List["FinancialData"]:
+        """按 codes 顺序返回财务数据；缺失的 code 直接跳过。
+
+        与 ``get_companies_by_codes`` 一致：调用方负责处理"少给了某个 code"
+        的提示，repository 不写 warning。
+        """
+
+        wanted = [c.strip() for c in codes if c and c.strip()]
+        if not wanted:
+            return []
+        index = {f.code: f for f in self.load_snapshot().financials}
+        return [index[code] for code in wanted if code in index]
+
 
 __all__ = [
     "BenchmarkData",
     "CompanyData",
     "DailyBar",
+    "FinancialData",
     "FixtureRepository",
     "MarketSnapshot",
     "Repository",

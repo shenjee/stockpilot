@@ -747,15 +747,15 @@ combined_score =
 
 ### 必须实现
 
-- [ ] `financial_quality.py`。
-- [ ] `financials --codes <comma_separated_codes>`。
-- [ ] 输出 `revenue_yoy`、`net_profit_yoy`、`deducted_net_profit_yoy`。
-- [ ] 输出 `gross_margin`、`net_margin`、`roe`。
-- [ ] 输出 `operating_cashflow_to_profit`、`free_cashflow`。
-- [ ] 输出 `debt_to_asset`、`interest_bearing_debt_ratio`。
-- [ ] 输出 `accounts_receivable_yoy`、`inventory_yoy`。
-- [ ] 输出 `score`。
-- [ ] 输出 `abnormal_flags`。
+- [x] `financial_quality.py`。
+- [x] `financials --codes <comma_separated_codes>`。
+- [x] 输出 `revenue_yoy`、`net_profit_yoy`、`deducted_net_profit_yoy`。
+- [x] 输出 `gross_margin`、`net_margin`、`roe`。
+- [x] 输出 `operating_cashflow_to_profit`、`free_cashflow`。
+- [x] 输出 `debt_to_asset`、`interest_bearing_debt_ratio`。
+- [x] 输出 `accounts_receivable_yoy`、`inventory_yoy`。
+- [x] 输出 `score`。
+- [x] 输出 `abnormal_flags`。
 
 ### 异常规则第一版
 
@@ -770,9 +770,9 @@ combined_score =
 
 ### DoD
 
-- [ ] `financials --codes 002371,600584 --format json` 正常。
-- [ ] 缺失数据输出 `warnings`，不导致整条命令失败。
-- [ ] 测试覆盖至少 3 个异常 flag。
+- [x] `financials --codes 002371,600584 --format json` 正常。
+- [x] 缺失数据输出 `warnings`，不导致整条命令失败。
+- [x] 测试覆盖至少 3 个异常 flag。
 
 ## 16. Phase 4：估值对比
 

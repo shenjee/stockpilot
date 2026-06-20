@@ -20,16 +20,19 @@ from .config import (
     DEFAULT_BENCHMARK,
     DEFAULT_CLASSIFICATION_SYSTEM,
     DEFAULT_COMPANY_SORT,
+    DEFAULT_FINANCIAL_SORT,
     DEFAULT_FORMAT,
     DEFAULT_PERIODS,
     DEFAULT_SECTOR_SORT,
     DEFAULT_TOP,
     SUPPORTED_CLASSIFICATION_SYSTEMS,
     SUPPORTED_COMPANY_SORTS,
+    SUPPORTED_FINANCIAL_SORTS,
     SUPPORTED_FORMATS,
     SUPPORTED_SECTOR_SORTS,
 )
 from .company_ranking import compute_company_ranking, sort_companies
+from .financial_quality import compute_financial_quality, sort_financials
 from .formatting import format_output
 from .repositories import FixtureRepository
 from .schema import (
@@ -163,7 +166,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_fin = sub.add_parser("financials", help="财务质量横向对比。")
     _add_common_args(p_fin)
     p_fin.add_argument("--codes", default=None, help="逗号分隔的股票代码。")
-    p_fin.add_argument("--sort", default="score")
+    p_fin.add_argument(
+        "--sort",
+        default=DEFAULT_FINANCIAL_SORT,
+        choices=SUPPORTED_FINANCIAL_SORTS,
+        help="排序字段，默认 score。",
+    )
 
     # valuations
     p_val = sub.add_parser("valuations", help="估值横向对比。")
@@ -368,15 +376,24 @@ def _cmd_companies(args: argparse.Namespace) -> str:
 def _cmd_financials(args: argparse.Namespace) -> str:
     repo = _load_repo(args.fixture)
     warnings: List[str] = []
+    companies: List = []
+    codes = _parse_codes(args.codes)
     if repo is None:
         warnings.append("no_data_source: pass --fixture to load market data")
-    codes = _parse_codes(args.codes)
     if not codes:
         warnings.append("no_codes_provided: pass --codes A,B,C")
+
+    if repo is not None and codes:
+        snapshot = repo.load_snapshot()
+        result = compute_financial_quality(snapshot, codes)
+        ordered = sort_financials(result.companies, args.sort)
+        companies = list(ordered)
+        warnings.extend(result.warnings)
+
     payload = FinancialsPayload(
         command="financials",
         date=_resolve_date(args.date, repo),
-        companies=[],
+        companies=companies,
         warnings=warnings,
     )
     return format_output(payload.to_dict(), args.fmt)

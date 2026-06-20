@@ -264,6 +264,130 @@ def _csv_value(value: Any) -> str:
     return str(value)
 
 
+def _format_financials_markdown(payload: Dict[str, Any]) -> str:
+    date = payload.get("date", "")
+    companies = payload.get("companies") or []
+    warnings = payload.get("warnings") or []
+
+    lines: List[str] = []
+    lines.append("# fundamental-screener: financials")
+    lines.append("")
+    lines.append(f"- date: `{date}`")
+    lines.append("")
+
+    if companies:
+        headers = [
+            "code",
+            "name",
+            "rev_yoy",
+            "np_yoy",
+            "deducted_np_yoy",
+            "gross_margin",
+            "net_margin",
+            "roe",
+            "ocf/profit",
+            "fcf",
+            "debt/asset",
+            "ib_debt_ratio",
+            "ar_yoy",
+            "inv_yoy",
+            "score",
+            "abnormal_flags",
+        ]
+        rows: List[List[str]] = []
+        for c in companies:
+            rows.append(
+                [
+                    _fmt_str(c.get("code")),
+                    _fmt_str(c.get("name")),
+                    _fmt_pct(c.get("revenue_yoy")),
+                    _fmt_pct(c.get("net_profit_yoy")),
+                    _fmt_pct(c.get("deducted_net_profit_yoy")),
+                    _fmt_pct(c.get("gross_margin")),
+                    _fmt_pct(c.get("net_margin")),
+                    _fmt_pct(c.get("roe")),
+                    _fmt_float(c.get("operating_cashflow_to_profit"), 2),
+                    _fmt_float(c.get("free_cashflow"), 0),
+                    _fmt_pct(c.get("debt_to_asset")),
+                    _fmt_pct(c.get("interest_bearing_debt_ratio")),
+                    _fmt_pct(c.get("accounts_receivable_yoy")),
+                    _fmt_pct(c.get("inventory_yoy")),
+                    _fmt_float(c.get("score"), 2),
+                    ", ".join(c.get("abnormal_flags") or []) or "-",
+                ]
+            )
+        lines.append(_md_table(headers, rows))
+        lines.append("")
+    else:
+        lines.append("_no companies_")
+        lines.append("")
+
+    if warnings:
+        lines.append("## warnings")
+        lines.append("")
+        for w in warnings:
+            lines.append(f"- {w}")
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _format_financials_csv(payload: Dict[str, Any]) -> str:
+    """financials CSV：每行一家公司。
+
+    列顺序与 ``schema.FinancialEntry`` 一致；``abnormal_flags`` / ``warnings``
+    用 ``;`` 拼接为字符串列，缺失值留空，便于 Excel/Numbers 直接打开。CSV 不
+    输出顶层元信息，元信息从 JSON 输出取。
+    """
+
+    companies = payload.get("companies") or []
+    headers = [
+        "code",
+        "name",
+        "revenue_yoy",
+        "net_profit_yoy",
+        "deducted_net_profit_yoy",
+        "gross_margin",
+        "net_margin",
+        "roe",
+        "operating_cashflow_to_profit",
+        "free_cashflow",
+        "debt_to_asset",
+        "interest_bearing_debt_ratio",
+        "accounts_receivable_yoy",
+        "inventory_yoy",
+        "score",
+        "abnormal_flags",
+        "warnings",
+    ]
+    buf = io.StringIO()
+    writer = csv.writer(buf, lineterminator="\n")
+    writer.writerow(headers)
+    for c in companies:
+        writer.writerow(
+            [
+                _csv_value(c.get("code")),
+                _csv_value(c.get("name")),
+                _csv_value(c.get("revenue_yoy")),
+                _csv_value(c.get("net_profit_yoy")),
+                _csv_value(c.get("deducted_net_profit_yoy")),
+                _csv_value(c.get("gross_margin")),
+                _csv_value(c.get("net_margin")),
+                _csv_value(c.get("roe")),
+                _csv_value(c.get("operating_cashflow_to_profit")),
+                _csv_value(c.get("free_cashflow")),
+                _csv_value(c.get("debt_to_asset")),
+                _csv_value(c.get("interest_bearing_debt_ratio")),
+                _csv_value(c.get("accounts_receivable_yoy")),
+                _csv_value(c.get("inventory_yoy")),
+                _csv_value(c.get("score")),
+                ";".join(c.get("abnormal_flags") or []),
+                ";".join(c.get("warnings") or []),
+            ]
+        )
+    return buf.getvalue()
+
+
 def format_markdown(payload: Dict[str, Any]) -> str:
     """根据 payload 的 command 选择合适的 Markdown 渲染。"""
 
@@ -272,6 +396,8 @@ def format_markdown(payload: Dict[str, Any]) -> str:
         return _format_sectors_markdown(payload)
     if command == "companies":
         return _format_companies_markdown(payload)
+    if command == "financials":
+        return _format_financials_markdown(payload)
     date = payload.get("date", "")
     return (
         f"# fundamental-screener: {command}\n\n"
@@ -281,11 +407,14 @@ def format_markdown(payload: Dict[str, Any]) -> str:
 
 
 def format_csv(payload: Dict[str, Any]) -> str:
-    """CSV 输出。Phase 2 起为 ``companies`` 命令提供完整列表，其余命令仍占位。"""
+    """CSV 输出。Phase 2 起为 ``companies``、Phase 3 起为 ``financials`` 命令
+    提供完整列表，其余命令仍占位。"""
 
     command = payload.get("command", "")
     if command == "companies":
         return _format_companies_csv(payload)
+    if command == "financials":
+        return _format_financials_csv(payload)
     return f"# csv output not implemented for command={command} yet\n"
 
 

@@ -152,7 +152,9 @@ class CLISmokeTests(unittest.TestCase):
         self.assertEqual(d["command"], "financials")
         self.assertNotIn("classification_system", d)
         self.assertIn("warnings", d)
-        self.assertEqual(d["companies"], [])
+        # Phase 3 起 financials 已有真实计算。
+        codes = {c["code"] for c in d["companies"]}
+        self.assertEqual(codes, {"002371", "600584"})
 
     def test_valuations_command_omits_classification_system(self) -> None:
         d = _run(
@@ -606,6 +608,162 @@ class CLIPhase2CompaniesTests(unittest.TestCase):
         self.assertIsNone(d["sector_name"])
         self.assertEqual(d["companies"], [])
         self.assertTrue(any("sector_not_found" in w for w in d["warnings"]))
+
+
+class CLIPhase3FinancialsTests(unittest.TestCase):
+    """Phase 3: financials 命令真实计算、排序、缺失降级。"""
+
+    def test_financials_default_sort_is_score(self) -> None:
+        d = _run(
+            [
+                "financials",
+                "--fixture",
+                str(FIXTURE),
+                "--codes",
+                "002371,600584,000001,000002",
+                "--format",
+                "json",
+            ]
+        )
+        self.assertEqual(d["sort"] if "sort" in d else "score", "score")
+        scores = [c["score"] for c in d["companies"]]
+        self.assertEqual(scores, sorted(scores, reverse=True))
+
+    def test_financials_fixture_flags_are_detected(self) -> None:
+        # fixture 里 600584 的应收 yoy(0.40) - 营收 yoy(0.05) = 0.35 → receivable_growth_risk；
+        # OCF/profit=0.30 + net_profit_yoy=0.20 → weak_cashflow；
+        # gross_margin_yoy_change=-0.03 → gross_margin_decline。
+        d = _run(
+            [
+                "financials",
+                "--fixture",
+                str(FIXTURE),
+                "--codes",
+                "600584",
+                "--format",
+                "json",
+            ]
+        )
+        flags = set(d["companies"][0]["abnormal_flags"])
+        self.assertIn("weak_cashflow", flags)
+        self.assertIn("receivable_growth_risk", flags)
+        self.assertIn("gross_margin_decline", flags)
+
+    def test_financials_unknown_code_warns_top_level(self) -> None:
+        d = _run(
+            [
+                "financials",
+                "--fixture",
+                str(FIXTURE),
+                "--codes",
+                "002371,ZZZ",
+                "--format",
+                "json",
+            ]
+        )
+        codes = [c["code"] for c in d["companies"]]
+        self.assertEqual(codes, ["002371"])
+        self.assertTrue(any("code_not_found: ZZZ" in w for w in d["warnings"]))
+
+    def test_financials_no_codes_returns_warning(self) -> None:
+        d = _run(
+            [
+                "financials",
+                "--fixture",
+                str(FIXTURE),
+                "--format",
+                "json",
+            ]
+        )
+        self.assertEqual(d["companies"], [])
+        self.assertTrue(any("no_codes_provided" in w for w in d["warnings"]))
+
+    def test_financials_unknown_sort_rejected_by_argparse(self) -> None:
+        rc, out, err = _run_expect_failure(
+            [
+                "financials",
+                "--fixture",
+                str(FIXTURE),
+                "--codes",
+                "002371",
+                "--sort",
+                "unknown_field",
+                "--format",
+                "json",
+            ]
+        )
+        self.assertNotEqual(rc, 0)
+        self.assertEqual(out, "")
+
+    def test_financials_markdown_renders_table(self) -> None:
+        out = _run_text(
+            [
+                "financials",
+                "--fixture",
+                str(FIXTURE),
+                "--codes",
+                "002371,600584",
+                "--format",
+                "markdown",
+            ]
+        )
+        self.assertIn("# fundamental-screener: financials", out)
+        self.assertIn("002371", out)
+        self.assertIn("600584", out)
+        self.assertIn("abnormal_flags", out)
+        # 两个负债指标都应在表头中出现，避免人读表时漏掉关键风险指标。
+        self.assertIn("debt/asset", out)
+        self.assertIn("ib_debt_ratio", out)
+
+    def test_financials_csv_has_header_and_rows(self) -> None:
+        out = _run_text(
+            [
+                "financials",
+                "--fixture",
+                str(FIXTURE),
+                "--codes",
+                "002371,600584",
+                "--format",
+                "csv",
+            ]
+        )
+        lines = [ln for ln in out.splitlines() if ln.strip()]
+        # 不能再退化为占位输出。
+        self.assertNotIn("not implemented", lines[0])
+        # 表头与 schema.FinancialEntry 字段顺序一致（含 interest_bearing_debt_ratio）。
+        header = lines[0]
+        self.assertTrue(
+            header.startswith(
+                "code,name,revenue_yoy,net_profit_yoy,deducted_net_profit_yoy,"
+                "gross_margin,net_margin,roe,operating_cashflow_to_profit,"
+                "free_cashflow,debt_to_asset,interest_bearing_debt_ratio,"
+                "accounts_receivable_yoy,inventory_yoy,score,abnormal_flags,warnings"
+            )
+        )
+        self.assertEqual(len(lines), 1 + 2)  # header + 2 公司
+        self.assertTrue(any(ln.startswith("002371,") for ln in lines))
+        self.assertTrue(any(ln.startswith("600584,") for ln in lines))
+
+    def test_financials_csv_flags_joined_with_semicolon(self) -> None:
+        # 600584 在 fixture 中至少触发 weak_cashflow / receivable_growth_risk /
+        # gross_margin_decline 三个 flag，CSV 列里应以 ';' 拼接，而不是被逗号
+        # 拆掉。
+        out = _run_text(
+            [
+                "financials",
+                "--fixture",
+                str(FIXTURE),
+                "--codes",
+                "600584",
+                "--format",
+                "csv",
+            ]
+        )
+        target = next(ln for ln in out.splitlines() if ln.startswith("600584,"))
+        self.assertIn("weak_cashflow", target)
+        self.assertIn("receivable_growth_risk", target)
+        self.assertIn("gross_margin_decline", target)
+        self.assertIn(";", target)
 
 
 if __name__ == "__main__":  # pragma: no cover
