@@ -25,11 +25,13 @@ from .config import (
     DEFAULT_PERIODS,
     DEFAULT_SECTOR_SORT,
     DEFAULT_TOP,
+    DEFAULT_VALUATION_SORT,
     SUPPORTED_CLASSIFICATION_SYSTEMS,
     SUPPORTED_COMPANY_SORTS,
     SUPPORTED_FINANCIAL_SORTS,
     SUPPORTED_FORMATS,
     SUPPORTED_SECTOR_SORTS,
+    SUPPORTED_VALUATION_SORTS,
 )
 from .company_ranking import compute_company_ranking, sort_companies
 from .financial_quality import compute_financial_quality, sort_financials
@@ -44,6 +46,7 @@ from .schema import (
     ValuationsPayload,
 )
 from .sector_rotation import compute_sector_rotation, sort_entries
+from .valuation import compute_valuation, sort_valuations
 
 
 # ---------------------------------------------------------------------------
@@ -177,7 +180,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_val = sub.add_parser("valuations", help="估值横向对比。")
     _add_common_args(p_val)
     p_val.add_argument("--codes", default=None, help="逗号分隔的股票代码。")
-    p_val.add_argument("--sort", default="score")
+    p_val.add_argument(
+        "--sort",
+        default=DEFAULT_VALUATION_SORT,
+        choices=SUPPORTED_VALUATION_SORTS,
+        help="排序字段，默认 score。",
+    )
 
     # screen
     p_screen = sub.add_parser("screen", help="完整筛选编排。")
@@ -402,15 +410,24 @@ def _cmd_financials(args: argparse.Namespace) -> str:
 def _cmd_valuations(args: argparse.Namespace) -> str:
     repo = _load_repo(args.fixture)
     warnings: List[str] = []
+    companies: List = []
+    codes = _parse_codes(args.codes)
     if repo is None:
         warnings.append("no_data_source: pass --fixture to load market data")
-    codes = _parse_codes(args.codes)
     if not codes:
         warnings.append("no_codes_provided: pass --codes A,B,C")
+
+    if repo is not None and codes:
+        snapshot = repo.load_snapshot()
+        result = compute_valuation(snapshot, codes)
+        ordered = sort_valuations(result.companies, args.sort)
+        companies = list(ordered)
+        warnings.extend(result.warnings)
+
     payload = ValuationsPayload(
         command="valuations",
         date=_resolve_date(args.date, repo),
-        companies=[],
+        companies=companies,
         warnings=warnings,
     )
     return format_output(payload.to_dict(), args.fmt)

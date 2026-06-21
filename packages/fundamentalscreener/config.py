@@ -131,6 +131,68 @@ FINANCIAL_ABNORMAL_FLAGS: Tuple[str, ...] = (
     "weak_core_profit",
 )
 
+# valuations 命令默认排序字段。
+DEFAULT_VALUATION_SORT: str = "score"
+
+# valuations 命令支持的排序字段。
+SUPPORTED_VALUATION_SORTS: Tuple[str, ...] = (
+    "score",
+    "pe",
+    "pb",
+    "ps",
+    "peg",
+    "dividend_yield",
+    "pe_percentile",
+    "pb_percentile",
+)
+
+# 估值评分各维度权重，与 docs §8.4 一致：
+#   pe_percentile 35 / pb_percentile / industry_valuation_position 合计 35 /
+#   peg(成长匹配) 20 / dividend_yield(股息) 10。
+# 这里把"历史估值分位分"拆成 pe_pct 与 pb_pct 等权（合计 35%）；
+# "行业相对估值分"使用 industry_valuation_position 映射（35%）；
+# 成长匹配分使用 peg 映射；股息分使用 dividend_yield 映射。
+VALUATION_SCORE_WEIGHTS: Tuple[Tuple[str, float], ...] = (
+    ("history_pe", 0.175),
+    ("history_pb", 0.175),
+    ("industry", 0.35),
+    ("growth_match", 0.20),
+    ("dividend", 0.10),
+)
+
+# 估值 label 规则阈值，与 docs §16 第一版规则对齐。
+VALUATION_LABEL_THRESHOLDS: Dict[str, float] = {
+    # low_need_quality_check: pe_pct < 0.35 或 pb_pct < 0.35
+    "low_pct_threshold": 0.35,
+    # fair: 0.35 <= pe_pct/pb_pct <= 0.70
+    "fair_lower": 0.35,
+    "fair_upper": 0.70,
+    # expensive: pe_pct > 0.80 或 pb_pct > 0.80
+    "expensive_pct_threshold": 0.80,
+    # expensive_but_supported: pe_pct/pb_pct 高位但 peg <= 1.5
+    "supported_peg_threshold": 1.5,
+}
+
+# label 优先级：not_applicable > expensive_but_supported > expensive >
+# low_need_quality_check > fair。docs §16 第一版规则。
+# expensive_but_supported 与 expensive 在新规则里互斥（同一公司只可能命中其
+# 中之一），优先级仅用于多规则同时命中时的兜底裁决。
+VALUATION_LABEL_PRIORITY: Tuple[str, ...] = (
+    "not_applicable",
+    "expensive_but_supported",
+    "expensive",
+    "low_need_quality_check",
+    "fair",
+)
+
+# industry_valuation_position → 行业相对估值分映射。
+INDUSTRY_POSITION_SCORE: Dict[str, float] = {
+    "low": 80.0,
+    "mid": 60.0,
+    "high": 30.0,
+    "unknown": 50.0,
+}
+
 # 板块状态枚举。顺序与 sector_rotation._resolve_state 的优先级一致：
 # overheated > strong > low_level_active > improving > neutral。
 SECTOR_STATES: Tuple[str, ...] = (
@@ -167,14 +229,20 @@ __all__ = [
     "DEFAULT_PERIODS",
     "DEFAULT_SECTOR_SORT",
     "DEFAULT_TOP",
+    "DEFAULT_VALUATION_SORT",
     "FINANCIAL_ABNORMAL_FLAGS",
     "FINANCIAL_FLAG_THRESHOLDS",
     "FINANCIAL_SCORE_WEIGHTS",
+    "INDUSTRY_POSITION_SCORE",
     "SECTOR_STATES",
     "SUPPORTED_CLASSIFICATION_SYSTEMS",
     "SUPPORTED_COMPANY_SORTS",
     "SUPPORTED_FINANCIAL_SORTS",
     "SUPPORTED_FORMATS",
     "SUPPORTED_SECTOR_SORTS",
+    "SUPPORTED_VALUATION_SORTS",
     "VALUATION_LABELS",
+    "VALUATION_LABEL_PRIORITY",
+    "VALUATION_LABEL_THRESHOLDS",
+    "VALUATION_SCORE_WEIGHTS",
 ]

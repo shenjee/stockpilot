@@ -2511,5 +2511,55 @@
       "inventory_yoy": 0.05,
       "gross_margin_yoy_change": -0.05
     }
+  ],
+  "valuations": [
+    {
+      "code": "002371",
+      "name": "示例公司A",
+      "pe": 28.0,
+      "pb": 3.2,
+      "ps": 4.5,
+      "peg": 1.1,
+      "dividend_yield": 0.012,
+      "pe_percentile": 0.45,
+      "pb_percentile": 0.55,
+      "industry_valuation_position": "mid"
+    },
+    {
+      "code": "600584",
+      "name": "示例公司B",
+      "pe": 15.0,
+      "pb": 1.8,
+      "ps": 2.1,
+      "peg": null,
+      "dividend_yield": 0.028,
+      "pe_percentile": 0.20,
+      "pb_percentile": 0.30,
+      "industry_valuation_position": "low"
+    },
+    {
+      "code": "000001",
+      "name": "示例公司C",
+      "pe": 35.0,
+      "pb": 5.5,
+      "ps": 6.0,
+      "peg": 1.2,
+      "dividend_yield": 0.008,
+      "pe_percentile": 0.85,
+      "pb_percentile": 0.78,
+      "industry_valuation_position": "high"
+    },
+    {
+      "code": "000002",
+      "name": "示例公司D",
+      "pe": 60.0,
+      "pb": 8.5,
+      "ps": 9.0,
+      "peg": 2.5,
+      "dividend_yield": 0.005,
+      "pe_percentile": 0.90,
+      "pb_percentile": 0.85,
+      "industry_valuation_position": "high"
+    }
   ]
 }

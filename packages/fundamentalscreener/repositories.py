@@ -121,6 +121,51 @@ class FinancialData:
 
 
 @dataclass
+class ValuationData:
+    """fixture 中单家公司的估值指标。
+
+    字段与 docs/fundamental_screener_phase_plan.md §7.4 / §16 对齐。``pe``、``pb``、
+    ``ps`` 是绝对倍数；``peg``、``dividend_yield``、``pe_percentile``、
+    ``pb_percentile`` 是小数；``industry_valuation_position`` 是枚举
+    ``low | mid | high | unknown``。
+    """
+
+    code: str
+    pe: Optional[float] = None
+    pb: Optional[float] = None
+    ps: Optional[float] = None
+    peg: Optional[float] = None
+    dividend_yield: Optional[float] = None
+    pe_percentile: Optional[float] = None
+    pb_percentile: Optional[float] = None
+    industry_valuation_position: Optional[str] = None
+    name: Optional[str] = None
+
+    @classmethod
+    def from_dict(cls, raw: Dict[str, Any]) -> "ValuationData":
+        def _opt(name: str) -> Optional[float]:
+            value = raw.get(name)
+            return float(value) if value is not None else None
+
+        return cls(
+            code=str(raw["code"]),
+            pe=_opt("pe"),
+            pb=_opt("pb"),
+            ps=_opt("ps"),
+            peg=_opt("peg"),
+            dividend_yield=_opt("dividend_yield"),
+            pe_percentile=_opt("pe_percentile"),
+            pb_percentile=_opt("pb_percentile"),
+            industry_valuation_position=(
+                str(raw["industry_valuation_position"])
+                if raw.get("industry_valuation_position") is not None
+                else None
+            ),
+            name=(str(raw["name"]) if raw.get("name") is not None else None),
+        )
+
+
+@dataclass
 class MarketSnapshot:
     """fixture 加载后的市场快照。"""
 
@@ -130,6 +175,7 @@ class MarketSnapshot:
     sectors: List[SectorData] = field(default_factory=list)
     companies: List[CompanyData] = field(default_factory=list)
     financials: List[FinancialData] = field(default_factory=list)
+    valuations: List[ValuationData] = field(default_factory=list)
 
 
 class Repository:
@@ -206,6 +252,7 @@ class FixtureRepository(Repository):
             sectors=sectors,
             companies=companies,
             financials=[FinancialData.from_dict(f) for f in raw.get("financials", [])],
+            valuations=[ValuationData.from_dict(v) for v in raw.get("valuations", [])],
         )
         self._snapshot = snapshot
         return snapshot
@@ -249,6 +296,17 @@ class FixtureRepository(Repository):
         index = {f.code: f for f in self.load_snapshot().financials}
         return [index[code] for code in wanted if code in index]
 
+    def get_valuations_by_codes(
+        self, codes: Iterable[str]
+    ) -> List["ValuationData"]:
+        """按 codes 顺序返回估值数据；缺失的 code 直接跳过。"""
+
+        wanted = [c.strip() for c in codes if c and c.strip()]
+        if not wanted:
+            return []
+        index = {v.code: v for v in self.load_snapshot().valuations}
+        return [index[code] for code in wanted if code in index]
+
 
 __all__ = [
     "BenchmarkData",
@@ -259,4 +317,5 @@ __all__ = [
     "MarketSnapshot",
     "Repository",
     "SectorData",
+    "ValuationData",
 ]

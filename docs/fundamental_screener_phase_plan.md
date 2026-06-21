@@ -782,35 +782,36 @@ combined_score =
 
 ### 必须实现
 
-- [ ] `valuation.py`。
-- [ ] `valuations --codes <comma_separated_codes>`。
-- [ ] 输出 `pe`、`pb`、`ps`、`peg`、`dividend_yield`。
-- [ ] 输出 `pe_percentile`、`pb_percentile`。
-- [ ] 输出 `industry_valuation_position`。
-- [ ] 输出 `score`。
-- [ ] 输出 `label`。
+- [x] `valuation.py`。
+- [x] `valuations --codes <comma_separated_codes>`。
+- [x] 输出 `pe`、`pb`、`ps`、`peg`、`dividend_yield`。
+- [x] 输出 `pe_percentile`、`pb_percentile`。
+- [x] 输出 `industry_valuation_position`。
+- [x] 输出 `score`。
+- [x] 输出 `label`。
 
 ### 标签规则第一版
 
 | label | 规则 |
 | --- | --- |
+| `not_applicable` | `pe`、`pb`、`pe_percentile`、`pb_percentile` 任一关键字段缺失或不适用 |
+| `expensive_but_supported` | `pe_percentile > 0.80` 或 `pb_percentile > 0.80`，且 `peg` 提供且 `peg <= 1.5` |
+| `expensive` | `pe_percentile > 0.80` 或 `pb_percentile > 0.80`，且 `peg` 缺失或 `peg > 1.5` |
 | `low_need_quality_check` | `pe_percentile < 0.35` 或 `pb_percentile < 0.35` |
 | `fair` | `0.35 <= pe_percentile <= 0.70` 且 `0.35 <= pb_percentile <= 0.70` |
-| `expensive_but_supported` | 估值分位高，但 `peg` 不为空且 `peg <= 1.5` |
-| `expensive` | `pe_percentile > 0.80` 或 `pb_percentile > 0.80` |
-| `not_applicable` | 关键估值字段缺失或不适用 |
 
-如果多个规则同时命中，优先级：
+说明：`expensive_but_supported` 是 `expensive` 的"成长可支撑"降级解释，
+两者互斥（同一公司只可能命中其中之一）。多规则命中时优先级：
 
 ```text
-not_applicable -> expensive -> expensive_but_supported -> low_need_quality_check -> fair
+not_applicable -> expensive_but_supported -> expensive -> low_need_quality_check -> fair
 ```
 
 ### DoD
 
-- [ ] `valuations --codes 002371,600584 --format json` 正常。
-- [ ] 不适用或缺失指标输出 `not_applicable` 和 `warnings`。
-- [ ] 不实现 DCF。
+- [x] `valuations --codes 002371,600584 --format json` 正常。
+- [x] 不适用或缺失指标输出 `not_applicable` 和 `warnings`。
+- [x] 不实现 DCF。
 
 ## 17. Phase 5：完整筛选编排
 
@@ -829,6 +830,10 @@ not_applicable -> expensive -> expensive_but_supported -> low_need_quality_check
 - [ ] 输出 `selected_sectors`。
 - [ ] 输出 `candidates.priority`、`candidates.watch`、`candidates.cautious`。
 - [ ] 输出完整原始指标、分项分数、flags、warnings。
+
+### Supplement
+
+- [ ] Phase 5 接入估值结果时，`label=not_applicable` 必须优先作为硬约束处理。即使 Phase 4 仍会在部分估值字段缺失时按可用分量计算 `score`，筛选编排也不能只按 `score` 排名而忽略 `not_applicable`。
 
 ### DoD
 

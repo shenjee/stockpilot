@@ -170,7 +170,8 @@ class CLISmokeTests(unittest.TestCase):
         )
         self.assertEqual(d["command"], "valuations")
         self.assertNotIn("classification_system", d)
-        self.assertEqual(d["companies"], [])
+        # Phase 4 起 valuations 已有真实计算。
+        self.assertEqual([c["code"] for c in d["companies"]], ["002371"])
 
     def test_screen_command_returns_candidates_groups(self) -> None:
         d = _run(
@@ -764,6 +765,152 @@ class CLIPhase3FinancialsTests(unittest.TestCase):
         self.assertIn("receivable_growth_risk", target)
         self.assertIn("gross_margin_decline", target)
         self.assertIn(";", target)
+
+
+class CLIPhase4ValuationsTests(unittest.TestCase):
+    """Phase 4: valuations 命令真实计算、label、markdown / csv。"""
+
+    def test_valuations_fixture_labels_cover_main_cases(self) -> None:
+        d = _run(
+            [
+                "valuations",
+                "--fixture",
+                str(FIXTURE),
+                "--codes",
+                "002371,600584,000001,000002",
+                "--format",
+                "json",
+            ]
+        )
+        labels = {c["code"]: c["label"] for c in d["companies"]}
+        # fixture 设计：A→fair, B→low_need_quality_check,
+        # C→expensive_but_supported, D→expensive。
+        self.assertEqual(labels["002371"], "fair")
+        self.assertEqual(labels["600584"], "low_need_quality_check")
+        self.assertEqual(labels["000001"], "expensive_but_supported")
+        self.assertEqual(labels["000002"], "expensive")
+
+    def test_valuations_default_sort_is_score(self) -> None:
+        d = _run(
+            [
+                "valuations",
+                "--fixture",
+                str(FIXTURE),
+                "--codes",
+                "002371,600584,000001,000002",
+                "--format",
+                "json",
+            ]
+        )
+        scores = [c["score"] for c in d["companies"]]
+        self.assertEqual(scores, sorted(scores, reverse=True))
+
+    def test_valuations_sort_by_pe_ascending(self) -> None:
+        d = _run(
+            [
+                "valuations",
+                "--fixture",
+                str(FIXTURE),
+                "--codes",
+                "002371,600584,000001,000002",
+                "--sort",
+                "pe",
+                "--format",
+                "json",
+            ]
+        )
+        pes = [c["pe"] for c in d["companies"]]
+        self.assertEqual(pes, sorted(pes))
+        self.assertEqual(d["companies"][0]["code"], "600584")  # pe=15 最低
+
+    def test_valuations_unknown_code_warns(self) -> None:
+        d = _run(
+            [
+                "valuations",
+                "--fixture",
+                str(FIXTURE),
+                "--codes",
+                "002371,ZZZ",
+                "--format",
+                "json",
+            ]
+        )
+        codes = [c["code"] for c in d["companies"]]
+        self.assertEqual(codes, ["002371"])
+        self.assertTrue(any("code_not_found: ZZZ" in w for w in d["warnings"]))
+
+    def test_valuations_no_codes_returns_warning(self) -> None:
+        d = _run(
+            [
+                "valuations",
+                "--fixture",
+                str(FIXTURE),
+                "--format",
+                "json",
+            ]
+        )
+        self.assertEqual(d["companies"], [])
+        self.assertTrue(any("no_codes_provided" in w for w in d["warnings"]))
+
+    def test_valuations_unknown_sort_rejected_by_argparse(self) -> None:
+        rc, out, err = _run_expect_failure(
+            [
+                "valuations",
+                "--fixture",
+                str(FIXTURE),
+                "--codes",
+                "002371",
+                "--sort",
+                "unknown_field",
+                "--format",
+                "json",
+            ]
+        )
+        self.assertNotEqual(rc, 0)
+        self.assertEqual(out, "")
+
+    def test_valuations_markdown_renders_table(self) -> None:
+        out = _run_text(
+            [
+                "valuations",
+                "--fixture",
+                str(FIXTURE),
+                "--codes",
+                "002371,000002",
+                "--format",
+                "markdown",
+            ]
+        )
+        self.assertIn("# fundamental-screener: valuations", out)
+        self.assertIn("002371", out)
+        self.assertIn("000002", out)
+        self.assertIn("label", out)
+        self.assertIn("industry_pos", out)
+
+    def test_valuations_csv_has_header_and_rows(self) -> None:
+        out = _run_text(
+            [
+                "valuations",
+                "--fixture",
+                str(FIXTURE),
+                "--codes",
+                "002371,600584",
+                "--format",
+                "csv",
+            ]
+        )
+        lines = [ln for ln in out.splitlines() if ln.strip()]
+        self.assertNotIn("not implemented", lines[0])
+        header = lines[0]
+        self.assertTrue(
+            header.startswith(
+                "code,name,pe,pb,ps,peg,dividend_yield,pe_percentile,pb_percentile,"
+                "industry_valuation_position,score,label,warnings"
+            )
+        )
+        self.assertEqual(len(lines), 1 + 2)
+        self.assertTrue(any(ln.startswith("002371,") for ln in lines))
+        self.assertTrue(any(ln.startswith("600584,") for ln in lines))
 
 
 if __name__ == "__main__":  # pragma: no cover
