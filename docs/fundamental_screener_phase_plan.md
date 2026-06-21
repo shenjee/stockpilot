@@ -919,28 +919,28 @@ not_applicable -> expensive_but_supported -> expensive -> low_need_quality_check
 
 ### 必须实现
 
-- [ ] 创建 `apps/fundamental-screener/app.py`。
-- [ ] 创建 `apps/fundamental-screener/README.md`。
-- [ ] 通过 core 或 CLI 获取 `sectors` 结果。
-- [ ] 绘制板块归一化走势曲线和基准线。
-- [ ] 展示板块指标结果表。
-- [ ] 支持表格点击/选择板块。
-- [ ] 展示板块内公司排名。
-- [ ] 展示财务质量横向对比。
-- [ ] 展示估值横向对比。
-- [ ] 展示异常 flags。
+- [x] 创建 `apps/fundamental-screener/app.py`。
+- [x] 创建 `apps/fundamental-screener/README.md`。
+- [x] 通过 core 或 CLI 获取 `sectors` 结果。
+- [x] 绘制板块归一化走势曲线和基准线。
+- [x] 展示板块指标结果表。
+- [x] 支持表格点击/选择板块。
+- [x] 展示板块内公司排名。
+- [x] 展示财务质量横向对比。
+- [x] 展示估值横向对比。
+- [x] 展示异常 flags。
 
 ### 禁止
 
-- [ ] 不在 Streamlit 中复制排序、评分、异常检测算法。
-- [ ] 不生成研报。
-- [ ] 不输出买卖建议。
+- [x] 不在 Streamlit 中复制排序、评分、异常检测算法。
+- [x] 不生成研报。
+- [x] 不输出买卖建议。
 
 ### DoD
 
-- [ ] `streamlit run apps/fundamental-screener/app.py` 可启动。
-- [ ] 页面能完成“板块 -> 公司 -> 财务/估值”的浏览。
-- [ ] 页面数据来自 core/CLI 输出。
+- [x] `streamlit run apps/fundamental-screener/app.py` 可启动。
+- [x] 页面能完成“板块 -> 公司 -> 财务/估值”的浏览。
+- [x] 页面数据来自 core/CLI 输出。
 
 ## 19. Phase 7：Skill 和日报集成
 
