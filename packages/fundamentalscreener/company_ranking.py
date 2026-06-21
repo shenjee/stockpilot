@@ -19,7 +19,9 @@ Phase 3/4 接入后的升级：
 - ``combined_score`` 改用 docs §14 的升级版权重：
   ``leader 0.20 / attention 0.20 / financial 0.35 / valuation 0.25``，
   缺失分量按可用权重重新归一（避免 fin/val 缺数据时整体分数归零）。
-- ``flags`` Phase 2 留空，硬伤判断仍由 Phase 5 编排负责。
+- ``flags`` 透传自 ``FinancialEntry.abnormal_flags``（如 ``weak_cashflow`` /
+  ``receivable_growth_risk`` / ``high_debt`` 等），缺少财务数据时为空列表；
+  ``valuation.label == "not_applicable"`` 的硬约束降组仍由 Phase 5 编排负责。
 - ``group`` 阈值沿用 Phase 2（priority/watch/cautious），本轮不动。
 
 数据缺失：单家公司缺关键列时对应字段为 None，并把可读 warning 写入 entry；
@@ -40,7 +42,7 @@ from .config import (
 )
 from .financial_quality import compute_financial_quality
 from .repositories import CompanyData, MarketSnapshot, SectorData
-from .schema import CompanyEntry
+from .schema import CompanyEntry, FinancialEntry, ValuationEntry
 from .valuation import compute_valuation
 
 
@@ -51,11 +53,18 @@ from .valuation import compute_valuation
 
 @dataclass
 class CompanyRankingResult:
-    """板块内公司排名结果。"""
+    """板块内公司排名结果。
+
+    除了 ``companies`` 列表本身，还顺带把本轮计算到的 ``FinancialEntry`` /
+    ``ValuationEntry`` 按 ``code`` 暴露出来。Phase 5 编排层据此把原始财务/
+    估值指标透传到 screen 候选，满足 docs §17 "所有分数可追溯" 的 DoD。
+    """
 
     sector_id: Optional[str] = None
     sector_name: Optional[str] = None
     companies: List[CompanyEntry] = field(default_factory=list)
+    financials: Dict[str, FinancialEntry] = field(default_factory=dict)
+    valuations: Dict[str, ValuationEntry] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
 
 
@@ -240,14 +249,11 @@ def compute_company_ranking(
     codes = [str(r["code"]) for r in raw_records]
     fin_result = compute_financial_quality(snapshot, codes)
     val_result = compute_valuation(snapshot, codes)
-    fin_score_index: Dict[str, Optional[float]] = {
-        e.code: e.score for e in fin_result.companies
+    fin_entry_index: Dict[str, FinancialEntry] = {
+        e.code: e for e in fin_result.companies
     }
-    val_score_index: Dict[str, Optional[float]] = {
-        e.code: e.score for e in val_result.companies
-    }
-    val_label_index: Dict[str, Optional[str]] = {
-        e.code: e.label for e in val_result.companies
+    val_entry_index: Dict[str, ValuationEntry] = {
+        e.code: e for e in val_result.companies
     }
 
     # ---- 构造 CompanyEntry ----
@@ -256,13 +262,15 @@ def compute_company_ranking(
         code = str(r["code"])
         leader_score = leader_norm[idx]
         attention_score = _attention_score(turnover_norm[idx], turnover_rate_norm[idx])
-        financial_quality_score = fin_score_index.get(code)
+        fin_entry = fin_entry_index.get(code)
+        val_entry = val_entry_index.get(code)
+        financial_quality_score = fin_entry.score if fin_entry is not None else None
 
         # 估值分量：label=not_applicable 表示关键字段缺失，分数虽然有数值
         # 但不可信，必须从 combined_score 排除，否则会让数据不完整的公司
         # 凭一个"看起来合理"的兜底分进入排名。
-        val_score_raw = val_score_index.get(code)
-        val_label = val_label_index.get(code)
+        val_score_raw = val_entry.score if val_entry is not None else None
+        val_label = val_entry.label if val_entry is not None else None
         if val_label == "not_applicable":
             valuation_score: Optional[float] = None
         else:
@@ -288,6 +296,12 @@ def compute_company_ranking(
         elif valuation_score is None:
             entry_warnings.append("missing_valuation_score")
 
+        # 把财务异常 flags 透传到 CompanyEntry.flags。docs §14 / §17 要求
+        # companies / screen 输出 flags，让 UI / skill 能解释"为什么谨慎"。
+        # 估值 label 不重复挂在 flags 里：label 已经在 fin/val 子对象与
+        # warnings 里有清晰位置，flags 只承载财务异常这一硬伤维度。
+        entry_flags: List[str] = list(fin_entry.abnormal_flags) if fin_entry is not None else []
+
         entry = CompanyEntry(
             code=code,
             name=str(r["name"]),
@@ -301,7 +315,7 @@ def compute_company_ranking(
             valuation_score=_round_or_none(valuation_score, 2),
             combined_score=_round_or_none(combined, 2),
             group=_group_for_score(combined),
-            flags=[],
+            flags=entry_flags,
             warnings=entry_warnings,
         )
         entries.append(entry)
@@ -310,6 +324,8 @@ def compute_company_ranking(
         sector_id=target.sector_id,
         sector_name=target.sector_name,
         companies=entries,
+        financials=fin_entry_index,
+        valuations=val_entry_index,
         warnings=[],
     )
 

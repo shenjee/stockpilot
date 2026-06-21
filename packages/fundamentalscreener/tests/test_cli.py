@@ -914,5 +914,63 @@ class CLIPhase4ValuationsTests(unittest.TestCase):
         self.assertTrue(any(ln.startswith("600584,") for ln in lines))
 
 
+class CLIPhase5ScreenTests(unittest.TestCase):
+    """Phase 5: screen 命令端到端联动 sectors/companies/financials/valuations。"""
+
+    def test_screen_default_returns_three_groups(self) -> None:
+        d = _run(
+            [
+                "screen",
+                "--fixture",
+                str(FIXTURE),
+                "--format",
+                "json",
+            ]
+        )
+        self.assertEqual(d["command"], "screen")
+        self.assertEqual(set(d["candidates"].keys()), {"priority", "watch", "cautious"})
+        # 所有候选应当带有 group 字段且与所在分组一致。
+        for group_name, items in d["candidates"].items():
+            for item in items:
+                self.assertEqual(item["group"], group_name)
+                self.assertIn("code", item)
+                self.assertIn("sector_id", item)
+
+    def test_screen_sector_top_limits_universe(self) -> None:
+        d = _run(
+            [
+                "screen",
+                "--fixture",
+                str(FIXTURE),
+                "--sector-top",
+                "1",
+                "--company-top",
+                "5",
+                "--format",
+                "json",
+            ]
+        )
+        # 仅保留排序最靠前的板块，候选公司的 sector_id 必须落在该板块内。
+        all_items = (
+            d["candidates"]["priority"]
+            + d["candidates"]["watch"]
+            + d["candidates"]["cautious"]
+        )
+        sectors = {item["sector_id"] for item in all_items}
+        self.assertLessEqual(len(sectors), 1)
+
+    def test_screen_generated_at_is_present(self) -> None:
+        d = _run(
+            [
+                "screen",
+                "--fixture",
+                str(FIXTURE),
+                "--format",
+                "json",
+            ]
+        )
+        self.assertTrue(d["generated_at"])
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

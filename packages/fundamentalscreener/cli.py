@@ -45,6 +45,7 @@ from .schema import (
     SectorsPayload,
     ValuationsPayload,
 )
+from .screening import run_screening
 from .sector_rotation import compute_sector_rotation, sort_entries
 from .valuation import compute_valuation, sort_valuations
 
@@ -436,15 +437,31 @@ def _cmd_valuations(args: argparse.Namespace) -> str:
 def _cmd_screen(args: argparse.Namespace) -> str:
     repo = _load_repo(args.fixture)
     warnings: List[str] = []
+    selected: List = []
+    candidates = CandidatesPayload()
     if repo is None:
         warnings.append("no_data_source: pass --fixture to load market data")
+    else:
+        snapshot = repo.load_snapshot()
+        result = run_screening(
+            snapshot,
+            sector_top=args.sector_top,
+            company_top=args.company_top,
+        )
+        selected = [s.to_dict() for s in result.selected_sectors]
+        candidates = CandidatesPayload(
+            priority=list(result.candidates.get("priority", [])),
+            watch=list(result.candidates.get("watch", [])),
+            cautious=list(result.candidates.get("cautious", [])),
+        )
+        warnings.extend(result.warnings)
     payload = ScreenPayload(
         command="screen",
         date=_resolve_date(args.date, repo),
         classification_system=_resolve_classification(args.classification_system, repo),
         benchmark=_resolve_benchmark(args.benchmark, repo),
-        selected_sectors=[],
-        candidates=CandidatesPayload(),
+        selected_sectors=selected,
+        candidates=candidates,
         warnings=warnings,
         generated_at=_now_iso(),
     )

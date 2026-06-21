@@ -466,6 +466,8 @@ CLI 的 `json` 输出必须稳定。字段使用 `snake_case`。
 
 ### 7.5 screen 输出
 
+`candidates` 的每个分组（`priority` / `watch` / `cautious`）包含若干 candidate 对象。candidate 在 `company_ranking` 输出的 `CompanyEntry` 基础上追加 `sector_id` / `sector_name`、并把硬约束（`valuation.label == "not_applicable"` ⇒ 降级到 `cautious`）后的最终 `group` 回写到字段本身，保证字段 `group` 始终与所在 bucket 一致。`flags` 透传自 `FinancialEntry.abnormal_flags`（例如 `weak_cashflow`、`receivable_growth_risk`、`high_debt`）。`financial` / `valuation` 子对象分别复用 `FinancialEntry.to_dict()` 与 `ValuationEntry.to_dict()`，供下游解释每个分数的来源（DoD：所有分数可追溯）。
+
 ```json
 {
   "command": "screen",
@@ -475,13 +477,68 @@ CLI 的 `json` 输出必须稳定。字段使用 `snake_case`。
   "selected_sectors": [],
   "candidates": {
     "priority": [],
-    "watch": [],
+    "watch": [
+      {
+        "code": "002371",
+        "name": "示例公司",
+        "sector_id": "BK0001",
+        "sector_name": "示例板块",
+        "market_cap": 1.2e10,
+        "turnover_amount": 3.4e8,
+        "turnover_rate": 0.025,
+        "sector_return_rank": 3,
+        "leader_score": 78.0,
+        "attention_score": 65.0,
+        "financial_quality_score": 70.0,
+        "valuation_score": 72.0,
+        "combined_score": 71.5,
+        "group": "watch",
+        "flags": ["weak_cashflow"],
+        "warnings": [],
+        "financial": {
+          "code": "002371",
+          "name": "示例公司",
+          "revenue_yoy": 0.18,
+          "net_profit_yoy": 0.22,
+          "deducted_net_profit_yoy": 0.20,
+          "gross_margin": 0.35,
+          "net_margin": 0.12,
+          "roe": 0.14,
+          "operating_cashflow_to_profit": 0.6,
+          "free_cashflow": 1.2e8,
+          "debt_to_asset": 0.55,
+          "interest_bearing_debt_ratio": 0.30,
+          "accounts_receivable_yoy": 0.4,
+          "inventory_yoy": 0.15,
+          "score": 70.0,
+          "abnormal_flags": ["weak_cashflow"],
+          "warnings": []
+        },
+        "valuation": {
+          "code": "002371",
+          "name": "示例公司",
+          "pe": 28.0,
+          "pb": 3.2,
+          "ps": 4.5,
+          "peg": 1.1,
+          "dividend_yield": 0.012,
+          "pe_percentile": 0.45,
+          "pb_percentile": 0.52,
+          "industry_valuation_position": "mid",
+          "score": 72.0,
+          "label": "fair",
+          "warnings": []
+        }
+      }
+    ],
     "cautious": []
   },
   "warnings": [],
   "generated_at": "2026-06-20T15:00:00+08:00"
 }
 ```
+
+注：上例为结构示意，仅在 `watch` 中展示一条 candidate；硬约束触发时同样的 candidate 会出现在 `cautious` 桶里，且 `group` 字段会被覆盖为 `"cautious"`。
 
 ## 8. 术语和枚举
 
@@ -833,26 +890,26 @@ not_applicable -> expensive_but_supported -> expensive -> low_need_quality_check
 
 ### 必须实现
 
-- [ ] `screening.py`。
-- [ ] `screen --sector-top <N> --company-top <N>`。
-- [ ] 自动取 Top N 板块。
-- [ ] 对每个板块取 Top N 公司。
-- [ ] 补齐候选公司的财务质量和估值。
-- [ ] 使用 Phase 2 升级后的综合分公式。
-- [ ] 输出 `selected_sectors`。
-- [ ] 输出 `candidates.priority`、`candidates.watch`、`candidates.cautious`。
-- [ ] 输出完整原始指标、分项分数、flags、warnings。
+- [x] `screening.py`。
+- [x] `screen --sector-top <N> --company-top <N>`。
+- [x] 自动取 Top N 板块。
+- [x] 对每个板块取 Top N 公司。
+- [x] 补齐候选公司的财务质量和估值。
+- [x] 使用 Phase 2 升级后的综合分公式。
+- [x] 输出 `selected_sectors`。
+- [x] 输出 `candidates.priority`、`candidates.watch`、`candidates.cautious`。
+- [x] 输出完整原始指标、分项分数、flags、warnings。
 
 ### Supplement
 
-- [ ] Phase 5 接入估值结果时，`label=not_applicable` 必须优先作为硬约束处理。即使 Phase 4 仍会在部分估值字段缺失时按可用分量计算 `score`，筛选编排也不能只按 `score` 排名而忽略 `not_applicable`。
+- [x] Phase 5 接入估值结果时，`label=not_applicable` 必须优先作为硬约束处理。即使 Phase 4 仍会在部分估值字段缺失时按可用分量计算 `score`，筛选编排也不能只按 `score` 排名而忽略 `not_applicable`。
 
 ### DoD
 
-- [ ] `screen --sector-top 10 --company-top 5 --format json` 正常。
-- [ ] JSON 可直接供 skill 调用。
-- [ ] 分组逻辑可解释。
-- [ ] 所有分数可追溯。
+- [x] `screen --sector-top 10 --company-top 5 --format json` 正常。
+- [x] JSON 可直接供 skill 调用。
+- [x] 分组逻辑可解释。
+- [x] 所有分数可追溯。
 
 ## 18. Phase 6：Streamlit MVP
 
