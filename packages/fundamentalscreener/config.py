@@ -66,12 +66,27 @@ SUPPORTED_COMPANY_SORTS: Tuple[str, ...] = (
 # 排序方向：默认 desc，sector_return_rank 用 asc（rank=1 表示最强）。
 COMPANY_SORT_ASCENDING: Tuple[str, ...] = ("sector_return_rank",)
 
-# Phase 2 第一版 combined_score 权重（财务/估值未接入）：
+# Phase 2 第一版 combined_score 权重（仅保留作为历史参考，不再被 runtime 使用）：
 #   combined_score = leader_score * 0.4 + attention_score * 0.6
-# Phase 5 接入财务/估值后会切换到 §14 的升级版权重。
+# 现在 runtime 默认使用 COMBINED_SCORE_WEIGHTS（Phase 3/4 接入后的升级版）。
 COMBINED_SCORE_WEIGHTS_PHASE2: Tuple[Tuple[str, float], ...] = (
     ("leader_score", 0.4),
     ("attention_score", 0.6),
+)
+
+# Phase 3/4 接入后的 combined_score 权重，对齐 docs §14：
+#   combined_score =
+#     leader_score * 0.20
+#   + attention_score * 0.20
+#   + financial_quality_score * 0.35
+#   + valuation_score * 0.25
+# 缺失分量按可用权重重新归一（与板块强度分、估值分一致），单字段缺失不会
+# 把整体打成 0；fin/val 同时缺失时由调用方按 Phase 2 兜底回退到 leader/attention。
+COMBINED_SCORE_WEIGHTS: Tuple[Tuple[str, float], ...] = (
+    ("leader_score", 0.20),
+    ("attention_score", 0.20),
+    ("financial_quality_score", 0.35),
+    ("valuation_score", 0.25),
 )
 
 # 候选分组阈值（基于 combined_score）。Phase 2 仅依赖板块内强弱信号，
@@ -217,6 +232,7 @@ VALUATION_LABELS: Tuple[str, ...] = (
 
 __all__ = [
     "CANDIDATE_GROUPS",
+    "COMBINED_SCORE_WEIGHTS",
     "COMBINED_SCORE_WEIGHTS_PHASE2",
     "COMPANY_GROUP_PRIORITY_THRESHOLD",
     "COMPANY_GROUP_WATCH_THRESHOLD",

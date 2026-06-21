@@ -481,10 +481,11 @@ class CLIPhase2CompaniesTests(unittest.TestCase):
         self.assertEqual(d["sort"], "combined_score")
         scores = [c["combined_score"] for c in d["companies"]]
         self.assertEqual(scores, sorted(scores, reverse=True))
-        # Phase 3/4 未接入，financial_quality_score / valuation_score 必须为 None。
+        # combined_score 升级后，fixture 包含 financials/valuations，fin/val
+        # 分量必须流进 companies 视图（不能再是 None）。
         for c in d["companies"]:
-            self.assertIsNone(c["financial_quality_score"])
-            self.assertIsNone(c["valuation_score"])
+            self.assertIsNotNone(c["financial_quality_score"])
+            self.assertIsNotNone(c["valuation_score"])
             self.assertIn(c["group"], (None, "priority", "watch", "cautious"))
 
     def test_companies_market_cap_drives_leader_score(self) -> None:

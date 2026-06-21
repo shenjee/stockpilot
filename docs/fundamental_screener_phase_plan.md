@@ -722,7 +722,7 @@ combined_score =
 + attention_score * 0.6
 ```
 
-Phase 3/4 接入后再升级为：
+Phase 3/4 接入后升级为（已在 `combined_score 升级` 小步骤中落地）：
 
 ```text
 combined_score =
@@ -731,6 +731,18 @@ combined_score =
 + financial_quality_score * 0.35
 + valuation_score * 0.25
 ```
+
+实现说明：
+
+- `companies` 命令在板块内部一次性调用 `compute_financial_quality` 和
+  `compute_valuation` 补齐 fin/val 分数，无需调用方手动传入；财务分仍按
+  cohort 归一化（一次板块内的统一归一化优于按公司各自跑一次）。
+- 单个分量缺失（例如某家公司没有估值数据）→ 按可用权重重新归一，避免
+  整体打成 0；`fin/val` 同时缺失时自动退化为 Phase 2 的 leader+attention。
+- fin/val 子命令的 `missing_field` warnings 不会被堆叠到 `companies` 视图，
+  保持单一职责（细节请去对应子命令查看）。
+- 分组阈值（`priority >= 70 / watch >= 50 / cautious`）本轮保持不变，
+  会在 Phase 5 编排里再配合 flags / 硬伤一起重新评估。
 
 ### DoD
 

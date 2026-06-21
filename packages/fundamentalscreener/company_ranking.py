@@ -1,23 +1,26 @@
-"""板块内公司排名（Phase 2）。
+"""板块内公司排名（Phase 2 + combined_score 升级）。
 
 输入：``MarketSnapshot`` + 目标板块 ``sector_id``。
 
 输出：``CompanyRankingResult``，包含 ``CompanyEntry`` 列表与跨公司 warnings。
 
-Phase 2 第一版只依赖板块内行情可观测的量：
+Phase 2 行情口径：
 
 - ``market_cap``、``turnover_amount``、``turnover_rate`` 直接来自数据。
 - ``sector_return_rank`` 按板块内 ``return_1d`` 降序排名（1 = 最强）。
 - ``leader_score`` 由 ``market_cap`` 在板块内做 min-max 归一化（板块内龙头优先）。
 - ``attention_score`` 由 ``turnover_amount`` 与 ``turnover_rate`` 各自归一化后等权平均
   （资金关注 = 绝对成交额 + 相对换手率）。
-- ``financial_quality_score`` / ``valuation_score`` 在 Phase 3/4 接入前固定为
-  ``None``，对应 schema 注释。
-- ``combined_score`` 使用 Phase 2 第一版权重：
-  ``leader_score * 0.4 + attention_score * 0.6``。
-- ``group`` 由 ``combined_score`` 阈值决定（priority/watch/cautious），尚不引入
-  财务、估值硬伤；Phase 5 编排会重新计算 group。
-- ``flags`` Phase 2 留空，避免在没有财务/估值时编造硬伤。
+
+Phase 3/4 接入后的升级：
+
+- ``financial_quality_score`` 来自 ``financial_quality.compute_financial_quality``。
+- ``valuation_score`` 来自 ``valuation.compute_valuation``。
+- ``combined_score`` 改用 docs §14 的升级版权重：
+  ``leader 0.20 / attention 0.20 / financial 0.35 / valuation 0.25``，
+  缺失分量按可用权重重新归一（避免 fin/val 缺数据时整体分数归零）。
+- ``flags`` Phase 2 留空，硬伤判断仍由 Phase 5 编排负责。
+- ``group`` 阈值沿用 Phase 2（priority/watch/cautious），本轮不动。
 
 数据缺失：单家公司缺关键列时对应字段为 None，并把可读 warning 写入 entry；
 没有任何公司或板块本身不存在的情况由 CLI 层负责报错（``sector_not_found``）。
@@ -29,14 +32,16 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from .config import (
-    COMBINED_SCORE_WEIGHTS_PHASE2,
+    COMBINED_SCORE_WEIGHTS,
     COMPANY_GROUP_PRIORITY_THRESHOLD,
     COMPANY_GROUP_WATCH_THRESHOLD,
     COMPANY_SORT_ASCENDING,
     SUPPORTED_COMPANY_SORTS,
 )
+from .financial_quality import compute_financial_quality
 from .repositories import CompanyData, MarketSnapshot, SectorData
 from .schema import CompanyEntry
+from .valuation import compute_valuation
 
 
 # ---------------------------------------------------------------------------
@@ -108,17 +113,26 @@ def _attention_score(
 def _aggregate_combined(
     leader_score: Optional[float],
     attention_score: Optional[float],
+    financial_quality_score: Optional[float],
+    valuation_score: Optional[float],
 ) -> Optional[float]:
-    """按 ``COMBINED_SCORE_WEIGHTS_PHASE2`` 加权；缺失分量按可用权重重新归一。"""
+    """按 ``COMBINED_SCORE_WEIGHTS`` 加权；缺失分量按可用权重重新归一。
+
+    这是 docs §14 的升级版公式（leader 0.20 / attention 0.20 / financial 0.35 /
+    valuation 0.25）。若 fin/val 两个分量都为 None，则自动退化为 Phase 2 的
+    leader+attention 组合（不会把整体打成 0）。
+    """
 
     components: Dict[str, Optional[float]] = {
         "leader_score": leader_score,
         "attention_score": attention_score,
+        "financial_quality_score": financial_quality_score,
+        "valuation_score": valuation_score,
     }
     valid = {k: v for k, v in components.items() if v is not None}
     if not valid:
         return None
-    weights = dict(COMBINED_SCORE_WEIGHTS_PHASE2)
+    weights = dict(COMBINED_SCORE_WEIGHTS)
     weight_sum = sum(weights[k] for k in valid)
     if weight_sum == 0:
         return None
@@ -216,15 +230,66 @@ def compute_company_ranking(
     turnover_rate_norm = _min_max_normalize(turnover_rate_values)
     sector_return_ranks = _rank_descending(return_1d_values)
 
+    # ---- 补齐财务质量分 / 估值分（Phase 3/4 接入） ----
+    # 在板块内集中调一次，避免每家公司各做一次 cohort 归一化（财务分依赖
+    # cohort）。fin/val 缺失某家公司时静默返回 None，不污染 ranking 顶层
+    # warnings —— 单家公司的 missing_field 信息已经在 financials/valuations
+    # 命令里独立展示，不应在 companies 视图里重复堆叠；但是 companies 视图
+    # 自己会用 entry warnings 标记"该公司的 fin/val 分量缺失"，方便调用方
+    # 判断 combined_score 是否被降级。
+    codes = [str(r["code"]) for r in raw_records]
+    fin_result = compute_financial_quality(snapshot, codes)
+    val_result = compute_valuation(snapshot, codes)
+    fin_score_index: Dict[str, Optional[float]] = {
+        e.code: e.score for e in fin_result.companies
+    }
+    val_score_index: Dict[str, Optional[float]] = {
+        e.code: e.score for e in val_result.companies
+    }
+    val_label_index: Dict[str, Optional[str]] = {
+        e.code: e.label for e in val_result.companies
+    }
+
     # ---- 构造 CompanyEntry ----
     entries: List[CompanyEntry] = []
     for idx, r in enumerate(raw_records):
+        code = str(r["code"])
         leader_score = leader_norm[idx]
         attention_score = _attention_score(turnover_norm[idx], turnover_rate_norm[idx])
-        combined = _aggregate_combined(leader_score, attention_score)
+        financial_quality_score = fin_score_index.get(code)
+
+        # 估值分量：label=not_applicable 表示关键字段缺失，分数虽然有数值
+        # 但不可信，必须从 combined_score 排除，否则会让数据不完整的公司
+        # 凭一个"看起来合理"的兜底分进入排名。
+        val_score_raw = val_score_index.get(code)
+        val_label = val_label_index.get(code)
+        if val_label == "not_applicable":
+            valuation_score: Optional[float] = None
+        else:
+            valuation_score = val_score_raw
+
+        combined = _aggregate_combined(
+            leader_score,
+            attention_score,
+            financial_quality_score,
+            valuation_score,
+        )
         entry_warnings = list(r["warnings"] or [])  # type: ignore[arg-type]
+
+        # 摘要型 warnings：让 CLI/skill/UI 一眼看出 combined_score 是否被降级。
+        # 不堆叠 missing_field 细节（仍由 financials/valuations 子命令展示）。
+        # 财务分量为 None 可能因为 code_not_found 或 score 算不出，统一一个标记即可。
+        if financial_quality_score is None:
+            entry_warnings.append("missing_financial_quality_score")
+        # 估值分量分别区分"完全缺失"与"label=not_applicable（关键字段不完整）"：
+        # 后者更具体，便于调用方追查数据缺口。
+        if val_label == "not_applicable":
+            entry_warnings.append("valuation_not_applicable")
+        elif valuation_score is None:
+            entry_warnings.append("missing_valuation_score")
+
         entry = CompanyEntry(
-            code=str(r["code"]),
+            code=code,
             name=str(r["name"]),
             market_cap=r["market_cap"],
             turnover_amount=r["turnover_amount"],
@@ -232,8 +297,8 @@ def compute_company_ranking(
             sector_return_rank=sector_return_ranks[idx],
             leader_score=_round_or_none(leader_score, 2),
             attention_score=_round_or_none(attention_score, 2),
-            financial_quality_score=None,
-            valuation_score=None,
+            financial_quality_score=_round_or_none(financial_quality_score, 2),
+            valuation_score=_round_or_none(valuation_score, 2),
             combined_score=_round_or_none(combined, 2),
             group=_group_for_score(combined),
             flags=[],
