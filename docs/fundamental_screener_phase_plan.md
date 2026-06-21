@@ -1026,6 +1026,84 @@ AkShare / 公开源
   -> CLI / Streamlit / Skill
 ```
 
+### 实施拆分
+
+Phase 6 分阶段实施，不一次性完成全部真实数据链路。每个子阶段都必须保持现有 fixture/core/CLI 可用，并优先使用 fake/source stub 做自动化测试。
+
+#### Phase 6A：数据治理骨架与 SQLite Schema
+
+目标：先建立数据治理地基，不依赖真实网络。
+
+范围：
+
+- [ ] 新增数据治理模块骨架、SQLite 初始化/迁移入口和同步日志结构。
+- [ ] 定义最小 SQLite 表结构，覆盖 `stocks`、`sectors`、`sector_constituents`、`sector_daily_bars`、`company_daily_snapshot`、`company_valuation_history`、`financial_metrics`、`data_fetch_log`。
+- [ ] 定义 `fetch_run_id`、`snapshot_id`、`quality_report_id`、`source_set`、`config_version`、`formula_version` 的生成和传递位置。
+- [ ] 定义质量报告和 snapshot metadata 的最小结构。
+- [ ] 保留 `FixtureRepository`，不改变现有 fixture MVP 行为。
+
+验收：
+
+- [ ] `init-db` 可幂等初始化 SQLite。
+- [ ] fake source 可以写入一批最小数据并保留来源血缘字段。
+- [ ] 默认测试不访问真实网络。
+
+#### Phase 6B：AkShare 行业板块采集与缓存
+
+目标：接入第一批真实板块数据，范围只限 `em_industry`。
+
+范围：
+
+- [ ] 新增 AkShare 数据源实现，第一版只支持 `classification_system = "em_industry"`。
+- [ ] 实现 `list_sectors()`、`get_sector_constituents()`、`get_sector_daily()`。
+- [ ] 实现 `get_benchmark_daily()`，至少支持 `hs300`。
+- [ ] 将行业板块列表、成分股、板块历史行情和 benchmark 历史行情写入 SQLite。
+- [ ] 同步过程写入 `data_fetch_log`，失败时不破坏已有缓存。
+
+验收：
+
+- [ ] fake AkShare source 可以同步 `em_industry` 行业板块列表、成分股、板块历史行情和 benchmark 历史行情。
+- [ ] 板块日线和 benchmark 至少支持 1/5/20/60 日收益、relative return 和 chart series 计算。
+- [ ] 真实 AkShare 同步作为手动 smoke，不作为单元测试阻塞项。
+- [ ] 网络失败能输出明确错误，并保留最近一次成功缓存。
+
+#### Phase 6C：公司快照、估值历史与财务指标
+
+目标：补齐 `MarketSnapshot` 需要的公司层真实数据。
+
+范围：
+
+- [ ] 实现 `get_stock_universe()`、`get_company_daily_snapshot()`、`get_company_valuation_history()`、`get_financial_metrics()`。
+- [ ] 写入股票池、公司日度快照、估值历史和财务指标。
+- [ ] 所有时变数据按 `analysis_date` 截断：行情/估值使用 `trade_date <= analysis_date`，股票池/上市状态使用 `as_of_date <= analysis_date` 或有效区间，财务使用 `availability_date <= analysis_date`。
+- [ ] 基于本地 `company_valuation_history` 计算 PE/PB 历史分位。
+- [ ] 财务/估值缺失写入 warnings，不用 0 替代。
+
+验收：
+
+- [ ] 不读取分析日之后才可见的数据。
+- [ ] PE/PB 分位可按固定配置复算。
+- [ ] 负 PE、亏损、停牌、ST、退市风险和缺失字段能显式标记。
+
+#### Phase 6D：Repository、质量状态与输出契约
+
+目标：让真实数据通过 repository 进入现有 core 和 CLI/JSON 契约。
+
+范围：
+
+- [ ] 新增 `SqliteFundamentalRepository`，从 SQLite 组装现有 `MarketSnapshot`。
+- [ ] 现有 `packages.fundamentalscreener.cli` 支持 `--db <path>` 读取 `SqliteFundamentalRepository`；未传 `--db` 时继续使用 fixture/现有路径，不破坏旧测试。
+- [ ] 生成并透传 `snapshot_id`、`source_set`、`fetch_run_id`、`quality_report_id`、`config_version`、`formula_version`。
+- [ ] 输出统一质量状态 `ok | degraded | stale | invalid`。
+- [ ] CLI JSON 顶层输出 `snapshot` 对象，并保持 `sectors`、`companies`、`financials`、`valuations`、`screen` 契约一致。
+- [ ] 落实 `degraded` / `stale` 不进入 `priority`，`invalid` 不生成 `MarketSnapshot` 或综合评分。
+
+验收：
+
+- [ ] CLI 可以从 SQLite/repository 读取真实数据并输出符合契约的 JSON。
+- [ ] `MarketSnapshot` 可被现有 sector/company/financial/valuation/screening core 消费。
+- [ ] 质量报告能解释数据是否可用、是否降级、哪些实体受影响。
+
 ### 数据源边界
 
 | 数据 | 第一版主源 | 说明 |
