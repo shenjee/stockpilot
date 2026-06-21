@@ -1006,6 +1006,8 @@ not_applicable -> expensive_but_supported -> expensive -> low_need_quality_check
 
 把测试 fixture 升级为独立的数据治理模块。真实数据必须先经过采集、SQLite 本地缓存、标准化和质量检查，再由 repository 组装为 `MarketSnapshot`。Streamlit、skill 和 CLI 不直接联网抓基本面数据。
 
+Phase 6 只实现数据治理、同步、缓存、质量检查和 repository 接入，不改评分算法。不得修改 `sector_rotation.py`、`company_ranking.py`、`financial_quality.py`、`valuation.py` 的评分规则，除非是为了让现有 core 消费 `MarketSnapshot` / `snapshot` 血缘字段所需的最小 schema 适配。
+
 第一版真实板块口径固定为：
 
 ```text
@@ -1048,6 +1050,34 @@ AkShare / 公开源
 - [ ] 新增数据质量检查和质量报告。
 - [ ] 保留 `FixtureRepository` 作为测试和 fallback，不把 fixture 当真实数据源。
 - [ ] 同步失败写入 `data_fetch_log`，不能破坏已有可用缓存。
+
+### 命令入口
+
+Phase 6 的可执行入口固定在 `packages.fundamentalscreener.sync`，不要新增无文档入口。第一版至少支持：
+
+```bash
+python -m packages.fundamentalscreener.sync init-db \
+  --db stockpilot/db/fundamental_data.sqlite
+
+python -m packages.fundamentalscreener.sync sync \
+  --db stockpilot/db/fundamental_data.sqlite \
+  --date 2026-06-19 \
+  --classification-system em_industry
+
+python -m packages.fundamentalscreener.sync quality \
+  --db stockpilot/db/fundamental_data.sqlite \
+  --date 2026-06-19
+```
+
+入口职责：
+
+| 命令 | 作用 |
+| --- | --- |
+| `init-db` | 初始化或迁移 SQLite 表结构，幂等执行 |
+| `sync` | 调用数据源、标准化、写入 SQLite、记录 `data_fetch_log` |
+| `quality` | 读取 SQLite 并输出结构化质量报告 |
+
+真实网络同步不是单元测试依赖。`sync` 的实现应允许注入 fake/source stub，便于测试在无网络环境稳定运行。
 
 ### 数据源抽象
 
@@ -1153,8 +1183,35 @@ AkShare / 公开源
 - [ ] 不把 AkShare、SQLite 或腾讯接口细节泄漏到 core 算法。
 - [ ] 不在第一版混用 `em_industry` 和 `em_concept`。
 - [ ] 不接新闻、公告、研报。
+- [ ] 不为了真实数据接入重写现有评分规则。
+- [ ] 不让测试依赖真实 AkShare、东方财富、腾讯网络请求。
+
+### 测试要求
+
+Phase 6 必须新增 focused tests，且默认测试不依赖真实网络。建议文件：
+
+```text
+packages/fundamentalscreener/tests/test_data_source_contract.py
+packages/fundamentalscreener/tests/test_sqlite_repository.py
+packages/fundamentalscreener/tests/test_sync.py
+packages/fundamentalscreener/tests/test_quality.py
+packages/fundamentalscreener/tests/test_snapshot_lineage.py
+```
+
+测试范围：
+
+- [ ] fake source 可以写入 SQLite，并保留 `source`、`fetch_run_id`、`source_updated_at`。
+- [ ] `init-db` 可重复执行，不破坏已有数据。
+- [ ] `SqliteFundamentalRepository` 能按 `analysis_date` 组装 `MarketSnapshot`。
+- [ ] point-in-time 过滤能排除分析日之后才披露的财务数据。
+- [ ] `company_valuation_history` 能按固定配置计算 PE/PB 历史分位。
+- [ ] 质量检查能输出 `ok | degraded | stale | invalid`。
+- [ ] `degraded` / `stale` 状态不会让候选进入 `priority`。
+- [ ] 网络失败或 fake source 抛错时，不破坏已有缓存，并写入 `data_fetch_log`。
 
 ### DoD
+
+必须验收：
 
 - [ ] 可以同步 `em_industry` 行业板块列表、成分股和板块历史行情到 SQLite。
 - [ ] 可以同步股票池、公司日度快照、估值历史和财务指标到 SQLite。
@@ -1164,6 +1221,12 @@ AkShare / 公开源
 - [ ] `MarketSnapshot` 可被现有 sector/company/financial/valuation/screening core 消费。
 - [ ] 同步过程输出质量报告和 `data_fetch_log`。
 - [ ] 网络失败时可降级读取最近一次成功缓存。
+- [ ] 新增 Phase 6 单元测试通过，且测试默认不访问真实网络。
+
+可选手动 smoke，不作为自动测试阻塞项：
+
+- [ ] 在有网络和依赖可用时，真实 AkShare source 能同步一小批 `em_industry` 行业、成分股和历史行情。
+- [ ] 真实同步失败时能输出明确错误和 `data_fetch_log` 记录，不影响 fake/source 测试通过。
 
 ## 19. Phase 7：Streamlit MVP
 
