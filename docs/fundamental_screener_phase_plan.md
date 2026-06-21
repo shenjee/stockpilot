@@ -1092,7 +1092,7 @@ Phase 6 分阶段实施，不一次性完成全部真实数据链路。每个子
 范围：
 
 - [ ] 新增 `SqliteFundamentalRepository`，从 SQLite 组装现有 `MarketSnapshot`。
-- [ ] 现有 `packages.fundamentalscreener.cli` 支持 `--db <path>` 读取 `SqliteFundamentalRepository`；未传 `--db` 时继续使用 fixture/现有路径，不破坏旧测试。
+- [ ] Phase 6 起，现有 `packages.fundamentalscreener.cli` 统一扩展 `--db <path>` 参数，用于读取 `SqliteFundamentalRepository`；未传 `--db` 时继续使用 fixture/现有路径，不破坏旧测试。
 - [ ] 生成并透传 `snapshot_id`、`source_set`、`fetch_run_id`、`quality_report_id`、`config_version`、`formula_version`。
 - [ ] 输出统一质量状态 `ok | degraded | stale | invalid`。
 - [ ] CLI JSON 顶层输出 `snapshot` 对象，并保持 `sectors`、`companies`、`financials`、`valuations`、`screen` 契约一致。
@@ -1291,7 +1291,7 @@ packages/fundamentalscreener/tests/test_snapshot_lineage.py
 
 必须验收：
 
-- [ ] 可以同步 `em_industry` 行业板块列表、成分股和板块历史行情到 SQLite。
+- [ ] fake/source stub 可以同步 `em_industry` 行业板块列表、成分股、板块历史行情和 benchmark 历史行情到 SQLite。
 - [ ] 可以同步股票池、公司日度快照、估值历史和财务指标到 SQLite。
 - [ ] 财务指标按 `analysis_date` 做 point-in-time 过滤，不读取分析日之后才披露的数据。
 - [ ] 可以基于本地 `company_valuation_history` 计算 PE/PB 历史分位。
@@ -1303,7 +1303,7 @@ packages/fundamentalscreener/tests/test_snapshot_lineage.py
 
 可选手动 smoke，不作为自动测试阻塞项：
 
-- [ ] 在有网络和依赖可用时，真实 AkShare source 能同步一小批 `em_industry` 行业、成分股和历史行情。
+- [ ] 在有网络和依赖可用时，真实 AkShare source 能同步一小批 `em_industry` 行业、成分股、板块历史行情和 benchmark 历史行情。
 - [ ] 真实同步失败时能输出明确错误和 `data_fetch_log` 记录，不影响 fake/source 测试通过。
 
 ## 19. Phase 7：Streamlit MVP
