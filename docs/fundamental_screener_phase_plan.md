@@ -1036,17 +1036,17 @@ Phase 6 分阶段实施，不一次性完成全部真实数据链路。每个子
 
 范围：
 
-- [ ] 新增数据治理模块骨架、SQLite 初始化/迁移入口和同步日志结构。
-- [ ] 定义最小 SQLite 表结构，覆盖 `stocks`、`sectors`、`sector_constituents`、`sector_daily_bars`、`company_daily_snapshot`、`company_valuation_history`、`financial_metrics`、`data_fetch_log`。
-- [ ] 定义 `fetch_run_id`、`snapshot_id`、`quality_report_id`、`source_set`、`config_version`、`formula_version` 的生成和传递位置。
-- [ ] 定义质量报告和 snapshot metadata 的最小结构。
-- [ ] 保留 `FixtureRepository`，不改变现有 fixture MVP 行为。
+- [x] 新增数据治理模块骨架、SQLite 初始化/迁移入口和同步日志结构。
+- [x] 定义最小 SQLite 表结构，覆盖 `stocks`、`sectors`、`sector_constituents`、`sector_daily_bars`、`company_daily_snapshot`、`company_valuation_history`、`financial_metrics`、`data_fetch_log`。
+- [x] 定义 `fetch_run_id`、`snapshot_id`、`quality_report_id`、`source_set`、`config_version`、`formula_version` 的生成和传递位置。
+- [x] 定义质量报告和 snapshot metadata 的最小结构。
+- [x] 保留 `FixtureRepository`，不改变现有 fixture MVP 行为。
 
 验收：
 
-- [ ] `init-db` 可幂等初始化 SQLite。
-- [ ] fake source 可以写入一批最小数据并保留来源血缘字段。
-- [ ] 默认测试不访问真实网络。
+- [x] `init-db` 可幂等初始化 SQLite。
+- [x] fake source 可以写入一批最小数据并保留来源血缘字段。
+- [x] 默认测试不访问真实网络。
 
 #### Phase 6B：AkShare 行业板块采集与缓存
 
@@ -1149,11 +1149,11 @@ python -m packages.fundamentalscreener.sync quality \
 
 入口职责：
 
-| 命令 | 作用 |
-| --- | --- |
-| `init-db` | 初始化或迁移 SQLite 表结构，幂等执行 |
-| `sync` | 调用数据源、标准化、写入 SQLite、记录 `data_fetch_log` |
-| `quality` | 读取 SQLite 并输出结构化质量报告 |
+| 命令 | 作用 | Phase 6A 状态 |
+| --- | --- | --- |
+| `init-db` | 初始化或迁移 SQLite 表结构，幂等执行 | Phase 6A 已实现 |
+| `sync` | 调用数据源、标准化、写入 SQLite、记录 `data_fetch_log` | Phase 6A CLI 入口有意禁用（rc=2），通过 Python API `sync_all(conn, FakeFundamentalDataSource(), ...)` 验证；CLI 接入真实 AkShare 在 Phase 6B 落地 |
+| `quality` | 读取 SQLite 并输出结构化质量报告 | Phase 6A 仅返回占位 `QualityReport`（status=ok），真实规则在 Phase 6D 落地 |
 
 真实网络同步不是单元测试依赖。`sync` 的实现应允许注入 fake/source stub，便于测试在无网络环境稳定运行。
 
@@ -1182,6 +1182,7 @@ python -m packages.fundamentalscreener.sync quality \
 | `sectors` | 板块代码、名称、分类口径、来源 |
 | `sector_constituents` | 板块-股票关系，带 `source` 和 `as_of_date` |
 | `sector_daily_bars` | 板块历史行情 |
+| `benchmark_daily_bars` | 基准指数（hs300 等）历史行情，独立于板块表，避免 `sector_daily_bars` 混入非板块实体 |
 | `company_daily_snapshot` | 公司日度行情与交易快照，长期保存市值、收盘价、成交额、换手率、涨跌幅等 |
 | `company_valuation_history` | 公司日度估值历史，长期保存 PE、PB、PS、股息率等，用于本地计算历史分位 |
 | `financial_metrics` | 公司财务指标，按报告期和披露日保存 ROE、毛利率、净利率、成长、现金流、负债等 |
