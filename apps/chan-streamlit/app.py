@@ -55,7 +55,6 @@ LAYER_KEYS = (
     "stroke_pivot_zones",
     "segment_pivot_zones",
     "divergences",
-    "alerts",
     "candidate_points",
     "volume_panel",
     "macd_panel",

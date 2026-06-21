@@ -174,7 +174,26 @@ class TencentStockDataProvider(MarketDataProvider):
             return []
 
         key = f"{autype}day" if ktype == "day" else f"{autype}{ktype}"
-        klines = data["data"].get(f"{prefix}{code}", {}).get(key, [])
+        # 腾讯财经 fqkline 接口返回结构在正常情况下是嵌套 dict：
+        #   {"code": 0, "data": {"sh512480": {"qfqday": [[...], ...], "qt": {...}, ...}}}
+        # 但在以下场景下，data["data"][symbol] 可能不是 dict：
+        #   1. 限流 / 维护 / 路由异常时，腾讯偶尔会把内层节点替换为空 list（[]）或字符串；
+        #   2. 个别 ETF / 指数 / 新上市标的，特定参数组合（如 autype 不匹配、日期范围越界）
+        #      会让该字段直接降级成 list，没有预期的 "qfqday" 等子键；
+        #   3. 接口偶发返回 code==0 但 data 字段缺失或为 null。
+        # 若直接链式调用 data["data"].get(...).get(...)，遇到非 dict 节点会抛
+        # AttributeError: 'list' object has no attribute 'get'。
+        # 因此这里改成「先 isinstance 校验类型，再 .get 解构」，逐层兜底返回 []，
+        # 让上层走「无数据」路径而不是崩溃。
+        payload = data.get("data", {})
+        if not isinstance(payload, dict):
+            return []
+        symbol_payload = payload.get(f"{prefix}{code}", {})
+        if not isinstance(symbol_payload, dict):
+            return []
+        klines = symbol_payload.get(key, [])
+        if not isinstance(klines, list):
+            return []
 
         results = []
         for item in klines:
@@ -216,8 +235,18 @@ class TencentStockDataProvider(MarketDataProvider):
             if data.get("code") != 0:
                 break
 
-            raw_items = data.get("data", {}).get(f"{prefix}{code}", {}).get(tx_ktype, [])
-            if not raw_items:
+            # 同 get_kline 的 fqkline 接口，mkline 分钟线接口也存在内层节点可能不是 dict
+            # 的情况（限流/维护、个别 ETF/指数特殊响应、code==0 但 data 缺失等）。
+            # 这里同样改为「先类型校验、再 .get 解构」，遇到异常结构直接 break 跳出分页循环，
+            # 避免在 dict.get 链式调用上抛 AttributeError。
+            payload = data.get("data", {})
+            if not isinstance(payload, dict):
+                break
+            symbol_payload = payload.get(f"{prefix}{code}", {})
+            if not isinstance(symbol_payload, dict):
+                break
+            raw_items = symbol_payload.get(tx_ktype, [])
+            if not isinstance(raw_items, list) or not raw_items:
                 break
 
             page_oldest_raw = None

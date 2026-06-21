@@ -135,21 +135,7 @@ def render_plot_primitives(
                     **layout_kwargs,
                 )
         elif primitive_type == "label":
-            figure.add_annotation(
-                x=primitive.get("x"),
-                y=primitive.get("y"),
-                text=_format_alert_message(
-                    {
-                        "alert_type": primitive.get("meta", {}).get("alert_type", ""),
-                        "meta": primitive.get("meta", {}).get("alert_meta", {}),
-                        "message": primitive.get("text", ""),
-                    },
-                    language,
-                ),
-                showarrow=True,
-                arrowcolor=primitive.get("color", "#0F766E"),
-                font={"color": primitive.get("color", "#0F766E")},
-                **layout_kwargs,
-            )
+            # 走势图上不再渲染 label 类提示语（如"最新活跃中枢区间..."），相关内容仅保留在摘要文本中。
+            continue
         if handled_trace and trace_showlegend:
             legend_layers.add(legend_group)
