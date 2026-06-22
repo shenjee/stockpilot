@@ -110,6 +110,7 @@ class SyncAllTests(unittest.TestCase):
                 source,
                 analysis_date="2026-06-19",
                 classification_system="em_industry",
+                codes=["002371"],
             )
             # 所有 8 个子任务都应成功。
             self.assertEqual(result.failure_count, 0, msg=result.tasks)
@@ -148,6 +149,35 @@ class SyncAllTests(unittest.TestCase):
             log_rows = list(cur.fetchall())
             self.assertGreater(len(log_rows), 0)
             self.assertTrue(all(r[1] == 1 for r in log_rows))
+        finally:
+            conn.close()
+
+    def test_sync_all_skips_per_code_tasks_without_codes(self) -> None:
+        """P2: 未提供 codes 时跳过 per-code 公司层任务（估值历史 + 财务指标），
+        避免对全量股票池逐只发起网络请求。batch 任务（股票池 + 日度快照）仍运行。"""
+        conn = connect(":memory:")
+        try:
+            source = _make_source()
+            result = sync_all(
+                conn,
+                source,
+                analysis_date="2026-06-19",
+                classification_system="em_industry",
+            )
+            task_names = {t["task"] for t in result.tasks}
+            # batch 公司层任务仍然运行
+            self.assertIn("get_stock_universe", task_names)
+            self.assertIn("get_company_daily_snapshot", task_names)
+            # per-code 公司层任务被跳过
+            self.assertNotIn("get_company_valuation_history", task_names)
+            self.assertNotIn("get_financial_metrics", task_names)
+            # valuation / financial 表不应有数据
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM company_valuation_history").fetchone()[0], 0
+            )
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM financial_metrics").fetchone()[0], 0
+            )
         finally:
             conn.close()
 
@@ -527,6 +557,7 @@ class SyncPkValidationTests(unittest.TestCase):
                 source,
                 analysis_date="2026-06-19",
                 classification_system="em_industry",
+                codes=["002371"],
             )
             fin_task = next(
                 t for t in result.tasks if t["task"] == "get_financial_metrics"

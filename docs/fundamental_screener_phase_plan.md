@@ -1073,17 +1073,17 @@ Phase 6 分阶段实施，不一次性完成全部真实数据链路。每个子
 
 范围：
 
-- [ ] 实现 `get_stock_universe()`、`get_company_daily_snapshot()`、`get_company_valuation_history()`、`get_financial_metrics()`。
-- [ ] 写入股票池、公司日度快照、估值历史和财务指标。
-- [ ] 所有时变数据按 `analysis_date` 截断：行情/估值使用 `trade_date <= analysis_date`，股票池/上市状态使用 `as_of_date <= analysis_date` 或有效区间，财务使用 `availability_date <= analysis_date`。
-- [ ] 基于本地 `company_valuation_history` 计算 PE/PB 历史分位。
-- [ ] 财务/估值缺失写入 warnings，不用 0 替代。
+- [x] 实现 `get_stock_universe()`、`get_company_daily_snapshot()`、`get_company_valuation_history()`、`get_financial_metrics()`。
+- [x] 写入股票池、公司日度快照、估值历史和财务指标。
+- [x] 所有时变数据按 `analysis_date` 截断：行情/估值使用 `trade_date <= analysis_date`，股票池/上市状态使用 `as_of_date <= analysis_date` 或有效区间，财务使用 `availability_date <= analysis_date`。
+- [x] 基于本地 `company_valuation_history` 计算 PE/PB 历史分位。
+- [x] 财务/估值缺失写入 warnings，不用 0 替代。
 
 验收：
 
-- [ ] 不读取分析日之后才可见的数据。
-- [ ] PE/PB 分位可按固定配置复算。
-- [ ] 负 PE、亏损、停牌、ST、退市风险和缺失字段能显式标记。
+- [x] 不读取分析日之后才可见的数据。
+- [x] PE/PB 分位可按固定配置复算。
+- [x] 负 PE、亏损、停牌、ST、退市风险和缺失字段能显式标记。
 
 #### Phase 6D：Repository、质量状态与输出契约
 
@@ -1152,7 +1152,7 @@ python -m packages.fundamentalscreener.sync quality \
 | 命令 | 作用 | Phase 6A 状态 |
 | --- | --- | --- |
 | `init-db` | 初始化或迁移 SQLite 表结构，幂等执行 | Phase 6A 已实现 |
-| `sync` | 调用数据源、标准化、写入 SQLite、记录 `data_fetch_log` | Phase 6B 已接入 `AkShareFundamentalDataSource`（`em_industry` 口径，板块列表/成分/板块行情/基准行情）；公司层采集在 Phase 6C 落地，当前以"成功 0 行"完成。未安装 akshare 时返回 rc=2 并给出安装提示。真实网络同步为手动 smoke |
+| `sync` | 调用数据源、标准化、写入 SQLite、记录 `data_fetch_log` | Phase 6B+6C 已接入 `AkShareFundamentalDataSource`（`em_industry` 口径）：板块层（板块列表/成分/板块行情/基准行情）+ 公司层（股票池/日度快照/估值历史/财务指标）。未安装 akshare 时返回 rc=2 并给出安装提示。真实网络同步为手动 smoke |
 | `quality` | 读取 SQLite 并输出结构化质量报告 | Phase 6A 仅返回占位 `QualityReport`（status=ok），真实规则在 Phase 6D 落地 |
 
 真实网络同步不是单元测试依赖。`sync` 的实现应允许注入 fake/source stub，便于测试在无网络环境稳定运行。
@@ -1212,7 +1212,7 @@ python -m packages.fundamentalscreener.sync quality \
 
 ### 标准化规则
 
-- [ ] 百分比统一转成小数，例如 `0.18` 表示 18%。
+- [x] 百分比统一转成小数，例如 `0.18` 表示 18%。
 - [ ] 金额统一为明确单位，优先使用元。
 - [ ] 日期统一为 `YYYY-MM-DD`。
 - [ ] 股票代码、市场和板块成分必须能稳定对齐。

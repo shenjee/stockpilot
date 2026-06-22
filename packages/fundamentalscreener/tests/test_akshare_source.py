@@ -63,7 +63,7 @@ def _decompact(d: str) -> str:
 
 
 class _FakeAkshare:
-    """实现 AkShareFundamentalDataSource 依赖的 4 个函数的内存替身。
+    """实现 AkShareFundamentalDataSource 依赖的 8 个函数的内存替身。
 
     历史行情函数会按传入的 ``YYYYMMDD`` 起止日期过滤，借此验证源代码确实把
     ``YYYY-MM-DD`` 压缩成了无分隔符日期再传给 akshare。
@@ -71,16 +71,24 @@ class _FakeAkshare:
 
     def __init__(
         self,
-        boards_df: Any,
-        cons_map: Dict[str, Any],
-        hist_map: Dict[str, Any],
-        benchmark_map: Dict[str, Any],
+        boards_df: Any = None,
+        cons_map: Optional[Dict[str, Any]] = None,
+        hist_map: Optional[Dict[str, Any]] = None,
+        benchmark_map: Optional[Dict[str, Any]] = None,
+        universe_df: Any = None,
+        spot_df: Any = None,
+        valuation_map: Optional[Dict[str, Dict[str, Any]]] = None,
+        financial_map: Optional[Dict[str, Any]] = None,
         fail: bool = False,
     ) -> None:
-        self.boards_df = boards_df
-        self.cons_map = cons_map
-        self.hist_map = hist_map
-        self.benchmark_map = benchmark_map
+        self.boards_df = boards_df or _empty_df()
+        self.cons_map = cons_map or {}
+        self.hist_map = hist_map or {}
+        self.benchmark_map = benchmark_map or {}
+        self.universe_df = universe_df or _empty_df()
+        self.spot_df = spot_df or _empty_df()
+        self.valuation_map = valuation_map or {}
+        self.financial_map = financial_map or {}
         self.fail = fail
         self.calls: List[Dict[str, Any]] = []
 
@@ -149,6 +157,36 @@ class _FakeAkshare:
         hi = _decompact(end_date)
         filtered = [r for r in df.to_dict(orient="records") if lo <= r["日期"] <= hi]
         return _FakeDataFrame(filtered)
+
+    # ---------------- 公司层（Phase 6C）----------------
+
+    def stock_info_a_code_name(self) -> Any:
+        self._maybe_fail()
+        self.calls.append({"func": "universe"})
+        return self.universe_df
+
+    def stock_zh_a_spot_em(self) -> Any:
+        self._maybe_fail()
+        self.calls.append({"func": "spot"})
+        return self.spot_df
+
+    def stock_zh_valuation_baidu(
+        self, symbol: str, indicator: str, period: str = "全部"
+    ) -> Any:
+        self._maybe_fail()
+        self.calls.append(
+            {"func": "valuation", "symbol": symbol, "indicator": indicator, "period": period}
+        )
+        return self.valuation_map.get(symbol, {}).get(indicator, _empty_df())
+
+    def stock_financial_analysis_indicator(
+        self, symbol: str, start_year: str = "1900"
+    ) -> Any:
+        self._maybe_fail()
+        self.calls.append(
+            {"func": "financial", "symbol": symbol, "start_year": start_year}
+        )
+        return self.financial_map.get(symbol, _empty_df())
 
 
 def _gen_weekdays(n: int, end_iso: str) -> List[str]:
@@ -378,7 +416,7 @@ class AkShareSourceTransformTests(unittest.TestCase):
             src.get_benchmark_daily("nope", "2026-03-20", "2026-06-19")
 
     def test_company_layer_methods_return_empty_in_phase_6b(self) -> None:
-        src = AkShareFundamentalDataSource(akshare=_build_fake_akshare())
+        src = AkShareFundamentalDataSource(akshare=_build_fake_akshare(), today="2026-06-19")
         self.assertEqual(src.get_stock_universe("2026-06-19"), [])
         self.assertEqual(src.get_company_daily_snapshot("2026-06-19"), [])
         self.assertEqual(src.get_company_valuation_history(["002371"], "2026-03-20", "2026-06-19"), [])
@@ -409,7 +447,7 @@ class AkShareSourceTransformTests(unittest.TestCase):
 class AkShareSyncIntegrationTests(unittest.TestCase):
     def test_sync_all_writes_sector_layer_with_akshare_source(self) -> None:
         fake = _build_fake_akshare()
-        src = AkShareFundamentalDataSource(akshare=fake)
+        src = AkShareFundamentalDataSource(akshare=fake, today="2026-06-19")
         conn = connect(":memory:")
         try:
             result = sync_all(
@@ -419,6 +457,7 @@ class AkShareSyncIntegrationTests(unittest.TestCase):
                 classification_system="em_industry",
                 benchmark="hs300",
                 history_days=90,
+                codes=["002371"],
             )
             # 板块层 4 个任务必须成功；公司层 4 个任务以 0 行成功。
             by_task = {t["task"]: t for t in result.tasks}
@@ -471,7 +510,7 @@ class AkShareSyncIntegrationTests(unittest.TestCase):
         # DoD：板块日线和 benchmark 至少支持 1/5/20/60 日收益。
         # 用 65 个工作日行情 + history_days=90，验证每块板块和 benchmark 都写入 >=61 条。
         fake = _build_fake_akshare(n_days=65, end_iso="2026-06-19")
-        src = AkShareFundamentalDataSource(akshare=fake)
+        src = AkShareFundamentalDataSource(akshare=fake, today="2026-06-19")
         conn = connect(":memory:")
         try:
             sync_all(
@@ -496,7 +535,7 @@ class AkShareSyncIntegrationTests(unittest.TestCase):
         # 第一次成功写入，第二次 fake 抛错：失败任务记入 data_fetch_log，但第一次的
         # 板块/基准缓存不被破坏。
         fake = _build_fake_akshare(n_days=5, end_iso="2026-06-19")
-        src = AkShareFundamentalDataSource(akshare=fake)
+        src = AkShareFundamentalDataSource(akshare=fake, today="2026-06-19")
         conn = connect(":memory:")
         try:
             first = sync_all(
@@ -537,7 +576,7 @@ class AkShareSyncIntegrationTests(unittest.TestCase):
         # 板块层写入磁盘。不触达 akshare 可用性探测（source 已注入）。
         with TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "fundamental.sqlite"
-            src = AkShareFundamentalDataSource(akshare=_build_fake_akshare(n_days=5, end_iso="2026-06-19"))
+            src = AkShareFundamentalDataSource(akshare=_build_fake_akshare(n_days=5, end_iso="2026-06-19"), today="2026-06-19")
             out = io.StringIO()
             with redirect_stdout(out):
                 rc = main(
@@ -558,6 +597,254 @@ class AkShareSyncIntegrationTests(unittest.TestCase):
                 )
             finally:
                 conn.close()
+
+
+# ---------------------------------------------------------------------------
+# 公司层转换逻辑测试（Phase 6C）
+# ---------------------------------------------------------------------------
+
+
+def _build_company_fake_akshare() -> _FakeAkshare:
+    """构造带公司层数据的 fake akshare。"""
+    universe_df = _FakeDataFrame(
+        [
+            {"code": "600001", "name": "示例SH"},
+            {"code": "002371", "name": "示例SZ"},
+            {"code": "300001", "name": "示例创业板"},
+        ]
+    )
+    spot_df = _FakeDataFrame(
+        [
+            {"序号": 1, "代码": "600001", "名称": "示例SH", "最新价": 10.5,
+             "涨跌幅": 1.2, "成交额": 1e8, "换手率": 0.5, "总市值": 5e10},
+            {"序号": 2, "代码": "002371", "名称": "示例SZ", "最新价": 20.0,
+             "涨跌幅": -0.3, "成交额": 2e8, "换手率": 1.0, "总市值": 1e11},
+        ]
+    )
+    days = _gen_weekdays(5, "2026-06-19")
+    pe_rows = [{"date": d, "value": 20.0 + i} for i, d in enumerate(days)]
+    pb_rows = [{"date": d, "value": 2.0 + i * 0.1} for i, d in enumerate(days)]
+    valuation_map = {
+        "002371": {
+            "市盈率(TTM)": _FakeDataFrame(pe_rows),
+            "市净率": _FakeDataFrame(pb_rows),
+        }
+    }
+    fin_rows = [
+        {"日期": "2026-03-31", "主营业务收入增长率(%)": 15.0, "净利润增长率(%)": 20.0,
+         "销售毛利率(%)": 30.0, "销售净利率(%)": 10.0, "净资产收益率(%)": 12.0,
+         "资产负债率(%)": 40.0, "经营现金净流量与净利润的比率(%)": 80.0,
+         "长期负债比率(%)": 10.0},
+        {"日期": "2025-12-31", "主营业务收入增长率(%)": 10.0, "净利润增长率(%)": 5.0,
+         "销售毛利率(%)": 28.0, "销售净利率(%)": 8.0, "净资产收益率(%)": 10.0,
+         "资产负债率(%)": 45.0, "经营现金净流量与净利润的比率(%)": 70.0,
+         "长期负债比率(%)": 12.0},
+    ]
+    financial_map = {"002371": _FakeDataFrame(fin_rows)}
+    return _FakeAkshare(
+        universe_df=universe_df,
+        spot_df=spot_df,
+        valuation_map=valuation_map,
+        financial_map=financial_map,
+    )
+
+
+class AkShareCompanyLayerTests(unittest.TestCase):
+    def test_get_stock_universe_transforms_codes_and_markets(self) -> None:
+        fake = _build_company_fake_akshare()
+        src = AkShareFundamentalDataSource(akshare=fake)
+        rows = src.get_stock_universe("2026-06-19")
+        self.assertEqual(len(rows), 3)
+        by_code = {r["code"]: r for r in rows}
+        self.assertEqual(by_code["600001"]["market"], "SH")
+        self.assertEqual(by_code["002371"]["market"], "SZ")
+        self.assertEqual(by_code["300001"]["market"], "SZ")
+        for r in rows:
+            self.assertEqual(r["listing_status"], "L")
+            self.assertIsNone(r["delisted_at"])
+            self.assertEqual(r["as_of_date"], "2026-06-19")
+            self.assertIsNotNone(r["source_updated_at"])
+
+    def test_get_stock_universe_skips_missing_code(self) -> None:
+        fake = _FakeAkshare(
+            universe_df=_FakeDataFrame([
+                {"code": "600001", "name": "有代码"},
+                {"code": None, "name": "无代码"},
+            ])
+        )
+        src = AkShareFundamentalDataSource(akshare=fake)
+        rows = src.get_stock_universe("2026-06-19")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["code"], "600001")
+
+    def test_get_company_daily_snapshot_maps_fields(self) -> None:
+        fake = _build_company_fake_akshare()
+        src = AkShareFundamentalDataSource(akshare=fake, today="2026-06-19")
+        rows = src.get_company_daily_snapshot("2026-06-19")
+        self.assertEqual(len(rows), 2)
+        first = rows[0]
+        self.assertEqual(first["code"], "600001")
+        self.assertEqual(first["trade_date"], "2026-06-19")
+        self.assertEqual(first["close"], 10.5)
+        # 百分比字段转成小数比率（docs §20: 0.012 表示 1.2%）
+        self.assertEqual(first["change_pct"], 0.012)
+        self.assertEqual(first["turnover_amount"], 1e8)
+        self.assertEqual(first["turnover_rate"], 0.005)
+        self.assertEqual(first["market_cap"], 5e10)
+
+    def test_get_company_daily_snapshot_rejects_non_current_date(self) -> None:
+        """PIT 守卫：trade_date 不是当前日期时抛 ValueError，避免用实时价格
+        伪造历史快照。"""
+        fake = _build_company_fake_akshare()
+        src = AkShareFundamentalDataSource(akshare=fake, today="2026-06-22")
+        with self.assertRaises(ValueError) as ctx:
+            src.get_company_daily_snapshot("2026-06-19")
+        self.assertIn("not the current date", str(ctx.exception))
+
+    def test_get_company_valuation_history_merges_pe_pb(self) -> None:
+        fake = _build_company_fake_akshare()
+        src = AkShareFundamentalDataSource(akshare=fake)
+        rows = src.get_company_valuation_history(["002371"], "2026-06-01", "2026-06-19")
+        self.assertEqual(len(rows), 5)
+        first = rows[0]
+        self.assertEqual(first["code"], "002371")
+        self.assertEqual(first["trade_date"], _gen_weekdays(5, "2026-06-19")[0])
+        self.assertEqual(first["pe"], 20.0)
+        self.assertEqual(first["pb"], 2.0)
+        self.assertIsNone(first["ps"])
+        self.assertIsNone(first["dividend_yield"])
+        # 验证调用了 PE 和 PB 两个指标
+        indicators = [c["indicator"] for c in fake.calls if c["func"] == "valuation"]
+        self.assertIn("市盈率(TTM)", indicators)
+        self.assertIn("市净率", indicators)
+
+    def test_get_company_valuation_history_filters_by_date_range(self) -> None:
+        fake = _build_company_fake_akshare()
+        src = AkShareFundamentalDataSource(akshare=fake)
+        days = _gen_weekdays(5, "2026-06-19")
+        # 只取中间 3 天
+        rows = src.get_company_valuation_history(["002371"], days[1], days[3])
+        self.assertEqual(len(rows), 3)
+        for r in rows:
+            self.assertTrue(days[1] <= r["trade_date"] <= days[3])
+
+    def test_get_company_valuation_history_empty_codes(self) -> None:
+        src = AkShareFundamentalDataSource(akshare=_build_company_fake_akshare())
+        self.assertEqual(src.get_company_valuation_history([], "2026-01-01", "2026-06-19"), [])
+
+    def test_get_financial_metrics_maps_columns_and_derives_periods(self) -> None:
+        fake = _build_company_fake_akshare()
+        src = AkShareFundamentalDataSource(akshare=fake)
+        rows = src.get_financial_metrics(["002371"], "2026-06-19")
+        self.assertEqual(len(rows), 2)
+        # 按报告期降序（日期最新的在前，因为 sync 读取顺序是 DataFrame 行序）
+        q1 = rows[0]
+        self.assertEqual(q1["code"], "002371")
+        self.assertEqual(q1["report_period"], "2026Q1")
+        self.assertEqual(q1["period_end_date"], "2026-03-31")
+        self.assertEqual(q1["period_type"], "quarterly")
+        self.assertEqual(q1["disclosure_date"], "2026-04-30")
+        self.assertEqual(q1["revenue_yoy"], 0.15)
+        self.assertEqual(q1["net_profit_yoy"], 0.20)
+        self.assertEqual(q1["gross_margin"], 0.30)
+        self.assertEqual(q1["roe"], 0.12)
+        self.assertEqual(q1["debt_to_asset"], 0.40)
+        # 不可得的字段为 None（不用 0 替代）
+        self.assertIsNone(q1["deducted_net_profit_yoy"])
+        self.assertIsNone(q1["free_cashflow"])
+        self.assertIsNone(q1["accounts_receivable_yoy"])
+
+    def test_get_financial_metrics_annual_period_type(self) -> None:
+        fake = _build_company_fake_akshare()
+        src = AkShareFundamentalDataSource(akshare=fake)
+        rows = src.get_financial_metrics(["002371"], "2026-06-19")
+        annual = next(r for r in rows if r["period_end_date"] == "2025-12-31")
+        self.assertEqual(annual["period_type"], "annual")
+        self.assertEqual(annual["report_period"], "2025A")
+        self.assertEqual(annual["disclosure_date"], "2026-04-30")
+
+    def test_get_financial_metrics_semiannual_period_type(self) -> None:
+        """H1 报告期：period_type 必须是契约值 ``semiannual``（非 ``semi_annual``），
+        report_period 为 ``2026H1``，disclosure_date 为 08-31。"""
+        fin_rows = [
+            {"日期": "2026-06-30", "主营业务收入增长率(%)": 18.0, "净利润增长率(%)": 22.0,
+             "销售毛利率(%)": 32.0, "销售净利率(%)": 12.0, "净资产收益率(%)": 14.0,
+             "资产负债率(%)": 38.0, "经营现金净流量与净利润的比率(%)": 85.0,
+             "长期负债比率(%)": 9.0},
+        ]
+        fake = _FakeAkshare(financial_map={"002371": _FakeDataFrame(fin_rows)})
+        src = AkShareFundamentalDataSource(akshare=fake)
+        # H1 披露日为 2026-08-31，as_of_date 必须晚于等于该日才能通过 PIT 过滤。
+        rows = src.get_financial_metrics(["002371"], "2026-08-31")
+        self.assertEqual(len(rows), 1)
+        h1 = rows[0]
+        self.assertEqual(h1["period_end_date"], "2026-06-30")
+        self.assertEqual(h1["period_type"], "semiannual")
+        self.assertEqual(h1["report_period"], "2026H1")
+        self.assertEqual(h1["disclosure_date"], "2026-08-31")
+
+    def test_get_financial_metrics_point_in_time_filter(self) -> None:
+        # analysis_date = 2026-03-31：Q1(披露日 04-30) 和年报(披露日次年 04-30)
+        # 都被过滤；只有 Q3(披露日 2025-10-31) 通过。
+        fin_rows = [
+            {"日期": "2026-03-31", "主营业务收入增长率(%)": 15.0, "净利润增长率(%)": 20.0,
+             "销售毛利率(%)": 30.0, "销售净利率(%)": 10.0, "净资产收益率(%)": 12.0,
+             "资产负债率(%)": 40.0, "经营现金净流量与净利润的比率(%)": 80.0,
+             "长期负债比率(%)": 10.0},
+            {"日期": "2025-12-31", "主营业务收入增长率(%)": 10.0, "净利润增长率(%)": 5.0,
+             "销售毛利率(%)": 28.0, "销售净利率(%)": 8.0, "净资产收益率(%)": 10.0,
+             "资产负债率(%)": 45.0, "经营现金净流量与净利润的比率(%)": 70.0,
+             "长期负债比率(%)": 12.0},
+            {"日期": "2025-09-30", "主营业务收入增长率(%)": 8.0, "净利润增长率(%)": 3.0,
+             "销售毛利率(%)": 25.0, "销售净利率(%)": 6.0, "净资产收益率(%)": 8.0,
+             "资产负债率(%)": 42.0, "经营现金净流量与净利润的比率(%)": 65.0,
+             "长期负债比率(%)": 11.0},
+        ]
+        fake = _FakeAkshare(financial_map={"002371": _FakeDataFrame(fin_rows)})
+        src = AkShareFundamentalDataSource(akshare=fake)
+        rows = src.get_financial_metrics(["002371"], "2026-03-31")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["period_end_date"], "2025-09-30")
+        self.assertEqual(rows[0]["report_period"], "2025Q3")
+
+    def test_get_financial_metrics_empty_codes(self) -> None:
+        src = AkShareFundamentalDataSource(akshare=_build_company_fake_akshare())
+        self.assertEqual(src.get_financial_metrics([], "2026-06-19"), [])
+
+    def test_company_layer_failure_preserves_sector_cache(self) -> None:
+        # 公司层失败不应影响板块层已写入的缓存。
+        fake = _build_fake_akshare(n_days=5, end_iso="2026-06-19")
+        # 叠加公司层数据
+        fake.universe_df = _FakeDataFrame([{"code": "002371", "name": "示例"}])
+        src = AkShareFundamentalDataSource(akshare=fake, today="2026-06-19")
+        conn = connect(":memory:")
+        try:
+            sync_all(
+                conn, src, analysis_date="2026-06-19",
+                classification_system="em_industry", benchmark="hs300", history_days=90,
+            )
+            cached_sectors = conn.execute("SELECT COUNT(*) FROM sectors").fetchone()[0]
+            cached_stocks = conn.execute("SELECT COUNT(*) FROM stocks").fetchone()[0]
+            self.assertGreater(cached_sectors, 0)
+            self.assertGreater(cached_stocks, 0)
+
+            # 第二次：公司层抛错
+            fake.fail = True
+            result = sync_all(
+                conn, src, analysis_date="2026-06-19",
+                classification_system="em_industry", benchmark="hs300", history_days=90,
+            )
+            # 板块层和公司层都有失败（因为 fail=True 影响所有方法）
+            self.assertGreater(result.failure_count, 0)
+            # 但第一次的缓存没被破坏
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM sectors").fetchone()[0], cached_sectors
+            )
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM stocks").fetchone()[0], cached_stocks
+            )
+        finally:
+            conn.close()
 
 
 if __name__ == "__main__":  # pragma: no cover

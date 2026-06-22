@@ -1,4 +1,4 @@
-"""Fundamental Screener 数据治理同步入口（Phase 6A 骨架）。
+"""Fundamental Screener 数据治理同步入口（Phase 6B+6C）。
 
 稳定调用方式：
 
@@ -7,12 +7,11 @@
         --classification-system em_industry
     python -m packages.fundamentalscreener.sync quality --db <path> --date <YYYY-MM-DD>
 
-Phase 6A 只实现：
+Phase 6B+6C 实现：
 - ``init-db``：幂等初始化 SQLite schema。
-- ``sync``：当传入注入式 fake 数据源时，将板块/成分股/板块行情/基准行情/股票池/
-  公司日度快照/公司估值历史/财务指标写入 SQLite，并在 ``data_fetch_log`` 中留下
-  来源血缘。Phase 6A 不接入真实 AkShare，CLI 调用方必须通过 Python API 注入
-  ``FakeFundamentalDataSource``，或调用 ``init-db`` 仅初始化 schema。
+- ``sync``：通过 ``AkShareFundamentalDataSource`` 或注入式 fake 数据源，将板块列表/
+  成分股/板块行情/基准行情/股票池/公司日度快照/公司估值历史/财务指标写入 SQLite，
+  并在 ``data_fetch_log`` 中留下来源血缘。未安装 akshare 时返回 rc=2。
 - ``quality``：占位输出空的 ``QualityReport``，真实规则在 Phase 6D 落地。
 
 设计原则：
@@ -20,6 +19,8 @@ Phase 6A 只实现：
   任务事务；任务失败时写入 ``data_fetch_log`` 的失败行并继续下一任务。
 - 所有采集写入必须带 ``source`` / ``fetch_run_id`` / ``source_updated_at`` /
   ``created_at`` / ``updated_at``。
+- rc=0 要求 Phase 6B 必需的板块层任务全部成功且写入行数 > 0；公司层任务失败也会
+  导致 rc=1，但公司层 0 行成功不阻塞板块层判定。
 """
 
 from __future__ import annotations
@@ -54,8 +55,8 @@ from .sqlite_schema import connect, init_db, list_tables
 # ---------------------------------------------------------------------------
 
 # Phase 6B 必须成功的板块层任务。CLI ``sync`` 的 rc=0 要求这 4 个任务全部成功
-# 且写入行数 > 0，避免断网/空返回被自动化误判为成功（公司层 Phase 6C 桩以 0 行
-# 成功，不计入必需集）。
+# 且写入行数 > 0，避免断网/空返回被自动化误判为成功（公司层任务不在必需集内：
+# per-code 任务未传 --codes 时跳过，batch 任务可能 0 行成功）。
 REQUIRED_PHASE_6B_TASKS: Tuple[str, ...] = (
     "list_sectors",
     "get_sector_constituents",
@@ -548,7 +549,12 @@ def sync_all(
     """运行一次完整同步。
 
     Phase 6A 实现支持：板块列表、板块成分、板块行情、基准行情、股票池、公司日度
-    快照、公司估值历史、财务指标。可选 ``codes`` 用于限制公司层抓取范围。
+    快照、公司估值历史、财务指标。
+
+    ``codes`` 用于限制公司层 per-code 抓取范围（估值历史 + 财务指标）。未提供
+    ``codes`` 时，这两个 per-code 任务会被跳过，避免对全量股票池逐只发起网络
+    请求（P2: 默认全量 fanout 会导致数千次顺序请求）。股票池和公司日度快照是
+    batch 接口，始终运行。
     """
 
     init_db(conn)
@@ -837,109 +843,110 @@ def sync_all(
     )
 
     def _company_codes() -> List[str]:
-        if codes:
-            return list(codes)
-        # 兜底用股票池里的 code
-        cur = conn.execute("SELECT code FROM stocks")
-        return [row[0] for row in cur.fetchall()]
+        # Per-code 公司层任务仅在 codes 显式提供时运行。调用方（sync_all）已通过
+        # if codes 守卫保证此处 codes 非空。
+        return [c for c in (codes or []) if c]
 
-    def _fetch_valuation_history() -> List[Dict[str, Any]]:
-        return source.get_company_valuation_history(
-            _company_codes(), start_date, analysis_date
-        )
-
-    def _persist_valuation_history(rows: List[Dict[str, Any]]) -> _PersistResult:
-        def _enrich(r: Dict[str, Any]) -> Dict[str, Any]:
-            return _lineage_columns(
-                {
-                    "code": str(r.get("code", "")),
-                    "trade_date": str(r.get("trade_date", "")),
-                    "market": r.get("market"),
-                    "pe": r.get("pe"),
-                    "pb": r.get("pb"),
-                    "ps": r.get("ps"),
-                    "dividend_yield": r.get("dividend_yield"),
-                    "source_updated_at": r.get("source_updated_at"),
-                },
-                source_name,
-                fetch_run_id,
+    if codes:
+        # --- 估值历史（per-code：每只股票 2 次百度接口调用）---
+        def _fetch_valuation_history() -> List[Dict[str, Any]]:
+            return source.get_company_valuation_history(
+                _company_codes(), start_date, analysis_date
             )
 
-        return _persist_with_validation(
-            conn,
-            table="company_valuation_history",
-            rows=rows,
-            pk_columns=("code", "trade_date"),
-            column_order=_COMPANY_VAL_COLUMNS,
-            enrich=_enrich,
-        )
+        def _persist_valuation_history(rows: List[Dict[str, Any]]) -> _PersistResult:
+            def _enrich(r: Dict[str, Any]) -> Dict[str, Any]:
+                return _lineage_columns(
+                    {
+                        "code": str(r.get("code", "")),
+                        "trade_date": str(r.get("trade_date", "")),
+                        "market": r.get("market"),
+                        "pe": r.get("pe"),
+                        "pb": r.get("pb"),
+                        "ps": r.get("ps"),
+                        "dividend_yield": r.get("dividend_yield"),
+                        "source_updated_at": r.get("source_updated_at"),
+                    },
+                    source_name,
+                    fetch_run_id,
+                )
 
-    result.tasks.append(
-        _run_task(
-            conn,
-            fetch_run_id=fetch_run_id,
-            source_name=source_name,
-            task="get_company_valuation_history",
-            fetch=_fetch_valuation_history,
-            persist=_persist_valuation_history,
-        )
-    )
-
-    def _fetch_financial() -> List[Dict[str, Any]]:
-        return source.get_financial_metrics(_company_codes(), analysis_date)
-
-    def _persist_financial(rows: List[Dict[str, Any]]) -> _PersistResult:
-        def _enrich(r: Dict[str, Any]) -> Dict[str, Any]:
-            return _lineage_columns(
-                {
-                    "code": str(r.get("code", "")),
-                    "report_period": str(r.get("report_period", "")),
-                    "period_end_date": str(r.get("period_end_date", "")),
-                    "disclosure_date": str(r.get("disclosure_date", "")),
-                    "period_type": str(r.get("period_type", "annual")),
-                    "as_of_date": str(r.get("as_of_date", analysis_date)),
-                    "revenue_yoy": r.get("revenue_yoy"),
-                    "net_profit_yoy": r.get("net_profit_yoy"),
-                    "deducted_net_profit_yoy": r.get("deducted_net_profit_yoy"),
-                    "gross_margin": r.get("gross_margin"),
-                    "net_margin": r.get("net_margin"),
-                    "roe": r.get("roe"),
-                    "operating_cashflow_to_profit": r.get(
-                        "operating_cashflow_to_profit"
-                    ),
-                    "free_cashflow": r.get("free_cashflow"),
-                    "debt_to_asset": r.get("debt_to_asset"),
-                    "interest_bearing_debt_ratio": r.get(
-                        "interest_bearing_debt_ratio"
-                    ),
-                    "accounts_receivable_yoy": r.get("accounts_receivable_yoy"),
-                    "inventory_yoy": r.get("inventory_yoy"),
-                    "gross_margin_yoy_change": r.get("gross_margin_yoy_change"),
-                    "source_updated_at": r.get("source_updated_at"),
-                },
-                source_name,
-                fetch_run_id,
+            return _persist_with_validation(
+                conn,
+                table="company_valuation_history",
+                rows=rows,
+                pk_columns=("code", "trade_date"),
+                column_order=_COMPANY_VAL_COLUMNS,
+                enrich=_enrich,
             )
 
-        return _persist_with_validation(
-            conn,
-            table="financial_metrics",
-            rows=rows,
-            pk_columns=("code", "report_period", "period_type", "disclosure_date"),
-            column_order=_FINANCIAL_COLUMNS,
-            enrich=_enrich,
+        result.tasks.append(
+            _run_task(
+                conn,
+                fetch_run_id=fetch_run_id,
+                source_name=source_name,
+                task="get_company_valuation_history",
+                fetch=_fetch_valuation_history,
+                persist=_persist_valuation_history,
+            )
         )
 
-    result.tasks.append(
-        _run_task(
-            conn,
-            fetch_run_id=fetch_run_id,
-            source_name=source_name,
-            task="get_financial_metrics",
-            fetch=_fetch_financial,
-            persist=_persist_financial,
+        # --- 财务指标（per-code：每只股票 1 次新浪接口调用）---
+        def _fetch_financial() -> List[Dict[str, Any]]:
+            return source.get_financial_metrics(_company_codes(), analysis_date)
+
+        def _persist_financial(rows: List[Dict[str, Any]]) -> _PersistResult:
+            def _enrich(r: Dict[str, Any]) -> Dict[str, Any]:
+                return _lineage_columns(
+                    {
+                        "code": str(r.get("code", "")),
+                        "report_period": str(r.get("report_period", "")),
+                        "period_end_date": str(r.get("period_end_date", "")),
+                        "disclosure_date": str(r.get("disclosure_date", "")),
+                        "period_type": str(r.get("period_type", "annual")),
+                        "as_of_date": str(r.get("as_of_date", analysis_date)),
+                        "revenue_yoy": r.get("revenue_yoy"),
+                        "net_profit_yoy": r.get("net_profit_yoy"),
+                        "deducted_net_profit_yoy": r.get("deducted_net_profit_yoy"),
+                        "gross_margin": r.get("gross_margin"),
+                        "net_margin": r.get("net_margin"),
+                        "roe": r.get("roe"),
+                        "operating_cashflow_to_profit": r.get(
+                            "operating_cashflow_to_profit"
+                        ),
+                        "free_cashflow": r.get("free_cashflow"),
+                        "debt_to_asset": r.get("debt_to_asset"),
+                        "interest_bearing_debt_ratio": r.get(
+                            "interest_bearing_debt_ratio"
+                        ),
+                        "accounts_receivable_yoy": r.get("accounts_receivable_yoy"),
+                        "inventory_yoy": r.get("inventory_yoy"),
+                        "gross_margin_yoy_change": r.get("gross_margin_yoy_change"),
+                        "source_updated_at": r.get("source_updated_at"),
+                    },
+                    source_name,
+                    fetch_run_id,
+                )
+
+            return _persist_with_validation(
+                conn,
+                table="financial_metrics",
+                rows=rows,
+                pk_columns=("code", "report_period", "period_type", "disclosure_date"),
+                column_order=_FINANCIAL_COLUMNS,
+                enrich=_enrich,
+            )
+
+        result.tasks.append(
+            _run_task(
+                conn,
+                fetch_run_id=fetch_run_id,
+                source_name=source_name,
+                task="get_financial_metrics",
+                fetch=_fetch_financial,
+                persist=_persist_financial,
+            )
         )
-    )
 
     result.finished_at = _ts()
     return result
@@ -1000,7 +1007,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_sync.add_argument(
         "--codes",
         default="",
-        help="可选：限制公司层抓取范围的逗号分隔股票代码（Phase 6C 起生效）。",
+        help="逗号分隔的股票代码。未提供时跳过 per-code 公司层任务（估值历史 + "
+        "财务指标），仅运行 batch 任务（股票池 + 日度快照）。",
     )
 
     p_quality = sub.add_parser(
@@ -1064,9 +1072,10 @@ def main(
         return 0
 
     if args.command == "sync":
-        # Phase 6B（docs §18 Phase 6B）：CLI ``sync`` 接入 AkShare 东方财富行业板块
-        # （``em_industry``）。第一版只支持 em_industry 口径；公司层采集在 Phase 6C
-        # 落地，当前会以"成功 0 行"完成。``source`` 注入仅供测试使用，跳过 akshare 探测。
+        # Phase 6B+6C：CLI ``sync`` 接入 AkShare 东方财富行业板块（``em_industry``）
+        # + 公司层（股票池 / 日度快照 / 估值历史 / 财务指标）。per-code 公司层任务
+        # （估值历史 + 财务指标）需要 ``--codes`` 显式指定，未提供时跳过。
+        # ``source`` 注入仅供测试使用，跳过 akshare 探测。
         if args.classification_system != "em_industry":
             sys.stderr.write(
                 f"sync: classification system {args.classification_system!r} is not "
@@ -1085,6 +1094,14 @@ def main(
                 return 2
             source = AkShareFundamentalDataSource()
 
+        parsed_codes = _parse_codes(args.codes)
+        if not parsed_codes:
+            sys.stderr.write(
+                "sync: --codes not provided; skipping per-code company tasks "
+                "(valuation history + financial metrics). Pass --codes A,B,C "
+                "to sync these for specific stocks.\n"
+            )
+
         conn = connect(args.db)
         try:
             result = sync_all(
@@ -1094,7 +1111,7 @@ def main(
                 classification_system=args.classification_system,
                 benchmark=args.benchmark,
                 history_days=args.history_days,
-                codes=_parse_codes(args.codes),
+                codes=parsed_codes,
             )
         finally:
             conn.close()
