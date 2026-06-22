@@ -28,6 +28,7 @@ from .lineage import (
     SourceSet,
     now_cn,
 )
+from .config import PERCENTILE_CONFIG
 from .percentile import compute_valuation_percentiles
 from .quality import QualityReport, run_quality_checks
 from .repositories import (
@@ -462,6 +463,12 @@ class SqliteFundamentalRepository(Repository):
         status = (
             self._quality_report.status if self._quality_report else "ok"
         )
+        # docs §18: 估值分位配置必须版本化，并纳入 config_version 或 formula_version。
+        # 将 percentile 版本拼入 formula_version，便于 snapshot 消费者追溯。
+        pct_version = PERCENTILE_CONFIG.get("version", "")
+        formula_version = DEFAULT_FORMULA_VERSION
+        if pct_version:
+            formula_version = f"{DEFAULT_FORMULA_VERSION}+{pct_version}"
 
         return SnapshotMetadata.create(
             analysis_date=self.analysis_date,
@@ -470,6 +477,7 @@ class SqliteFundamentalRepository(Repository):
             fetch_run_id=fetch_run_id,
             quality_report_id=quality_report_id,
             data_quality_status=status,
+            formula_version=formula_version,
         )
 
     def _extract_source_set(self, conn) -> SourceSet:

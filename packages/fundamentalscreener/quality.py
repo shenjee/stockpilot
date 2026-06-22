@@ -150,6 +150,11 @@ STALE_THRESHOLD_DAYS: int = 7
 # 板块日线最少需要的交易日数（docs §18: 板块日线至少覆盖 60 个交易日）。
 MIN_SECTOR_DAILY_BARS: int = 60
 
+# 板块成分股行情覆盖率阈值（docs §18: "行业板块成分覆盖率应达到配置阈值，
+# 低于阈值时降级或阻断"）。覆盖率低于此值 → error（阻断）；高于阈值但有个别
+# 缺失 → warning（降级）。
+MIN_CONSTITUENT_QUOTE_COVERAGE: float = 0.5
+
 
 def run_quality_checks(
     conn,
@@ -337,14 +342,32 @@ def run_quality_checks(
     ).fetchone()[0]
     missing_quotes = total_constituents - constituents_with_quotes
     if missing_quotes > 0:
-        report.add_issue(
-            "missing_constituent_quotes",
-            LEVEL_WARNING,
-            f"{missing_quotes}/{total_constituents} sector constituents have no quote data "
-            f"on or before {analysis_date}",
-            entity_type="snapshot",
-            details={"missing": missing_quotes, "total": total_constituents},
-        )
+        coverage = constituents_with_quotes / total_constituents if total_constituents > 0 else 0.0
+        if coverage < MIN_CONSTITUENT_QUOTE_COVERAGE:
+            # 覆盖率低于阈值 → 阻断（docs §18: "低于阈值时...阻断"）
+            report.add_issue(
+                "low_constituent_quote_coverage",
+                LEVEL_ERROR,
+                f"constituent quote coverage: {constituents_with_quotes}/{total_constituents} "
+                f"({coverage:.0%}) below threshold {MIN_CONSTITUENT_QUOTE_COVERAGE:.0%}",
+                entity_type="snapshot",
+                details={
+                    "with_quotes": constituents_with_quotes,
+                    "missing": missing_quotes,
+                    "total": total_constituents,
+                    "threshold": MIN_CONSTITUENT_QUOTE_COVERAGE,
+                },
+            )
+        else:
+            # 个别缺失 → warning（docs §18: "个别板块成分缺行情" 为 warning）
+            report.add_issue(
+                "missing_constituent_quotes",
+                LEVEL_WARNING,
+                f"{missing_quotes}/{total_constituents} sector constituents have no quote data "
+                f"on or before {analysis_date}",
+                entity_type="snapshot",
+                details={"missing": missing_quotes, "total": total_constituents},
+            )
 
     # company daily snapshot (quotes) — scoped to selected sector constituents
     row = conn.execute(
@@ -513,6 +536,63 @@ def run_quality_checks(
                 },
             )
 
+    # ---- 公司 code 对齐检测（docs §18: "公司 code 必须能在 companies、
+    # financials、valuations 中对齐"）----
+    # 覆盖率检查给出聚合比例，此处给出实体级明细，便于定位具体哪些成分股
+    # 缺财务或缺估值。仅报告 INFO，不改变 status（已由覆盖率检查决定）。
+    if company_count > 0:
+        # 缺财务的成分股
+        missing_fin = [
+            r[0]
+            for r in conn.execute(
+                "SELECT DISTINCT sc.code FROM sector_constituents sc "
+                "WHERE sc.classification_system = ? "
+                "AND sc.as_of_date = ("
+                "  SELECT MAX(as_of_date) FROM sector_constituents "
+                "  WHERE sector_id = sc.sector_id AND classification_system = ? "
+                "  AND as_of_date <= ?"
+                ") "
+                "AND NOT EXISTS ("
+                "  SELECT 1 FROM financial_metrics f "
+                "  WHERE f.code = sc.code AND f.disclosure_date <= ? "
+                "  AND f.as_of_date <= ?"
+                ")",
+                (classification_system, classification_system,
+                 analysis_date, analysis_date, analysis_date),
+            ).fetchall()
+        ]
+        # 缺估值的成分股
+        missing_val = [
+            r[0]
+            for r in conn.execute(
+                "SELECT DISTINCT sc.code FROM sector_constituents sc "
+                "WHERE sc.classification_system = ? "
+                "AND sc.as_of_date = ("
+                "  SELECT MAX(as_of_date) FROM sector_constituents "
+                "  WHERE sector_id = sc.sector_id AND classification_system = ? "
+                "  AND as_of_date <= ?"
+                ") "
+                "AND NOT EXISTS ("
+                "  SELECT 1 FROM company_valuation_history v "
+                "  WHERE v.code = sc.code AND v.trade_date <= ?"
+                ")",
+                (classification_system, classification_system,
+                 analysis_date, analysis_date),
+            ).fetchall()
+        ]
+        if missing_fin or missing_val:
+            report.add_issue(
+                "code_misalignment",
+                LEVEL_INFO,
+                f"{len(missing_fin)} constituents missing financials, "
+                f"{len(missing_val)} missing valuations",
+                entity_type="snapshot",
+                details={
+                    "missing_financials": missing_fin,
+                    "missing_valuations": missing_val,
+                },
+            )
+
     return report
 
 
@@ -521,6 +601,7 @@ __all__ = [
     "LEVEL_ERROR",
     "LEVEL_INFO",
     "LEVEL_WARNING",
+    "MIN_CONSTITUENT_QUOTE_COVERAGE",
     "MIN_SECTOR_DAILY_BARS",
     "QualityIssue",
     "QualityReport",

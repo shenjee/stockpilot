@@ -205,6 +205,10 @@ class QualityCheckTests(unittest.TestCase):
             days = _gen_weekdays(65, "2026-06-10")
             _insert_sector_daily(conn, "BK0001", days)
             _insert_benchmark(conn, "hs300", days)
+            # 成分股有行情（同样过旧），避免触发 low_constituent_quote_coverage error
+            _insert_company_snapshot(conn, "002371", "2026-06-10")
+            _insert_financial(conn, "002371", "2026-04-28")
+            _insert_valuation(conn, "002371", "2026-06-10")
             report = run_quality_checks(conn, "2026-06-19", "em_industry", "hs300")
             self.assertTrue(report.stale)
             self.assertEqual(report.status, "stale")
@@ -389,6 +393,91 @@ class QualityCheckTests(unittest.TestCase):
             self.assertEqual(cov[0].details["total"], 3)
             self.assertEqual(cov[0].details["with_valuation_rows"], 3)
             self.assertEqual(cov[0].details["with_usable_valuations"], 1)
+        finally:
+            conn.close()
+
+    def test_low_constituent_quote_coverage_is_error(self) -> None:
+        """成分股行情覆盖率低于阈值 → error → invalid。"""
+        conn = self._setup_db()
+        try:
+            _insert_sector(conn, "BK0001", "半导体")
+            # 3 家成分股，只有 1 家有行情 → 33% < 50% → error
+            _insert_constituent(conn, "BK0001", "002371")
+            _insert_constituent(conn, "BK0001", "600584")
+            _insert_constituent(conn, "BK0001", "000001")
+            days = _gen_weekdays(65, "2026-06-19")
+            _insert_sector_daily(conn, "BK0001", days)
+            _insert_benchmark(conn, "hs300", days)
+            _insert_company_snapshot(conn, "002371", "2026-06-19")
+            report = run_quality_checks(conn, "2026-06-19", "em_industry", "hs300")
+            self.assertEqual(report.status, "invalid")
+            err = [i for i in report.issues if i.code == "low_constituent_quote_coverage"]
+            self.assertEqual(len(err), 1)
+            self.assertEqual(err[0].level, LEVEL_ERROR)
+            self.assertEqual(err[0].details["with_quotes"], 1)
+            self.assertEqual(err[0].details["missing"], 2)
+            self.assertEqual(err[0].details["total"], 3)
+        finally:
+            conn.close()
+
+    def test_individual_missing_quotes_is_warning_not_error(self) -> None:
+        """个别成分缺行情（覆盖率 >= 50%）→ warning，不是 error。"""
+        conn = self._setup_db()
+        try:
+            _insert_sector(conn, "BK0001", "半导体")
+            # 3 家成分股，2 家有行情 → 67% >= 50% → warning
+            _insert_constituent(conn, "BK0001", "002371")
+            _insert_constituent(conn, "BK0001", "600584")
+            _insert_constituent(conn, "BK0001", "000001")
+            days = _gen_weekdays(65, "2026-06-19")
+            _insert_sector_daily(conn, "BK0001", days)
+            _insert_benchmark(conn, "hs300", days)
+            _insert_company_snapshot(conn, "002371", "2026-06-19")
+            _insert_company_snapshot(conn, "600584", "2026-06-19")
+            _insert_financial(conn, "002371", "2026-04-28")
+            _insert_financial(conn, "600584", "2026-04-28")
+            _insert_valuation(conn, "002371", "2026-06-19")
+            _insert_valuation(conn, "600584", "2026-06-19")
+            report = run_quality_checks(conn, "2026-06-19", "em_industry", "hs300")
+            # warning（degraded），不是 error（invalid）
+            self.assertEqual(report.status, "degraded")
+            warn = [i for i in report.issues if i.code == "missing_constituent_quotes"]
+            self.assertEqual(len(warn), 1)
+            self.assertEqual(warn[0].level, LEVEL_WARNING)
+            self.assertEqual(warn[0].details["missing"], 1)
+            self.assertEqual(warn[0].details["total"], 3)
+            # 不应有 error 级 issue
+            self.assertEqual(report.counts[LEVEL_ERROR], 0)
+        finally:
+            conn.close()
+
+    def test_code_misalignment_reports_missing_financials_and_valuations(self) -> None:
+        """code_misalignment INFO 报告缺财务/缺估值的成分股 code 列表。"""
+        conn = self._setup_db()
+        try:
+            _insert_sector(conn, "BK0001", "半导体")
+            _insert_constituent(conn, "BK0001", "002371")
+            _insert_constituent(conn, "BK0001", "600584")
+            _insert_constituent(conn, "BK0001", "000001")
+            days = _gen_weekdays(65, "2026-06-19")
+            _insert_sector_daily(conn, "BK0001", days)
+            _insert_benchmark(conn, "hs300", days)
+            # 全部有行情，避免触发 quote coverage error
+            for code in ("002371", "600584", "000001"):
+                _insert_company_snapshot(conn, code, "2026-06-19")
+            # 只有 002371 有财务和估值
+            _insert_financial(conn, "002371", "2026-04-28")
+            _insert_valuation(conn, "002371", "2026-06-19")
+            report = run_quality_checks(conn, "2026-06-19", "em_industry", "hs300")
+            align = [i for i in report.issues if i.code == "code_misalignment"]
+            self.assertEqual(len(align), 1)
+            self.assertEqual(align[0].level, LEVEL_INFO)
+            self.assertSetEqual(
+                set(align[0].details["missing_financials"]), {"600584", "000001"}
+            )
+            self.assertSetEqual(
+                set(align[0].details["missing_valuations"]), {"600584", "000001"}
+            )
         finally:
             conn.close()
 

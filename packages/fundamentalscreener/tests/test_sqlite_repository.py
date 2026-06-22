@@ -539,6 +539,27 @@ class UniverseScopingRegressionTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_formula_version_includes_percentile_config_version(self) -> None:
+        """docs §18: 估值分位配置必须版本化，纳入 formula_version。"""
+        from packages.fundamentalscreener.config import PERCENTILE_CONFIG
+        from packages.fundamentalscreener.lineage import DEFAULT_FORMULA_VERSION
+
+        conn = self._setup_db()
+        try:
+            repo = SqliteFundamentalRepository(
+                conn,  # type: ignore[arg-type]
+                analysis_date="2026-06-19",
+            )
+            repo.load_snapshot()
+            meta = repo.metadata
+            pct_ver = PERCENTILE_CONFIG["version"]
+            self.assertEqual(
+                meta.formula_version,
+                f"{DEFAULT_FORMULA_VERSION}+{pct_ver}",
+            )
+        finally:
+            conn.close()
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
