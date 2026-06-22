@@ -245,7 +245,34 @@ class SyncCliTests(unittest.TestCase):
             finally:
                 conn.close()
 
-    def test_sync_cli_refuses_without_real_source(self) -> None:
+    def test_sync_cli_without_akshare_returns_error(self) -> None:
+        # Phase 6B：CLI sync 不再被禁用，但真实同步需要 akshare。当 akshare 不可用时
+        # 应返回 rc=2 并给出明确安装提示（不联网、不崩溃）。用 patch 强制
+        # ``_akshare_available`` 返回 False，保证测试不依赖 akshare 是否真的安装、
+        # 也不触达网络。
+        from packages.fundamentalscreener import sync as sync_mod
+        from unittest.mock import patch
+
+        with TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "fundamental.sqlite"
+            err = io.StringIO()
+            with patch.object(sync_mod, "_akshare_available", return_value=False):
+                with redirect_stderr(err):
+                    rc = main(
+                        [
+                            "sync",
+                            "--db",
+                            str(db_path),
+                            "--date",
+                            "2026-06-19",
+                            "--classification-system",
+                            "em_industry",
+                        ]
+                    )
+            self.assertEqual(rc, 2)
+            self.assertIn("akshare", err.getvalue().lower())
+
+    def test_sync_cli_rejects_unsupported_classification_system(self) -> None:
         with TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "fundamental.sqlite"
             err = io.StringIO()
@@ -258,11 +285,101 @@ class SyncCliTests(unittest.TestCase):
                         "--date",
                         "2026-06-19",
                         "--classification-system",
-                        "em_industry",
+                        "sw_l1",
                     ]
                 )
             self.assertEqual(rc, 2)
-            self.assertIn("intentionally disabled", err.getvalue().lower())
+            self.assertIn("em_industry", err.getvalue())
+
+    def test_sync_cli_with_injected_source_succeeds(self) -> None:
+        # 通过 ``source=`` 注入 fake 数据源，跳过 akshare 探测，验证 CLI sync 接线：
+        # 正常运行、输出 JSON、rc=0，且板块层数据真的写入 SQLite。
+        with TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "fundamental.sqlite"
+            out = io.StringIO()
+            with redirect_stdout(out):
+                rc = main(
+                    [
+                        "sync",
+                        "--db",
+                        str(db_path),
+                        "--date",
+                        "2026-06-19",
+                        "--classification-system",
+                        "em_industry",
+                        "--benchmark",
+                        "hs300",
+                    ],
+                    source=_make_source(),
+                )
+            self.assertEqual(rc, 0)
+            payload = json.loads(out.getvalue())
+            self.assertEqual(payload["command"], "sync")
+            self.assertEqual(payload["classification_system"], "em_industry")
+            self.assertEqual(payload["benchmark"], "hs300")
+            self.assertIn("fetch_run_id", payload)
+            self.assertGreater(payload["success_count"], 0)
+            # 板块行真的写入了磁盘。
+            conn = connect(str(db_path))
+            try:
+                row = conn.execute(
+                    "SELECT sector_id, source FROM sectors LIMIT 1"
+                ).fetchone()
+                self.assertIsNotNone(row)
+                self.assertEqual(row[0], "BK0001")
+                self.assertEqual(row[1], "fake")
+            finally:
+                conn.close()
+
+    def test_sync_cli_returns_rc1_when_required_tasks_write_zero_rows(self) -> None:
+        # P1 回归：空数据源让所有任务以 0 行"成功"（failure_count==0），但 Phase 6B
+        # 必需的板块层任务没有写入任何行，CLI 必须返回 rc=1 而非 rc=0。
+        with TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "fundamental.sqlite"
+            out = io.StringIO()
+            with redirect_stdout(out):
+                rc = main(
+                    [
+                        "sync",
+                        "--db",
+                        str(db_path),
+                        "--date",
+                        "2026-06-19",
+                        "--classification-system",
+                        "em_industry",
+                        "--benchmark",
+                        "hs300",
+                    ],
+                    source=FakeFundamentalDataSource(name="fake"),
+                )
+            self.assertEqual(rc, 1)
+            payload = json.loads(out.getvalue())
+            self.assertEqual(payload["failure_count"], 0)
+            self.assertEqual(payload["row_count"], 0)
+
+    def test_sync_cli_returns_rc1_when_source_fails(self) -> None:
+        # P1 回归：数据源抛错时必需任务失败（failure_count>0），CLI 返回 rc=1。
+        with TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "fundamental.sqlite"
+            out = io.StringIO()
+            with redirect_stdout(out):
+                rc = main(
+                    [
+                        "sync",
+                        "--db",
+                        str(db_path),
+                        "--date",
+                        "2026-06-19",
+                        "--classification-system",
+                        "em_industry",
+                        "--benchmark",
+                        "hs300",
+                    ],
+                    source=FakeFundamentalDataSource(name="fake", fail=True),
+                )
+            self.assertEqual(rc, 1)
+            payload = json.loads(out.getvalue())
+            self.assertGreater(payload["failure_count"], 0)
 
     def test_quality_cli_returns_placeholder_report(self) -> None:
         with TemporaryDirectory() as tmp:

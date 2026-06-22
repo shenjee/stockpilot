@@ -32,7 +32,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from .data_sources import FakeFundamentalDataSource, FundamentalDataSource
+from .data_sources import (
+    AkShareFundamentalDataSource,
+    FakeFundamentalDataSource,
+    FundamentalDataSource,
+)
 from .lineage import (
     DEFAULT_CONFIG_VERSION,
     DEFAULT_FORMULA_VERSION,
@@ -48,6 +52,16 @@ from .sqlite_schema import connect, init_db, list_tables
 # ---------------------------------------------------------------------------
 # 同步任务定义
 # ---------------------------------------------------------------------------
+
+# Phase 6B 必须成功的板块层任务。CLI ``sync`` 的 rc=0 要求这 4 个任务全部成功
+# 且写入行数 > 0，避免断网/空返回被自动化误判为成功（公司层 Phase 6C 桩以 0 行
+# 成功，不计入必需集）。
+REQUIRED_PHASE_6B_TASKS: Tuple[str, ...] = (
+    "list_sectors",
+    "get_sector_constituents",
+    "get_sector_daily",
+    "get_benchmark_daily",
+)
 
 
 @dataclass
@@ -965,7 +979,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_sync = sub.add_parser(
         "sync",
-        help="运行同步任务。Phase 6A 默认未注入真实数据源；CLI 会拒绝执行。",
+        help="运行同步任务。Phase 6B 接入 AkShare 东方财富行业板块（em_industry）。",
     )
     p_sync.add_argument("--db", required=True)
     p_sync.add_argument("--date", required=True, help="分析日期 YYYY-MM-DD。")
@@ -973,9 +987,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--classification-system",
         dest="classification_system",
         default="em_industry",
-        help="板块分类口径，Phase 6A 第一版固定 em_industry。",
+        help="板块分类口径，Phase 6B 第一版固定 em_industry。",
     )
     p_sync.add_argument("--benchmark", default="hs300")
+    p_sync.add_argument(
+        "--history-days",
+        dest="history_days",
+        type=int,
+        default=90,
+        help="回采历史天数（自然日），需覆盖 60 个交易日以支持 60 日收益。",
+    )
+    p_sync.add_argument(
+        "--codes",
+        default="",
+        help="可选：限制公司层抓取范围的逗号分隔股票代码（Phase 6C 起生效）。",
+    )
 
     p_quality = sub.add_parser(
         "quality", help="输出占位 QualityReport，规则在 Phase 6D 落地。"
@@ -986,7 +1012,37 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
+def _akshare_available() -> bool:
+    """探测 akshare 是否可导入。真实同步需要 akshare；未安装时 CLI 给出明确错误。"""
+
+    try:
+        import akshare  # noqa: F401, type: ignore[import-not-found]
+    except ImportError:
+        return False
+    return True
+
+
+def _parse_codes(raw: str) -> Optional[List[str]]:
+    """解析 ``--codes`` 参数：逗号分隔的股票代码列表，空串返回 ``None``。"""
+
+    if not raw:
+        return None
+    codes = [c.strip() for c in raw.split(",") if c.strip()]
+    return codes or None
+
+
+def main(
+    argv: Optional[Sequence[str]] = None,
+    *,
+    source: Optional[FundamentalDataSource] = None,
+) -> int:
+    """CLI 入口。
+
+    ``source`` 仅用于 ``sync`` 子命令的内部/测试注入：传入时跳过 akshare 可用性
+    探测并直接使用该数据源；为 ``None`` 时构造 ``AkShareFundamentalDataSource()``
+    并要求 akshare 已安装。其他子命令忽略该参数。
+    """
+
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -1008,19 +1064,60 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 0
 
     if args.command == "sync":
-        # Phase 6A 范围（docs §18 Phase 6A）：CLI ``sync`` 命令的"真实数据源调用"
-        # 职责留给 Phase 6B（AkShare em_industry）。Phase 6A 的 sync 行为通过
-        # Python API ``sync_all(conn, FakeFundamentalDataSource(), ...)`` 验证，
-        # 不提供 CLI 入口。这里明确返回 rc=2，避免使用者误以为 CLI 已支持同步。
-        sys.stderr.write(
-            "sync: CLI entrypoint is intentionally disabled in phase 6A. Phase 6A "
-            "validates syncing via the Python API (sync_all + "
-            "FakeFundamentalDataSource). The CLI sync command will be wired to the "
-            "real AkShare source in phase 6B. Use `python -m "
-            "packages.fundamentalscreener.sync init-db` to initialize the schema "
-            "in the meantime.\n"
+        # Phase 6B（docs §18 Phase 6B）：CLI ``sync`` 接入 AkShare 东方财富行业板块
+        # （``em_industry``）。第一版只支持 em_industry 口径；公司层采集在 Phase 6C
+        # 落地，当前会以"成功 0 行"完成。``source`` 注入仅供测试使用，跳过 akshare 探测。
+        if args.classification_system != "em_industry":
+            sys.stderr.write(
+                f"sync: classification system {args.classification_system!r} is not "
+                "supported in phase 6B. Only 'em_industry' is implemented.\n"
+            )
+            return 2
+
+        if source is None:
+            if not _akshare_available():
+                sys.stderr.write(
+                    "sync: akshare is not installed. Install it with "
+                    "`pip install akshare` to enable real em_industry sync. "
+                    "(Phase 6B: real AkShare sync is a manual smoke, not a unit "
+                    "test dependency.)\n"
+                )
+                return 2
+            source = AkShareFundamentalDataSource()
+
+        conn = connect(args.db)
+        try:
+            result = sync_all(
+                conn,
+                source,
+                analysis_date=args.date,
+                classification_system=args.classification_system,
+                benchmark=args.benchmark,
+                history_days=args.history_days,
+                codes=_parse_codes(args.codes),
+            )
+        finally:
+            conn.close()
+
+        payload = result.to_dict()
+        payload["command"] = "sync"
+        payload["db"] = str(Path(args.db).resolve()) if args.db != ":memory:" else ":memory:"
+        payload["date"] = args.date
+        payload["classification_system"] = args.classification_system
+        payload["benchmark"] = args.benchmark
+        sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2))
+        sys.stdout.write("\n")
+        # rc=0 要求 Phase 6B 必需的板块层任务全部成功且写入行数 > 0，且无任何子任务
+        # 失败。这样断网/空返回不会被自动化误判为成功：公司层 Phase 6C 桩以 0 行成功
+        # 但不在必需集内；list_sectors 失败后下游板块任务虽以 0 行"成功"但必需集仍
+        # 不满足。JSON 始终输出便于排查。akshare 缺失/口径不支持在前面已返回 rc=2。
+        by_task = {t["task"]: t for t in result.tasks}
+        required_ok = all(
+            by_task.get(t, {}).get("success")
+            and int(by_task.get(t, {}).get("row_count", 0) or 0) > 0
+            for t in REQUIRED_PHASE_6B_TASKS
         )
-        return 2
+        return 0 if (result.failure_count == 0 and required_ok) else 1
 
     if args.command == "quality":
         # Phase 6A 仅产出占位 QualityReport。

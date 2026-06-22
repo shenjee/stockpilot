@@ -1054,18 +1054,18 @@ Phase 6 分阶段实施，不一次性完成全部真实数据链路。每个子
 
 范围：
 
-- [ ] 新增 AkShare 数据源实现，第一版只支持 `classification_system = "em_industry"`。
-- [ ] 实现 `list_sectors()`、`get_sector_constituents()`、`get_sector_daily()`。
-- [ ] 实现 `get_benchmark_daily()`，至少支持 `hs300`。
-- [ ] 将行业板块列表、成分股、板块历史行情和 benchmark 历史行情写入 SQLite。
-- [ ] 同步过程写入 `data_fetch_log`，失败时不破坏已有缓存。
+- [x] 新增 AkShare 数据源实现，第一版只支持 `classification_system = "em_industry"`。
+- [x] 实现 `list_sectors()`、`get_sector_constituents()`、`get_sector_daily()`。
+- [x] 实现 `get_benchmark_daily()`，至少支持 `hs300`。
+- [x] 将行业板块列表、成分股、板块历史行情和 benchmark 历史行情写入 SQLite。
+- [x] 同步过程写入 `data_fetch_log`，失败时不破坏已有缓存。
 
 验收：
 
-- [ ] fake AkShare source 可以同步 `em_industry` 行业板块列表、成分股、板块历史行情和 benchmark 历史行情。
-- [ ] 板块日线和 benchmark 至少支持 1/5/20/60 日收益、relative return 和 chart series 计算。
-- [ ] 真实 AkShare 同步作为手动 smoke，不作为单元测试阻塞项。
-- [ ] 网络失败能输出明确错误，并保留最近一次成功缓存。
+- [x] fake AkShare source 可以同步 `em_industry` 行业板块列表、成分股、板块历史行情和 benchmark 历史行情。
+- [x] 板块日线和 benchmark 至少支持 1/5/20/60 日收益、relative return 和 chart series 计算。
+- [x] 真实 AkShare 同步作为手动 smoke，不作为单元测试阻塞项。
+- [x] 网络失败能输出明确错误，并保留最近一次成功缓存。
 
 #### Phase 6C：公司快照、估值历史与财务指标
 
@@ -1152,7 +1152,7 @@ python -m packages.fundamentalscreener.sync quality \
 | 命令 | 作用 | Phase 6A 状态 |
 | --- | --- | --- |
 | `init-db` | 初始化或迁移 SQLite 表结构，幂等执行 | Phase 6A 已实现 |
-| `sync` | 调用数据源、标准化、写入 SQLite、记录 `data_fetch_log` | Phase 6A CLI 入口有意禁用（rc=2），通过 Python API `sync_all(conn, FakeFundamentalDataSource(), ...)` 验证；CLI 接入真实 AkShare 在 Phase 6B 落地 |
+| `sync` | 调用数据源、标准化、写入 SQLite、记录 `data_fetch_log` | Phase 6B 已接入 `AkShareFundamentalDataSource`（`em_industry` 口径，板块列表/成分/板块行情/基准行情）；公司层采集在 Phase 6C 落地，当前以"成功 0 行"完成。未安装 akshare 时返回 rc=2 并给出安装提示。真实网络同步为手动 smoke |
 | `quality` | 读取 SQLite 并输出结构化质量报告 | Phase 6A 仅返回占位 `QualityReport`（status=ok），真实规则在 Phase 6D 落地 |
 
 真实网络同步不是单元测试依赖。`sync` 的实现应允许注入 fake/source stub，便于测试在无网络环境稳定运行。
