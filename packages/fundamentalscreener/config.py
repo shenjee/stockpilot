@@ -27,7 +27,9 @@ DEFAULT_TOP: int = 20
 DEFAULT_CLASSIFICATION_SYSTEM: str = "concept"
 
 # 受支持的板块分类口径。Phase 0/1 不强制校验真实分类。
+# Phase 6 起新增 em_industry（东方财富行业板块，真实数据第一版口径）。
 SUPPORTED_CLASSIFICATION_SYSTEMS: Tuple[str, ...] = (
+    "em_industry",
     "sw_l1",
     "citic_l1",
     "concept",

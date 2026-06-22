@@ -189,6 +189,21 @@ def run_screening(
                 )
             )
 
+    # ---- Step 5: Phase 6D 质量状态约束 ----
+    # degraded / stale 数据不得进入 priority 候选组（docs §18）。
+    # invalid 不应到达此处（SqliteFundamentalRepository.load_snapshot 会抛
+    # QualityInvalidError），但做防御性兜底。
+    quality_status = getattr(snapshot, "data_quality_status", "ok")
+    if quality_status in ("degraded", "stale", "invalid"):
+        demoted = candidates.pop("priority", [])
+        for item in demoted:
+            item["group"] = "watch"
+        candidates["priority"] = []
+        candidates["watch"].extend(demoted)
+        warnings.append(
+            f"data_quality_{quality_status}: priority candidates demoted to watch"
+        )
+
     return ScreeningResult(
         selected_sectors=selected_sectors,
         candidates=candidates,

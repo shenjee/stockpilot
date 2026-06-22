@@ -176,6 +176,7 @@ class MarketSnapshot:
     companies: List[CompanyData] = field(default_factory=list)
     financials: List[FinancialData] = field(default_factory=list)
     valuations: List[ValuationData] = field(default_factory=list)
+    data_quality_status: str = "ok"
 
 
 class Repository:
@@ -192,6 +193,32 @@ class Repository:
 
     def get_companies_by_codes(self, codes: Iterable[str]) -> List[CompanyData]:  # pragma: no cover
         raise NotImplementedError
+
+    def find_sector(self, sector_id_or_name: str) -> Optional[SectorData]:
+        """按 sector_id 或 sector_name 查找板块。"""
+
+        for s in self.load_snapshot().sectors:
+            if s.sector_id == sector_id_or_name or s.sector_name == sector_id_or_name:
+                return s
+        return None
+
+    def get_financials_by_codes(self, codes: Iterable[str]) -> List["FinancialData"]:
+        """按 codes 顺序返回财务数据；缺失的 code 直接跳过。"""
+
+        wanted = [c.strip() for c in codes if c and c.strip()]
+        if not wanted:
+            return []
+        index = {f.code: f for f in self.load_snapshot().financials}
+        return [index[code] for code in wanted if code in index]
+
+    def get_valuations_by_codes(self, codes: Iterable[str]) -> List["ValuationData"]:
+        """按 codes 顺序返回估值数据；缺失的 code 直接跳过。"""
+
+        wanted = [c.strip() for c in codes if c and c.strip()]
+        if not wanted:
+            return []
+        index = {v.code: v for v in self.load_snapshot().valuations}
+        return [index[code] for code in wanted if code in index]
 
 
 class FixtureRepository(Repository):
@@ -268,43 +295,11 @@ class FixtureRepository(Repository):
             return list(companies)
         return [c for c in companies if c.sector_id == sector_id]
 
-    def find_sector(self, sector_id_or_name: str) -> Optional[SectorData]:
-        for s in self.load_snapshot().sectors:
-            if s.sector_id == sector_id_or_name or s.sector_name == sector_id_or_name:
-                return s
-        return None
-
     def get_companies_by_codes(self, codes: Iterable[str]) -> List[CompanyData]:
         wanted = [c.strip() for c in codes if c and c.strip()]
         if not wanted:
             return []
         index = {c.code: c for c in self.load_snapshot().companies}
-        return [index[code] for code in wanted if code in index]
-
-    def get_financials_by_codes(
-        self, codes: Iterable[str]
-    ) -> List["FinancialData"]:
-        """按 codes 顺序返回财务数据；缺失的 code 直接跳过。
-
-        与 ``get_companies_by_codes`` 一致：调用方负责处理"少给了某个 code"
-        的提示，repository 不写 warning。
-        """
-
-        wanted = [c.strip() for c in codes if c and c.strip()]
-        if not wanted:
-            return []
-        index = {f.code: f for f in self.load_snapshot().financials}
-        return [index[code] for code in wanted if code in index]
-
-    def get_valuations_by_codes(
-        self, codes: Iterable[str]
-    ) -> List["ValuationData"]:
-        """按 codes 顺序返回估值数据；缺失的 code 直接跳过。"""
-
-        wanted = [c.strip() for c in codes if c and c.strip()]
-        if not wanted:
-            return []
-        index = {v.code: v for v in self.load_snapshot().valuations}
         return [index[code] for code in wanted if code in index]
 
 

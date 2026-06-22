@@ -1012,10 +1012,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     p_quality = sub.add_parser(
-        "quality", help="输出占位 QualityReport，规则在 Phase 6D 落地。"
+        "quality", help="读取 SQLite 并输出结构化质量报告（Phase 6D）。"
     )
     p_quality.add_argument("--db", required=True)
     p_quality.add_argument("--date", required=True)
+    p_quality.add_argument(
+        "--classification-system",
+        dest="classification_system",
+        default="em_industry",
+        help="板块分类口径，默认 em_industry。",
+    )
+    p_quality.add_argument("--benchmark", default="hs300")
 
     return parser
 
@@ -1137,8 +1144,20 @@ def main(
         return 0 if (result.failure_count == 0 and required_ok) else 1
 
     if args.command == "quality":
-        # Phase 6A 仅产出占位 QualityReport。
-        report = QualityReport(analysis_date=args.date)
+        # Phase 6D：读取 SQLite 并输出结构化质量报告。
+        from .quality import run_quality_checks
+
+        conn = connect(args.db)
+        try:
+            init_db(conn)
+            report = run_quality_checks(
+                conn,
+                analysis_date=args.date,
+                classification_system=args.classification_system,
+                benchmark=args.benchmark,
+            )
+        finally:
+            conn.close()
         sys.stdout.write(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
         sys.stdout.write("\n")
         return 0

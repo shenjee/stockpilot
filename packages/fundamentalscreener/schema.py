@@ -91,9 +91,11 @@ class SectorsPayload:
     sectors: List[SectorEntry] = field(default_factory=list)
     chart_series: List[ChartSeries] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
+    snapshot: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
+            "snapshot": dict(self.snapshot),
             "command": self.command,
             "date": self.date,
             "classification_system": self.classification_system,
@@ -146,9 +148,11 @@ class CompaniesPayload:
     sort: str
     companies: List[CompanyEntry] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
+    snapshot: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
+            "snapshot": dict(self.snapshot),
             "command": self.command,
             "date": self.date,
             "classification_system": self.classification_system,
@@ -199,9 +203,11 @@ class FinancialsPayload:
     date: str
     companies: List[FinancialEntry] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
+    snapshot: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
+            "snapshot": dict(self.snapshot),
             "command": self.command,
             "date": self.date,
             "companies": [c.to_dict() for c in self.companies],
@@ -244,9 +250,11 @@ class ValuationsPayload:
     date: str
     companies: List[ValuationEntry] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
+    snapshot: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
+            "snapshot": dict(self.snapshot),
             "command": self.command,
             "date": self.date,
             "companies": [c.to_dict() for c in self.companies],
@@ -287,9 +295,11 @@ class ScreenPayload:
     candidates: CandidatesPayload = field(default_factory=CandidatesPayload)
     warnings: List[str] = field(default_factory=list)
     generated_at: str = ""
+    snapshot: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
+            "snapshot": dict(self.snapshot),
             "command": self.command,
             "date": self.date,
             "classification_system": self.classification_system,

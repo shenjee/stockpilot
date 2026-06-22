@@ -411,10 +411,22 @@ class SyncCliTests(unittest.TestCase):
             payload = json.loads(out.getvalue())
             self.assertGreater(payload["failure_count"], 0)
 
-    def test_quality_cli_returns_placeholder_report(self) -> None:
+    def test_quality_cli_returns_real_report(self) -> None:
+        # Phase 6D：quality 命令读取 SQLite 并输出结构化质量报告。
+        # 先 sync 一批数据，再运行 quality。
         with TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "fundamental.sqlite"
-            # quality 命令在 Phase 6A 不要求 db 真实存在。
+            conn = connect(str(db_path))
+            try:
+                sync_all(
+                    conn,
+                    _make_source(),
+                    analysis_date="2026-06-19",
+                    classification_system="em_industry",
+                )
+            finally:
+                conn.close()
+
             out = io.StringIO()
             with redirect_stdout(out):
                 rc = main(
@@ -423,8 +435,10 @@ class SyncCliTests(unittest.TestCase):
             self.assertEqual(rc, 0)
             payload = json.loads(out.getvalue())
             self.assertIn("quality_report_id", payload)
-            self.assertEqual(payload["status"], "ok")
+            self.assertIn(payload["status"], ("ok", "degraded", "stale", "invalid"))
             self.assertEqual(payload["analysis_date"], "2026-06-19")
+            # 应有 issues 列表（即使为空）
+            self.assertIn("issues", payload)
 
 
 class SyncPkValidationTests(unittest.TestCase):

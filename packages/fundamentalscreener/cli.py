@@ -14,7 +14,7 @@ import argparse
 import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from .config import (
     DEFAULT_BENCHMARK,
@@ -36,7 +36,8 @@ from .config import (
 from .company_ranking import compute_company_ranking, sort_companies
 from .financial_quality import compute_financial_quality, sort_financials
 from .formatting import format_output
-from .repositories import FixtureRepository
+from .lineage import SnapshotMetadata, now_cn
+from .repositories import FixtureRepository, Repository
 from .schema import (
     CandidatesPayload,
     CompaniesPayload,
@@ -47,6 +48,7 @@ from .schema import (
 )
 from .screening import run_screening
 from .sector_rotation import compute_sector_rotation, sort_entries
+from .sqlite_repository import QualityInvalidError, SqliteFundamentalRepository
 from .valuation import compute_valuation, sort_valuations
 
 
@@ -68,6 +70,11 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         "--fixture",
         default=None,
         help="使用 fixture JSON 文件作为数据源。Phase 0/1 必须支持。",
+    )
+    parser.add_argument(
+        "--db",
+        default=None,
+        help="SQLite 数据库路径，用于读取 SqliteFundamentalRepository（Phase 6D）。",
     )
 
 
@@ -208,22 +215,42 @@ def build_parser() -> argparse.ArgumentParser:
 # ---------------------------------------------------------------------------
 
 
-def _load_repo(fixture: Optional[str]) -> Optional[FixtureRepository]:
-    """构造 FixtureRepository 并立即触发一次 ``load_snapshot()``。
+def _load_repo(args: argparse.Namespace) -> Optional[Repository]:
+    """构造 Repository 并立即触发一次 ``load_snapshot()``。
 
-    Phase 0 要求只要传了 ``--fixture``，文件必须被读取，而不是被某些 handler
-    悄悄绕过。把加载放在这里能保证所有命令的行为一致：传错路径会立即抛
-    ``FileNotFoundError``，而不是返回看起来正常的 JSON。
+    优先级：``--db`` > ``--fixture`` > None。
+    - ``--db``：构造 ``SqliteFundamentalRepository``，需要 ``analysis_date``。
+      未传 ``--date`` 时默认取当前日期。
+    - ``--fixture``：构造 ``FixtureRepository``（Phase 0-5 行为，不破坏旧测试）。
+    - 都未传：返回 None，handler 输出 ``no_data_source`` warning。
     """
 
-    if not fixture:
-        return None
-    repo = FixtureRepository(Path(fixture))
-    repo.load_snapshot()
-    return repo
+    if getattr(args, "db", None):
+        analysis_date = args.date or now_cn().date().isoformat()
+        # --db 路径使用真实数据，分类口径默认 em_industry（Phase 6 唯一支持的
+        # 真实口径）。若用户显式传了非 concept 的口径则尊重用户选择。
+        cs = getattr(args, "classification_system", None)
+        if not cs or cs == DEFAULT_CLASSIFICATION_SYSTEM:
+            cs = "em_industry"
+        benchmark = getattr(args, "benchmark", None) or DEFAULT_BENCHMARK
+        repo = SqliteFundamentalRepository(
+            args.db,
+            analysis_date=analysis_date,
+            classification_system=cs,
+            benchmark=benchmark,
+        )
+        repo.load_snapshot()
+        return repo
+
+    if getattr(args, "fixture", None):
+        repo = FixtureRepository(Path(args.fixture))
+        repo.load_snapshot()
+        return repo
+
+    return None
 
 
-def _resolve_date(explicit: Optional[str], repo: Optional[FixtureRepository]) -> str:
+def _resolve_date(explicit: Optional[str], repo: Optional[Repository]) -> str:
     if explicit:
         return explicit
     if repo is not None:
@@ -232,7 +259,7 @@ def _resolve_date(explicit: Optional[str], repo: Optional[FixtureRepository]) ->
 
 
 def _resolve_classification(
-    explicit: Optional[str], repo: Optional[FixtureRepository]
+    explicit: Optional[str], repo: Optional[Repository]
 ) -> str:
     if explicit:
         return explicit
@@ -246,7 +273,7 @@ class BenchmarkMismatchError(Exception):
 
 
 def _resolve_benchmark(
-    explicit: Optional[str], repo: Optional[FixtureRepository]
+    explicit: Optional[str], repo: Optional[Repository]
 ) -> str:
     """决定权威 benchmark id，并阻止"显示一个基准、计算另一个"的不一致。
 
@@ -274,6 +301,29 @@ def _resolve_benchmark(
     return explicit
 
 
+def _build_snapshot_dict(args: argparse.Namespace, repo: Optional[Repository]) -> Dict[str, Any]:
+    """构造 JSON 顶层 ``snapshot`` 对象（docs §7）。
+
+    - ``--db`` 路径：透传 ``SqliteFundamentalRepository.metadata``（含真实
+      fetch_run_id / source_set / quality_report_id / data_quality_status）。
+    - ``--fixture`` 路径：生成基本 ``SnapshotMetadata``，``source_set`` 标记 fixture。
+    - 无数据源：生成最小 metadata，``source_set`` 为空。
+    """
+
+    analysis_date = _resolve_date(args.date, repo)
+    if isinstance(repo, SqliteFundamentalRepository):
+        return repo.metadata.to_dict()
+    if repo is not None:
+        return SnapshotMetadata.create(
+            analysis_date=analysis_date,
+            source_set={"fixture": "json"},
+        ).to_dict()
+    return SnapshotMetadata.create(
+        analysis_date=analysis_date,
+        source_set={},
+    ).to_dict()
+
+
 def _now_iso() -> str:
     tz = timezone(timedelta(hours=8))
     return datetime.now(tz).replace(microsecond=0).isoformat()
@@ -285,7 +335,7 @@ def _now_iso() -> str:
 
 
 def _cmd_sectors(args: argparse.Namespace) -> str:
-    repo = _load_repo(args.fixture)
+    repo = _load_repo(args)
     payload = SectorsPayload(
         command="sectors",
         date=_resolve_date(args.date, repo),
@@ -298,7 +348,7 @@ def _cmd_sectors(args: argparse.Namespace) -> str:
         warnings=[],
     )
     if repo is None:
-        payload.warnings.append("no_data_source: pass --fixture to load market data")
+        payload.warnings.append("no_data_source: pass --fixture or --db to load market data")
     else:
         snapshot = repo.load_snapshot()
         result = compute_sector_rotation(snapshot, periods=tuple(payload.periods))
@@ -308,11 +358,12 @@ def _cmd_sectors(args: argparse.Namespace) -> str:
         payload.sectors = list(ordered)
         payload.chart_series = list(result.chart_series)
         payload.warnings.extend(result.warnings)
+    payload.snapshot = _build_snapshot_dict(args, repo)
     return format_output(payload.to_dict(), args.fmt)
 
 
 def _cmd_sector_detail(args: argparse.Namespace) -> str:
-    repo = _load_repo(args.fixture)
+    repo = _load_repo(args)
     payload = SectorsPayload(
         command="sector-detail",
         date=_resolve_date(args.date, repo),
@@ -325,13 +376,15 @@ def _cmd_sector_detail(args: argparse.Namespace) -> str:
         warnings=[],
     )
     if repo is None:
-        payload.warnings.append("no_data_source: pass --fixture to load market data")
+        payload.warnings.append("no_data_source: pass --fixture or --db to load market data")
+        payload.snapshot = _build_snapshot_dict(args, repo)
         return format_output(payload.to_dict(), args.fmt)
 
     snapshot = repo.load_snapshot()
     target = repo.find_sector(args.sector)
     if target is None:
         payload.warnings.append(f"sector_not_found: {args.sector}")
+        payload.snapshot = _build_snapshot_dict(args, repo)
         return format_output(payload.to_dict(), args.fmt)
 
     result = compute_sector_rotation(snapshot, periods=tuple(payload.periods))
@@ -344,17 +397,18 @@ def _cmd_sector_detail(args: argparse.Namespace) -> str:
     payload.sectors = target_entries
     payload.chart_series = target_series
     payload.warnings.extend(result.warnings)
+    payload.snapshot = _build_snapshot_dict(args, repo)
     return format_output(payload.to_dict(), args.fmt)
 
 
 def _cmd_companies(args: argparse.Namespace) -> str:
-    repo = _load_repo(args.fixture)
+    repo = _load_repo(args)
     sector_id: Optional[str] = None
     sector_name: Optional[str] = None
     warnings: List[str] = []
     companies: List = []
     if repo is None:
-        warnings.append("no_data_source: pass --fixture to load market data")
+        warnings.append("no_data_source: pass --fixture or --db to load market data")
     else:
         target = repo.find_sector(args.sector)
         if target is None:
@@ -379,16 +433,17 @@ def _cmd_companies(args: argparse.Namespace) -> str:
         companies=companies,
         warnings=warnings,
     )
+    payload.snapshot = _build_snapshot_dict(args, repo)
     return format_output(payload.to_dict(), args.fmt)
 
 
 def _cmd_financials(args: argparse.Namespace) -> str:
-    repo = _load_repo(args.fixture)
+    repo = _load_repo(args)
     warnings: List[str] = []
     companies: List = []
     codes = _parse_codes(args.codes)
     if repo is None:
-        warnings.append("no_data_source: pass --fixture to load market data")
+        warnings.append("no_data_source: pass --fixture or --db to load market data")
     if not codes:
         warnings.append("no_codes_provided: pass --codes A,B,C")
 
@@ -405,16 +460,17 @@ def _cmd_financials(args: argparse.Namespace) -> str:
         companies=companies,
         warnings=warnings,
     )
+    payload.snapshot = _build_snapshot_dict(args, repo)
     return format_output(payload.to_dict(), args.fmt)
 
 
 def _cmd_valuations(args: argparse.Namespace) -> str:
-    repo = _load_repo(args.fixture)
+    repo = _load_repo(args)
     warnings: List[str] = []
     companies: List = []
     codes = _parse_codes(args.codes)
     if repo is None:
-        warnings.append("no_data_source: pass --fixture to load market data")
+        warnings.append("no_data_source: pass --fixture or --db to load market data")
     if not codes:
         warnings.append("no_codes_provided: pass --codes A,B,C")
 
@@ -431,16 +487,17 @@ def _cmd_valuations(args: argparse.Namespace) -> str:
         companies=companies,
         warnings=warnings,
     )
+    payload.snapshot = _build_snapshot_dict(args, repo)
     return format_output(payload.to_dict(), args.fmt)
 
 
 def _cmd_screen(args: argparse.Namespace) -> str:
-    repo = _load_repo(args.fixture)
+    repo = _load_repo(args)
     warnings: List[str] = []
     selected: List = []
     candidates = CandidatesPayload()
     if repo is None:
-        warnings.append("no_data_source: pass --fixture to load market data")
+        warnings.append("no_data_source: pass --fixture or --db to load market data")
     else:
         snapshot = repo.load_snapshot()
         result = run_screening(
@@ -465,6 +522,7 @@ def _cmd_screen(args: argparse.Namespace) -> str:
         warnings=warnings,
         generated_at=_now_iso(),
     )
+    payload.snapshot = _build_snapshot_dict(args, repo)
     return format_output(payload.to_dict(), args.fmt)
 
 
@@ -500,6 +558,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 2
     except CLIArgumentError as exc:
         sys.stderr.write(f"{exc}\n")
+        return 2
+    except QualityInvalidError as exc:
+        sys.stderr.write(f"data_quality_invalid: {exc}\n")
         return 2
     sys.stdout.write(output)
     if not output.endswith("\n"):
