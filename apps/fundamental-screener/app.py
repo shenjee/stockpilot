@@ -1,9 +1,10 @@
-"""Fundamental Screener Streamlit MVP (Phase 6).
+"""Fundamental Screener Streamlit MVP (Phase 7 产品化前端)。
 
-Edge of responsibility (docs §18)：
-- 只调用 ``packages/fundamentalscreener`` core，禁止在此重排序/重评分/重检测。
+Edge of responsibility (docs §18/§19)：
+- 只调用 ``services/data_service.py`` 的产品级函数，禁止在此重排序/重评分/重检测。
 - 仅完成"板块 -> 公司 -> 财务/估值/异常 flags"的浏览。
 - 不输出研报、不输出买卖建议、不预测板块。
+- 用户界面不出现 fixture、SQLite、数据库路径或 CLI 参数。
 
 启动方式::
 
@@ -28,29 +29,16 @@ from fundamentalscreener.config import (  # noqa: E402
     DEFAULT_SECTOR_SORT,
     SUPPORTED_SECTOR_SORTS,
 )
-from fundamentalscreener.lineage import now_cn  # noqa: E402
 from services.data_service import (  # noqa: E402
     build_sector_board,
     build_sector_detail,
     collect_company_flags,
     companies_to_rows,
     financials_to_rows,
-    load_snapshot,
-    load_snapshot_from_db,
+    load_or_refresh_snapshot,
     sectors_to_rows,
     valuations_to_rows,
 )
-
-
-DEFAULT_FIXTURE = (
-    ROOT
-    / "packages"
-    / "fundamentalscreener"
-    / "tests"
-    / "fixtures"
-    / "minimal_market.json"
-)
-DEFAULT_DB = ROOT / "stockpilot" / "db" / "fundamental_data.sqlite"
 
 
 # ---------------------------------------------------------------------------
@@ -216,30 +204,6 @@ def _localize_rows(
 
 
 # ---------------------------------------------------------------------------
-# 缓存：fixture 读取一次即可
-# ---------------------------------------------------------------------------
-
-
-@st.cache_data(show_spinner=False)
-def _cached_load(fixture_path: str):
-    return load_snapshot(fixture_path)
-
-
-@st.cache_data(show_spinner=False)
-def _cached_load_db(
-    db_path: str,
-    analysis_date: str,
-    classification_system: str,
-    benchmark: str,
-):
-    """缓存 SQLite 数据源加载结果（Phase 7 真实数据入口）。"""
-
-    return load_snapshot_from_db(
-        db_path, analysis_date, classification_system, benchmark
-    )
-
-
-# ---------------------------------------------------------------------------
 # UI 工具
 # ---------------------------------------------------------------------------
 
@@ -297,7 +261,7 @@ def _render_quality_issue_list(issues: List[Dict[str, Any]]) -> None:
 def main() -> None:
     st.set_page_config(page_title="基本面量化工作台", layout="wide")
 
-    # ----------------- 侧边栏：语言 + 数据源 + 板块排序 -----------------
+    # ----------------- 侧边栏：产品参数 -----------------
     with st.sidebar:
         lang = st.selectbox(
             _t("界面语言", "Display language"),
@@ -309,50 +273,6 @@ def main() -> None:
                 "Display language for labels and enum values; does not affect data.",
             ),
         )
-
-        st.header(_t("数据源", "Data Source"))
-        data_source = st.radio(
-            _t("数据源", "Data source"),
-            options=["fixture", "sqlite"],
-            format_func=lambda x: (
-                _t("Fixture（示例数据）", "Fixture (sample)")
-                if x == "fixture"
-                else _t("SQLite（真实数据）", "SQLite (real)")
-            ),
-            horizontal=True,
-            help=_t(
-                "fixture: Phase 0-5 示例数据；sqlite: Phase 6 真实数据缓存（需先跑 sync）。",
-                "fixture: Phase 0-5 sample data; sqlite: Phase 6 real cache (run sync first).",
-            ),
-        )
-
-        fixture_path = ""
-        db_path = ""
-        analysis_date = ""
-        if data_source == "fixture":
-            fixture_path = st.text_input(
-                _t("Fixture JSON 路径", "Fixture JSON path"),
-                value=str(DEFAULT_FIXTURE),
-                help=_t("与 CLI --fixture 参数一致。", "Same as CLI --fixture."),
-            )
-        else:
-            db_path = st.text_input(
-                _t("SQLite 数据库路径", "SQLite database path"),
-                value=str(DEFAULT_DB),
-                help=_t(
-                    "Phase 6 sync 写入的 fundamental_data.sqlite，与 CLI --db 一致。",
-                    "fundamental_data.sqlite written by Phase 6 sync; same as CLI --db.",
-                ),
-            )
-            analysis_date = st.text_input(
-                _t("分析日期", "Analysis date"),
-                value="",
-                placeholder=_t("YYYY-MM-DD，留空取今天", "YYYY-MM-DD, blank for today"),
-                help=_t(
-                    "所有时变数据按此日期截断（point-in-time）。",
-                    "All time-variant data is cut off at this date (point-in-time).",
-                ),
-            )
         sort_field = st.selectbox(
             _t("板块排序字段", "Sector sort field"),
             options=list(SUPPORTED_SECTOR_SORTS),
@@ -372,74 +292,97 @@ def main() -> None:
             value=5,
             step=1,
         )
+        # 分析日期：默认不勾选 → 使用最新可用交易日（前端计划 §2.5）。
+        specify_date = st.checkbox(
+            _t("指定分析日期", "Specify analysis date"),
+            value=False,
+            help=_t(
+                "不勾选时使用最新可用交易日。",
+                "If unchecked, uses the latest available trading date.",
+            ),
+        )
+        analysis_date_str: Optional[str] = None
+        if specify_date:
+            picked = st.date_input(_t("分析日期", "Analysis date"))
+            analysis_date_str = picked.isoformat()
 
     st.title(_t("基本面量化工作台", "Fundamental Screener"))
 
-    # ----------------- 数据加载 -----------------
-    metadata = None
-    quality_report = None
+    # ----------------- 获取数据 / 运行分析 -----------------
+    refresh_clicked = st.button(
+        _t("获取数据 / 运行分析", "Fetch Data / Run Analysis"),
+        type="primary",
+        help=_t(
+            "从同花顺行业板块同步最新数据并运行分析。",
+            "Sync latest data from THS industry sectors and run analysis.",
+        ),
+    )
 
-    if data_source == "fixture":
-        try:
-            snapshot = _cached_load(fixture_path)
-        except FileNotFoundError as exc:
-            st.error(f"fixture_not_found: {exc}")
-            return
-        except Exception as exc:  # pragma: no cover - 兜底
-            st.error(f"fixture_load_failed: {exc}")
-            return
-    else:
-        # SQLite 真实数据源（Phase 7）
-        if not db_path.strip():
-            st.error(
-                _t(
-                    "请输入 SQLite 数据库路径。",
-                    "Please enter the SQLite database path.",
-                )
-            )
-            return
-        resolved_date = analysis_date.strip() or now_cn().date().isoformat()
-        try:
-            load_result = _cached_load_db(
-                db_path, resolved_date, "em_industry", "hs300"
-            )
-        except Exception as exc:  # pragma: no cover - 兜底
-            st.error(f"sqlite_load_failed: {exc}")
-            return
+    result = load_or_refresh_snapshot(
+        refresh=refresh_clicked,
+        analysis_date=analysis_date_str,
+    )
 
-        if load_result.quality_error:
-            # 质量状态 invalid：展示阻断原因 + 质量报告后退出
-            st.error(
-                _t(
-                    f"数据质量不可用（invalid），无法生成快照：{load_result.quality_error}",
-                    f"Data quality invalid; cannot build snapshot: {load_result.quality_error}",
-                )
+    # ----------------- 状态处理 -----------------
+    if result.status == "no_cache":
+        st.info(
+            result.message
+            or _t(
+                "暂无本地数据，请点击上方按钮获取数据。",
+                "No local data. Click the button above to fetch.",
             )
-            if load_result.quality_report is not None:
-                issues = [i.to_dict() for i in load_result.quality_report.issues]
-                with st.expander(
-                    _t(
-                        f"质量问题（{len(issues)}）",
-                        f"Quality Issues ({len(issues)})",
-                    ),
-                    expanded=True,
-                ):
-                    _render_quality_issue_list(issues)
-            return
-        if load_result.snapshot is None:
-            st.error("sqlite_load_failed: snapshot is None")
-            return
-        snapshot = load_result.snapshot
-        metadata = load_result.metadata
-        quality_report = load_result.quality_report
+        )
+        return
+
+    if result.status == "invalid":
+        st.error(
+            result.message
+            or _t("数据质量不可用，无法生成快照。", "Data quality invalid; cannot build snapshot.")
+        )
+        if result.quality_report is not None:
+            issues = [i.to_dict() for i in result.quality_report.issues]
+            with st.expander(
+                _t(
+                    f"质量问题（{len(issues)}）",
+                    f"Quality Issues ({len(issues)})",
+                ),
+                expanded=True,
+            ):
+                _render_quality_issue_list(issues)
+        return
+
+    snapshot = result.snapshot
+    if snapshot is None:
+        st.error(_t("加载数据失败。", "Failed to load data."))
+        return
+
+    # 刷新失败但有旧缓存：展示旧缓存 + 失败提示
+    if result.status == "refresh_failed":
+        st.warning(result.message)
+
+    # degraded / stale 质量提示
+    if result.status == "degraded":
+        st.warning(
+            _t(
+                "数据不完整，部分财务/估值缺失，本次不生成优先候选。",
+                "Data incomplete; some financial/valuation data is missing. No priority candidates generated.",
+            )
+        )
+    elif result.status == "stale":
+        st.warning(
+            _t(
+                "数据可能过期，请考虑刷新。",
+                "Data may be stale. Consider refreshing.",
+            )
+        )
 
     board = build_sector_board(
         snapshot,
         sort=sort_field,
         periods=DEFAULT_PERIODS,
         top=int(sector_top),
-        metadata=metadata,
-        quality_report=quality_report,
+        metadata=result.metadata,
+        quality_report=result.quality_report,
     )
 
     # ----------------- 顶部信息卡 -----------------

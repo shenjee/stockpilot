@@ -1,7 +1,9 @@
-"""App import + main() smoke test.
+"""App import + main() smoke test (Phase 7 产品化前端).
 
 Stubs ``streamlit`` so the test can run without the real package, and verifies
-``app.main()`` loads the default fixture and renders without raising.
+``app.main()`` renders correctly via the product-level ``load_or_refresh_snapshot``
+entry point. Tests assert that the UI does NOT expose fixture / SQLite / path
+inputs (docs §2.4).
 """
 
 from __future__ import annotations
@@ -23,13 +25,23 @@ class _DummyContext:
 
 
 class _Recorder:
-    def __init__(self, selection_rows: Optional[List[int]] = None) -> None:
+    def __init__(
+        self,
+        selection_rows: Optional[List[int]] = None,
+        button_return: bool = False,
+    ) -> None:
         self.dataframes: List[Any] = []
         self.line_charts: List[Any] = []
         self.warnings: List[str] = []
         self.errors: List[str] = []
         self.infos: List[str] = []
         self.selectbox_calls: List[str] = []
+        self.text_input_calls: List[str] = []
+        self.radio_calls: List[str] = []
+        self.button_calls: List[str] = []
+        self.checkbox_calls: List[str] = []
+        self.date_input_calls: List[str] = []
+        self._button_return = button_return
         # 第一个 st.dataframe 调用（板块表）返回这组 selection.rows，
         # 其余 dataframe 调用一律返回空选择，避免被误用。
         self._pending_selection = list(selection_rows or [])
@@ -46,7 +58,12 @@ class _Recorder:
         st.subheader = lambda *a, **kw: None
         st.markdown = lambda *a, **kw: None
         st.metric = lambda *a, **kw: None
-        st.text_input = lambda label, value="", **kw: value
+
+        def _text_input(label, value="", **kw):
+            recorder.text_input_calls.append(str(label))
+            return value
+
+        st.text_input = _text_input
 
         def _selectbox(label, options, index=0, **kw):
             recorder.selectbox_calls.append(str(label))
@@ -55,11 +72,30 @@ class _Recorder:
         st.selectbox = _selectbox
 
         def _radio(label, options, index=0, **kw):
+            recorder.radio_calls.append(str(label))
             return options[index] if options else None
 
         st.radio = _radio
         st.number_input = lambda label, min_value=None, max_value=None, value=0, step=1, **kw: value
-        st.button = lambda *a, **kw: False
+
+        def _checkbox(label, value=False, **kw):
+            recorder.checkbox_calls.append(str(label))
+            return value
+
+        st.checkbox = _checkbox
+
+        def _date_input(label, value=None, **kw):
+            recorder.date_input_calls.append(str(label))
+            from datetime import date
+            return value or date.today()
+
+        st.date_input = _date_input
+
+        def _button(*a, **kw):
+            recorder.button_calls.append(str(a[0]) if a else "")
+            return recorder._button_return
+
+        st.button = _button
 
         def _info(msg, *a, **kw):
             recorder.infos.append(str(msg))
@@ -76,8 +112,6 @@ class _Recorder:
 
         def _dataframe(rows, *a, **kw):
             recorder.dataframes.append(rows)
-            # 只对第一个 dataframe（板块表）返回配置的 selection.rows；
-            # 其余调用一律返回空 selection，避免别处误把数据当板块下钻。
             if recorder._dataframe_index == 0:
                 rows_out = list(recorder._pending_selection)
             else:
@@ -119,6 +153,14 @@ class _MetricColumn:
 APP_DIR = Path(__file__).resolve().parents[1]
 ROOT = APP_DIR.parents[1]
 APP_PATH = APP_DIR / "app.py"
+FIXTURE_PATH = (
+    ROOT
+    / "packages"
+    / "fundamentalscreener"
+    / "tests"
+    / "fixtures"
+    / "minimal_market.json"
+)
 
 
 def _load_app(recorder: _Recorder):
@@ -133,8 +175,19 @@ def _load_app(recorder: _Recorder):
     return module
 
 
+def _make_ok_result(app_module):
+    """构造一个 status=ok 的 FrontendSnapshotResult，内部使用 fixture 快照。"""
+
+    from services.data_service import FrontendSnapshotResult, load_snapshot
+
+    snapshot = load_snapshot(str(FIXTURE_PATH))
+    return FrontendSnapshotResult(snapshot=snapshot, status="ok")
+
+
 class AppSmokeTests(unittest.TestCase):
-    def test_main_runs_with_default_fixture(self) -> None:
+    def test_main_runs_with_cached_data(self) -> None:
+        """页面启动时读取缓存，正常渲染板块表。"""
+
         recorder = _Recorder()
         try:
             app = _load_app(recorder)
@@ -142,23 +195,134 @@ class AppSmokeTests(unittest.TestCase):
             self.skipTest(f"missing dependency: {exc}")
             return
 
+        app.load_or_refresh_snapshot = lambda refresh=False, **kw: _make_ok_result(app)
+
         try:
             app.main()
         except ModuleNotFoundError as exc:
-            # pandas 不在测试环境时跳过：核心调用边界由 test_data_service 覆盖。
             self.skipTest(f"missing dependency: {exc}")
             return
 
         self.assertEqual(recorder.errors, [], f"errors: {recorder.errors}")
-        # 至少渲染了一张表（板块表）。
         self.assertTrue(
             recorder.dataframes,
             "expected at least one dataframe rendered for sectors",
         )
-        # 未选行的默认路径必须落到下拉回退。
         self.assertTrue(
             any("下拉" in label for label in recorder.selectbox_calls),
             f"expected selectbox fallback when no row selected, got {recorder.selectbox_calls}",
+        )
+
+    def test_no_cache_shows_empty_state(self) -> None:
+        """无缓存时展示空状态，不渲染表格。"""
+
+        recorder = _Recorder()
+        try:
+            app = _load_app(recorder)
+        except ModuleNotFoundError as exc:
+            self.skipTest(f"missing dependency: {exc}")
+            return
+
+        from services.data_service import FrontendSnapshotResult
+
+        app.load_or_refresh_snapshot = lambda refresh=False, **kw: FrontendSnapshotResult(
+            status="no_cache", message="暂无本地数据，请点击获取数据。"
+        )
+
+        try:
+            app.main()
+        except ModuleNotFoundError as exc:
+            self.skipTest(f"missing dependency: {exc}")
+            return
+
+        self.assertTrue(recorder.infos, "expected info message for no_cache")
+        self.assertFalse(recorder.dataframes, "should not render tables for no_cache")
+        self.assertEqual(recorder.errors, [])
+
+    def test_refresh_failed_shows_old_cache_and_warning(self) -> None:
+        """刷新失败但有旧缓存时展示旧缓存和失败提示。"""
+
+        recorder = _Recorder()
+        try:
+            app = _load_app(recorder)
+        except ModuleNotFoundError as exc:
+            self.skipTest(f"missing dependency: {exc}")
+            return
+
+        from services.data_service import FrontendSnapshotResult
+
+        snapshot_result = _make_ok_result(app)
+        app.load_or_refresh_snapshot = lambda refresh=False, **kw: FrontendSnapshotResult(
+            snapshot=snapshot_result.snapshot,
+            status="refresh_failed",
+            message="数据刷新失败，展示最近可用缓存：connection error",
+        )
+
+        try:
+            app.main()
+        except ModuleNotFoundError as exc:
+            self.skipTest(f"missing dependency: {exc}")
+            return
+
+        self.assertTrue(recorder.warnings, "expected warning for refresh_failed")
+        self.assertTrue(recorder.dataframes, "should render tables from old cache")
+        self.assertEqual(recorder.errors, [])
+
+    def test_ui_does_not_expose_fixture_sqlite_or_path(self) -> None:
+        """UI 不出现 fixture、SQLite、数据库路径（docs §2.4）。"""
+
+        recorder = _Recorder()
+        try:
+            app = _load_app(recorder)
+        except ModuleNotFoundError as exc:
+            self.skipTest(f"missing dependency: {exc}")
+            return
+
+        app.load_or_refresh_snapshot = lambda refresh=False, **kw: _make_ok_result(app)
+
+        try:
+            app.main()
+        except ModuleNotFoundError as exc:
+            self.skipTest(f"missing dependency: {exc}")
+            return
+
+        # 不应有 radio 调用（旧版数据源 radio 已删除）
+        self.assertEqual(recorder.radio_calls, [], f"radio should not be used: {recorder.radio_calls}")
+
+        # 不应有包含 fixture / SQLite / 路径 的 text_input
+        forbidden = ["fixture", "sqlite", "路径", "path", "数据库", "database"]
+        for label in recorder.text_input_calls:
+            for word in forbidden:
+                self.assertNotIn(
+                    word.lower(),
+                    label.lower(),
+                    f"text_input label should not contain '{word}': {label}",
+                )
+
+    def test_ui_exposes_analysis_date_control(self) -> None:
+        """侧边栏应暴露分析日期控件（docs §2.5 侧边栏保留项）。"""
+
+        recorder = _Recorder()
+        try:
+            app = _load_app(recorder)
+        except ModuleNotFoundError as exc:
+            self.skipTest(f"missing dependency: {exc}")
+            return
+
+        app.load_or_refresh_snapshot = lambda refresh=False, **kw: _make_ok_result(app)
+
+        try:
+            app.main()
+        except ModuleNotFoundError as exc:
+            self.skipTest(f"missing dependency: {exc}")
+            return
+
+        self.assertTrue(
+            any(
+                "分析日期" in label or "analysis date" in label.lower()
+                for label in recorder.checkbox_calls
+            ),
+            f"expected analysis date checkbox, got {recorder.checkbox_calls}",
         )
 
     def test_row_selection_drives_sector_drill_down(self) -> None:
@@ -171,7 +335,8 @@ class AppSmokeTests(unittest.TestCase):
             self.skipTest(f"missing dependency: {exc}")
             return
 
-        # 在 main 调用 build_sector_detail 前打补丁，记录实际被下钻的 sector_id。
+        app.load_or_refresh_snapshot = lambda refresh=False, **kw: _make_ok_result(app)
+
         detail_calls: List[Dict[str, Any]] = []
         original_build_sector_detail = app.build_sector_detail
 
@@ -181,10 +346,13 @@ class AppSmokeTests(unittest.TestCase):
 
         app.build_sector_detail = _spy
 
-        # 拿到板块表当前顺序（与 main 实际使用的排序一致），用于断言行 1 = 第二行。
-        snapshot = app.load_snapshot(str(app.DEFAULT_FIXTURE))
+        # 拿到板块表当前顺序，用于断言行 1 = 第二行。
+        ok_result = _make_ok_result(app)
         board = app.build_sector_board(
-            snapshot, sort=app.DEFAULT_SECTOR_SORT, periods=app.DEFAULT_PERIODS, top=10
+            ok_result.snapshot,
+            sort=app.DEFAULT_SECTOR_SORT,
+            periods=app.DEFAULT_PERIODS,
+            top=10,
         )
         if len(board.sectors) < 2:
             self.skipTest("fixture exposes fewer than 2 sectors; row-1 test not meaningful")
@@ -202,7 +370,6 @@ class AppSmokeTests(unittest.TestCase):
             len(detail_calls), 1, f"expected single drill-down, got {detail_calls}"
         )
         self.assertEqual(detail_calls[0]["sector_id"], expected_sector_id)
-        # 选中行时不应再触发下拉回退。
         self.assertFalse(
             any("下拉" in label for label in recorder.selectbox_calls),
             f"selectbox fallback should not fire when row is selected, got {recorder.selectbox_calls}",

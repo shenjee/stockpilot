@@ -1066,7 +1066,7 @@ Phase 6 分阶段实施，不一次性完成全部真实数据链路。每个子
 
 验收：
 
-- [ ] fake AkShare source 可以同步 `ths_industry` 行业板块列表、成分股、板块历史行情和 benchmark 历史行情。
+- [x] fake AkShare source 可以同步 `ths_industry` 行业板块列表、成分股、板块历史行情和 benchmark 历史行情。
 - [x] fake AkShare source 可以同步 `em_industry` 行业板块列表、成分股、板块历史行情和 benchmark 历史行情。
 - [x] 板块日线和 benchmark 至少支持 1/5/20/60 日收益、relative return 和 chart series 计算。
 - [x] 真实 AkShare 同步作为手动 smoke，不作为单元测试阻塞项。
@@ -1134,7 +1134,7 @@ Phase 6 分阶段实施，不一次性完成全部真实数据链路。每个子
 - [ ] 新增 SQLite 初始化和同步脚本。
 - [ ] 新增 `SqliteFundamentalRepository`，从 SQLite 组装现有 `MarketSnapshot`。
 - [ ] 新增数据质量检查和质量报告。
-- [ ] 保留 `FixtureRepository` 作为测试和 fallback，不把 fixture 当真实数据源。
+- [ ] 保留 `FixtureRepository` 作为测试辅助，不把 fixture 当真实数据源或产品 fallback。
 - [ ] 同步失败写入 `data_fetch_log`，不能破坏已有可用缓存。
 
 ### 命令入口
@@ -1250,7 +1250,7 @@ python -m packages.fundamentalscreener.sync quality \
 | --- | --- | --- |
 | `error` | 无 benchmark、板块日线不足 60 个交易日、核心表不存在 | 阻断生成 `MarketSnapshot` |
 | `warning` | 部分公司缺财务或估值、个别板块成分缺行情 | 输出 warnings，保留可用数据 |
-| `info` | 使用最近一次缓存、部分字段来自 fallback 源 | 展示数据来源和新鲜度 |
+| `info` | 使用最近一次缓存、部分字段来自对照源数据 | 展示数据来源和新鲜度 |
 
 ### 快照、血缘与质量状态契约
 
@@ -1300,16 +1300,16 @@ packages/fundamentalscreener/tests/test_snapshot_lineage.py
 
 必须验收：
 
-- [ ] fake/source stub 可以同步 `ths_industry` 行业板块列表、成分股、板块历史行情和 benchmark 历史行情到 SQLite。
-- [ ] `em_industry` 对照源 stub 仍可作为对照源同步，不影响默认 `ths_industry` 路径。
-- [ ] 可以同步股票池、公司日度快照、估值历史和财务指标到 SQLite。
-- [ ] 财务指标按 `analysis_date` 做 point-in-time 过滤，不读取分析日之后才披露的数据。
-- [ ] 可以基于本地 `company_valuation_history` 计算 PE/PB 历史分位。
-- [ ] 可以从 SQLite 读取并组装 `MarketSnapshot`。
-- [ ] `MarketSnapshot` 可被现有 sector/company/financial/valuation/screening core 消费。
-- [ ] 同步过程输出质量报告和 `data_fetch_log`。
-- [ ] 网络失败时可降级读取最近一次成功缓存。
-- [ ] 新增 Phase 6 单元测试通过，且测试默认不访问真实网络。
+- [x] fake/source stub 可以同步 `ths_industry` 行业板块列表、成分股、板块历史行情和 benchmark 历史行情到 SQLite。
+- [x] `em_industry` 对照源 stub 仍可作为对照源同步，不影响默认 `ths_industry` 路径。
+- [x] 可以同步股票池、公司日度快照、估值历史和财务指标到 SQLite。
+- [x] 财务指标按 `analysis_date` 做 point-in-time 过滤，不读取分析日之后才披露的数据。
+- [x] 可以基于本地 `company_valuation_history` 计算 PE/PB 历史分位。
+- [x] 可以从 SQLite 读取并组装 `MarketSnapshot`。
+- [x] `MarketSnapshot` 可被现有 sector/company/financial/valuation/screening core 消费。
+- [x] 同步过程输出质量报告和 `data_fetch_log`。
+- [x] 网络失败时可降级读取最近一次成功缓存。
+- [x] 新增 Phase 6 单元测试通过，且测试默认不访问真实网络。
 
 可选手动 smoke，不作为自动测试阻塞项：
 
@@ -1322,7 +1322,12 @@ packages/fundamentalscreener/tests/test_snapshot_lineage.py
 
 在 core/CLI 和数据治理边界稳定后做独立 Streamlit 数据工作台。Streamlit 只消费 repository、snapshot 或 core/CLI 输出，不承担采集、标准化或评分算法。
 
-当前已完成的 Streamlit 项属于界面验证。接入真实数据前仍必须完成 Phase 6；Phase 7 的真实数据验收以“读取 Phase 6 的 repository/cache，并展示数据日期、来源和质量 warnings”为准。
+当前已完成的 Streamlit 项属于界面验证，不代表 Phase 7 产品化完成。Phase 7 应拆成两层验收：
+
+- 界面验证：已证明 Streamlit 可以承载“板块 -> 公司 -> 财务/估值/flags”的浏览工作流。
+- 产品化前端：仍待执行，必须去掉 fixture/SQLite/path 等工程化入口，改为自动读取内部缓存并提供“获取数据 / 运行分析”按钮。
+
+接入真实数据前仍必须完成 Phase 6B 的同花顺数据源测试闭环。Phase 7 的真实数据验收以“读取 Phase 6 的 repository/cache，并展示数据日期、来源和质量 warnings”为准。
 
 Streamlit 前端的独立产品功能和执行步骤见：
 
@@ -1332,11 +1337,10 @@ docs/fundamental_screener_streamlit_frontend_plan.md
 
 该前端计划优先级高于本节的历史 fixture UI 描述。用户界面不得暴露 fixture、SQLite、数据库路径或 CLI 参数；这些只能作为内部测试和缓存实现存在。
 
-### 必须实现
+### 已完成：界面验证
 
 - [x] 创建 `apps/fundamental-screener/app.py`。
 - [x] 创建 `apps/fundamental-screener/README.md`。
-- [x] 通过 core 或 CLI 获取 `sectors` 结果。
 - [x] 绘制板块归一化走势曲线和基准线。
 - [x] 展示板块指标结果表。
 - [x] 支持表格点击/选择板块。
@@ -1344,8 +1348,21 @@ docs/fundamental_screener_streamlit_frontend_plan.md
 - [x] 展示财务质量横向对比。
 - [x] 展示估值横向对比。
 - [x] 展示异常 flags。
-- [x] 接入 Phase 6 的 SQLite/repository 数据源作为真实数据入口。
-- [x] 页面展示数据日期、来源和 warnings。
+
+### 待完成：产品化前端
+
+- [x] `app.py` 删除数据源 radio。
+- [x] `app.py` 删除 fixture JSON 路径输入框。
+- [x] `app.py` 删除 SQLite 数据库路径输入框。
+- [x] `services/data_service.py` 增加 `load_latest_snapshot()`。
+- [x] `services/data_service.py` 增加 `refresh_market_data()`，内部调用 `sync_all()` 和同花顺行业板块数据源。
+- [x] `services/data_service.py` 增加 `load_or_refresh_snapshot()`。
+- [x] `services/data_service.py` 增加前端适配层返回结构 `FrontendSnapshotResult`。
+- [x] 页面启动时默认读取内部缓存的最新可用 `MarketSnapshot`。
+- [x] 无缓存时展示空状态和"获取数据 / 运行分析"按钮，不抛工程错误。
+- [x] 刷新失败但有旧缓存时展示旧缓存和失败原因。
+- [x] 页面展示数据日期、来源、采集批次和质量 warnings。
+- [x] `degraded` / `stale` 数据可展示和解释，但不得进入 `priority` 候选；前端不得用视觉样式替代 core/repository 的硬过滤。
 
 ### 禁止
 
@@ -1357,10 +1374,11 @@ docs/fundamental_screener_streamlit_frontend_plan.md
 ### DoD
 
 - [x] `streamlit run apps/fundamental-screener/app.py` 可启动。
-- [x] 页面能完成“板块 -> 公司 -> 财务/估值”的浏览。
-- [x] 页面数据来自 core/CLI 输出。
+- [x] 页面能完成"板块 -> 公司 -> 财务/估值"的浏览。
+- [x] 页面产品路径数据来自 Phase 6 repository/cache，不来自 fixture。
 - [x] 页面可读取 Phase 6 的真实数据缓存。
 - [x] 页面明确展示数据日期和质量 warnings。
+- [x] 用户界面不出现 fixture、SQLite、数据库路径或 CLI 参数。
 
 ## 20. Phase 8：Skill 和日报集成
 
