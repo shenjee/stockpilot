@@ -66,10 +66,11 @@ klines
 
 Phase 0/1 的板块分类口径采用“口径无关，只定 schema”。不要在 Phase 0/1 绑定申万一级、中信一级或任何真实行业分类。`sector_id` 和 `sector_name` 只作为稳定字符串字段，fixture 使用概念板块式示例名即可，例如 `semiconductor` / `半导体`、`machinery` / `工程机械`。
 
-后续接真实数据时，通过 `classification_system` 字段区分口径。第一版真实数据治理固定使用东方财富行业板块：
+后续接真实数据时，通过 `classification_system` 字段区分口径。第一版真实数据治理默认使用同花顺行业板块，东方财富行业板块仅作为对照源：
 
 ```text
-em_industry # 东方财富行业板块，Phase 6 第一版真实数据口径
+ths_industry # 同花顺行业板块，第一版产品默认真实数据口径
+em_industry # 东方财富行业板块，开发对照源
 em_concept  # 东方财富概念板块，后续扩展
 sw_l1       # 申万一级，后续扩展
 citic_l1    # 中信一级，后续扩展
@@ -1008,16 +1009,18 @@ not_applicable -> expensive_but_supported -> expensive -> low_need_quality_check
 
 Phase 6 只实现数据治理、同步、缓存、质量检查和 repository 接入，不改评分算法。不得修改 `sector_rotation.py`、`company_ranking.py`、`financial_quality.py`、`valuation.py` 的评分规则，除非是为了让现有 core 消费 `MarketSnapshot` / `snapshot` 血缘字段所需的最小 schema 适配。
 
-第一版真实板块口径固定为：
+第一版真实板块主口径调整为：
 
 ```text
-classification_system = "em_industry"
+classification_system = "ths_industry"
 ```
+
+修正原因：本地实测显示，同花顺行业板块接口在稳定性、可靠性和响应速度上优于东方财富行业板块接口。东方财富行业板块保留为开发对照源，不再作为产品默认主源。
 
 ### 数据链路
 
 ```text
-AkShare / 公开源
+AkShare / 公开源（优先同花顺行业板块）
   -> SQLite 本地缓存
   -> 数据质量检查
   -> SqliteFundamentalRepository
@@ -1048,13 +1051,14 @@ Phase 6 分阶段实施，不一次性完成全部真实数据链路。每个子
 - [x] fake source 可以写入一批最小数据并保留来源血缘字段。
 - [x] 默认测试不访问真实网络。
 
-#### Phase 6B：AkShare 行业板块采集与缓存
+#### Phase 6B：行业板块采集与缓存
 
-目标：接入第一批真实板块数据，范围只限 `em_industry`。
+目标：接入第一批真实板块数据，默认范围为 `ths_industry`，并保留 `em_industry` 作为对照源。
 
 范围：
 
-- [x] 新增 AkShare 数据源实现，第一版只支持 `classification_system = "em_industry"`。
+- [x] 新增 AkShare 数据源实现，已支持 `classification_system = "em_industry"`。
+- [ ] 新增同花顺行业板块数据源实现，默认支持 `classification_system = "ths_industry"`。
 - [x] 实现 `list_sectors()`、`get_sector_constituents()`、`get_sector_daily()`。
 - [x] 实现 `get_benchmark_daily()`，至少支持 `hs300`。
 - [x] 将行业板块列表、成分股、板块历史行情和 benchmark 历史行情写入 SQLite。
@@ -1062,6 +1066,7 @@ Phase 6 分阶段实施，不一次性完成全部真实数据链路。每个子
 
 验收：
 
+- [ ] fake AkShare source 可以同步 `ths_industry` 行业板块列表、成分股、板块历史行情和 benchmark 历史行情。
 - [x] fake AkShare source 可以同步 `em_industry` 行业板块列表、成分股、板块历史行情和 benchmark 历史行情。
 - [x] 板块日线和 benchmark 至少支持 1/5/20/60 日收益、relative return 和 chart series 计算。
 - [x] 真实 AkShare 同步作为手动 smoke，不作为单元测试阻塞项。
@@ -1091,38 +1096,41 @@ Phase 6 分阶段实施，不一次性完成全部真实数据链路。每个子
 
 范围：
 
-- [ ] 新增 `SqliteFundamentalRepository`，从 SQLite 组装现有 `MarketSnapshot`。
-- [ ] Phase 6 起，现有 `packages.fundamentalscreener.cli` 统一扩展 `--db <path>` 参数，用于读取 `SqliteFundamentalRepository`；未传 `--db` 时继续使用 fixture/现有路径，不破坏旧测试。
-- [ ] 生成并透传 `snapshot_id`、`source_set`、`fetch_run_id`、`quality_report_id`、`config_version`、`formula_version`。
-- [ ] 输出统一质量状态 `ok | degraded | stale | invalid`。
-- [ ] CLI JSON 顶层输出 `snapshot` 对象，并保持 `sectors`、`companies`、`financials`、`valuations`、`screen` 契约一致。
-- [ ] 落实 `degraded` / `stale` 不进入 `priority`，`invalid` 不生成 `MarketSnapshot` 或综合评分。
+- [x] 新增 `SqliteFundamentalRepository`，从 SQLite 组装现有 `MarketSnapshot`。
+- [x] Phase 6 起，现有 `packages.fundamentalscreener.cli` 统一扩展 `--db <path>` 参数，用于读取 `SqliteFundamentalRepository`；未传 `--db` 时继续使用 fixture/现有路径，不破坏旧测试。
+- [x] 生成并透传 `snapshot_id`、`source_set`、`fetch_run_id`、`quality_report_id`、`config_version`、`formula_version`。
+- [x] 输出统一质量状态 `ok | degraded | stale | invalid`。
+- [x] CLI JSON 顶层输出 `snapshot` 对象，并保持 `sectors`、`companies`、`financials`、`valuations`、`screen` 契约一致。
+- [x] 落实 `degraded` / `stale` 不进入 `priority`，`invalid` 不生成 `MarketSnapshot` 或综合评分。
 
 验收：
 
-- [ ] CLI 可以从 SQLite/repository 读取真实数据并输出符合契约的 JSON。
-- [ ] `MarketSnapshot` 可被现有 sector/company/financial/valuation/screening core 消费。
-- [ ] 质量报告能解释数据是否可用、是否降级、哪些实体受影响。
+- [x] CLI 可以从 SQLite/repository 读取真实数据并输出符合契约的 JSON。
+- [x] `MarketSnapshot` 可被现有 sector/company/financial/valuation/screening core 消费。
+- [x] 质量报告能解释数据是否可用、是否降级、哪些实体受影响。
 
 ### 数据源边界
 
 | 数据 | 第一版主源 | 说明 |
 | --- | --- | --- |
-| 行业板块列表 | AkShare 封装的东方财富行业板块 | 固定 `em_industry`，不混用概念、申万、中信 |
-| 行业板块成分 | AkShare 封装的东方财富行业成分 | 生成板块-股票关系 |
-| 板块历史行情 | AkShare 封装的东方财富板块行情 | 支撑 1/5/20/60 日收益和 chart series |
+| 行业板块列表 | AkShare 封装的同花顺行业板块 | 默认 `ths_industry`，东方财富 `em_industry` 仅对照 |
+| 行业板块成分 | AkShare 封装的同花顺行业成分或行业详情 | 生成板块-股票关系；若接口只提供汇总，需补成分股获取方案后再进入公司排名 |
+| 板块历史行情 | AkShare 封装的同花顺板块行情 | 支撑 1/5/20/60 日收益和 chart series |
 | 个股行情/K线 | 现有腾讯财经 provider | 继续只做行情和技术数据补充 |
 | 公司日度快照 | AkShare 东方财富实时行情，必要时腾讯补充 | 市值、PE、PB、PS、成交额、换手率 |
 | 财务指标 | AkShare 公开源 | ROE、毛利率、净利率、成长、现金流、负债等 |
 | 新闻/公告/研报 | 暂不接入 | 第二阶段再考虑文本数据 |
 | Tushare | 暂不考虑 | 需要 token/充值，不作为免费 MVP 主路径 |
 
-腾讯财经不扩展成基本面 provider。东方财富裸接口可以作为后续 fallback，但第一版不作为主实现，避免字段变化、限流和网络断开影响核心链路。
+腾讯财经不扩展成基本面 provider。东方财富行业板块保留为对照源，但第一版产品默认不再使用东方财富作为主源。
+
+同花顺和东方财富都是自研行业分类，成分股不会完全一致。不得把 `ths_industry` 与 `em_industry` 混写到同一个 `classification_system` 下；快照和 `source_set` 必须明确记录实际使用源。
 
 ### 必须实现
 
 - [ ] 新增数据源抽象，至少覆盖 `list_sectors()`、`get_sector_constituents()`、`get_sector_daily()`、`get_benchmark_daily()`、`get_stock_universe()`、`get_company_daily_snapshot()`、`get_company_valuation_history()`、`get_financial_metrics()`。
-- [ ] 新增 AkShare 数据源实现，第一版只支持 `em_industry`。
+- [ ] 新增同花顺行业板块数据源实现，第一版默认支持 `ths_industry`。
+- [ ] 保留东方财富行业板块数据源作为对照源，支持 `em_industry`。
 - [ ] 新增 SQLite 初始化和同步脚本。
 - [ ] 新增 `SqliteFundamentalRepository`，从 SQLite 组装现有 `MarketSnapshot`。
 - [ ] 新增数据质量检查和质量报告。
@@ -1140,7 +1148,7 @@ python -m packages.fundamentalscreener.sync init-db \
 python -m packages.fundamentalscreener.sync sync \
   --db stockpilot/db/fundamental_data.sqlite \
   --date 2026-06-19 \
-  --classification-system em_industry
+  --classification-system ths_industry
 
 python -m packages.fundamentalscreener.sync quality \
   --db stockpilot/db/fundamental_data.sqlite \
@@ -1152,7 +1160,7 @@ python -m packages.fundamentalscreener.sync quality \
 | 命令 | 作用 | Phase 6A 状态 |
 | --- | --- | --- |
 | `init-db` | 初始化或迁移 SQLite 表结构，幂等执行 | Phase 6A 已实现 |
-| `sync` | 调用数据源、标准化、写入 SQLite、记录 `data_fetch_log` | Phase 6B+6C 已接入 `AkShareFundamentalDataSource`（`em_industry` 口径）：板块层（板块列表/成分/板块行情/基准行情）+ 公司层（股票池/日度快照/估值历史/财务指标）。未安装 akshare 时返回 rc=2 并给出安装提示。真实网络同步为手动 smoke |
+| `sync` | 调用数据源、标准化、写入 SQLite、记录 `data_fetch_log` | 下一步默认接入同花顺行业板块数据源（`ths_industry`）；现有东方财富 `em_industry` 数据源保留为对照。未安装 akshare 时返回 rc=2 并给出安装提示。真实网络同步为手动 smoke |
 | `quality` | 读取 SQLite 并输出结构化质量报告 | Phase 6A 仅返回占位 `QualityReport`（status=ok），真实规则在 Phase 6D 落地 |
 
 真实网络同步不是单元测试依赖。`sync` 的实现应允许注入 fake/source stub，便于测试在无网络环境稳定运行。
@@ -1260,7 +1268,7 @@ python -m packages.fundamentalscreener.sync quality \
 - [ ] 不让 Streamlit 直接调用 AkShare、东方财富或腾讯基本面接口。
 - [ ] 不让 skill 直接抓基本面数据。
 - [ ] 不把 AkShare、SQLite 或腾讯接口细节泄漏到 core 算法。
-- [ ] 不在第一版混用 `em_industry` 和 `em_concept`。
+- [ ] 不把 `ths_industry`、`em_industry`、`em_concept` 混写成同一个板块口径。
 - [ ] 不接新闻、公告、研报。
 - [ ] 不为了真实数据接入重写现有评分规则。
 - [ ] 不让测试依赖真实 AkShare、东方财富、腾讯网络请求。
@@ -1292,7 +1300,8 @@ packages/fundamentalscreener/tests/test_snapshot_lineage.py
 
 必须验收：
 
-- [ ] fake/source stub 可以同步 `em_industry` 行业板块列表、成分股、板块历史行情和 benchmark 历史行情到 SQLite。
+- [ ] fake/source stub 可以同步 `ths_industry` 行业板块列表、成分股、板块历史行情和 benchmark 历史行情到 SQLite。
+- [ ] `em_industry` 对照源 stub 仍可作为对照源同步，不影响默认 `ths_industry` 路径。
 - [ ] 可以同步股票池、公司日度快照、估值历史和财务指标到 SQLite。
 - [ ] 财务指标按 `analysis_date` 做 point-in-time 过滤，不读取分析日之后才披露的数据。
 - [ ] 可以基于本地 `company_valuation_history` 计算 PE/PB 历史分位。
@@ -1304,7 +1313,7 @@ packages/fundamentalscreener/tests/test_snapshot_lineage.py
 
 可选手动 smoke，不作为自动测试阻塞项：
 
-- [ ] 在有网络和依赖可用时，真实 AkShare source 能同步一小批 `em_industry` 行业、成分股、板块历史行情和 benchmark 历史行情。
+- [ ] 在有网络和依赖可用时，真实 AkShare source 能同步一小批 `ths_industry` 行业、成分股、板块历史行情和 benchmark 历史行情。
 - [ ] 真实同步失败时能输出明确错误和 `data_fetch_log` 记录，不影响 fake/source 测试通过。
 
 ## 19. Phase 7：Streamlit MVP
@@ -1313,7 +1322,15 @@ packages/fundamentalscreener/tests/test_snapshot_lineage.py
 
 在 core/CLI 和数据治理边界稳定后做独立 Streamlit 数据工作台。Streamlit 只消费 repository、snapshot 或 core/CLI 输出，不承担采集、标准化或评分算法。
 
-当前已完成的 Streamlit 项属于基于 fixture/core 的界面验证。接入真实数据前仍必须完成 Phase 6；Phase 7 的真实数据验收以“读取 Phase 6 的 SQLite/repository，并展示数据日期、来源和质量 warnings”为准。
+当前已完成的 Streamlit 项属于界面验证。接入真实数据前仍必须完成 Phase 6；Phase 7 的真实数据验收以“读取 Phase 6 的 repository/cache，并展示数据日期、来源和质量 warnings”为准。
+
+Streamlit 前端的独立产品功能和执行步骤见：
+
+```text
+docs/fundamental_screener_streamlit_frontend_plan.md
+```
+
+该前端计划优先级高于本节的历史 fixture UI 描述。用户界面不得暴露 fixture、SQLite、数据库路径或 CLI 参数；这些只能作为内部测试和缓存实现存在。
 
 ### 必须实现
 
@@ -1327,23 +1344,23 @@ packages/fundamentalscreener/tests/test_snapshot_lineage.py
 - [x] 展示财务质量横向对比。
 - [x] 展示估值横向对比。
 - [x] 展示异常 flags。
-- [ ] 接入 Phase 6 的 SQLite/repository 数据源作为真实数据入口。
-- [ ] 页面展示数据日期、来源和 warnings。
+- [x] 接入 Phase 6 的 SQLite/repository 数据源作为真实数据入口。
+- [x] 页面展示数据日期、来源和 warnings。
 
 ### 禁止
 
 - [x] 不在 Streamlit 中复制排序、评分、异常检测算法。
 - [x] 不生成研报。
 - [x] 不输出买卖建议。
-- [ ] 不在 Streamlit 中直接联网抓基本面数据。
+- [x] 不在 Streamlit 中直接联网抓基本面数据。
 
 ### DoD
 
 - [x] `streamlit run apps/fundamental-screener/app.py` 可启动。
 - [x] 页面能完成“板块 -> 公司 -> 财务/估值”的浏览。
 - [x] 页面数据来自 core/CLI 输出。
-- [ ] 页面可读取 Phase 6 的真实数据缓存。
-- [ ] 页面明确展示数据日期和质量 warnings。
+- [x] 页面可读取 Phase 6 的真实数据缓存。
+- [x] 页面明确展示数据日期和质量 warnings。
 
 ## 20. Phase 8：Skill 和日报集成
 
