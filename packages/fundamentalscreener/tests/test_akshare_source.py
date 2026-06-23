@@ -22,12 +22,25 @@ from datetime import date, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Dict, List, Optional
+from unittest.mock import patch
 
 from packages.fundamentalscreener.data_sources.akshare_source import (
     AkShareFundamentalDataSource,
 )
 from packages.fundamentalscreener.sqlite_schema import connect
 from packages.fundamentalscreener.sync import main, sync_all
+
+# THS 成分股抓取测试需要 requests + beautifulsoup4 + lxml 解析器（akshare 的依赖）。
+# 项目设计原则是测试在最小依赖环境也能跑（fake 注入不联网），因此缺这些
+# 依赖时跳过抓取测试，而非整组失败。仅检查 import 不够：bs4 装了但缺 lxml
+# 时 BeautifulSoup(..., features="lxml") 会在调用时才报 FeatureNotFound。
+try:
+    import requests  # noqa: F401
+    from bs4 import BeautifulSoup  # noqa: F401
+    BeautifulSoup("<html></html>", features="lxml")
+    _HAS_SCRAPE_DEPS = True
+except (ImportError, Exception):  # noqa: BLE001
+    _HAS_SCRAPE_DEPS = False
 
 
 # ---------------------------------------------------------------------------
@@ -63,10 +76,14 @@ def _decompact(d: str) -> str:
 
 
 class _FakeAkshare:
-    """实现 AkShareFundamentalDataSource 依赖的 8 个函数的内存替身。
+    """实现 AkShareFundamentalDataSource 依赖的函数的内存替身。
 
     历史行情函数会按传入的 ``YYYYMMDD`` 起止日期过滤，借此验证源代码确实把
     ``YYYY-MM-DD`` 压缩成了无分隔符日期再传给 akshare。
+
+    同时支持 EM（东方财富）和 THS（同花顺）两套板块 API：
+    - EM: ``stock_board_industry_name_em`` / ``_cons_em`` / ``_hist_em``
+    - THS: ``stock_board_industry_name_ths`` / ``_index_ths`` / ``_cons_ths``
     """
 
     def __init__(
@@ -80,6 +97,10 @@ class _FakeAkshare:
         valuation_map: Optional[Dict[str, Dict[str, Any]]] = None,
         financial_map: Optional[Dict[str, Any]] = None,
         fail: bool = False,
+        # THS 板块数据
+        boards_df_ths: Any = None,
+        cons_map_ths: Optional[Dict[str, Any]] = None,
+        hist_map_ths: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.boards_df = boards_df or _empty_df()
         self.cons_map = cons_map or {}
@@ -91,6 +112,10 @@ class _FakeAkshare:
         self.financial_map = financial_map or {}
         self.fail = fail
         self.calls: List[Dict[str, Any]] = []
+        # THS
+        self.boards_df_ths = boards_df_ths or _empty_df()
+        self.cons_map_ths = cons_map_ths or {}
+        self.hist_map_ths = hist_map_ths or {}
 
     def _maybe_fail(self) -> None:
         if self.fail:
@@ -126,6 +151,41 @@ class _FakeAkshare:
             }
         )
         df = self.hist_map.get(symbol, _empty_df(["日期", "收盘"]))
+        if len(df) == 0:
+            return df
+        lo = _decompact(start_date)
+        hi = _decompact(end_date)
+        filtered = [r for r in df.to_dict(orient="records") if lo <= r["日期"] <= hi]
+        return _FakeDataFrame(filtered)
+
+    # ---------------- THS 板块层 ----------------
+
+    def stock_board_industry_name_ths(self) -> Any:
+        self._maybe_fail()
+        self.calls.append({"func": "name_ths"})
+        return self.boards_df_ths
+
+    def stock_board_industry_cons_ths(self, symbol: str) -> Any:
+        self._maybe_fail()
+        self.calls.append({"func": "cons_ths", "symbol": symbol})
+        return self.cons_map_ths.get(symbol, _empty_df(["代码", "名称"]))
+
+    def stock_board_industry_index_ths(
+        self,
+        symbol: str,
+        start_date: str,
+        end_date: str,
+    ) -> Any:
+        self._maybe_fail()
+        self.calls.append(
+            {
+                "func": "hist_ths",
+                "symbol": symbol,
+                "start_date": start_date,
+                "end_date": end_date,
+            }
+        )
+        df = self.hist_map_ths.get(symbol, _empty_df(["日期", "收盘价"]))
         if len(df) == 0:
             return df
         lo = _decompact(start_date)
@@ -292,6 +352,81 @@ def _build_fake_akshare(
     )
 
 
+def _build_ths_fake_akshare(
+    *,
+    board_codes: Optional[List[tuple]] = None,
+    n_days: int = 65,
+    end_iso: str = "2026-06-19",
+    fail: bool = False,
+) -> _FakeAkshare:
+    """构造一个带两块同花顺板块 + hs300 基准的 fake akshare。
+
+    ``board_codes`` 是 ``[(ths_code, name), ...]`` 列表，默认两块。
+    THS 板块列表列名是 ``name`` / ``code``（不同于 EM 的 ``板块名称`` / ``板块代码``）。
+    THS 指数列名是 ``开盘价`` / ``最高价`` / ``最低价`` / ``收盘价``（带"价"后缀）。
+    THS 指数接口按板块**名称**查询，因此 ``hist_map_ths`` 的 key 是名称。
+    """
+    board_codes = board_codes or [("881121", "半导体"), ("881273", "白酒")]
+    days = _gen_weekdays(n_days, end_iso)
+
+    boards_rows_ths = [
+        {"name": name, "code": code}
+        for code, name in board_codes
+    ]
+    boards_df_ths = _FakeDataFrame(boards_rows_ths)
+
+    cons_map_ths: Dict[str, Any] = {}
+    hist_map_ths: Dict[str, Any] = {}
+    for code, name in board_codes:
+        cons_map_ths[code] = _FakeDataFrame(
+            [
+                {"序号": 1, "代码": "300077", "名称": "国民技术", "现价": 26.73},
+                {"序号": 2, "代码": "002371", "名称": "北方华创", "现价": 350.0},
+            ]
+        )
+        hist_rows = [
+            {
+                "日期": d,
+                "开盘价": 19000.0 + idx,
+                "最高价": 19500.0 + idx,
+                "最低价": 18500.0 + idx,
+                "收盘价": 19200.0 + idx,
+                "成交量": 5_000_000,
+                "成交额": 50_000_000_000.0 + idx,
+            }
+            for idx, d in enumerate(days)
+        ]
+        # THS 指数接口按名称查询
+        hist_map_ths[name] = _FakeDataFrame(hist_rows)
+
+    # hs300 基准（与 EM 共用 index_zh_a_hist）
+    bench_rows = [
+        {
+            "日期": d,
+            "开盘": 3500.0 + idx,
+            "收盘": 3510.0 + idx,
+            "最高": 3520.0 + idx,
+            "最低": 3490.0 + idx,
+            "成交量": 10_000_000,
+            "成交额": 100_000_000_000.0 + idx,
+            "振幅": 1.0,
+            "涨跌幅": 0.3,
+            "涨跌额": 10.0,
+            "换手率": 0.5,
+        }
+        for idx, d in enumerate(days)
+    ]
+    benchmark_map = {"000300": _FakeDataFrame(bench_rows)}
+
+    return _FakeAkshare(
+        boards_df_ths=boards_df_ths,
+        cons_map_ths=cons_map_ths,
+        hist_map_ths=hist_map_ths,
+        benchmark_map=benchmark_map,
+        fail=fail,
+    )
+
+
 # ---------------------------------------------------------------------------
 # 转换逻辑测试
 # ---------------------------------------------------------------------------
@@ -439,6 +574,133 @@ class AkShareSourceTransformTests(unittest.TestCase):
         self.assertEqual(rows, [])
 
 
+class AkShareSourceTHSTransformTests(unittest.TestCase):
+    """同花顺（ths_industry）口径的转换逻辑测试。"""
+
+    def test_list_sectors_transforms_ths_industry_boards(self) -> None:
+        fake = _build_ths_fake_akshare()
+        src = AkShareFundamentalDataSource(akshare=fake)
+        rows = src.list_sectors("ths_industry")
+        self.assertEqual(len(rows), 2)
+        first = rows[0]
+        self.assertEqual(first["sector_id"], "881121")
+        self.assertEqual(first["sector_name"], "半导体")
+        self.assertEqual(first["classification_system"], "ths_industry")
+        self.assertIsNotNone(first["source_updated_at"])
+        self.assertNotIn("source", first)
+        self.assertNotIn("fetch_run_id", first)
+
+    def test_list_sectors_ths_caches_name_mapping(self) -> None:
+        """list_sectors 应缓存 code→name 映射，供 get_sector_daily 使用。"""
+        fake = _build_ths_fake_akshare()
+        src = AkShareFundamentalDataSource(akshare=fake)
+        src.list_sectors("ths_industry")
+        self.assertEqual(src._ths_name_cache.get("881121"), "半导体")
+        self.assertEqual(src._ths_name_cache.get("881273"), "白酒")
+
+    def test_list_sectors_ths_skips_rows_missing_code(self) -> None:
+        bad = _FakeDataFrame(
+            [
+                {"name": "半导体", "code": "881121"},
+                {"name": "无代码", "code": None},
+            ]
+        )
+        fake = _FakeAkshare(boards_df_ths=bad)
+        src = AkShareFundamentalDataSource(akshare=fake)
+        rows = src.list_sectors("ths_industry")
+        self.assertEqual([r["sector_id"] for r in rows], ["881121"])
+
+    def test_get_sector_constituents_ths_via_injected_method(self) -> None:
+        """THS 成分股通过 fake akshare 的 stock_board_industry_cons_ths 注入。"""
+        fake = _build_ths_fake_akshare()
+        src = AkShareFundamentalDataSource(akshare=fake)
+        rows = src.get_sector_constituents("881121", "ths_industry", "2026-06-19")
+        self.assertEqual({r["code"] for r in rows}, {"300077", "002371"})
+        for r in rows:
+            self.assertEqual(r["sector_id"], "881121")
+            self.assertEqual(r["classification_system"], "ths_industry")
+            self.assertEqual(r["as_of_date"], "2026-06-19")
+        # 传板块代码给 cons_ths
+        cons_calls = [c for c in fake.calls if c["func"] == "cons_ths"]
+        self.assertTrue(all(c["symbol"] == "881121" for c in cons_calls))
+
+    def test_get_sector_daily_ths_maps_code_to_name(self) -> None:
+        """THS 板块日线通过 code→name 映射调用 stock_board_industry_index_ths。
+
+        验证：
+        - 日期被压缩成 YYYYMMDD 传给 akshare
+        - 传给 index_ths 的是板块**名称**（半导体），不是代码（881121）
+        - OHLC 字段从 ``开盘价`` / ``收盘价`` 等带"价"后缀的列名提取
+        """
+        fake = _build_ths_fake_akshare(n_days=5, end_iso="2026-06-19")
+        src = AkShareFundamentalDataSource(akshare=fake)
+        # 先调 list_sectors 填充缓存
+        src.list_sectors("ths_industry")
+        rows = src.get_sector_daily("881121", "ths_industry", "2026-03-20", "2026-06-19")
+        self.assertEqual(len(rows), 5)
+        first = rows[0]
+        self.assertEqual(first["sector_id"], "881121")
+        self.assertEqual(first["classification_system"], "ths_industry")
+        self.assertEqual(first["trade_date"], _gen_weekdays(5, "2026-06-19")[0])
+        self.assertEqual(first["open"], 19000.0)
+        self.assertEqual(first["close"], 19200.0)
+        self.assertEqual(first["high"], 19500.0)
+        self.assertEqual(first["low"], 18500.0)
+        self.assertEqual(first["turnover_amount"], 50_000_000_000.0)
+        # 传板块名称（而非代码）给 index_ths
+        hist_call = next(c for c in fake.calls if c["func"] == "hist_ths")
+        self.assertEqual(hist_call["symbol"], "半导体")
+        self.assertEqual(hist_call["start_date"], "20260320")
+        self.assertEqual(hist_call["end_date"], "20260619")
+
+    def test_get_sector_daily_ths_handles_nan_and_missing(self) -> None:
+        hist = _FakeDataFrame(
+            [
+                {"日期": "2026-06-19", "开盘价": float("nan"), "最高价": None,
+                 "最低价": 18500.0, "收盘价": 19200.0, "成交额": "非数"},
+            ]
+        )
+        fake = _FakeAkshare(
+            boards_df_ths=_FakeDataFrame([{"name": "半导体", "code": "881121"}]),
+            hist_map_ths={"半导体": hist},
+        )
+        src = AkShareFundamentalDataSource(akshare=fake)
+        rows = src.get_sector_daily("881121", "ths_industry", "2026-06-01", "2026-06-19")
+        self.assertEqual(len(rows), 1)
+        r = rows[0]
+        self.assertIsNone(r["open"])  # NaN -> None
+        self.assertEqual(r["close"], 19200.0)
+        self.assertIsNone(r["high"])  # None -> None
+        self.assertEqual(r["low"], 18500.0)
+        self.assertIsNone(r["turnover_amount"])  # 非数 -> None
+
+    def test_get_sector_daily_ths_unknown_code_returns_empty(self) -> None:
+        """板块代码不在缓存中且 name_ths 也找不到时返回空列表。"""
+        fake = _build_ths_fake_akshare()
+        src = AkShareFundamentalDataSource(akshare=fake)
+        rows = src.get_sector_daily("999999", "ths_industry", "2026-03-20", "2026-06-19")
+        self.assertEqual(rows, [])
+
+    def test_ths_constituents_empty_for_empty_sector(self) -> None:
+        """空 sector_id 返回空列表，不调用 akshare。"""
+        fake = _build_ths_fake_akshare()
+        src = AkShareFundamentalDataSource(akshare=fake)
+        self.assertEqual(src.get_sector_constituents("", "ths_industry", "2026-06-19"), [])
+        # 不应调用 cons_ths
+        self.assertFalse(any(c["func"] == "cons_ths" for c in fake.calls))
+
+    def test_ths_and_em_do_not_cross_contaminate(self) -> None:
+        """ths_industry 请求不应触发 EM API 调用，反之亦然。"""
+        fake = _build_ths_fake_akshare()
+        # 同时给 EM 数据，确保 THS 路径不误调 EM
+        fake.boards_df = _FakeDataFrame([{"板块名称": "EM板块", "板块代码": "BK1001"}])
+        src = AkShareFundamentalDataSource(akshare=fake)
+        src.list_sectors("ths_industry")
+        # THS 路径只调 name_ths，不调 name（EM）
+        self.assertTrue(any(c["func"] == "name_ths" for c in fake.calls))
+        self.assertFalse(any(c["func"] == "name" for c in fake.calls))
+
+
 # ---------------------------------------------------------------------------
 # sync_all 集成测试
 # ---------------------------------------------------------------------------
@@ -447,7 +709,7 @@ class AkShareSourceTransformTests(unittest.TestCase):
 class AkShareSyncIntegrationTests(unittest.TestCase):
     def test_sync_all_writes_sector_layer_with_akshare_source(self) -> None:
         fake = _build_fake_akshare()
-        src = AkShareFundamentalDataSource(akshare=fake, today="2026-06-19")
+        src = AkShareFundamentalDataSource(akshare=fake, today="2026-06-19", name="akshare_em")
         conn = connect(":memory:")
         try:
             result = sync_all(
@@ -597,6 +859,415 @@ class AkShareSyncIntegrationTests(unittest.TestCase):
                 )
             finally:
                 conn.close()
+
+
+class AkShareTHSSyncIntegrationTests(unittest.TestCase):
+    """同花顺（ths_industry）口径的 sync_all 集成测试。"""
+
+    def test_sync_all_writes_ths_sector_layer(self) -> None:
+        """THS 板块层 4 个任务成功写入，source=akshare_ths，classification_system=ths_industry。"""
+        fake = _build_ths_fake_akshare()
+        src = AkShareFundamentalDataSource(akshare=fake, today="2026-06-19")
+        conn = connect(":memory:")
+        try:
+            result = sync_all(
+                conn,
+                src,
+                analysis_date="2026-06-19",
+                classification_system="ths_industry",
+                benchmark="hs300",
+                history_days=90,
+            )
+            # 板块层 4 个任务必须成功且写入行数 > 0
+            by_task = {t["task"]: t for t in result.tasks}
+            for task in ("list_sectors", "get_sector_constituents",
+                         "get_sector_daily", "get_benchmark_daily"):
+                self.assertTrue(by_task[task]["success"], f"{task} should succeed")
+                self.assertGreater(by_task[task]["row_count"], 0, f"{task} should write rows")
+
+            # sectors 表写入 2 块，source=akshare_ths，classification_system=ths_industry
+            sectors = conn.execute(
+                "SELECT sector_id, sector_name, source, classification_system "
+                "FROM sectors ORDER BY sector_id"
+            ).fetchall()
+            self.assertEqual(len(sectors), 2)
+            self.assertEqual(sectors[0][0], "881121")
+            self.assertEqual(sectors[0][1], "半导体")
+            self.assertEqual(sectors[0][2], "akshare_ths")
+            self.assertEqual(sectors[0][3], "ths_industry")
+
+            # 成分股 4 条（2 板块 × 2 股）
+            n_cons = conn.execute("SELECT COUNT(*) FROM sector_constituents").fetchone()[0]
+            self.assertEqual(n_cons, 4)
+
+            # 板块日线 2 × 65 = 130 条
+            n_daily = conn.execute("SELECT COUNT(*) FROM sector_daily_bars").fetchone()[0]
+            self.assertEqual(n_daily, 130)
+
+            # 板块日线 classification_system=ths_industry
+            cs = conn.execute(
+                "SELECT DISTINCT classification_system FROM sector_daily_bars"
+            ).fetchall()
+            self.assertEqual(len(cs), 1)
+            self.assertEqual(cs[0][0], "ths_industry")
+
+            # 基准日线 65 条
+            n_bench = conn.execute("SELECT COUNT(*) FROM benchmark_daily_bars").fetchone()[0]
+            self.assertEqual(n_bench, 65)
+
+            # data_fetch_log source=akshare_ths
+            logs = conn.execute(
+                "SELECT DISTINCT source FROM data_fetch_log"
+            ).fetchall()
+            self.assertEqual(len(logs), 1)
+            self.assertEqual(logs[0][0], "akshare_ths")
+        finally:
+            conn.close()
+
+    def test_sync_all_ths_daily_covers_60_day_window(self) -> None:
+        """THS 板块日线和 benchmark 至少 61 条以支撑 60 日收益。"""
+        fake = _build_ths_fake_akshare(n_days=65, end_iso="2026-06-19")
+        src = AkShareFundamentalDataSource(akshare=fake, today="2026-06-19")
+        conn = connect(":memory:")
+        try:
+            sync_all(
+                conn,
+                src,
+                analysis_date="2026-06-19",
+                classification_system="ths_industry",
+                benchmark="hs300",
+                history_days=90,
+            )
+            for sector_id in ("881121", "881273"):
+                n = conn.execute(
+                    "SELECT COUNT(*) FROM sector_daily_bars WHERE sector_id=?",
+                    (sector_id,),
+                ).fetchone()[0]
+                self.assertGreaterEqual(n, 61, f"{sector_id} needs >=61 bars for 60d return")
+            n_bench = conn.execute("SELECT COUNT(*) FROM benchmark_daily_bars").fetchone()[0]
+            self.assertGreaterEqual(n_bench, 61)
+        finally:
+            conn.close()
+
+    def test_sync_cli_ths_industry(self) -> None:
+        """CLI sync 默认使用 ths_industry 口径，rc=0。"""
+        with TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "fundamental.sqlite"
+            src = AkShareFundamentalDataSource(
+                akshare=_build_ths_fake_akshare(n_days=5, end_iso="2026-06-19"),
+                today="2026-06-19",
+            )
+            out = io.StringIO()
+            with redirect_stdout(out):
+                rc = main(
+                    [
+                        "sync", "--db", str(db_path), "--date", "2026-06-19",
+                        "--classification-system", "ths_industry", "--benchmark", "hs300",
+                    ],
+                    source=src,
+                )
+            self.assertEqual(rc, 0)
+            payload = json.loads(out.getvalue())
+            self.assertEqual(payload["classification_system"], "ths_industry")
+            self.assertGreater(payload["success_count"], 0)
+            conn = connect(str(db_path))
+            try:
+                sectors = conn.execute(
+                    "SELECT classification_system FROM sectors LIMIT 1"
+                ).fetchone()
+                self.assertEqual(sectors[0], "ths_industry")
+            finally:
+                conn.close()
+
+
+# ---------------------------------------------------------------------------
+# THS 成分股抓取路径测试（HTML fixture）
+# ---------------------------------------------------------------------------
+
+
+class _FakeResponse:
+    """requests.Response 的最小替身，用于 _scrape_ths_constituents 测试。"""
+
+    def __init__(self, text: str = "", status_code: int = 200) -> None:
+        self.text = text
+        self.status_code = status_code
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+
+_THS_MAIN_PAGE_HTML = """<html><body>
+<table>
+<thead><tr><th>序号</th><th>代码</th><th>名称</th><th>现价</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>300077</td><td>国民技术</td><td>26.73</td></tr>
+<tr><td>2</td><td>002371</td><td>北方华创</td><td>350.00</td></tr>
+</tbody>
+</table>
+<div class="m-pager">1  2  3  下一页尾页1/3</div>
+</body></html>"""
+
+_THS_AJAX_PAGE_2 = """<table>
+<tbody>
+<tr><td>21</td><td>600584</td><td>长电科技</td><td>28.50</td></tr>
+<tr><td>22</td><td>603501</td><td>韦尔股份</td><td>120.00</td></tr>
+</tbody>
+</table>"""
+
+_THS_AJAX_PAGE_3 = """<table>
+<tbody>
+<tr><td>41</td><td>300613</td><td>富瀚微</td><td>45.60</td></tr>
+</tbody>
+</table>"""
+
+_THS_SINGLE_PAGE_HTML = """<html><body>
+<table>
+<tbody>
+<tr><td>1</td><td>300077</td><td>国民技术</td><td>26.73</td></tr>
+<tr><td>2</td><td>002371</td><td>北方华创</td><td>350.00</td></tr>
+</tbody>
+</table>
+<div class="m-pager">1/1</div>
+</body></html>"""
+
+_THS_EMPTY_TABLE_HTML = """<html><body>
+<table><tbody></tbody></table>
+<div class="m-pager">1/1</div>
+</body></html>"""
+
+
+class _ScrapeOnlyTHSFake:
+    """无 stock_board_industry_cons_ths 的 fake akshare，强制走抓取路径。"""
+
+    def __init__(self) -> None:
+        self.calls: List[Dict[str, Any]] = []
+
+    def stock_board_industry_name_ths(self) -> Any:
+        self.calls.append({"func": "name_ths"})
+        return _FakeDataFrame([{"name": "半导体", "code": "881121"}])
+
+
+@unittest.skipUnless(_HAS_SCRAPE_DEPS, "requires requests + beautifulsoup4 + lxml")
+class AkShareTHSScrapeTests(unittest.TestCase):
+    """THS 成分股抓取路径（_scrape_ths_constituents）的 HTML fixture 测试。
+
+    真实 AkShare 没有 stock_board_industry_cons_ths 接口，生产路径走网页抓取。
+    用 mock requests.get + 真实 BeautifulSoup 验证：单页解析、多页 AJAX 分页、
+    HTTP 错误（主页 + AJAX 页）、空表、解析器单元。
+    """
+
+    @patch("requests.get")
+    def test_scrape_single_page_extracts_all_codes(self, mock_get: Any) -> None:
+        """单页（1/1）：解析全部成分股代码，只请求一次。"""
+        mock_get.return_value = _FakeResponse(text=_THS_SINGLE_PAGE_HTML)
+        src = AkShareFundamentalDataSource(akshare=_FakeAkshare())
+        records = src._scrape_ths_constituents("881121")
+        codes = {r["代码"] for r in records}
+        self.assertEqual(codes, {"300077", "002371"})
+        self.assertEqual(mock_get.call_count, 1)
+
+    @patch("requests.get")
+    def test_scrape_multi_page_follows_pagination(self, mock_get: Any) -> None:
+        """多页（1/3）：第一页解析总页数，后续 2 页走 AJAX 端点。"""
+
+        def _side_effect(
+            url: str, headers: Any = None, timeout: Any = None
+        ) -> _FakeResponse:
+            if "/page/" in url:
+                page = int(url.split("/page/")[1].split("/")[0])
+                if page == 2:
+                    return _FakeResponse(text=_THS_AJAX_PAGE_2)
+                if page == 3:
+                    return _FakeResponse(text=_THS_AJAX_PAGE_3)
+            return _FakeResponse(text=_THS_MAIN_PAGE_HTML)
+
+        mock_get.side_effect = _side_effect
+        src = AkShareFundamentalDataSource(akshare=_FakeAkshare())
+        records = src._scrape_ths_constituents("881121")
+        codes = {r["代码"] for r in records}
+        self.assertEqual(codes, {"300077", "002371", "600584", "603501", "300613"})
+        # 1 主页 + 2 AJAX = 3
+        self.assertEqual(mock_get.call_count, 3)
+
+    @patch("requests.get")
+    def test_scrape_http_error_raises(self, mock_get: Any) -> None:
+        """HTTP 403 → raise_for_status 抛错，不静默返回空。"""
+        mock_get.return_value = _FakeResponse(text="", status_code=403)
+        src = AkShareFundamentalDataSource(akshare=_FakeAkshare())
+        with self.assertRaises(RuntimeError):
+            src._scrape_ths_constituents("881121")
+
+    @patch("requests.get")
+    def test_scrape_ajax_http_error_raises(self, mock_get: Any) -> None:
+        """AJAX 分页 HTTP 500 也要抛错，不静默跳过。"""
+
+        def _side_effect(
+            url: str, headers: Any = None, timeout: Any = None
+        ) -> _FakeResponse:
+            if "/page/" in url:
+                return _FakeResponse(text="", status_code=500)
+            return _FakeResponse(text=_THS_MAIN_PAGE_HTML)
+
+        mock_get.side_effect = _side_effect
+        src = AkShareFundamentalDataSource(akshare=_FakeAkshare())
+        with self.assertRaises(RuntimeError):
+            src._scrape_ths_constituents("881121")
+
+    @patch("requests.get")
+    def test_scrape_empty_table_returns_empty(self, mock_get: Any) -> None:
+        """页面正常加载但表格为空 → 返回空列表（sync 层 guard 会捕获）。"""
+        mock_get.return_value = _FakeResponse(text=_THS_EMPTY_TABLE_HTML)
+        src = AkShareFundamentalDataSource(akshare=_FakeAkshare())
+        records = src._scrape_ths_constituents("881121")
+        self.assertEqual(records, [])
+
+    @patch("requests.get")
+    def test_get_constituents_falls_through_to_scrape(self, mock_get: Any) -> None:
+        """akshare 无 cons_ths 方法时，get_sector_constituents 走抓取路径。"""
+        mock_get.return_value = _FakeResponse(text=_THS_SINGLE_PAGE_HTML)
+        fake = _ScrapeOnlyTHSFake()
+        src = AkShareFundamentalDataSource(akshare=fake)
+        rows = src.get_sector_constituents("881121", "ths_industry", "2026-06-19")
+        self.assertEqual({r["code"] for r in rows}, {"300077", "002371"})
+        self.assertTrue(mock_get.called)
+
+    def test_parse_stock_table_extracts_codes_and_names(self) -> None:
+        """_parse_ths_stock_table：提取第二列代码和第三列名称。"""
+        from bs4 import BeautifulSoup
+
+        soup = BeautifulSoup(_THS_MAIN_PAGE_HTML, features="lxml")
+        records = AkShareFundamentalDataSource._parse_ths_stock_table(soup)
+        self.assertEqual(len(records), 2)
+        self.assertEqual(records[0], {"代码": "300077", "名称": "国民技术"})
+        self.assertEqual(records[1], {"代码": "002371", "名称": "北方华创"})
+
+    def test_parse_stock_table_skips_non_digit_codes(self) -> None:
+        """非数字开头的代码（如表头误入 tbody）应被跳过。"""
+        from bs4 import BeautifulSoup
+
+        html = (
+            "<table><tbody>"
+            '<tr><td>序号</td><td>X</td><td>名称</td></tr>'
+            '<tr><td>1</td><td>300077</td><td>国民技术</td></tr>'
+            "</tbody></table>"
+        )
+        soup = BeautifulSoup(html, features="lxml")
+        records = AkShareFundamentalDataSource._parse_ths_stock_table(soup)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["代码"], "300077")
+
+    def test_parse_total_pages_extracts_count(self) -> None:
+        """_parse_ths_total_pages：从 '1/9' 提取总页数 9。"""
+        from bs4 import BeautifulSoup
+
+        soup = BeautifulSoup(
+            '<div class="m-pager">1  2  3  下一页尾页1/9</div>',
+            features="lxml",
+        )
+        self.assertEqual(
+            AkShareFundamentalDataSource._parse_ths_total_pages(soup), 9
+        )
+
+    def test_parse_total_pages_no_pager_returns_one(self) -> None:
+        """无分页元素时返回 1（单页）。"""
+        from bs4 import BeautifulSoup
+
+        soup = BeautifulSoup("<html><body></body></html>", features="lxml")
+        self.assertEqual(
+            AkShareFundamentalDataSource._parse_ths_total_pages(soup), 1
+        )
+
+
+class AkShareSourceGuardAndLineageTests(unittest.TestCase):
+    """P0 失败可见性 + P2 source_name 派生的 sync 集成测试。"""
+
+    def test_sync_ths_empty_constituents_marks_task_failed(self) -> None:
+        """P0：板块非空但成分股全空时，get_sector_constituents 标记为失败。
+
+        模拟数据源故障（反爬 403 / 空页）：所有板块的成分股返回空 →
+        _fetch_constituents 抛 RuntimeError → _run_task 标记 fetch_failed。
+        """
+        fake = _build_ths_fake_akshare()
+        # 所有板块的成分股都返回空
+        fake.cons_map_ths = {}
+        src = AkShareFundamentalDataSource(akshare=fake, today="2026-06-19")
+        conn = connect(":memory:")
+        try:
+            result = sync_all(
+                conn,
+                src,
+                analysis_date="2026-06-19",
+                classification_system="ths_industry",
+                benchmark="hs300",
+                history_days=90,
+            )
+            by_task = {t["task"]: t for t in result.tasks}
+            cons_task = by_task["get_sector_constituents"]
+            self.assertFalse(cons_task["success"])
+            self.assertIn("0 constituents returned", cons_task["error"])
+            # data_fetch_log 也记录了失败
+            fail_logs = conn.execute(
+                "SELECT COUNT(*) FROM data_fetch_log WHERE task=? AND success=0",
+                ("get_sector_constituents",),
+            ).fetchone()[0]
+            self.assertGreater(fail_logs, 0)
+        finally:
+            conn.close()
+
+    def test_sync_all_derives_source_name_from_classification(self) -> None:
+        """P2：EM 口径 + 默认 name=akshare_ths → sync_all 派生 source=akshare_em。
+
+        直接 AkShareFundamentalDataSource() 的 name 默认是 akshare_ths，
+        但 sync_all 按 classification_system=em_industry 派生 akshare_em，
+        避免把 EM 数据标记成 akshare_ths（lineage 误标）。
+        """
+        fake = _build_fake_akshare()
+        src = AkShareFundamentalDataSource(akshare=fake, today="2026-06-19")
+        self.assertEqual(src.name, "akshare_ths")
+        conn = connect(":memory:")
+        try:
+            sync_all(
+                conn,
+                src,
+                analysis_date="2026-06-19",
+                classification_system="em_industry",
+                benchmark="hs300",
+                history_days=90,
+            )
+            sources = conn.execute("SELECT DISTINCT source FROM sectors").fetchall()
+            self.assertEqual(len(sources), 1)
+            self.assertEqual(sources[0][0], "akshare_em")
+            log_sources = conn.execute(
+                "SELECT DISTINCT source FROM data_fetch_log"
+            ).fetchall()
+            self.assertEqual(log_sources[0][0], "akshare_em")
+        finally:
+            conn.close()
+
+    def test_sync_all_ths_derives_akshare_ths(self) -> None:
+        """P2：THS 口径 → sync_all 派生 source=akshare_ths，覆盖对象 name。
+
+        对象 name 故意设为 akshare_em，sync_all 仍按 ths_industry 派生 akshare_ths。
+        """
+        fake = _build_ths_fake_akshare()
+        src = AkShareFundamentalDataSource(
+            akshare=fake, today="2026-06-19", name="akshare_em"
+        )
+        conn = connect(":memory:")
+        try:
+            sync_all(
+                conn,
+                src,
+                analysis_date="2026-06-19",
+                classification_system="ths_industry",
+                benchmark="hs300",
+                history_days=90,
+            )
+            sources = conn.execute("SELECT DISTINCT source FROM sectors").fetchall()
+            self.assertEqual(sources[0][0], "akshare_ths")
+        finally:
+            conn.close()
 
 
 # ---------------------------------------------------------------------------

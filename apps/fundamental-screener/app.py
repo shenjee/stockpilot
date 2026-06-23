@@ -28,6 +28,7 @@ from fundamentalscreener.config import (  # noqa: E402
     DEFAULT_SECTOR_SORT,
     SUPPORTED_SECTOR_SORTS,
 )
+from fundamentalscreener.lineage import now_cn  # noqa: E402
 from services.data_service import (  # noqa: E402
     build_sector_board,
     build_sector_detail,
@@ -35,6 +36,7 @@ from services.data_service import (  # noqa: E402
     companies_to_rows,
     financials_to_rows,
     load_snapshot,
+    load_snapshot_from_db,
     sectors_to_rows,
     valuations_to_rows,
 )
@@ -48,6 +50,7 @@ DEFAULT_FIXTURE = (
     / "fixtures"
     / "minimal_market.json"
 )
+DEFAULT_DB = ROOT / "stockpilot" / "db" / "fundamental_data.sqlite"
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +164,16 @@ _ENUM_LABELS: Dict[str, Dict[str, Dict[str, str]]] = {
 }
 
 
+# 语言选项：界面默认中文，用户切换后整页跟随。
+_LANG_LABELS = {"zh": "中文", "en": "English"}
+
+
+def _t(zh: str, en: str) -> str:
+    """按当前界面语言返回文案；默认中文。"""
+
+    return zh if st.session_state.get("lang_idx", "zh") == "zh" else en
+
+
 def _label(field: str, lang: str) -> str:
     """字段名 -> 显示标签。未登记字段回退原 snake_case。"""
 
@@ -202,13 +215,6 @@ def _localize_rows(
     return localized
 
 
-# 语言选项：label 同时给出中英文，便于切换。
-_LANG_OPTIONS = {
-    "中文 / Chinese": "zh",
-    "English / 英文": "en",
-}
-
-
 # ---------------------------------------------------------------------------
 # 缓存：fixture 读取一次即可
 # ---------------------------------------------------------------------------
@@ -217,6 +223,20 @@ _LANG_OPTIONS = {
 @st.cache_data(show_spinner=False)
 def _cached_load(fixture_path: str):
     return load_snapshot(fixture_path)
+
+
+@st.cache_data(show_spinner=False)
+def _cached_load_db(
+    db_path: str,
+    analysis_date: str,
+    classification_system: str,
+    benchmark: str,
+):
+    """缓存 SQLite 数据源加载结果（Phase 7 真实数据入口）。"""
+
+    return load_snapshot_from_db(
+        db_path, analysis_date, classification_system, benchmark
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -252,103 +272,233 @@ def _empty_message(text: str) -> None:
     st.info(text)
 
 
+def _render_quality_issue_list(issues: List[Dict[str, Any]]) -> None:
+    """渲染质量问题列表：error→红色，warning→黄色，info→蓝色。"""
+
+    for issue in issues:
+        level = issue.get("level", "")
+        code = issue.get("code", "")
+        msg = issue.get("message", "")
+        entity = issue.get("entity_id") or issue.get("entity_type") or ""
+        label = f"[{code}]{f' {entity}' if entity else ''} {msg}"
+        if level == "error":
+            st.error(label)
+        elif level == "warning":
+            st.warning(label)
+        else:
+            st.info(label)
+
+
 # ---------------------------------------------------------------------------
 # 主入口
 # ---------------------------------------------------------------------------
 
 
 def main() -> None:
-    st.set_page_config(page_title="Fundamental Screener", layout="wide")
-    st.title("基本面量化工作台 / Fundamental Screener")
-    st.caption(
-        "数据来自 packages/fundamentalscreener core；本页面只做浏览，不重复实现算法。"
-    )
+    st.set_page_config(page_title="基本面量化工作台", layout="wide")
 
-    # ----------------- 侧边栏：数据源 + 板块排序 -----------------
+    # ----------------- 侧边栏：语言 + 数据源 + 板块排序 -----------------
     with st.sidebar:
-        st.header("显示语言 / Language")
-        lang_label = st.selectbox(
-            "界面语言 / Display language",
-            options=list(_LANG_OPTIONS.keys()),
-            index=0,
-            help="表格列名与枚举值的显示语言；不影响底层数据。",
+        lang = st.selectbox(
+            _t("界面语言", "Display language"),
+            options=list(_LANG_LABELS.keys()),
+            format_func=lambda x: _LANG_LABELS[x],
+            key="lang_idx",
+            help=_t(
+                "表格列名与枚举值的显示语言；不影响底层数据。",
+                "Display language for labels and enum values; does not affect data.",
+            ),
         )
-        lang = _LANG_OPTIONS.get(lang_label, "zh")
 
-        st.header("数据源")
-        fixture_path = st.text_input(
-            "Fixture JSON 路径",
-            value=str(DEFAULT_FIXTURE),
-            help="Phase 6 默认从 fixture 读取，与 CLI --fixture 参数一致。",
+        st.header(_t("数据源", "Data Source"))
+        data_source = st.radio(
+            _t("数据源", "Data source"),
+            options=["fixture", "sqlite"],
+            format_func=lambda x: (
+                _t("Fixture（示例数据）", "Fixture (sample)")
+                if x == "fixture"
+                else _t("SQLite（真实数据）", "SQLite (real)")
+            ),
+            horizontal=True,
+            help=_t(
+                "fixture: Phase 0-5 示例数据；sqlite: Phase 6 真实数据缓存（需先跑 sync）。",
+                "fixture: Phase 0-5 sample data; sqlite: Phase 6 real cache (run sync first).",
+            ),
         )
+
+        fixture_path = ""
+        db_path = ""
+        analysis_date = ""
+        if data_source == "fixture":
+            fixture_path = st.text_input(
+                _t("Fixture JSON 路径", "Fixture JSON path"),
+                value=str(DEFAULT_FIXTURE),
+                help=_t("与 CLI --fixture 参数一致。", "Same as CLI --fixture."),
+            )
+        else:
+            db_path = st.text_input(
+                _t("SQLite 数据库路径", "SQLite database path"),
+                value=str(DEFAULT_DB),
+                help=_t(
+                    "Phase 6 sync 写入的 fundamental_data.sqlite，与 CLI --db 一致。",
+                    "fundamental_data.sqlite written by Phase 6 sync; same as CLI --db.",
+                ),
+            )
+            analysis_date = st.text_input(
+                _t("分析日期", "Analysis date"),
+                value="",
+                placeholder=_t("YYYY-MM-DD，留空取今天", "YYYY-MM-DD, blank for today"),
+                help=_t(
+                    "所有时变数据按此日期截断（point-in-time）。",
+                    "All time-variant data is cut off at this date (point-in-time).",
+                ),
+            )
         sort_field = st.selectbox(
-            "板块排序字段",
+            _t("板块排序字段", "Sector sort field"),
             options=list(SUPPORTED_SECTOR_SORTS),
             index=list(SUPPORTED_SECTOR_SORTS).index(DEFAULT_SECTOR_SORT),
         )
         sector_top = st.number_input(
-            "板块 Top N",
+            _t("板块 Top N", "Sector Top N"),
             min_value=1,
             max_value=200,
             value=10,
             step=1,
         )
         company_top = st.number_input(
-            "板块内公司 Top N",
+            _t("板块内公司 Top N", "Companies Top N per sector"),
             min_value=1,
             max_value=50,
             value=5,
             step=1,
         )
 
+    st.title(_t("基本面量化工作台", "Fundamental Screener"))
+
     # ----------------- 数据加载 -----------------
-    try:
-        snapshot = _cached_load(fixture_path)
-    except FileNotFoundError as exc:
-        st.error(f"fixture_not_found: {exc}")
-        return
-    except Exception as exc:  # pragma: no cover - 兜底
-        st.error(f"fixture_load_failed: {exc}")
-        return
+    metadata = None
+    quality_report = None
+
+    if data_source == "fixture":
+        try:
+            snapshot = _cached_load(fixture_path)
+        except FileNotFoundError as exc:
+            st.error(f"fixture_not_found: {exc}")
+            return
+        except Exception as exc:  # pragma: no cover - 兜底
+            st.error(f"fixture_load_failed: {exc}")
+            return
+    else:
+        # SQLite 真实数据源（Phase 7）
+        if not db_path.strip():
+            st.error(
+                _t(
+                    "请输入 SQLite 数据库路径。",
+                    "Please enter the SQLite database path.",
+                )
+            )
+            return
+        resolved_date = analysis_date.strip() or now_cn().date().isoformat()
+        try:
+            load_result = _cached_load_db(
+                db_path, resolved_date, "em_industry", "hs300"
+            )
+        except Exception as exc:  # pragma: no cover - 兜底
+            st.error(f"sqlite_load_failed: {exc}")
+            return
+
+        if load_result.quality_error:
+            # 质量状态 invalid：展示阻断原因 + 质量报告后退出
+            st.error(
+                _t(
+                    f"数据质量不可用（invalid），无法生成快照：{load_result.quality_error}",
+                    f"Data quality invalid; cannot build snapshot: {load_result.quality_error}",
+                )
+            )
+            if load_result.quality_report is not None:
+                issues = [i.to_dict() for i in load_result.quality_report.issues]
+                with st.expander(
+                    _t(
+                        f"质量问题（{len(issues)}）",
+                        f"Quality Issues ({len(issues)})",
+                    ),
+                    expanded=True,
+                ):
+                    _render_quality_issue_list(issues)
+            return
+        if load_result.snapshot is None:
+            st.error("sqlite_load_failed: snapshot is None")
+            return
+        snapshot = load_result.snapshot
+        metadata = load_result.metadata
+        quality_report = load_result.quality_report
 
     board = build_sector_board(
         snapshot,
         sort=sort_field,
         periods=DEFAULT_PERIODS,
         top=int(sector_top),
+        metadata=metadata,
+        quality_report=quality_report,
     )
 
     # ----------------- 顶部信息卡 -----------------
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("日期 / Date", board.date or "-")
+    c1.metric(_t("日期", "Date"), board.date or "-")
     c2.metric(
-        "分类口径 / Classification",
+        _t("分类口径", "Classification"),
         _enum_value("classification_system", board.classification_system, lang)
         or "-",
     )
-    c3.metric("基准 / Benchmark", board.benchmark_name or board.benchmark_id or "-")
-    c4.metric("板块数 / Sectors", len(board.sectors))
+    c3.metric(_t("基准", "Benchmark"), board.benchmark_name or board.benchmark_id or "-")
+    c4.metric(_t("板块数", "Sectors"), len(board.sectors))
+
+    # Phase 7: SQLite 数据源展示血缘与质量状态（docs §19 DoD）
+    if board.data_quality_status:
+        q1, q2, q3, q4 = st.columns(4)
+        q1.metric(_t("数据质量", "Quality"), board.data_quality_status)
+        q2.metric(_t("数据截止", "Data Cutoff"), board.data_cutoff or "-")
+        q3.metric(
+            _t("数据来源", "Sources"),
+            ", ".join(f"{k}={v}" for k, v in board.source_set.items()) or "-",
+        )
+        q4.metric(
+            _t("采集批次", "Fetch Run"),
+            (board.fetch_run_id[:24] + "…")
+            if len(board.fetch_run_id) > 24
+            else (board.fetch_run_id or "-"),
+        )
+
+    if board.quality_issues:
+        with st.expander(
+            _t(
+                f"质量问题（{len(board.quality_issues)}）",
+                f"Quality Issues ({len(board.quality_issues)})",
+            ),
+            expanded=False,
+        ):
+            _render_quality_issue_list(board.quality_issues)
 
     if board.warnings:
-        with st.expander("板块层 warnings", expanded=False):
+        with st.expander(_t("板块层警告", "Sector Warnings"), expanded=False):
             for w in board.warnings:
                 st.warning(w)
 
     # ----------------- 板块走势图 + 表格 -----------------
-    st.subheader("板块归一化走势 / Normalized Sector Curves")
+    st.subheader(_t("板块归一化走势", "Normalized Sector Curves"))
     chart_df = _chart_dataframe(board.chart_series)
     if chart_df is None or chart_df.empty:
-        _empty_message("当前 fixture 没有可用 chart_series。")
+        _empty_message(_t("当前没有可用的板块走势数据。", "No sector chart data available."))
     else:
         st.line_chart(chart_df)
 
-    st.subheader("板块指标 / Sector Metrics")
+    st.subheader(_t("板块指标", "Sector Metrics"))
     sector_rows = sectors_to_rows(board.sectors)
     if not sector_rows:
-        _empty_message("当前选择没有板块。")
+        _empty_message(_t("当前选择没有板块。", "No sectors under current selection."))
         return
 
-    st.caption("点击表格行可下钻到板块详情 / Click a row to drill into a sector.")
+    st.caption(_t("点击表格行可下钻到板块详情。", "Click a row to drill into a sector."))
     selection = st.dataframe(
         _localize_rows(sector_rows, lang),
         use_container_width=True,
@@ -374,7 +524,7 @@ def main() -> None:
             f"{s.sector_name} ({s.sector_id})": s.sector_id for s in board.sectors
         }
         fallback_label = st.selectbox(
-            "或下拉选择板块 / Or pick a sector",
+            _t("或下拉选择板块", "Or pick a sector"),
             options=list(sector_labels.keys()),
         )
         selected_sector_id = sector_labels[fallback_label]
@@ -386,29 +536,48 @@ def main() -> None:
         top=int(company_top),
     )
 
-    st.subheader(f"公司排名 / Company Ranking — {detail.sector_name}")
+    st.subheader(
+        _t(
+            f"公司排名 — {detail.sector_name}",
+            f"Company Ranking — {detail.sector_name}",
+        )
+    )
     company_rows = companies_to_rows(detail.companies)
     if not company_rows:
-        _empty_message("该板块当前没有公司数据。")
+        _empty_message(_t("该板块当前没有公司数据。", "No companies in this sector."))
     else:
         st.dataframe(_localize_rows(company_rows, lang), use_container_width=True)
 
     # ----------------- 财务 / 估值 / Flags -----------------
     fin_tab, val_tab, flag_tab = st.tabs(
-        ["财务质量对比 / Financial Quality", "估值对比 / Valuation", "异常 flags / Flags"]
+        [
+            _t("财务质量对比", "Financial Quality"),
+            _t("估值对比", "Valuation"),
+            _t("异常标记", "Flags"),
+        ]
     )
 
     with fin_tab:
         fin_rows = financials_to_rows(detail.financials)
         if not fin_rows:
-            _empty_message("该板块当前没有财务数据，或公司排名为空。")
+            _empty_message(
+                _t(
+                    "该板块当前没有财务数据，或公司排名为空。",
+                    "No financials for this sector, or company ranking is empty.",
+                )
+            )
         else:
             st.dataframe(_localize_rows(fin_rows, lang), use_container_width=True)
 
     with val_tab:
         val_rows = valuations_to_rows(detail.valuations)
         if not val_rows:
-            _empty_message("该板块当前没有估值数据，或公司排名为空。")
+            _empty_message(
+                _t(
+                    "该板块当前没有估值数据，或公司排名为空。",
+                    "No valuations for this sector, or company ranking is empty.",
+                )
+            )
         else:
             st.dataframe(_localize_rows(val_rows, lang), use_container_width=True)
 
@@ -417,12 +586,14 @@ def main() -> None:
             detail.companies, detail.financials, detail.valuations
         )
         if not flag_rows:
-            _empty_message("该板块当前没有 flag 数据。")
+            _empty_message(_t("该板块当前没有标记数据。", "No flags for this sector."))
         else:
             st.dataframe(_localize_rows(flag_rows, lang), use_container_width=True)
 
     if detail.warnings:
-        with st.expander("板块详情 warnings", expanded=False):
+        with st.expander(
+            _t("板块详情警告", "Sector Detail Warnings"), expanded=False
+        ):
             for w in detail.warnings:
                 st.warning(w)
 

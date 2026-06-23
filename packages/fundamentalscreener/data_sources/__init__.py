@@ -6,8 +6,9 @@
 提供：
 - ``FundamentalDataSource`` 协议接口。
 - ``FakeFundamentalDataSource``：内存中的可控数据源，供单元测试使用。
-- ``AkShareFundamentalDataSource``：Phase 6B 起的东方财富行业板块真实实现
-  （``em_industry`` 口径）。``akshare`` 惰性导入，支持依赖注入便于无网络测试。
+- ``AkShareFundamentalDataSource``：行业板块真实实现，默认使用同花顺行业板块
+  （``ths_industry`` 口径），东方财富（``em_industry``）作为对照源。
+  ``akshare`` 惰性导入，支持依赖注入便于无网络测试。
 """
 
 from .akshare_source import AkShareFundamentalDataSource

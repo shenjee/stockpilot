@@ -4,14 +4,15 @@
 
     python -m packages.fundamentalscreener.sync init-db --db <path>
     python -m packages.fundamentalscreener.sync sync --db <path> --date <YYYY-MM-DD>
-        --classification-system em_industry
+        --classification-system ths_industry
     python -m packages.fundamentalscreener.sync quality --db <path> --date <YYYY-MM-DD>
 
 Phase 6B+6C 实现：
 - ``init-db``：幂等初始化 SQLite schema。
 - ``sync``：通过 ``AkShareFundamentalDataSource`` 或注入式 fake 数据源，将板块列表/
   成分股/板块行情/基准行情/股票池/公司日度快照/公司估值历史/财务指标写入 SQLite，
-  并在 ``data_fetch_log`` 中留下来源血缘。未安装 akshare 时返回 rc=2。
+  并在 ``data_fetch_log`` 中留下来源血缘。默认使用同花顺行业板块（``ths_industry``），
+  东方财富（``em_industry``）作为对照源。未安装 akshare 时返回 rc=2。
 - ``quality``：占位输出空的 ``QualityReport``，真实规则在 Phase 6D 落地。
 
 设计原则：
@@ -560,7 +561,15 @@ def sync_all(
     init_db(conn)
 
     fetch_run_id = fetch_run_id or new_fetch_run_id()
-    source_name = getattr(source, "name", "unknown")
+    # source_name 必须反映实际使用的 classification_system，而非对象级固定值。
+    # AkShareFundamentalDataSource 同时支持 ths_industry / em_industry，直接用
+    # source.name 可能导致 EM 数据被标记为 akshare_ths（lineage 误标）。
+    if isinstance(source, AkShareFundamentalDataSource):
+        source_name = (
+            "akshare_ths" if classification_system == "ths_industry" else "akshare_em"
+        )
+    else:
+        source_name = getattr(source, "name", "unknown")
     started_at = _ts()
 
     start_date = (
@@ -626,6 +635,14 @@ def sync_all(
                 continue
             out.extend(
                 source.get_sector_constituents(sid, classification_system, analysis_date)
+            )
+        # 板块列表非空但成分股总数为 0 → 几乎必然是数据源故障（反爬 403、空页、
+        # API 结构变更），不能记成"成功写入 0 行"。抛错让 _run_task 标记 fetch_failed。
+        if sectors_rows and not out:
+            raise RuntimeError(
+                f"get_sector_constituents: {len(sectors_rows)} sector(s) found but "
+                f"0 constituents returned — likely a data source failure "
+                f"(anti-crawl, HTTP error, or API structure change)."
             )
         return out
 
@@ -986,15 +1003,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_sync = sub.add_parser(
         "sync",
-        help="运行同步任务。Phase 6B 接入 AkShare 东方财富行业板块（em_industry）。",
+        help="运行同步任务。默认接入同花顺行业板块（ths_industry），东方财富（em_industry）为对照源。",
     )
     p_sync.add_argument("--db", required=True)
     p_sync.add_argument("--date", required=True, help="分析日期 YYYY-MM-DD。")
     p_sync.add_argument(
         "--classification-system",
         dest="classification_system",
-        default="em_industry",
-        help="板块分类口径，Phase 6B 第一版固定 em_industry。",
+        default="ths_industry",
+        help="板块分类口径，默认 ths_industry（同花顺）。em_industry 为东方财富对照源。",
     )
     p_sync.add_argument("--benchmark", default="hs300")
     p_sync.add_argument(
@@ -1019,8 +1036,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_quality.add_argument(
         "--classification-system",
         dest="classification_system",
-        default="em_industry",
-        help="板块分类口径，默认 em_industry。",
+        default="ths_industry",
+        help="板块分类口径，默认 ths_industry（同花顺）。",
     )
     p_quality.add_argument("--benchmark", default="hs300")
 
@@ -1079,14 +1096,14 @@ def main(
         return 0
 
     if args.command == "sync":
-        # Phase 6B+6C：CLI ``sync`` 接入 AkShare 东方财富行业板块（``em_industry``）
-        # + 公司层（股票池 / 日度快照 / 估值历史 / 财务指标）。per-code 公司层任务
-        # （估值历史 + 财务指标）需要 ``--codes`` 显式指定，未提供时跳过。
-        # ``source`` 注入仅供测试使用，跳过 akshare 探测。
-        if args.classification_system != "em_industry":
+        # Phase 6B+6C：CLI ``sync`` 接入 AkShare 行业板块（默认 ``ths_industry``，
+        # ``em_industry`` 为对照源）+ 公司层（股票池 / 日度快照 / 估值历史 /
+        # 财务指标）。per-code 公司层任务（估值历史 + 财务指标）需要 ``--codes``
+        # 显式指定，未提供时跳过。``source`` 注入仅供测试使用，跳过 akshare 探测。
+        if args.classification_system not in ("ths_industry", "em_industry"):
             sys.stderr.write(
                 f"sync: classification system {args.classification_system!r} is not "
-                "supported in phase 6B. Only 'em_industry' is implemented.\n"
+                "supported. Use 'ths_industry' (default) or 'em_industry'.\n"
             )
             return 2
 
@@ -1094,11 +1111,13 @@ def main(
             if not _akshare_available():
                 sys.stderr.write(
                     "sync: akshare is not installed. Install it with "
-                    "`pip install akshare` to enable real em_industry sync. "
-                    "(Phase 6B: real AkShare sync is a manual smoke, not a unit "
+                    "`pip install akshare` to enable real sector sync "
+                    "(ths_industry / em_industry). "
+                    "(Real AkShare sync is a manual smoke, not a unit "
                     "test dependency.)\n"
                 )
                 return 2
+            # sync_all 会按 classification_system 派生 source name，无需在此设置。
             source = AkShareFundamentalDataSource()
 
         parsed_codes = _parse_codes(args.codes)

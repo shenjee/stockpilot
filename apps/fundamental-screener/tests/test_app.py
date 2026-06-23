@@ -53,6 +53,11 @@ class _Recorder:
             return options[index] if options else None
 
         st.selectbox = _selectbox
+
+        def _radio(label, options, index=0, **kw):
+            return options[index] if options else None
+
+        st.radio = _radio
         st.number_input = lambda label, min_value=None, max_value=None, value=0, step=1, **kw: value
         st.button = lambda *a, **kw: False
 

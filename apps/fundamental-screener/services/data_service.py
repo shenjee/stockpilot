@@ -21,6 +21,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from fundamentalscreener.company_ranking import compute_company_ranking, sort_companies
 from fundamentalscreener.config import DEFAULT_PERIODS, DEFAULT_SECTOR_SORT
 from fundamentalscreener.financial_quality import compute_financial_quality, sort_financials
+from fundamentalscreener.lineage import SnapshotMetadata
+from fundamentalscreener.quality import QualityReport
 from fundamentalscreener.repositories import FixtureRepository, MarketSnapshot
 from fundamentalscreener.schema import (
     CompanyEntry,
@@ -33,6 +35,10 @@ from fundamentalscreener.sector_rotation import (
     SectorRotationResult,
     compute_sector_rotation,
     sort_entries,
+)
+from fundamentalscreener.sqlite_repository import (
+    QualityInvalidError,
+    SqliteFundamentalRepository,
 )
 from fundamentalscreener.valuation import compute_valuation, sort_valuations
 
@@ -53,6 +59,13 @@ class SectorBoardData:
     sectors: List[SectorEntry] = field(default_factory=list)
     chart_series: List[Dict[str, Any]] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
+    # Phase 7: snapshot 血缘与质量状态（SQLite 数据源有值，fixture 模式留空）。
+    data_quality_status: str = ""
+    data_cutoff: str = ""
+    source_set: Dict[str, str] = field(default_factory=dict)
+    fetch_run_id: str = ""
+    quality_report_id: str = ""
+    quality_issues: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -67,16 +80,65 @@ class SectorDetailData:
     warnings: List[str] = field(default_factory=list)
 
 
+@dataclass
+class SnapshotLoadResult:
+    """``load_snapshot_from_db`` 的返回：snapshot + 血缘 metadata + 质量报告。
+
+    - ``metadata`` / ``quality_report`` 仅 SQLite 数据源有值；fixture 路径为 ``None``。
+    - ``quality_error`` 在 ``QualityInvalidError`` 抛出时填充，供 UI 展示阻断原因。
+    """
+
+    snapshot: Optional[MarketSnapshot] = None
+    metadata: Optional[SnapshotMetadata] = None
+    quality_report: Optional[QualityReport] = None
+    quality_error: Optional[str] = None
+
+
 # ---------------------------------------------------------------------------
 # 加载
 # ---------------------------------------------------------------------------
 
 
 def load_snapshot(fixture_path: Path | str) -> MarketSnapshot:
-    """读取 fixture 文件并返回 MarketSnapshot。"""
+    """读取 fixture 文件并返回 MarketSnapshot（Phase 0-5 行为，保留不变）。"""
 
     repo = FixtureRepository(Path(fixture_path))
     return repo.load_snapshot()
+
+
+def load_snapshot_from_db(
+    db_path: Path | str,
+    analysis_date: str,
+    classification_system: str = "em_industry",
+    benchmark: str = "hs300",
+) -> SnapshotLoadResult:
+    """从 SQLite 读取真实数据（Phase 7 真实数据入口）。
+
+    - 质量状态为 ``invalid`` 时 ``SqliteFundamentalRepository.load_snapshot()`` 抛
+      ``QualityInvalidError``，此处捕获并填入 ``quality_error``，返回空 snapshot，
+      由 UI 展示阻断原因而非崩溃。
+    - 正常时返回 snapshot + metadata + quality_report，供 UI 展示数据日期、来源
+      和质量 warnings（docs §19 Phase 7 DoD）。
+    """
+
+    repo = SqliteFundamentalRepository(
+        db_path,
+        analysis_date=analysis_date,
+        classification_system=classification_system,
+        benchmark=benchmark,
+    )
+    try:
+        snapshot = repo.load_snapshot()
+    except QualityInvalidError as exc:
+        return SnapshotLoadResult(
+            quality_error=str(exc),
+            quality_report=repo.quality_report,
+        )
+    return SnapshotLoadResult(
+        snapshot=snapshot,
+        metadata=repo.metadata,
+        quality_report=repo.quality_report,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -89,12 +151,16 @@ def build_sector_board(
     sort: str = DEFAULT_SECTOR_SORT,
     periods: Sequence[int] = DEFAULT_PERIODS,
     top: Optional[int] = None,
+    metadata: Optional[SnapshotMetadata] = None,
+    quality_report: Optional[QualityReport] = None,
 ) -> SectorBoardData:
     """调用 ``compute_sector_rotation`` 并整理为视图数据。
 
     - ``sort`` / ``top`` / ``periods`` 都透传给 core 的排序函数，不重复实现。
     - ``chart_series`` 序列化成 ``{series_id, series_name, type, points}`` 字典，
       便于 Streamlit 直接画线。
+    - ``metadata`` / ``quality_report`` 来自 SQLite 数据源（Phase 7），透传到
+      ``SectorBoardData`` 供 UI 展示数据日期、来源和质量 warnings。
     """
 
     result: SectorRotationResult = compute_sector_rotation(
@@ -120,7 +186,7 @@ def build_sector_board(
             }
         )
 
-    return SectorBoardData(
+    board = SectorBoardData(
         date=snapshot.date,
         classification_system=snapshot.classification_system,
         benchmark_id=snapshot.benchmark.id,
@@ -129,6 +195,15 @@ def build_sector_board(
         chart_series=chart_series,
         warnings=list(result.warnings),
     )
+    if metadata is not None:
+        board.data_quality_status = metadata.data_quality_status
+        board.data_cutoff = metadata.data_cutoff
+        board.source_set = metadata.source_set.to_dict()
+        board.fetch_run_id = metadata.fetch_run_id
+        board.quality_report_id = metadata.quality_report_id
+    if quality_report is not None:
+        board.quality_issues = [i.to_dict() for i in quality_report.issues]
+    return board
 
 
 # ---------------------------------------------------------------------------
@@ -235,12 +310,14 @@ def collect_company_flags(
 __all__ = [
     "SectorBoardData",
     "SectorDetailData",
+    "SnapshotLoadResult",
     "build_sector_board",
     "build_sector_detail",
     "collect_company_flags",
     "companies_to_rows",
     "financials_to_rows",
     "load_snapshot",
+    "load_snapshot_from_db",
     "sectors_to_rows",
     "valuations_to_rows",
 ]
