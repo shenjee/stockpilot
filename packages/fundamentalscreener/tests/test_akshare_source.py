@@ -36,10 +36,14 @@ from packages.fundamentalscreener.sync import main, sync_all
 # 时 BeautifulSoup(..., features="lxml") 会在调用时才报 FeatureNotFound。
 try:
     import requests  # noqa: F401
-    from bs4 import BeautifulSoup  # noqa: F401
-    BeautifulSoup("<html></html>", features="lxml")
-    _HAS_SCRAPE_DEPS = True
-except (ImportError, Exception):  # noqa: BLE001
+    from bs4 import BeautifulSoup
+    from bs4.exceptions import FeatureNotFound
+    try:
+        BeautifulSoup("<html></html>", features="lxml")
+        _HAS_SCRAPE_DEPS = True
+    except FeatureNotFound:
+        _HAS_SCRAPE_DEPS = False
+except ImportError:
     _HAS_SCRAPE_DEPS = False
 
 
