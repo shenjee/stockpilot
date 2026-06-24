@@ -267,6 +267,20 @@ def _has_cache_for_date(
         conn.close()
 
 
+def get_latest_cached_date(
+    db_path: Optional[Path | str] = None,
+    classification_system: str = DEFAULT_CLASSIFICATION_SYSTEM,
+) -> Optional[str]:
+    """返回缓存中该口径下最新可用分析日期（``YYYY-MM-DD``），无缓存返回 ``None``。
+
+    供前端设置日期控件的默认值：有缓存时默认指向最新数据日，无缓存时由调用方
+    回退到 ``date.today()``。
+    """
+
+    db = Path(db_path) if db_path else DEFAULT_DB_PATH
+    return _find_latest_analysis_date(db, classification_system)
+
+
 def load_latest_snapshot(
     db_path: Optional[Path | str] = None,
     analysis_date: Optional[str] = None,
@@ -887,6 +901,7 @@ __all__ = [
     "collect_company_flags",
     "companies_to_rows",
     "financials_to_rows",
+    "get_latest_cached_date",
     "has_sector_detail_cache",
     "load_latest_snapshot",
     "load_or_refresh_snapshot",

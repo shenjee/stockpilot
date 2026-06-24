@@ -15,6 +15,7 @@ Edge of responsibility (docs §18/§19)：
 from __future__ import annotations
 
 import sys
+from datetime import date
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -35,6 +36,7 @@ from services.data_service import (  # noqa: E402
     collect_company_flags,
     companies_to_rows,
     financials_to_rows,
+    get_latest_cached_date,
     load_or_refresh_snapshot,
     refresh_sector_detail,
     sectors_to_rows,
@@ -205,6 +207,49 @@ def _localize_rows(
 
 
 # ---------------------------------------------------------------------------
+# 百分比格式化
+# ---------------------------------------------------------------------------
+
+# 比率字段（0-1 小数），展示时格式化为百分比字符串（如 0.0368 → "3.68%"）。
+_PERCENT_FIELDS: set = {
+    "return_1d", "return_5d", "return_20d", "return_60d",
+    "relative_return", "turnover_amount_change",
+    "market_turnover_share", "rising_stock_ratio",
+    "turnover_rate",
+    "revenue_yoy", "net_profit_yoy", "deducted_net_profit_yoy",
+    "gross_margin", "net_margin", "roe",
+    "operating_cashflow_to_profit",
+    "debt_to_asset", "interest_bearing_debt_ratio",
+    "accounts_receivable_yoy", "inventory_yoy",
+    "dividend_yield", "pe_percentile", "pb_percentile",
+}
+
+
+def _to_display_rows(
+    rows: List[Dict[str, Any]], lang: str
+) -> List[Dict[str, Any]]:
+    """格式化百分比字段并翻译列名/枚举值，供 st.dataframe 直接展示。
+
+    比率字段转为 ``"3.68%"`` 字符串；``None`` 原样保留。
+    """
+
+    formatted: List[Dict[str, Any]] = []
+    for row in rows:
+        new_row: Dict[str, Any] = {}
+        for key, value in row.items():
+            if (
+                key in _PERCENT_FIELDS
+                and value is not None
+                and isinstance(value, (int, float))
+            ):
+                new_row[key] = f"{value:.2%}"
+            else:
+                new_row[key] = value
+        formatted.append(new_row)
+    return _localize_rows(formatted, lang)
+
+
+# ---------------------------------------------------------------------------
 # UI 工具
 # ---------------------------------------------------------------------------
 
@@ -264,16 +309,22 @@ def main() -> None:
 
     # ----------------- 侧边栏：产品参数 -----------------
     with st.sidebar:
-        lang = st.selectbox(
-            _t("界面语言", "Display language"),
-            options=list(_LANG_LABELS.keys()),
-            format_func=lambda x: _LANG_LABELS[x],
-            key="lang_idx",
+        # 分析日期：默认展示缓存中最新可用交易日，用户可自由调整。
+        default_date_str = get_latest_cached_date()
+        if default_date_str:
+            default_date = date.fromisoformat(default_date_str)
+        else:
+            default_date = date.today()
+        picked = st.date_input(
+            _t("分析日期", "Analysis date"),
+            value=default_date,
             help=_t(
-                "表格列名与枚举值的显示语言；不影响底层数据。",
-                "Display language for labels and enum values; does not affect data.",
+                "默认使用最新可用交易日，可手动调整。",
+                "Defaults to the latest available trading date; adjust as needed.",
             ),
         )
+        analysis_date_str = picked.isoformat()
+
         sort_field = st.selectbox(
             _t("板块排序字段", "Sector sort field"),
             options=list(SUPPORTED_SECTOR_SORTS),
@@ -293,19 +344,16 @@ def main() -> None:
             value=5,
             step=1,
         )
-        # 分析日期：默认不勾选 → 使用最新可用交易日（前端计划 §2.5）。
-        specify_date = st.checkbox(
-            _t("指定分析日期", "Specify analysis date"),
-            value=False,
+        lang = st.selectbox(
+            _t("界面语言", "Display language"),
+            options=list(_LANG_LABELS.keys()),
+            format_func=lambda x: _LANG_LABELS[x],
+            key="lang_idx",
             help=_t(
-                "不勾选时使用最新可用交易日。",
-                "If unchecked, uses the latest available trading date.",
+                "表格列名与枚举值的显示语言；不影响底层数据。",
+                "Display language for labels and enum values; does not affect data.",
             ),
         )
-        analysis_date_str: Optional[str] = None
-        if specify_date:
-            picked = st.date_input(_t("分析日期", "Analysis date"))
-            analysis_date_str = picked.isoformat()
 
     st.title(_t("基本面量化工作台", "Fundamental Screener"))
 
@@ -444,7 +492,7 @@ def main() -> None:
 
     st.caption(_t("点击表格行可下钻到板块详情。", "Click a row to drill into a sector."))
     selection = st.dataframe(
-        _localize_rows(sector_rows, lang),
+        _to_display_rows(sector_rows, lang),
         use_container_width=True,
         hide_index=True,
         on_select="rerun",
@@ -506,7 +554,7 @@ def main() -> None:
     if not company_rows:
         _empty_message(_t("该板块当前没有公司数据。", "No companies in this sector."))
     else:
-        st.dataframe(_localize_rows(company_rows, lang), use_container_width=True)
+        st.dataframe(_to_display_rows(company_rows, lang), use_container_width=True)
 
     # ----------------- 财务 / 估值 / Flags -----------------
     fin_tab, val_tab, flag_tab = st.tabs(
@@ -527,7 +575,7 @@ def main() -> None:
                 )
             )
         else:
-            st.dataframe(_localize_rows(fin_rows, lang), use_container_width=True)
+            st.dataframe(_to_display_rows(fin_rows, lang), use_container_width=True)
 
     with val_tab:
         val_rows = valuations_to_rows(detail.valuations)
@@ -539,7 +587,7 @@ def main() -> None:
                 )
             )
         else:
-            st.dataframe(_localize_rows(val_rows, lang), use_container_width=True)
+            st.dataframe(_to_display_rows(val_rows, lang), use_container_width=True)
 
     with flag_tab:
         flag_rows = collect_company_flags(
@@ -548,7 +596,7 @@ def main() -> None:
         if not flag_rows:
             _empty_message(_t("该板块当前没有标记数据。", "No flags for this sector."))
         else:
-            st.dataframe(_localize_rows(flag_rows, lang), use_container_width=True)
+            st.dataframe(_to_display_rows(flag_rows, lang), use_container_width=True)
 
     if detail.warnings:
         with st.expander(

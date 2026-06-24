@@ -321,9 +321,9 @@ class AppSmokeTests(unittest.TestCase):
         self.assertTrue(
             any(
                 "分析日期" in label or "analysis date" in label.lower()
-                for label in recorder.checkbox_calls
+                for label in recorder.date_input_calls
             ),
-            f"expected analysis date checkbox, got {recorder.checkbox_calls}",
+            f"expected analysis date input, got {recorder.date_input_calls}",
         )
 
     def test_row_selection_drives_sector_drill_down(self) -> None:
