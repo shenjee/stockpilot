@@ -746,7 +746,7 @@ classification_system = "em_industry"
 | `get_sector_daily(sector_id, start_date, end_date)` | 获取板块历史行情 |
 | `get_benchmark_daily(benchmark, start_date, end_date)` | 获取基准指数历史行情 |
 | `get_stock_universe(as_of_date)` | 获取股票池、市场、上市状态 |
-| `get_company_daily_snapshot(trade_date)` | 获取公司日度行情与交易快照 |
+| `get_company_daily_snapshot(trade_date, codes=None)` | 获取公司日度行情与交易快照；`codes=None` 全市场，非空时仅抓指定 codes（§15.9.5） |
 | `get_company_valuation_history(codes, start_date, end_date)` | 获取或生成估值历史 |
 | `get_financial_metrics(codes, as_of_date)` | 获取 point-in-time 可用的财务指标 |
 
@@ -755,24 +755,27 @@ classification_system = "em_industry"
 快照或 repository 输出前至少检查：
 
 - 板块必须有 `sector_id`、`sector_name`、`classification_system`。
-- 每个板块必须有成分股。
 - benchmark 必须有历史行情。
 - 板块日线至少覆盖 60 个交易日。
 - 公司 code 必须能在行情、财务、估值数据中对齐。
 - 财务/估值缺失要写入 warnings。
 - 网络采集失败不得影响已有本地数据的读取。
 
+成分股和个股层级数据的按需加载规则见 §15.9：未加载成分股的板块不因"无成分股"或"成分缺行情"报错或阻断，只有已发起加载的板块才纳入成分覆盖率和个股对齐检查。
+
 质量检查需要区分严重级别：
 
 | 级别 | 示例 | 处理 |
 | --- | --- | --- |
-| `error` | 无 benchmark、板块日线不足 60 个交易日、核心表不存在 | 阻断生成 `MarketSnapshot` |
+| `error` | 板块列表空、板块日线缺失或不足 60 日、benchmark 无行情 | 阻断生成 `MarketSnapshot` |
 | `warning` | 部分公司缺财务或估值、个别板块成分缺行情 | 输出 warnings，保留可用数据 |
 | `info` | 使用最近一次缓存、部分字段来自 fallback 源 | 展示数据来源和新鲜度 |
 
+在按需加载模式下（§15.9），error 的阻断范围按数据层级区分：轻量层 error（板块列表空、板块日线缺失、benchmark 缺失）阻断整个 `MarketSnapshot`，应用无法展示板块轮动表；重量层 error（已加载板块的成分股覆盖率低）仅阻断该板块详情，不影响其他板块和板块轮动表的展示。未加载的板块不产生 error。
+
 还应检查数据新鲜度和覆盖率：
 
-- 行情和估值数据的 `trade_date` 应为最近可用交易日，过旧时输出 stale warning。
+- 行情和估值数据的 `trade_date` 应为最近可用交易日，过旧时输出 stale warning。stale 阈值由 `STALE_THRESHOLD_DAYS` 配置（默认 7 个自然日，约一个交易周 + 缓冲），最新 `trade_date` 距 `analysis_date` 超过该阈值即判 stale。
 - 行业板块成分覆盖率应达到配置阈值，低于阈值时降级或阻断。
 - 财务指标覆盖率应在质量报告中展示，例如候选公司中多少比例有可用最新财报。
 - `data_fetch_log` 应记录成功/失败、行数、耗时、错误摘要和是否使用缓存。
@@ -793,7 +796,7 @@ classification_system = "em_industry"
 ok | degraded | stale | invalid
 ```
 
-质量状态至少应有 snapshot 级状态；必要时可附带 sector/company/metric 级别的局部状态。`degraded` / `stale` 数据可以展示和解释，但不得进入 `priority` 候选组；`invalid` 数据不得生成 `MarketSnapshot` 或综合评分。
+质量状态至少应有 snapshot 级状态；必要时可附带 sector/company/metric 级别的局部状态。`degraded` / `stale` 数据可以展示和解释，但不得进入 `priority` 候选组。`invalid` 的阻断范围按层级区分：snapshot-level `invalid`（轻量层缺失）禁止生成 `MarketSnapshot` 和任何综合评分；sector/company-level `invalid`（已加载板块的重量层 error）只禁止对应板块详情和该局部的综合评分，不影响其他板块和板块轮动表的展示。
 
 估值分位配置必须版本化，并纳入 `config_version` 或 `formula_version`。第一版至少覆盖窗口长度、最小有效样本数、非正 PE 和亏损公司的处理规则。
 
@@ -816,6 +819,99 @@ Phase 8：CLI / Skill / 日报集成
 - `core` 不关心 AkShare、SQLite 或腾讯接口。
 - `repositories.py` 是真实数据进入 `MarketSnapshot` 的边界。
 - fixture 继续作为测试数据，不承担真实数据治理职责。
+
+### 15.9 按需加载（Lazy Loading）
+
+#### 15.9.1 背景
+
+全市场个股快照涉及约 5500 只股票，若按 per-code 逐只请求（每只约 0.5 秒），完整同步需要数十分钟。但实际使用中，用户打开应用后通常只关注少数几个板块。一次性抓取全市场个股数据既慢又浪费，因此第一版采用按需加载策略：板块级轻量数据始终加载，个股级重量数据仅在看板块时加载。
+
+#### 15.9.2 数据分层
+
+| 层 | 数据 | 量级 | 加载策略 | 说明 |
+| --- | --- | --- | --- | --- |
+| 轻量层 | 板块列表 | 1 次调用，秒级 | 始终加载 | 90 个板块 ID 和名称 |
+| 轻量层 | 板块日线 | 90 次调用，轻量 | 始终加载 | 板块指数 OHLC，轮动对比需要全量 |
+| 轻量层 | benchmark | 1 次调用 | 始终加载 | 沪深 300 指数日线 |
+| 重量层 | 板块成分股 | 每板块 1 次 | 按需 | 哪些股票属于该板块，看板块时才抓 |
+| 重量层 | 个股日线快照 | 每只 1 次，最贵 | 按需 | 收盘价、成交额、换手率、市值、涨跌幅 |
+| 重量层 | 估值历史 | 每只 2 次 | 按需 | PE/PB/PS/股息率 |
+| 重量层 | 财务指标 | 每只 1 次 | 按需 | ROE、毛利率、成长、现金流、负债 |
+
+轻量层是板块轮动表的展示前提，必须全量同步。重量层是公司排名、财务对比和估值对比的输入，只在用户进入板块详情时按板块粒度触发。
+
+#### 15.9.3 加载流程
+
+```mermaid
+flowchart TD
+    A["打开应用"] --> B["同步轻量层<br/>板块列表 + 板块日线 + benchmark"]
+    B --> C["展示板块轮动表<br/>（90 个板块，走势图 + 指标表）"]
+    C --> D{"用户点进某板块"}
+    D --> E["同步该板块重量层<br/>成分股 + 个股日线 + 估值 + 财务"]
+    E --> F["展示公司排名<br/>+ 财务对比 + 估值对比"]
+    D -.->|未查看的板块| G["不加载个股数据"]
+    E --> H["写入 SQLite 缓存"]
+    H --> I["下次进入该板块<br/>直接读缓存"]
+```
+
+应用打开时只同步轻量层，秒级展示板块轮动表。用户点进某个板块后，才触发该板块的成分股和个股数据同步，同步结果写入 SQLite 缓存。下次进入同一板块时，缓存命中必须按 `analysis_date`、`as_of_date`/`trade_date` 和最近交易日校验新鲜度：缓存数据在 `STALE_THRESHOLD_DAYS`（§15.6）内且 `trade_date <= analysis_date` 时直接复用；过期时只能 stale 展示或后台刷新，不能无条件复用。未查看的板块不加载任何个股数据。
+
+#### 15.9.4 质量检查适配
+
+按需加载改变了"全市场数据必须完整"的前提，质量检查规则需要适配：
+
+| 检查项 | 原规则 | 按需加载后 |
+| --- | --- | --- |
+| `no_benchmark_history` | benchmark 无行情 → error | 不变（benchmark 属轻量层，始终加载） |
+| `sector_daily_empty` | 板块日线为 0 → error | 不变（板块日线属轻量层，始终加载） |
+| `sector_daily_too_short` | 板块日线 < 60 日 → error | 不变 |
+| `sector_no_constituents` | 板块无成分股 → warning | **仅对已加载成分股的板块检查**；未加载的板块跳过，不报 warning |
+| `low_constituent_quote_coverage` | 成分覆盖率 < 50% → error | **仅对已加载成分股的板块检查**；未加载的板块不纳入分母 |
+| 财务/估值覆盖率 | 缺失 → warning | 仅检查已加载板块的成分股 |
+
+核心原则：**未加载的板块不因数据缺失报错或阻断**。只有用户已发起加载的板块，才纳入成分覆盖率和个股对齐检查。这样应用打开时不会被未查看的板块拖入 `invalid` 状态。
+
+#### 15.9.4a 必需任务分层
+
+当前 `REQUIRED_PHASE_6B_TASKS` 包含 `get_sector_constituents`，首屏刷新要求 4 个任务全部 `success && row_count > 0`。按需加载模式下，成分股属重量层，不应阻塞首屏。需将必需任务拆为两层：
+
+| 层 | 必需任务 | 首屏校验 | 说明 |
+| --- | --- | --- | --- |
+| 轻量必需 | `list_sectors`、`get_sector_daily`、`get_benchmark_daily` | 是 | 任一失败或 0 行 → `refresh_failed` / `no_cache` |
+| 重量必需 | `get_sector_constituents` | 否 | 仅在用户进入板块详情时触发；失败 → 该板块 `degraded`，不阻塞首屏 |
+
+前端 `refresh_market_data` 的 `required_ok` 判定应只校验轻量必需集。`get_sector_constituents` 从 `REQUIRED_PHASE_6B_TASKS` 移至独立的 detail 层校验集，由板块详情入口单独触发和检查。
+
+#### 15.9.5 同步粒度
+
+同步入口支持按板块粒度触发。当前 `sync_all` 的 `codes` 参数仅控制 per-code 公司层任务（估值历史 + 财务指标），不控制成分股抓取范围。按需加载需要新增 `sector_ids` 参数，将成分股抓取从"遍历全部 `sectors_rows`"收窄到指定板块，并从成分股派生 `codes` 驱动个股层任务。
+
+迁移方案：
+
+| 任务 | 当前行为 | `sector_ids` 提供后 | 全量/按需 |
+| --- | --- | --- | --- |
+| `list_sectors` | 全量 | 全量 | 始终全量 |
+| `get_sector_daily` | 遍历全部板块 | 全量（轮动表需要全量板块日线） | 始终全量 |
+| `get_benchmark_daily` | 全量 | 全量 | 始终全量 |
+| `get_stock_universe` | 全量 batch | 全量（股票池轻量） | 始终全量 |
+| `get_sector_constituents` | 遍历全部 `sectors_rows` | **仅遍历 `sector_ids` 指定的板块** | 按需 |
+| `get_company_daily_snapshot` | 全市场 batch（`codes=None`） | **`get_company_daily_snapshot(trade_date, codes=derived_codes)` 仅抓指定 codes** | 按需 |
+| `get_company_valuation_history` | per-code，由 `codes` 驱动 | **由 `sector_ids` 成分股派生 codes** | 按需 |
+| `get_financial_metrics` | per-code，由 `codes` 驱动 | **由 `sector_ids` 成分股派生 codes** | 按需 |
+
+目标签名：
+
+```text
+sync_all(sector_ids=["881121", "881122"])
+  -> 轻量层：全量同步（板块列表 + 全部板块日线 + benchmark + 股票池）
+  -> 重量层：仅同步 881121、881122 的成分股
+  -> codes 派生：从已抓取的成分股提取 distinct codes
+  -> 个股层：用派生 codes 驱动日线快照 + 估值 + 财务
+```
+
+`sector_ids` 为 `None` 时回退到当前全量行为（向后兼容）。`sector_ids` 非空时，`codes` 参数可选：显式传入则与派生 codes 取交集，未传入则直接用派生 codes。
+
+SQLite 缓存按 `(code, trade_date)` 和 `(sector_id, as_of_date)` 主键 UPSERT，多次按板块同步不会互相覆盖，已加载的板块数据持续累积。
 
 ## 16. 核心原则
 
