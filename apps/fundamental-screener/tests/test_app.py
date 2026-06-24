@@ -129,6 +129,7 @@ class _Recorder:
         st.columns = lambda n: tuple(_MetricColumn(recorder) for _ in range(n))
         st.tabs = lambda labels: tuple(_DummyContext() for _ in labels)
         st.expander = lambda *a, **kw: _DummyContext()
+        st.spinner = lambda *a, **kw: _DummyContext()
         st.sidebar = _DummyContext()
 
         def _cache_data(func=None, **kwargs):
@@ -373,6 +374,97 @@ class AppSmokeTests(unittest.TestCase):
         self.assertFalse(
             any("下拉" in label for label in recorder.selectbox_calls),
             f"selectbox fallback should not fire when row is selected, got {recorder.selectbox_calls}",
+        )
+
+
+class SectorDetailFailureDisplayTests(unittest.TestCase):
+    """§15.9.4b: 板块详情按需加载失败时 UI 应展示 warning，不静默吞掉。
+
+    覆盖 refresh_sector_detail 返回 no_cache / invalid / refresh_failed 三种
+    失败状态。通过 mock build_sector_detail 返回空公司列表触发 refresh 路径，
+    再 mock refresh_sector_detail 返回指定失败状态，断言 st.warning 被调用。
+    """
+
+    def _run_with_detail_failure(self, detail_status: str, detail_message: str):
+        """通用脚手架：返回 ok 快照但板块详情为空，触发 refresh 后返回指定失败。
+
+        返回 (app, recorder) 供调用方做进一步断言。
+        """
+
+        recorder = _Recorder(selection_rows=[0])
+        try:
+            app = _load_app(recorder)
+        except ModuleNotFoundError as exc:
+            self.skipTest(f"missing dependency: {exc}")
+            return None, None
+
+        app.load_or_refresh_snapshot = lambda refresh=False, **kw: _make_ok_result(app)
+
+        # build_sector_detail 返回空公司 → 触发 refresh_sector_detail 调用
+        def _empty_detail(snapshot, sector_id, **kwargs):
+            from services.data_service import SectorDetailData
+
+            return SectorDetailData(sector_id=sector_id, sector_name="", companies=[])
+
+        app.build_sector_detail = _empty_detail
+
+        # refresh_sector_detail 返回指定失败状态
+        from services.data_service import SectorDetailData, SectorDetailResult
+
+        def _fake_refresh(sector_id, **kw):
+            return SectorDetailResult(
+                detail=SectorDetailData(sector_id=sector_id, sector_name="", companies=[]),
+                status=detail_status,
+                message=detail_message,
+            )
+
+        app.refresh_sector_detail = _fake_refresh
+
+        try:
+            app.main()
+        except ModuleNotFoundError as exc:
+            self.skipTest(f"missing dependency: {exc}")
+            return None, None
+
+        return app, recorder
+
+    def test_detail_no_cache_shows_warning(self) -> None:
+        """成分股同步失败且无旧缓存 → no_cache → st.warning 展示失败原因。"""
+
+        app, recorder = self._run_with_detail_failure(
+            "no_cache", "板块详情刷新失败且无可用成分股数据。原因：constituents failure"
+        )
+        if app is None:
+            return
+        self.assertTrue(
+            any("constituents failure" in w for w in recorder.warnings),
+            f"expected warning for no_cache, got: {recorder.warnings}",
+        )
+
+    def test_detail_invalid_shows_warning(self) -> None:
+        """质量检查阻断 → invalid → st.warning 展示阻断原因。"""
+
+        app, recorder = self._run_with_detail_failure(
+            "invalid", "data_quality_status is 'invalid': quality check blocked"
+        )
+        if app is None:
+            return
+        self.assertTrue(
+            any("invalid" in w or "quality" in w for w in recorder.warnings),
+            f"expected warning for invalid, got: {recorder.warnings}",
+        )
+
+    def test_detail_refresh_failed_shows_warning(self) -> None:
+        """成分股同步失败但有旧缓存 → refresh_failed → st.warning 展示失败原因。"""
+
+        app, recorder = self._run_with_detail_failure(
+            "refresh_failed", "板块数据刷新失败，展示最近可用缓存：network error"
+        )
+        if app is None:
+            return
+        self.assertTrue(
+            any("network error" in w for w in recorder.warnings),
+            f"expected warning for refresh_failed, got: {recorder.warnings}",
         )
 
 

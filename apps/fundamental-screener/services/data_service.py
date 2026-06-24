@@ -358,13 +358,17 @@ def refresh_market_data(
         )
         source = AkShareFundamentalDataSource()
 
-    from fundamentalscreener.sync import REQUIRED_PHASE_6B_TASKS, sync_all
+    from fundamentalscreener.sync import LIGHT_REQUIRED_TASKS, sync_all
 
     refresh_result_dict: Optional[Dict[str, Any]] = None
     sync_error: Optional[str] = None
     try:
         conn = connect(db)
         try:
+            # §15.9: codes=None 时执行轻量层同步（sector_ids=[] 跳过成分股和
+            # 个股层），避免全市场 per-code 抓取阻塞首屏。codes 非空时回退
+            # 全量行为（向后兼容）。
+            sync_sector_ids: Optional[Sequence[str]] = [] if codes is None else None
             result = sync_all(
                 conn,
                 source,
@@ -373,30 +377,35 @@ def refresh_market_data(
                 benchmark=benchmark,
                 history_days=history_days,
                 codes=codes,
+                sector_ids=sync_sector_ids,
             )
             refresh_result_dict = result.to_dict()
-            # 镜像 CLI required_ok（sync.py）：Phase 6B 必需任务必须全部成功且
-            # 写入行数 > 0。sync_all 不对单个任务失败抛异常，空返回也会被标记为
-            # success=True/row_count=0，仅检查 failure_count 会漏掉 THS 空返回
-            # 这种"静默失败"场景（前端计划 §2.8 数据状态机）。
+            # §15.9.4a: 首屏只校验轻量必需集（板块列表 + 板块日线 + benchmark）。
+            # 成分股属重量层，失败不阻塞首屏——用户点进板块详情时才触发同步。
+            # 非轻量任务（get_stock_universe / get_company_daily_snapshot 等）失败
+            # 也不阻塞首屏：sync_all 的 _run_task 会捕获异常写进 result.tasks，
+            # 此处只按 LIGHT_REQUIRED_TASKS 判定，其它失败最多由质量检查降级。
             by_task = {t["task"]: t for t in result.tasks}
             required_ok = all(
                 by_task.get(t, {}).get("success")
                 and int(by_task.get(t, {}).get("row_count", 0) or 0) > 0
-                for t in REQUIRED_PHASE_6B_TASKS
+                for t in LIGHT_REQUIRED_TASKS
             )
-            if result.failure_count > 0 or not required_ok:
-                failed = [
-                    t["task"] for t in result.tasks if not t.get("success")
+            if not required_ok:
+                failed_details = [
+                    f"{t}: {by_task.get(t, {}).get('error', 'unknown')}"
+                    for t in LIGHT_REQUIRED_TASKS
+                    if not by_task.get(t, {}).get("success")
                 ]
                 empty_required = [
                     t
-                    for t in REQUIRED_PHASE_6B_TASKS
-                    if int(by_task.get(t, {}).get("row_count", 0) or 0) == 0
+                    for t in LIGHT_REQUIRED_TASKS
+                    if by_task.get(t, {}).get("success")
+                    and int(by_task.get(t, {}).get("row_count", 0) or 0) == 0
                 ]
                 sync_error = (
                     "sync did not satisfy required tasks"
-                    + (f": failed={failed}" if failed else "")
+                    + (f": failed=[{', '.join(failed_details)}]" if failed_details else "")
                     + (
                         f": empty_required={empty_required}"
                         if empty_required
@@ -490,6 +499,210 @@ def load_or_refresh_snapshot(
         analysis_date=analysis_date,
         classification_system=classification_system,
         benchmark=benchmark,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 板块详情按需加载（§15.9）
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SectorDetailResult:
+    """板块详情按需加载结果。
+
+    ``status`` 取值：
+    - ``ok``：正常展示。
+    - ``degraded`` / ``stale``：展示结果，同时提示数据质量问题。
+    - ``refresh_failed``：刷新失败但有旧缓存，展示旧缓存和失败原因。
+    - ``no_cache``：无本地数据。
+    - ``invalid``：质量检查阻断，无法生成快照。
+    """
+
+    detail: Optional[SectorDetailData] = None
+    status: str = "ok"
+    message: str = ""
+    refresh_result: Optional[Dict[str, Any]] = None
+
+
+def has_sector_detail_cache(
+    sector_id: str,
+    db_path: Optional[Path | str] = None,
+    analysis_date: Optional[str] = None,
+    classification_system: str = DEFAULT_CLASSIFICATION_SYSTEM,
+) -> bool:
+    """检查指定板块是否已有成分股缓存（§15.9 按需加载判断入口）。
+
+    返回 ``True`` 时该板块在 ``sector_constituents`` 表中有 ``as_of_date <=
+    analysis_date`` 的记录，可直接从缓存构建详情；返回 ``False`` 时需触发
+    ``refresh_sector_detail`` 同步重量层数据。
+    """
+
+    db = Path(db_path) if db_path else DEFAULT_DB_PATH
+    if not db.exists():
+        return False
+    if analysis_date is None:
+        analysis_date = _find_latest_analysis_date(db, classification_system)
+    if analysis_date is None:
+        return False
+    try:
+        conn = connect(db)
+    except Exception:
+        return False
+    try:
+        init_db(conn)
+        row = conn.execute(
+            "SELECT 1 FROM sector_constituents "
+            "WHERE sector_id = ? AND classification_system = ? "
+            "AND as_of_date <= ? LIMIT 1",
+            (sector_id, classification_system, analysis_date),
+        ).fetchone()
+        return row is not None
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+
+def refresh_sector_detail(
+    sector_id: str,
+    db_path: Optional[Path | str] = None,
+    analysis_date: Optional[str] = None,
+    classification_system: str = DEFAULT_CLASSIFICATION_SYSTEM,
+    benchmark: str = DEFAULT_BENCHMARK,
+    history_days: int = DEFAULT_HISTORY_DAYS,
+    company_sort: str = "combined_score",
+    top: Optional[int] = None,
+    source: Optional[Any] = None,
+) -> SectorDetailResult:
+    """§15.9: 按需同步指定板块的重量层数据并返回板块详情。
+
+    1. 调用 ``sync_all(sector_ids=[sector_id])`` 同步该板块的成分股 + 个股数据
+       （日线快照 + 估值 + 财务）。轻量层数据（板块列表 / 板块日线 / benchmark /
+       股票池）由 ``sync_all`` 始终全量同步，此处不重复。
+    2. 从 DB 加载快照（``SqliteFundamentalRepository.load_snapshot``）。
+    3. 调用 ``build_sector_detail`` 构建公司排名 + 财务 + 估值。
+
+    同步失败但有旧缓存时展示旧缓存和失败提示（``status="refresh_failed"``）。
+    同步失败且无缓存时返回 ``status="no_cache"``。
+    """
+
+    db = Path(db_path) if db_path else DEFAULT_DB_PATH
+    if analysis_date is None:
+        analysis_date = _find_latest_analysis_date(db, classification_system)
+    if analysis_date is None:
+        return SectorDetailResult(
+            status="no_cache",
+            message="暂无本地数据，请先获取数据。",
+        )
+
+    # 构造数据源（默认 AkShare THS，可注入用于测试）
+    if source is None:
+        from fundamentalscreener.data_sources.akshare_source import (
+            AkShareFundamentalDataSource,
+        )
+        source = AkShareFundamentalDataSource()
+
+    from fundamentalscreener.sync import DETAIL_REQUIRED_TASKS, sync_all
+
+    refresh_result_dict: Optional[Dict[str, Any]] = None
+    sync_error: Optional[str] = None
+    try:
+        conn = connect(db)
+        try:
+            result = sync_all(
+                conn,
+                source,
+                analysis_date=analysis_date,
+                classification_system=classification_system,
+                benchmark=benchmark,
+                history_days=history_days,
+                sector_ids=[sector_id],
+            )
+            refresh_result_dict = result.to_dict()
+            # §15.9.4b: sync_all 的 _run_task 捕获异常后写进 result.tasks，
+            # 不会向上抛出，必须显式检查重量层必需任务（成分股）是否成功且有行。
+            # 失败或 0 行 → 视为 detail 层刷新失败，提示用户而非静默展示空详情。
+            by_task = {t["task"]: t for t in result.tasks}
+            failed_details = [
+                f"{t}: {by_task.get(t, {}).get('error', 'unknown')}"
+                for t in DETAIL_REQUIRED_TASKS
+                if not by_task.get(t, {}).get("success")
+            ]
+            empty_details = [
+                t
+                for t in DETAIL_REQUIRED_TASKS
+                if by_task.get(t, {}).get("success")
+                and int(by_task.get(t, {}).get("row_count", 0) or 0) == 0
+            ]
+            if failed_details or empty_details:
+                sync_error = (
+                    "sync did not satisfy detail required tasks"
+                    + (f": failed=[{', '.join(failed_details)}]" if failed_details else "")
+                    + (f": empty={empty_details}" if empty_details else "")
+                )
+        finally:
+            conn.close()
+    except Exception as exc:
+        sync_error = str(exc)
+
+    # 从 DB 加载快照（无论同步成功失败都尝试读取缓存）
+    load_result = load_snapshot_from_db(
+        db, analysis_date, classification_system, benchmark
+    )
+
+    if load_result.snapshot is not None:
+        detail = build_sector_detail(
+            load_result.snapshot, sector_id,
+            company_sort=company_sort, top=top,
+        )
+        status = "ok"
+        message = ""
+        if sync_error:
+            # 重量层失败但有旧缓存 → refresh_failed；若详情仍无公司则升级为 no_cache
+            # 语义（用户点进未加载板块，刷新失败且无可用详情）。
+            if not detail.companies:
+                return SectorDetailResult(
+                    detail=detail,
+                    status="no_cache",
+                    message=f"板块详情刷新失败且无可用成分股数据。原因：{sync_error}",
+                    refresh_result=refresh_result_dict,
+                )
+            status = "refresh_failed"
+            message = f"板块数据刷新失败，展示最近可用缓存：{sync_error}"
+        elif load_result.metadata:
+            qs = load_result.metadata.data_quality_status or "ok"
+            if qs in ("degraded", "stale"):
+                status = qs
+        return SectorDetailResult(
+            detail=detail,
+            status=status,
+            message=message,
+            refresh_result=refresh_result_dict,
+        )
+
+    # 无缓存可用
+    if load_result.quality_error:
+        if sync_error:
+            return SectorDetailResult(
+                status="no_cache",
+                message=f"板块数据刷新失败且无可用缓存。原因：{sync_error}",
+                refresh_result=refresh_result_dict,
+            )
+        return SectorDetailResult(
+            status="invalid",
+            message=load_result.quality_error,
+            refresh_result=refresh_result_dict,
+        )
+
+    return SectorDetailResult(
+        status="no_cache",
+        message=(
+            f"板块数据刷新失败且无可用缓存。原因：{sync_error}"
+            if sync_error
+            else "暂无本地数据。"
+        ),
+        refresh_result=refresh_result_dict,
     )
 
 
@@ -662,6 +875,7 @@ def collect_company_flags(
 __all__ = [
     "SectorBoardData",
     "SectorDetailData",
+    "SectorDetailResult",
     "SnapshotLoadResult",
     "FrontendSnapshotResult",
     "DEFAULT_DB_PATH",
@@ -673,11 +887,13 @@ __all__ = [
     "collect_company_flags",
     "companies_to_rows",
     "financials_to_rows",
+    "has_sector_detail_cache",
     "load_latest_snapshot",
     "load_or_refresh_snapshot",
     "load_snapshot",
     "load_snapshot_from_db",
     "refresh_market_data",
+    "refresh_sector_detail",
     "sectors_to_rows",
     "valuations_to_rows",
 ]

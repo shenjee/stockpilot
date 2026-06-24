@@ -36,6 +36,7 @@ from services.data_service import (  # noqa: E402
     companies_to_rows,
     financials_to_rows,
     load_or_refresh_snapshot,
+    refresh_sector_detail,
     sectors_to_rows,
     valuations_to_rows,
 )
@@ -472,12 +473,28 @@ def main() -> None:
         )
         selected_sector_id = sector_labels[fallback_label]
 
+    # §15.9: 按需加载 — 先从当前快照构建详情，成分股为空时触发该板块的重量层同步
     detail = build_sector_detail(
         snapshot,
         selected_sector_id,
         company_sort="combined_score",
         top=int(company_top),
     )
+    if not detail.companies:
+        with st.spinner(_t("正在加载板块详情...", "Loading sector detail...")):
+            detail_result = refresh_sector_detail(
+                selected_sector_id,
+                analysis_date=snapshot.date,
+                company_sort="combined_score",
+                top=int(company_top),
+            )
+        if detail_result.detail is not None:
+            detail = detail_result.detail
+        # §15.9.4b: 展示详情层失败原因，不静默吞掉 no_cache / invalid。
+        # refresh_sector_detail 在成分股同步失败且无旧缓存时返回 no_cache，
+        # 旧代码只处理 refresh_failed，导致 no_cache 静默落到"没有公司数据"。
+        if detail_result.status in ("refresh_failed", "no_cache", "invalid"):
+            st.warning(detail_result.message)
 
     st.subheader(
         _t(

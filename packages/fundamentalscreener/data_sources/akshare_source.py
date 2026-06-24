@@ -13,12 +13,12 @@
   - ``get_sector_constituents``：``ak.stock_board_industry_cons_em(symbol=BK 代码)``
   - ``get_sector_daily``：``ak.stock_board_industry_hist_em(symbol=BK 代码, ...)``
 
-- ``get_benchmark_daily``：``ak.index_zh_a_hist(symbol=指数代码, ...)``，至少支持 ``hs300``
+- ``get_benchmark_daily``：``ak.stock_zh_index_daily(symbol=新浪指数代码)``，至少支持 ``hs300``（§15.9 改用新浪指数源，东方财富 push2 被墙）
 
 公司层（Phase 6C）：
 
 - ``get_stock_universe``：``ak.stock_info_a_code_name()``
-- ``get_company_daily_snapshot``：``ak.stock_zh_a_spot_em()``
+- ``get_company_daily_snapshot``：per-code ``ak.stock_zh_a_daily(symbol, ...)``（新浪源，§15.9 改用 per-code 抓取，东方财富实时快照被墙）
 - ``get_company_valuation_history``：``ak.stock_zh_valuation_baidu(symbol, indicator, period)``
 - ``get_financial_metrics``：``ak.stock_financial_analysis_indicator(symbol, start_year)``
 
@@ -366,30 +366,33 @@ class AkShareFundamentalDataSource:
                 f"unsupported benchmark: {benchmark!r}. Supported: "
                 f"{sorted(self._benchmark_symbols)}"
             )
-        df = self._ak.index_zh_a_hist(
-            symbol=symbol,
-            period="daily",
-            start_date=_compact_date(start_date),
-            end_date=_compact_date(end_date),
-        )
+        # 新浪 ``stock_zh_index_daily`` 返回全量历史（无起止参数），需在内存按
+        # ``[start_date, end_date]`` 过滤。东方财富 ``index_zh_a_hist``（push2 主机）
+        # 在本环境被墙不可用，改用新浪指数日线源（已验证可用）。
+        sina_symbol = _to_sina_index_symbol(symbol)
+        df = self._ak.stock_zh_index_daily(symbol=sina_symbol)
         if df is None or len(df) == 0:
             return []
         records = df.to_dict(orient="records")
         fetched_at = now_cn_isoformat()
         rows: List[Dict[str, Any]] = []
         for r in records:
-            trade_date = _normalize_date(r.get("日期"))
+            trade_date = _normalize_date(r.get("date"))
             if not trade_date:
+                continue
+            if trade_date < start_date or trade_date > end_date:
                 continue
             rows.append(
                 {
                     "benchmark": benchmark,
                     "trade_date": trade_date,
-                    "open": _to_float(r.get("开盘")),
-                    "high": _to_float(r.get("最高")),
-                    "low": _to_float(r.get("最低")),
-                    "close": _to_float(r.get("收盘")),
-                    "turnover_amount": _to_float(r.get("成交额")),
+                    "open": _to_float(r.get("open")),
+                    "high": _to_float(r.get("high")),
+                    "low": _to_float(r.get("low")),
+                    "close": _to_float(r.get("close")),
+                    # 新浪指数日线不提供成交额，留 None（benchmark 主要用于相对收益，
+                    # 依赖 close，不依赖 turnover_amount）。
+                    "turnover_amount": None,
                     "source_updated_at": fetched_at,
                 }
             )
@@ -525,48 +528,90 @@ class AkShareFundamentalDataSource:
             )
         return rows
 
-    def get_company_daily_snapshot(self, trade_date: str) -> List[Dict[str, Any]]:
-        """全 A 最新行情快照：``ak.stock_zh_a_spot_em()``。
+    def get_company_daily_snapshot(
+        self, trade_date: str, codes: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
+        """公司日度行情快照（per-code，新浪源 ``stock_zh_a_daily``）。
 
-        返回东方财富实时行情。``stock_zh_a_spot_em()`` 是实时接口，无法回溯历史
-        某日快照。为遵守点-in-time 原则（docs §20: 行情使用 ``trade_date <=
-        analysis_date``），仅当 ``trade_date`` 等于当前日期时才允许调用；否则
-        抛出 ``ValueError``，避免将今日可见的价格错误标记为历史日期。
+        东方财富 ``stock_zh_a_spot_em``（push2 主机）在本环境被墙不可用，改用新浪
+        ``stock_zh_a_daily`` 逐只抓取（已验证可用，返回 date/open/high/low/close/
+        volume/amount/outstanding_share/turnover）。
 
-        百分比字段（``涨跌幅`` / ``换手率``）按 docs §20 标准化规则转成小数
-        比率（``1.2`` → ``0.012``）。
+        - ``codes=None``：全市场，从 ``stock_info_a_code_name()`` 取全量 code 逐只
+          抓取（向后兼容，量级约 5500 只，慢；按需加载路径应显式传 ``codes``）。
+        - ``codes`` 非空：仅抓指定 codes。
+        - 每只取 ``trade_date`` 当日（或最近一个 <= trade_date 的交易日）的行情；
+          ``market_cap = close × outstanding_share``；``change_pct`` 由相邻两日收盘
+          价计算（首日为 ``None``）。支持历史日期，不再限制 ``trade_date == today``。
+        - 百分比字段（``turnover``）新浪返回即为小数比率，直接使用。
         """
-        today = self._today or now_cn().date().isoformat()
-        if trade_date != today:
-            raise ValueError(
-                f"get_company_daily_snapshot: trade_date {trade_date!r} is not the "
-                f"current date ({today}). stock_zh_a_spot_em() returns realtime data "
-                f"only; historical daily snapshots require a per-code daily-quote "
-                f"source not yet integrated in Phase 6C."
-            )
-        df = self._ak.stock_zh_a_spot_em()
-        if df is None or len(df) == 0:
-            return []
-        records = df.to_dict(orient="records")
+        if codes is None:
+            codes = self._all_codes()
         fetched_at = now_cn_isoformat()
         rows: List[Dict[str, Any]] = []
-        for r in records:
-            code = _to_str(r.get("代码"))
+        for code in codes:
             if not code:
                 continue
-            rows.append(
-                {
-                    "code": code,
-                    "trade_date": trade_date,
-                    "close": _to_float(r.get("最新价")),
-                    "turnover_amount": _to_float(r.get("成交额")),
-                    "turnover_rate": _pct_to_ratio(r.get("换手率")),
-                    "market_cap": _to_float(r.get("总市值")),
-                    "change_pct": _pct_to_ratio(r.get("涨跌幅")),
-                    "source_updated_at": fetched_at,
-                }
-            )
+            daily = self._fetch_code_daily(code, trade_date)
+            if not daily:
+                continue
+            rows.append(daily | {"code": code, "source_updated_at": fetched_at})
         return rows
+
+    def _all_codes(self) -> List[str]:
+        """从 ``stock_info_a_code_name()`` 取全量 A 股代码（``codes=None`` 兜底）。"""
+
+        df = self._ak.stock_info_a_code_name()
+        if df is None or len(df) == 0:
+            return []
+        return [_to_str(r.get("code")) for r in df.to_dict(orient="records") if _to_str(r.get("code"))]
+
+    def _fetch_code_daily(
+        self, code: str, trade_date: str
+    ) -> Optional[Dict[str, Any]]:
+        """抓取单只股票在 ``trade_date`` 的日度快照。
+
+        取 ``[trade_date-12d, trade_date]`` 窗口（覆盖周末 + 节假日），取最近一条
+        ``<= trade_date`` 的行作为当日快照；若有前一日收盘则计算 ``change_pct``。
+        """
+
+        from datetime import date as _date, timedelta as _td
+
+        end = _date.fromisoformat(trade_date)
+        start = (end - _td(days=12)).isoformat()
+        symbol = _to_sina_symbol(code)
+        df = self._ak.stock_zh_a_daily(
+            symbol=symbol,
+            start_date=_compact_date(start),
+            end_date=_compact_date(trade_date),
+            adjust="",
+        )
+        if df is None or len(df) == 0:
+            return None
+        records = [
+            r for r in df.to_dict(orient="records")
+            if _normalize_date(r.get("date")) and _normalize_date(r.get("date")) <= trade_date
+        ]
+        if not records:
+            return None
+        records.sort(key=lambda r: _normalize_date(r.get("date")))  # type: ignore[arg-type]
+        latest = records[-1]
+        close = _to_float(latest.get("close"))
+        outstanding = _to_float(latest.get("outstanding_share"))
+        market_cap = close * outstanding if (close is not None and outstanding is not None) else None
+        change_pct: Optional[float] = None
+        if len(records) >= 2:
+            prev_close = _to_float(records[-2].get("close"))
+            if prev_close:
+                change_pct = (close - prev_close) / prev_close if close is not None else None
+        return {
+            "trade_date": _normalize_date(latest.get("date")),
+            "close": close,
+            "turnover_amount": _to_float(latest.get("amount")),
+            "turnover_rate": _to_float(latest.get("turnover")),
+            "market_cap": market_cap,
+            "change_pct": change_pct,
+        }
 
     def get_company_valuation_history(
         self, codes: List[str], start_date: str, end_date: str
@@ -772,6 +817,25 @@ def _derive_market(code: str) -> Optional[str]:
     if first in ("4", "8"):
         return "BJ"
     return None
+
+
+def _to_sina_symbol(code: str) -> str:
+    """6 位股票代码 → 新浪行情 symbol（``sh600001`` / ``sz002371`` / ``bj830799``）。
+
+    新浪 ``stock_zh_a_daily`` 接受带交易所前缀的小写 symbol。
+    """
+
+    market = _derive_market(code)
+    prefix = (market or "sz").lower()
+    return f"{prefix}{code}"
+
+
+def _to_sina_index_symbol(code: str) -> str:
+    """指数代码 → 新浪指数 symbol：``000xxx`` → ``sh000xxx``，``399xxx`` → ``sz399xxx``。"""
+
+    if code.startswith("399"):
+        return f"sz{code}"
+    return f"sh{code}"
 
 
 def _derive_period_type(period_end_date: str) -> str:

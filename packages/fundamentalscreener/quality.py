@@ -218,21 +218,27 @@ def run_quality_checks(
                 entity_id=sector_id,
             )
 
-        # 板块成分股
-        const_count = conn.execute(
-            "SELECT COUNT(*) FROM sector_constituents "
-            "WHERE sector_id = ? AND classification_system = ? "
-            "AND as_of_date <= ?",
-            (sector_id, classification_system, analysis_date),
-        ).fetchone()[0]
-        if const_count == 0:
-            report.add_issue(
-                "sector_no_constituents",
-                LEVEL_WARNING,
-                f"sector {sector_id!r} has no constituents on or before {analysis_date}",
-                entity_type="sector",
-                entity_id=sector_id,
-            )
+        # 板块成分股（§15.9.4: 仅对已加载成分股的板块检查；未加载的板块跳过）
+        has_constituents = conn.execute(
+            "SELECT 1 FROM sector_constituents "
+            "WHERE sector_id = ? AND classification_system = ? LIMIT 1",
+            (sector_id, classification_system),
+        ).fetchone()
+        if has_constituents:
+            const_count = conn.execute(
+                "SELECT COUNT(*) FROM sector_constituents "
+                "WHERE sector_id = ? AND classification_system = ? "
+                "AND as_of_date <= ?",
+                (sector_id, classification_system, analysis_date),
+            ).fetchone()[0]
+            if const_count == 0:
+                report.add_issue(
+                    "sector_no_constituents",
+                    LEVEL_WARNING,
+                    f"sector {sector_id!r} has no constituents on or before {analysis_date}",
+                    entity_type="sector",
+                    entity_id=sector_id,
+                )
 
         # 板块日线覆盖
         daily_count = conn.execute(
@@ -316,6 +322,8 @@ def run_quality_checks(
         )
 
     # ---- 板块成分股缺行情检测（docs §18: "个别板块成分缺行情" 为 warning）----
+    # §15.9.4: 以下覆盖率检查均从 sector_constituents 表查询，天然只包含已加载
+    # 成分股的板块。未加载的板块无记录，不纳入分母，不会因数据缺失报错或阻断。
     total_constituents = conn.execute(
         "SELECT COUNT(DISTINCT sc.code) FROM sector_constituents sc "
         "WHERE sc.classification_system = ? "
@@ -344,10 +352,12 @@ def run_quality_checks(
     if missing_quotes > 0:
         coverage = constituents_with_quotes / total_constituents if total_constituents > 0 else 0.0
         if coverage < MIN_CONSTITUENT_QUOTE_COVERAGE:
-            # 覆盖率低于阈值 → 阻断（docs §18: "低于阈值时...阻断"）
+            # §15.9: 重量层覆盖率不足只降级 snapshot（degraded），不阻断整个板块
+            # 轮动表。sqlite_repository 会把 invalid 直接阻断 MarketSnapshot，
+            # 而成分股行情缺失属板块详情层问题，不应让首屏不可用。
             report.add_issue(
                 "low_constituent_quote_coverage",
-                LEVEL_ERROR,
+                LEVEL_WARNING,
                 f"constituent quote coverage: {constituents_with_quotes}/{total_constituents} "
                 f"({coverage:.0%}) below threshold {MIN_CONSTITUENT_QUOTE_COVERAGE:.0%}",
                 entity_type="snapshot",

@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
+from typing import Any, Dict, List, Optional, Protocol, Sequence, runtime_checkable
 
 
 @runtime_checkable
@@ -48,7 +48,9 @@ class FundamentalDataSource(Protocol):
     def get_stock_universe(self, as_of_date: str) -> List[Dict[str, Any]]:
         ...
 
-    def get_company_daily_snapshot(self, trade_date: str) -> List[Dict[str, Any]]:
+    def get_company_daily_snapshot(
+        self, trade_date: str, codes: Optional[Sequence[str]] = None
+    ) -> List[Dict[str, Any]]:
         ...
 
     def get_company_valuation_history(

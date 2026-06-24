@@ -31,6 +31,8 @@ from services.data_service import (  # noqa: E402
     load_or_refresh_snapshot,
     load_snapshot,
     load_snapshot_from_db,
+    refresh_market_data,
+    refresh_sector_detail,
     sectors_to_rows,
     valuations_to_rows,
 )
@@ -334,9 +336,21 @@ class _FakeRefreshSource:
              "source_updated_at": as_of_date},
         ]
 
-    def get_company_daily_snapshot(self, trade_date):
+    def get_company_daily_snapshot(self, trade_date, codes=None):
         if self.fail or self.empty:
             return []
+        if codes is not None:
+            # per-code 模式：只返回指定 codes 的数据
+            all_rows = [
+                {"code": "002371", "trade_date": trade_date, "close": 10.0,
+                 "turnover_amount": 1e8, "turnover_rate": 0.02, "market_cap": 1e10,
+                 "source_updated_at": trade_date},
+                {"code": "600584", "trade_date": trade_date, "close": 20.0,
+                 "turnover_amount": 2e8, "turnover_rate": 0.01, "market_cap": 2e10,
+                 "source_updated_at": trade_date},
+            ]
+            wanted = set(codes)
+            return [r for r in all_rows if r["code"] in wanted]
         return [
             {"code": "002371", "trade_date": trade_date, "close": 10.0,
              "turnover_amount": 1e8, "turnover_rate": 0.02, "market_cap": 1e10,
@@ -351,6 +365,29 @@ class _FakeRefreshSource:
 
     def get_financial_metrics(self, codes, as_of_date):
         return []
+
+
+class _FakeRefreshSourceDetailFail(_FakeRefreshSource):
+    """``get_sector_constituents`` 抛异常，其它任务正常（§15.9.4b 测试用）。
+
+    模拟重量层同步失败但轻量层成功：sync_all 的 _run_task 捕获异常写进
+    result.tasks，不向上抛出。用于验证 refresh_sector_detail 显式检查
+    DETAIL_REQUIRED_TASKS 失败。
+    """
+
+    def get_sector_constituents(self, sector_id, classification_system, as_of_date):
+        raise RuntimeError("fake constituents failure")
+
+
+class _FakeRefreshSourceUniverseFail(_FakeRefreshSource):
+    """``get_stock_universe`` 抛异常，轻量任务正常（§15.9.4a 测试用）。
+
+    模拟非轻量任务失败但轻量必需集成功：用于验证 refresh_market_data 首屏
+    不被非轻量任务失败阻塞。
+    """
+
+    def get_stock_universe(self, as_of_date):
+        raise RuntimeError("fake universe failure")
 
 
 class LoadLatestSnapshotTests(unittest.TestCase):
@@ -691,6 +728,133 @@ class LoadOrRefreshSnapshotTests(unittest.TestCase):
                 source=_FakeRefreshSource(),
             )
             self.assertIn(result.status, ("ok", "degraded", "stale"))
+            self.assertIsNotNone(result.snapshot)
+        finally:
+            if os.path.exists(db_path):
+                os.unlink(db_path)
+
+
+class RefreshSectorDetailTests(unittest.TestCase):
+    """§15.9.4b: refresh_sector_detail 按需加载失败场景测试。"""
+
+    def test_refresh_sector_detail_success_returns_companies(self) -> None:
+        """正常按需加载：成分股同步成功 → 返回公司列表。"""
+        db_fd, db_path = tempfile.mkstemp(suffix=".sqlite")
+        os.close(db_fd)
+        try:
+            result = refresh_sector_detail(
+                "BK0001",
+                db_path=db_path,
+                analysis_date="2026-06-19",
+                source=_FakeRefreshSource(),
+            )
+            self.assertIn(result.status, ("ok", "degraded", "stale"))
+            self.assertIsNotNone(result.detail)
+            self.assertTrue(result.detail.companies, "should have companies")
+        finally:
+            if os.path.exists(db_path):
+                os.unlink(db_path)
+
+    def test_constituents_failure_no_cache_returns_no_cache(self) -> None:
+        """成分股同步失败（_run_task 捕获）且无旧缓存 → no_cache，不静默 ok。"""
+        db_fd, db_path = tempfile.mkstemp(suffix=".sqlite")
+        os.close(db_fd)
+        try:
+            # 先做轻量同步（建立板块日线 + benchmark，无成分股）
+            refresh_market_data(
+                db_path=db_path,
+                analysis_date="2026-06-19",
+                source=_FakeRefreshSource(),
+            )
+            # 成分股同步失败
+            result = refresh_sector_detail(
+                "BK0001",
+                db_path=db_path,
+                analysis_date="2026-06-19",
+                source=_FakeRefreshSourceDetailFail(),
+            )
+            self.assertEqual(result.status, "no_cache")
+            self.assertTrue(result.message)
+            # detail 返回但无公司（板块存在但成分股未加载）
+            self.assertIsNotNone(result.detail)
+            self.assertFalse(result.detail.companies)
+        finally:
+            if os.path.exists(db_path):
+                os.unlink(db_path)
+
+    def test_constituents_failure_with_old_cache_returns_refresh_failed(self) -> None:
+        """成分股同步失败但有旧缓存 → refresh_failed + 旧公司列表。"""
+        db_fd, db_path = tempfile.mkstemp(suffix=".sqlite")
+        os.close(db_fd)
+        try:
+            # 第一次成功同步成分股
+            refresh_sector_detail(
+                "BK0001",
+                db_path=db_path,
+                analysis_date="2026-06-19",
+                source=_FakeRefreshSource(),
+            )
+            # 第二次成分股同步失败
+            result = refresh_sector_detail(
+                "BK0001",
+                db_path=db_path,
+                analysis_date="2026-06-19",
+                source=_FakeRefreshSourceDetailFail(),
+            )
+            self.assertEqual(result.status, "refresh_failed")
+            self.assertIsNotNone(result.detail, "should have old cache detail")
+            self.assertTrue(result.detail.companies, "should have old companies")
+            self.assertTrue(result.message)
+        finally:
+            if os.path.exists(db_path):
+                os.unlink(db_path)
+
+
+class RefreshMarketDataNonLightFailureTests(unittest.TestCase):
+    """§15.9.4a: 首屏非轻量任务失败不阻塞首屏。"""
+
+    def test_universe_failure_returns_ok_not_refresh_failed(self) -> None:
+        """get_stock_universe 失败但轻量任务成功 → ok，不是 refresh_failed。"""
+        db_fd, db_path = tempfile.mkstemp(suffix=".sqlite")
+        os.close(db_fd)
+        try:
+            result = refresh_market_data(
+                db_path=db_path,
+                analysis_date="2026-06-19",
+                source=_FakeRefreshSourceUniverseFail(),
+            )
+            # 轻量必需集成功 → 首屏可用，不应被非轻量失败阻塞
+            self.assertIn(
+                result.status, ("ok", "degraded", "stale"),
+                f"expected first screen usable, got {result.status}: {result.message}",
+            )
+            self.assertIsNotNone(result.snapshot)
+            self.assertTrue(result.snapshot.sectors)
+        finally:
+            if os.path.exists(db_path):
+                os.unlink(db_path)
+
+    def test_universe_failure_with_old_cache_returns_ok(self) -> None:
+        """有旧缓存时非轻量任务失败 → 仍返回 ok/degraded（不降级为 refresh_failed）。"""
+        db_fd, db_path = tempfile.mkstemp(suffix=".sqlite")
+        os.close(db_fd)
+        try:
+            # 第一次正常同步
+            refresh_market_data(
+                db_path=db_path,
+                analysis_date="2026-06-19",
+                source=_FakeRefreshSource(),
+            )
+            # 第二次非轻量任务失败
+            result = refresh_market_data(
+                db_path=db_path,
+                analysis_date="2026-06-19",
+                source=_FakeRefreshSourceUniverseFail(),
+            )
+            self.assertIn(
+                result.status, ("ok", "degraded", "stale"),
+                f"expected first screen usable, got {result.status}: {result.message}",
+            )
             self.assertIsNotNone(result.snapshot)
         finally:
             if os.path.exists(db_path):

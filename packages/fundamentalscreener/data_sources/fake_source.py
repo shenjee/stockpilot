@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 
 @dataclass
@@ -103,10 +103,16 @@ class FakeFundamentalDataSource:
             if row.get("as_of_date", as_of_date) <= as_of_date
         ]
 
-    def get_company_daily_snapshot(self, trade_date: str) -> List[Dict[str, Any]]:
+    def get_company_daily_snapshot(
+        self, trade_date: str, codes: Optional[Sequence[str]] = None
+    ) -> List[Dict[str, Any]]:
         self._maybe_fail()
+        wanted = set(codes) if codes else None
         return [
-            row for row in self.company_daily_snapshot if row.get("trade_date") == trade_date
+            row
+            for row in self.company_daily_snapshot
+            if row.get("trade_date") == trade_date
+            and (wanted is None or row.get("code") in wanted)
         ]
 
     def get_company_valuation_history(

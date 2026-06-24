@@ -55,15 +55,25 @@ from .sqlite_schema import connect, init_db, list_tables
 # 同步任务定义
 # ---------------------------------------------------------------------------
 
-# Phase 6B 必须成功的板块层任务。CLI ``sync`` 的 rc=0 要求这 4 个任务全部成功
-# 且写入行数 > 0，避免断网/空返回被自动化误判为成功（公司层任务不在必需集内：
-# per-code 任务未传 --codes 时跳过，batch 任务可能 0 行成功）。
+# Phase 6B 必需的板块层任务（§15.9.4a 后已拆为轻量 + 重量两层）。
+# 此常量保留为轻量必需集的别名，供 CLI rc 判定使用。成分股已移至
+# ``DETAIL_REQUIRED_TASKS``，不再阻塞首屏/CLI 的轻量必需判定。
 REQUIRED_PHASE_6B_TASKS: Tuple[str, ...] = (
     "list_sectors",
-    "get_sector_constituents",
     "get_sector_daily",
     "get_benchmark_daily",
 )
+
+# §15.9.4a 必需任务分层：按需加载模式下成分股属重量层，不应阻塞首屏。
+# - 轻量必需：首屏校验（板块列表 + 全部板块日线 + benchmark），任一失败或 0 行
+#   → refresh_failed / no_cache。
+# - 重量必需：仅在用户进入板块详情时触发；失败 → 该板块 degraded，不阻塞首屏。
+LIGHT_REQUIRED_TASKS: Tuple[str, ...] = (
+    "list_sectors",
+    "get_sector_daily",
+    "get_benchmark_daily",
+)
+DETAIL_REQUIRED_TASKS: Tuple[str, ...] = ("get_sector_constituents",)
 
 
 @dataclass
@@ -545,6 +555,7 @@ def sync_all(
     benchmark: str = "hs300",
     history_days: int = 90,
     codes: Optional[Sequence[str]] = None,
+    sector_ids: Optional[Sequence[str]] = None,
     fetch_run_id: Optional[str] = None,
 ) -> SyncResult:
     """运行一次完整同步。
@@ -556,6 +567,12 @@ def sync_all(
     ``codes`` 时，这两个 per-code 任务会被跳过，避免对全量股票池逐只发起网络
     请求（P2: 默认全量 fanout 会导致数千次顺序请求）。股票池和公司日度快照是
     batch 接口，始终运行。
+
+    ``sector_ids``（§15.9.5 按需加载）：非空时将成分股抓取从"遍历全部板块"收窄
+    到指定板块，并从已抓取成分股派生 ``codes`` 驱动个股层任务（日线快照 + 估值 +
+    财务）。``sector_ids=None`` 时回退当前全量行为（向后兼容）。``sector_ids`` 非
+    空时，``codes`` 参数可选：显式传入则与派生 codes 取交集，未传入则直接用派生
+    codes。轻量层（板块列表 / 板块日线 / benchmark / 股票池）始终全量同步。
     """
 
     init_db(conn)
@@ -627,23 +644,39 @@ def sync_all(
     )
 
     # 板块成分 & 板块行情：以 sectors_rows 为驱动
+    constituents_rows: List[Dict[str, Any]] = []
+
     def _fetch_constituents() -> List[Dict[str, Any]]:
+        nonlocal constituents_rows
+        # §15.9.5：sector_ids 非空时只遍历指定板块（按需加载），否则遍历全部
+        # sectors_rows（向后兼容）。轻量层（list_sectors）始终全量，此处成分股属
+        # 重量层。
+        if sector_ids is not None:
+            wanted = set(str(s) for s in sector_ids)
+            target_sectors = [
+                s for s in sectors_rows if str(s.get("sector_id", "")) in wanted
+            ]
+        else:
+            target_sectors = sectors_rows
         out: List[Dict[str, Any]] = []
-        for s in sectors_rows:
+        for s in target_sectors:
             sid = str(s.get("sector_id", ""))
             if not sid:
                 continue
             out.extend(
                 source.get_sector_constituents(sid, classification_system, analysis_date)
             )
-        # 板块列表非空但成分股总数为 0 → 几乎必然是数据源故障（反爬 403、空页、
+        # 目标板块非空但成分股总数为 0 → 几乎必然是数据源故障（反爬 403、空页、
         # API 结构变更），不能记成"成功写入 0 行"。抛错让 _run_task 标记 fetch_failed。
-        if sectors_rows and not out:
+        # 注意：sector_ids 未命中任何板块时 target_sectors 为空，不抛错（graceful
+        # no-op），避免按需加载指定了尚未出现在 sectors 表的板块时误判为故障。
+        if target_sectors and not out:
             raise RuntimeError(
-                f"get_sector_constituents: {len(sectors_rows)} sector(s) found but "
+                f"get_sector_constituents: {len(target_sectors)} sector(s) targeted but "
                 f"0 constituents returned — likely a data source failure "
                 f"(anti-crawl, HTTP error, or API structure change)."
             )
+        constituents_rows = out
         return out
 
     def _persist_constituents(rows: List[Dict[str, Any]]) -> _PersistResult:
@@ -819,7 +852,28 @@ def sync_all(
         )
     )
 
+    def _effective_company_codes() -> List[str]:
+        # §15.9.5：确定 per-code 公司层任务（日线快照 + 估值 + 财务）的 code 集合。
+        # - sector_ids 非空（按需加载）：从已抓取成分股派生 distinct codes；若 codes
+        #   显式传入则取交集，否则直接用派生 codes。
+        # - sector_ids=None（向后兼容）：codes 参数驱动 per-code 任务；未传则跳过。
+        if sector_ids is not None:
+            derived = sorted(
+                {str(r.get("code", "")) for r in constituents_rows if r.get("code")}
+            )
+            if codes is not None:
+                wanted = set(str(c) for c in codes)
+                return [c for c in derived if c in wanted]
+            return derived
+        return [c for c in (codes or []) if c]
+
     def _fetch_company_daily() -> List[Dict[str, Any]]:
+        # §15.9.5：sector_ids 非空时用派生 codes 驱动 per-code 日线快照；
+        # sector_ids=None 时回退全市场（codes=None），保持向后兼容。
+        if sector_ids is not None:
+            return source.get_company_daily_snapshot(
+                analysis_date, codes=_effective_company_codes()
+            )
         return source.get_company_daily_snapshot(analysis_date)
 
     def _persist_company_daily(rows: List[Dict[str, Any]]) -> _PersistResult:
@@ -859,16 +913,12 @@ def sync_all(
         )
     )
 
-    def _company_codes() -> List[str]:
-        # Per-code 公司层任务仅在 codes 显式提供时运行。调用方（sync_all）已通过
-        # if codes 守卫保证此处 codes 非空。
-        return [c for c in (codes or []) if c]
-
-    if codes:
+    effective_codes = _effective_company_codes()
+    if effective_codes:
         # --- 估值历史（per-code：每只股票 2 次百度接口调用）---
         def _fetch_valuation_history() -> List[Dict[str, Any]]:
             return source.get_company_valuation_history(
-                _company_codes(), start_date, analysis_date
+                effective_codes, start_date, analysis_date
             )
 
         def _persist_valuation_history(rows: List[Dict[str, Any]]) -> _PersistResult:
@@ -910,7 +960,7 @@ def sync_all(
 
         # --- 财务指标（per-code：每只股票 1 次新浪接口调用）---
         def _fetch_financial() -> List[Dict[str, Any]]:
-            return source.get_financial_metrics(_company_codes(), analysis_date)
+            return source.get_financial_metrics(effective_codes, analysis_date)
 
         def _persist_financial(rows: List[Dict[str, Any]]) -> _PersistResult:
             def _enrich(r: Dict[str, Any]) -> Dict[str, Any]:
@@ -1027,6 +1077,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="逗号分隔的股票代码。未提供时跳过 per-code 公司层任务（估值历史 + "
         "财务指标），仅运行 batch 任务（股票池 + 日度快照）。",
     )
+    p_sync.add_argument(
+        "--sector-ids",
+        dest="sector_ids",
+        default="",
+        help="逗号分隔的板块代码（§15.9.5 按需加载）。非空时只抓指定板块的成分股，"
+        "并从成分股派生 codes 驱动个股层任务。未提供时回退全量行为。",
+    )
 
     p_quality = sub.add_parser(
         "quality", help="读取 SQLite 并输出结构化质量报告（Phase 6D）。"
@@ -1061,6 +1118,15 @@ def _parse_codes(raw: str) -> Optional[List[str]]:
         return None
     codes = [c.strip() for c in raw.split(",") if c.strip()]
     return codes or None
+
+
+def _parse_sector_ids(raw: str) -> Optional[List[str]]:
+    """解析 ``--sector-ids`` 参数：逗号分隔的板块代码列表，空串返回 ``None``。"""
+
+    if not raw:
+        return None
+    ids = [s.strip() for s in raw.split(",") if s.strip()]
+    return ids or None
 
 
 def main(
@@ -1121,11 +1187,13 @@ def main(
             source = AkShareFundamentalDataSource()
 
         parsed_codes = _parse_codes(args.codes)
-        if not parsed_codes:
+        parsed_sector_ids = _parse_sector_ids(args.sector_ids)
+        if not parsed_codes and not parsed_sector_ids:
             sys.stderr.write(
                 "sync: --codes not provided; skipping per-code company tasks "
                 "(valuation history + financial metrics). Pass --codes A,B,C "
-                "to sync these for specific stocks.\n"
+                "to sync these for specific stocks, or --sector-ids X,Y to "
+                "derive codes from sector constituents (§15.9.5).\n"
             )
 
         conn = connect(args.db)
@@ -1138,6 +1206,7 @@ def main(
                 benchmark=args.benchmark,
                 history_days=args.history_days,
                 codes=parsed_codes,
+                sector_ids=parsed_sector_ids,
             )
         finally:
             conn.close()
@@ -1150,15 +1219,20 @@ def main(
         payload["benchmark"] = args.benchmark
         sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2))
         sys.stdout.write("\n")
-        # rc=0 要求 Phase 6B 必需的板块层任务全部成功且写入行数 > 0，且无任何子任务
-        # 失败。这样断网/空返回不会被自动化误判为成功：公司层 Phase 6C 桩以 0 行成功
-        # 但不在必需集内；list_sectors 失败后下游板块任务虽以 0 行"成功"但必需集仍
-        # 不满足。JSON 始终输出便于排查。akshare 缺失/口径不支持在前面已返回 rc=2。
+        # rc=0 要求轻量必需任务全部成功且写入行数 > 0，且无任何子任务失败。
+        # §15.9.4a: 成分股属重量层，从 REQUIRED_PHASE_6B_TASKS 移至独立校验。
+        # 全量同步（sector_ids is None）时仍要求成分股成功且有行；按需加载
+        # （sector_ids 非空）时成分股为用户显式请求的板块，同样要求成功。
+        # JSON 始终输出便于排查。akshare 缺失/口径不支持在前面已返回 rc=2。
         by_task = {t["task"]: t for t in result.tasks}
+        required_tasks = list(LIGHT_REQUIRED_TASKS)
+        # 成分股在两种模式下都是必需的：全量同步遍历全部板块，按需加载只抓
+        # 指定板块——用户显式请求的板块成分股失败应被 CLI 报告为 rc=1。
+        required_tasks.extend(DETAIL_REQUIRED_TASKS)
         required_ok = all(
             by_task.get(t, {}).get("success")
             and int(by_task.get(t, {}).get("row_count", 0) or 0) > 0
-            for t in REQUIRED_PHASE_6B_TASKS
+            for t in required_tasks
         )
         return 0 if (result.failure_count == 0 and required_ok) else 1
 

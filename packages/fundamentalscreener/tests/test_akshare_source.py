@@ -97,7 +97,7 @@ class _FakeAkshare:
         hist_map: Optional[Dict[str, Any]] = None,
         benchmark_map: Optional[Dict[str, Any]] = None,
         universe_df: Any = None,
-        spot_df: Any = None,
+        daily_map: Optional[Dict[str, Any]] = None,
         valuation_map: Optional[Dict[str, Dict[str, Any]]] = None,
         financial_map: Optional[Dict[str, Any]] = None,
         fail: bool = False,
@@ -111,7 +111,7 @@ class _FakeAkshare:
         self.hist_map = hist_map or {}
         self.benchmark_map = benchmark_map or {}
         self.universe_df = universe_df or _empty_df()
-        self.spot_df = spot_df or _empty_df()
+        self.daily_map = daily_map or {}
         self.valuation_map = valuation_map or {}
         self.financial_map = financial_map or {}
         self.fail = fail
@@ -197,30 +197,13 @@ class _FakeAkshare:
         filtered = [r for r in df.to_dict(orient="records") if lo <= r["日期"] <= hi]
         return _FakeDataFrame(filtered)
 
-    def index_zh_a_hist(
-        self,
-        symbol: str,
-        period: str,
-        start_date: str,
-        end_date: str,
-    ) -> Any:
+    def stock_zh_index_daily(self, symbol: str) -> Any:
+        # 新浪指数日线：symbol 为新浪格式（如 sh000300），返回全量历史（无起止参数）。
+        # source 层在内存按日期范围过滤。benchmark_map 按数值代码键控，故剥离前缀。
         self._maybe_fail()
-        self.calls.append(
-            {
-                "func": "index",
-                "symbol": symbol,
-                "period": period,
-                "start_date": start_date,
-                "end_date": end_date,
-            }
-        )
-        df = self.benchmark_map.get(symbol, _empty_df(["日期", "收盘"]))
-        if len(df) == 0:
-            return df
-        lo = _decompact(start_date)
-        hi = _decompact(end_date)
-        filtered = [r for r in df.to_dict(orient="records") if lo <= r["日期"] <= hi]
-        return _FakeDataFrame(filtered)
+        self.calls.append({"func": "index", "symbol": symbol})
+        code = symbol[2:] if len(symbol) > 2 and symbol[:2] in ("sh", "sz") else symbol
+        return self.benchmark_map.get(code, _empty_df(["date", "close"]))
 
     # ---------------- 公司层（Phase 6C）----------------
 
@@ -229,10 +212,31 @@ class _FakeAkshare:
         self.calls.append({"func": "universe"})
         return self.universe_df
 
-    def stock_zh_a_spot_em(self) -> Any:
+    def stock_zh_a_daily(
+        self, symbol: str, start_date: str, end_date: str, adjust: str = ""
+    ) -> Any:
+        # 新浪 per-code 日线：symbol 为新浪格式（如 sz002371）。daily_map 按裸代码键控。
         self._maybe_fail()
-        self.calls.append({"func": "spot"})
-        return self.spot_df
+        self.calls.append(
+            {
+                "func": "daily",
+                "symbol": symbol,
+                "start_date": start_date,
+                "end_date": end_date,
+                "adjust": adjust,
+            }
+        )
+        code = symbol[2:] if len(symbol) > 2 and symbol[:2] in ("sh", "sz", "bj") else symbol
+        df = self.daily_map.get(code, _empty_df(["date", "close"]))
+        if len(df) == 0:
+            return df
+        lo = _decompact(start_date)
+        hi = _decompact(end_date)
+        filtered = [
+            r for r in df.to_dict(orient="records")
+            if lo <= str(r.get("date", ""))[:10] <= hi
+        ]
+        return _FakeDataFrame(filtered)
 
     def stock_zh_valuation_baidu(
         self, symbol: str, indicator: str, period: str = "全部"
@@ -328,20 +332,15 @@ def _build_fake_akshare(
         ]
         hist_map[code] = _FakeDataFrame(hist_rows)
 
-    # hs300 -> 000300，同样 n_days 个工作日。
+    # hs300 -> 000300，新浪指数日线格式（date/open/high/low/close/volume）。
     bench_rows = [
         {
-            "日期": d,
-            "开盘": 3500.0 + idx,
-            "收盘": 3510.0 + idx,
-            "最高": 3520.0 + idx,
-            "最低": 3490.0 + idx,
-            "成交量": 10_000_000,
-            "成交额": 100_000_000_000.0 + idx,
-            "振幅": 1.0,
-            "涨跌幅": 0.3,
-            "涨跌额": 10.0,
-            "换手率": 0.5,
+            "date": d,
+            "open": 3500.0 + idx,
+            "high": 3520.0 + idx,
+            "low": 3490.0 + idx,
+            "close": 3510.0 + idx,
+            "volume": 10_000_000,
         }
         for idx, d in enumerate(days)
     ]
@@ -403,20 +402,15 @@ def _build_ths_fake_akshare(
         # THS 指数接口按名称查询
         hist_map_ths[name] = _FakeDataFrame(hist_rows)
 
-    # hs300 基准（与 EM 共用 index_zh_a_hist）
+    # hs300 基准（新浪指数日线格式，与 EM 共用 stock_zh_index_daily）
     bench_rows = [
         {
-            "日期": d,
-            "开盘": 3500.0 + idx,
-            "收盘": 3510.0 + idx,
-            "最高": 3520.0 + idx,
-            "最低": 3490.0 + idx,
-            "成交量": 10_000_000,
-            "成交额": 100_000_000_000.0 + idx,
-            "振幅": 1.0,
-            "涨跌幅": 0.3,
-            "涨跌额": 10.0,
-            "换手率": 0.5,
+            "date": d,
+            "open": 3500.0 + idx,
+            "high": 3520.0 + idx,
+            "low": 3490.0 + idx,
+            "close": 3510.0 + idx,
+            "volume": 10_000_000,
         }
         for idx, d in enumerate(days)
     ]
@@ -542,12 +536,11 @@ class AkShareSourceTransformTests(unittest.TestCase):
         self.assertEqual(first["benchmark"], "hs300")
         self.assertEqual(first["trade_date"], _gen_weekdays(3, "2026-06-19")[0])
         self.assertEqual(first["close"], 3510.0)
-        self.assertEqual(first["turnover_amount"], 100_000_000_000.0)
-        # 传 000300 指数代码给 index_zh_a_hist。
+        # 新浪指数日线不提供成交额，turnover_amount 为 None。
+        self.assertIsNone(first["turnover_amount"])
+        # 传 sh000300（新浪指数格式）给 stock_zh_index_daily。
         idx_call = next(c for c in fake.calls if c["func"] == "index")
-        self.assertEqual(idx_call["symbol"], "000300")
-        self.assertEqual(idx_call["period"], "daily")
-        self.assertEqual(idx_call["start_date"], "20260320")
+        self.assertEqual(idx_call["symbol"], "sh000300")
 
     def test_get_benchmark_daily_unsupported_raises(self) -> None:
         src = AkShareFundamentalDataSource(akshare=_build_fake_akshare())
@@ -1280,7 +1273,11 @@ class AkShareSourceGuardAndLineageTests(unittest.TestCase):
 
 
 def _build_company_fake_akshare() -> _FakeAkshare:
-    """构造带公司层数据的 fake akshare。"""
+    """构造带公司层数据的 fake akshare。
+
+    ``daily_map`` 使用新浪 per-code 日线格式（date/open/high/low/close/volume/
+    amount/outstanding_share/turnover），与 ``stock_zh_a_daily`` 的真实返回对齐。
+    """
     universe_df = _FakeDataFrame(
         [
             {"code": "600001", "name": "示例SH"},
@@ -1288,15 +1285,19 @@ def _build_company_fake_akshare() -> _FakeAkshare:
             {"code": "300001", "name": "示例创业板"},
         ]
     )
-    spot_df = _FakeDataFrame(
-        [
-            {"序号": 1, "代码": "600001", "名称": "示例SH", "最新价": 10.5,
-             "涨跌幅": 1.2, "成交额": 1e8, "换手率": 0.5, "总市值": 5e10},
-            {"序号": 2, "代码": "002371", "名称": "示例SZ", "最新价": 20.0,
-             "涨跌幅": -0.3, "成交额": 2e8, "换手率": 1.0, "总市值": 1e11},
-        ]
-    )
     days = _gen_weekdays(5, "2026-06-19")
+    daily_map: Dict[str, Any] = {
+        "600001": _FakeDataFrame([
+            {"date": days[-2], "open": 10.0, "high": 10.2, "low": 9.8, "close": 10.0,
+             "volume": 1_000_000, "amount": 0.9e8, "outstanding_share": 5e9, "turnover": 0.004},
+            {"date": days[-1], "open": 10.3, "high": 10.6, "low": 10.2, "close": 10.5,
+             "volume": 1_100_000, "amount": 1e8, "outstanding_share": 5e9, "turnover": 0.005},
+        ]),
+        "002371": _FakeDataFrame([
+            {"date": days[-1], "open": 19.8, "high": 20.2, "low": 19.5, "close": 20.0,
+             "volume": 2_000_000, "amount": 2e8, "outstanding_share": 5e9, "turnover": 0.01},
+        ]),
+    }
     pe_rows = [{"date": d, "value": 20.0 + i} for i, d in enumerate(days)]
     pb_rows = [{"date": d, "value": 2.0 + i * 0.1} for i, d in enumerate(days)]
     valuation_map = {
@@ -1318,7 +1319,7 @@ def _build_company_fake_akshare() -> _FakeAkshare:
     financial_map = {"002371": _FakeDataFrame(fin_rows)}
     return _FakeAkshare(
         universe_df=universe_df,
-        spot_df=spot_df,
+        daily_map=daily_map,
         valuation_map=valuation_map,
         financial_map=financial_map,
     )
@@ -1357,24 +1358,35 @@ class AkShareCompanyLayerTests(unittest.TestCase):
         src = AkShareFundamentalDataSource(akshare=fake, today="2026-06-19")
         rows = src.get_company_daily_snapshot("2026-06-19")
         self.assertEqual(len(rows), 2)
-        first = rows[0]
+        first = rows[0]  # 600001（universe_df 顺序）
         self.assertEqual(first["code"], "600001")
         self.assertEqual(first["trade_date"], "2026-06-19")
         self.assertEqual(first["close"], 10.5)
-        # 百分比字段转成小数比率（docs §20: 0.012 表示 1.2%）
-        self.assertEqual(first["change_pct"], 0.012)
+        # change_pct 由相邻两日收盘价计算：(10.5 - 10.0) / 10.0 = 0.05
+        self.assertEqual(first["change_pct"], 0.05)
         self.assertEqual(first["turnover_amount"], 1e8)
         self.assertEqual(first["turnover_rate"], 0.005)
-        self.assertEqual(first["market_cap"], 5e10)
+        # market_cap = close × outstanding_share = 10.5 × 5e9
+        self.assertEqual(first["market_cap"], 5.25e10)
 
-    def test_get_company_daily_snapshot_rejects_non_current_date(self) -> None:
-        """PIT 守卫：trade_date 不是当前日期时抛 ValueError，避免用实时价格
-        伪造历史快照。"""
+    def test_get_company_daily_snapshot_codes_filter(self) -> None:
+        """codes 参数过滤：只抓指定 code，跳过其他。"""
+        fake = _build_company_fake_akshare()
+        src = AkShareFundamentalDataSource(akshare=fake, today="2026-06-19")
+        rows = src.get_company_daily_snapshot("2026-06-19", codes=["002371"])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["code"], "002371")
+        self.assertEqual(rows[0]["close"], 20.0)
+        # 002371 只有 1 条记录，change_pct 为 None
+        self.assertIsNone(rows[0]["change_pct"])
+
+    def test_get_company_daily_snapshot_supports_historical_date(self) -> None:
+        """§15.9: 移除 trade_date == today 限制，支持历史日期。"""
         fake = _build_company_fake_akshare()
         src = AkShareFundamentalDataSource(akshare=fake, today="2026-06-22")
-        with self.assertRaises(ValueError) as ctx:
-            src.get_company_daily_snapshot("2026-06-19")
-        self.assertIn("not the current date", str(ctx.exception))
+        # 不应抛错，正常返回数据
+        rows = src.get_company_daily_snapshot("2026-06-19")
+        self.assertEqual(len(rows), 2)
 
     def test_get_company_valuation_history_merges_pe_pb(self) -> None:
         fake = _build_company_fake_akshare()
