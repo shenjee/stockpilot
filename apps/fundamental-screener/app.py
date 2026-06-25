@@ -148,10 +148,46 @@ _ENUM_LABELS: Dict[str, Dict[str, Dict[str, str]]] = {
         "low": {"zh": "低位", "en": "Low"},
     },
     "classification_system": {
+        "ths_industry": {"zh": "同花顺行业", "en": "THS Industry"},
+        "em_industry": {"zh": "东方财富行业", "en": "EM Industry"},
         "concept": {"zh": "概念板块", "en": "Concept"},
         "industry": {"zh": "行业板块", "en": "Industry"},
         "index": {"zh": "指数板块", "en": "Index"},
     },
+}
+
+
+# 基准指数代码 → 可读名称。
+_BENCHMARK_LABELS: Dict[str, Dict[str, str]] = {
+    "hs300": {"zh": "沪深300", "en": "CSI 300"},
+    "sse": {"zh": "上证综指", "en": "SSE Composite"},
+    "szse": {"zh": "深证成指", "en": "SZSE Component"},
+    "chinext": {"zh": "创业板指", "en": "ChiNext"},
+    "star50": {"zh": "科创50", "en": "STAR 50"},
+}
+
+# 数据质量状态 → 可读描述。
+_QUALITY_STATUS_LABELS: Dict[str, Dict[str, str]] = {
+    "ok": {"zh": "完整", "en": "Complete"},
+    "degraded": {"zh": "部分缺失", "en": "Partial"},
+    "stale": {"zh": "可能过期", "en": "Stale"},
+    "invalid": {"zh": "不可用", "en": "Invalid"},
+}
+
+# 数据来源标识 → 可读名称。
+_SOURCE_LABELS: Dict[str, Dict[str, str]] = {
+    "akshare_ths": {"zh": "AkShare（同花顺）", "en": "AkShare (THS)"},
+    "akshare_em": {"zh": "AkShare（东方财富）", "en": "AkShare (EM)"},
+    "akshare": {"zh": "AkShare", "en": "AkShare"},
+    "sina": {"zh": "新浪财经", "en": "Sina Finance"},
+}
+
+# source_set 角色键 → 可读名称。
+_SOURCE_ROLE_LABELS: Dict[str, Dict[str, str]] = {
+    "benchmark": {"zh": "基准指数", "en": "Benchmark"},
+    "sector": {"zh": "板块行情", "en": "Sector"},
+    "financial": {"zh": "财务数据", "en": "Financials"},
+    "valuation": {"zh": "估值数据", "en": "Valuation"},
 }
 
 
@@ -186,6 +222,44 @@ def _enum_value(field: str, value: Any, lang: str) -> Any:
     if not mapped:
         return value
     return mapped.get(lang) or mapped.get("zh") or value
+
+
+def _benchmark_label(benchmark_id: str, lang: str) -> str:
+    """基准代码 → 可读名称（如 hs300 → 沪深300）。"""
+
+    entry = _BENCHMARK_LABELS.get(benchmark_id)
+    if entry:
+        return entry.get(lang) or entry["zh"]
+    return benchmark_id
+
+
+def _quality_status_label(status: str, lang: str) -> str:
+    """数据质量状态 → 可读描述（如 degraded → 部分缺失）。"""
+
+    entry = _QUALITY_STATUS_LABELS.get(status)
+    if entry:
+        return entry.get(lang) or entry["zh"]
+    return status
+
+
+def _source_set_text(source_set: Dict[str, str], lang: str) -> str:
+    """把 source_set 翻译成一句话描述，如"全部来自 AkShare（同花顺）"。"""
+
+    if not source_set:
+        return "-"
+    # 收集所有去重后的来源名称
+    sources = sorted(set(source_set.values()))
+    parts = []
+    for src in sources:
+        entry = _SOURCE_LABELS.get(src)
+        name = (entry.get(lang) or entry["zh"]) if entry else src
+        roles = [k for k, v in source_set.items() if v == src]
+        role_names = [
+            (_SOURCE_ROLE_LABELS.get(r, {}).get(lang) or _SOURCE_ROLE_LABELS.get(r, {}).get("zh") or r)
+            for r in roles
+        ]
+        parts.append(f"{name}（{'、'.join(role_names)}）")
+    return "；".join(parts)
 
 
 def _localize_rows(
@@ -306,6 +380,24 @@ def _render_quality_issue_list(issues: List[Dict[str, Any]]) -> None:
 
 def main() -> None:
     st.set_page_config(page_title="基本面量化工作台", layout="wide")
+    st.markdown(
+        """
+        <style>
+        header[data-testid="stHeader"] { display: none; }
+        .block-container { padding-top: 0.75rem; padding-bottom: 2rem; }
+        section[data-testid="stSidebar"] div[data-testid="stSidebarContent"] { padding-top: 0.25rem; }
+        section[data-testid="stSidebar"] div[data-testid="stSidebarUserContent"] { padding-top: 0.25rem; }
+        section[data-testid="stSidebar"] div[data-testid="stSidebarHeader"] {
+            min-height: 0px !important;
+            height: 0px !important;
+            margin-bottom: 4px !important;
+            align-items: flex-start !important;
+        }
+        .page-title { font-size: 1.2rem; font-weight: 700; line-height: 1.25; margin: 0 0 0.25rem 0; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
     # ----------------- 侧边栏：产品参数 -----------------
     with st.sidebar:
@@ -344,6 +436,14 @@ def main() -> None:
             value=5,
             step=1,
         )
+        refresh_clicked = st.button(
+            _t("获取数据 / 运行分析", "Fetch Data / Run Analysis"),
+            type="primary",
+            help=_t(
+                "从同花顺行业板块同步最新数据并运行分析。",
+                "Sync latest data from THS industry sectors and run analysis.",
+            ),
+        )
         lang = st.selectbox(
             _t("界面语言", "Display language"),
             options=list(_LANG_LABELS.keys()),
@@ -355,16 +455,9 @@ def main() -> None:
             ),
         )
 
-    st.title(_t("基本面量化工作台", "Fundamental Screener"))
-
-    # ----------------- 获取数据 / 运行分析 -----------------
-    refresh_clicked = st.button(
-        _t("获取数据 / 运行分析", "Fetch Data / Run Analysis"),
-        type="primary",
-        help=_t(
-            "从同花顺行业板块同步最新数据并运行分析。",
-            "Sync latest data from THS industry sectors and run analysis.",
-        ),
+    st.markdown(
+        f'<div class="page-title">{_t("基本面量化工作台", "Fundamental Screener")}</div>',
+        unsafe_allow_html=True,
     )
 
     result = load_or_refresh_snapshot(
@@ -410,14 +503,7 @@ def main() -> None:
         st.warning(result.message)
 
     # degraded / stale 质量提示
-    if result.status == "degraded":
-        st.warning(
-            _t(
-                "数据不完整，部分财务/估值缺失，本次不生成优先候选。",
-                "Data incomplete; some financial/valuation data is missing. No priority candidates generated.",
-            )
-        )
-    elif result.status == "stale":
+    if result.status == "stale":
         st.warning(
             _t(
                 "数据可能过期，请考虑刷新。",
@@ -434,31 +520,23 @@ def main() -> None:
         quality_report=result.quality_report,
     )
 
-    # ----------------- 顶部信息卡 -----------------
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric(_t("日期", "Date"), board.date or "-")
-    c2.metric(
-        _t("分类口径", "Classification"),
-        _enum_value("classification_system", board.classification_system, lang)
-        or "-",
+    # ----------------- 顶部信息：单行小字体 -----------------
+    quality_text = (
+        _quality_status_label(board.data_quality_status, lang)
+        if board.data_quality_status
+        else "-"
     )
-    c3.metric(_t("基准", "Benchmark"), board.benchmark_name or board.benchmark_id or "-")
-    c4.metric(_t("板块数", "Sectors"), len(board.sectors))
-
-    # Phase 7: SQLite 数据源展示血缘与质量状态（docs §19 DoD）
-    if board.data_quality_status:
-        q1, q2, q3, q4 = st.columns(4)
-        q1.metric(_t("数据质量", "Quality"), board.data_quality_status)
-        q2.metric(_t("数据截止", "Data Cutoff"), board.data_cutoff or "-")
-        q3.metric(
-            _t("数据来源", "Sources"),
-            ", ".join(f"{k}={v}" for k, v in board.source_set.items()) or "-",
-        )
-        q4.metric(
-            _t("采集批次", "Fetch Run"),
-            (board.fetch_run_id[:24] + "…")
-            if len(board.fetch_run_id) > 24
-            else (board.fetch_run_id or "-"),
+    info_parts = [
+        f"{_t('日期', 'Date')}：{board.date or '-'}",
+        f"{_t('分类', 'Classification')}：{_enum_value('classification_system', board.classification_system, lang) or '-'}",
+        f"{_t('基准', 'Benchmark')}：{_benchmark_label(board.benchmark_id, lang)}",
+        f"{_t('板块', 'Sectors')}：{_t(f'前{len(board.sectors)}', f'Top {len(board.sectors)}')}",
+        f"{_t('数据质量', 'Quality')}：{quality_text}",
+    ]
+    st.caption("　｜　".join(info_parts))
+    if board.source_set:
+        st.caption(
+            f"{_t('数据来源', 'Data source')}：{_source_set_text(board.source_set, lang)}"
         )
 
     if board.quality_issues:
@@ -484,7 +562,10 @@ def main() -> None:
     else:
         st.line_chart(chart_df)
 
-    st.subheader(_t("板块指标", "Sector Metrics"))
+    st.markdown(
+        f'<div class="page-title">{_t("板块指标", "Sector Metrics")}</div>',
+        unsafe_allow_html=True,
+    )
     sector_rows = sectors_to_rows(board.sectors)
     if not sector_rows:
         _empty_message(_t("当前选择没有板块。", "No sectors under current selection."))
@@ -587,7 +668,7 @@ def main() -> None:
                 )
             )
         else:
-            st.dataframe(_to_display_rows(val_rows, lang), use_container_width=True)
+            st.dataframe(_to_display_rows(val_rows, lang), width="stretch")
 
     with flag_tab:
         flag_rows = collect_company_flags(
