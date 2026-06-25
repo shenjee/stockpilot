@@ -1,11 +1,18 @@
-"""Fundamental Screener CLI 入口。
+"""Fundamental Screener CLI entry point.
 
-稳定调用方式（Phase 0）：
+Stable invocation:
 
     python -m packages.fundamentalscreener.cli <command> [options]
 
-支持的命令：sectors / sector-detail / companies / financials / valuations / screen。
-Phase 0 仅返回稳定 JSON 框架，不实现真实板块/公司/财务/估值计算。
+Supported commands: sectors / sector-detail / companies / financials /
+valuations / screen.
+
+The original Phase 0 goal was a stable JSON contract. The current CLI now
+drives the implemented screener pipeline: sector rotation, company ranking,
+financial quality, valuation, screening groups, warnings, and snapshot lineage.
+Use fixtures or SQLite repositories as data sources; keep user-facing stdout
+machine-readable and route errors/warnings through the established payload
+fields or stderr handling.
 """
 
 from __future__ import annotations

@@ -28,7 +28,7 @@ which python
 
 - `packages/chantheory/`: project-owned adapter layer around `czsc` for Chan Theory analysis.
 - `packages/chantheory/tests/`: unit tests and JSON fixtures for the adapter layer.
-- `packages/fundamentalscreener/`: core package for Fundamental Screener sector/company ranking, financial quality, valuation, data quality, repositories, and sync.
+- `packages/fundamentalscreener/`: core package for Fundamental Screener sector/company ranking, financial quality, valuation, data quality, repositories, data sources, SQLite schema, and sync.
 - `packages/fundamentalscreener/tests/`: unit tests and fixtures for Fundamental Screener core and CLI payloads.
 - `apps/chan-streamlit/`: Streamlit debug app used to validate `chantheory` output and chart overlays.
 - `apps/chan-streamlit/tests/`: app-focused tests.
@@ -147,13 +147,16 @@ python -m pip install streamlit plotly pandas
 - The Streamlit app is a validation/debug tool, not the long-term product UI.
 - Fundamental Screener uses A-share public market/fundamental data to rank sectors and companies for further research. It should remain a quantitative screening tool, not a report generator or investment adviser.
 - Real-market Fundamental Screener ingestion belongs in `packages/fundamentalscreener/data_sources/` and sync/repository code; deterministic tests should use fixtures or injected fakes.
+- `packages/fundamentalscreener/data_sources/base.py` defines the data source contract; `akshare_source.py` is the real public-data source; `fake_source.py` supports injected deterministic tests and smoke paths.
+- `packages/fundamentalscreener/percentile.py`, `formatting.py`, and `sqlite_schema.py` are shared support modules for scoring helpers, CLI/app formatting, and SQLite schema setup.
 
 ## Agent Workflow
 
 - Read `README.md` first for repo-level context.
 - Read `packages/chantheory/README.md` before changing adapter behavior or schema expectations.
 - Read `apps/chan-streamlit/README.md` before changing the debug app.
-- Read `docs/fundamental_screener_phase_plan.md` and `apps/fundamental-screener/README.md` before changing Fundamental Screener core or app behavior.
+- Read `docs/fundamental_screener_mvp.md`, `docs/fundamental_screener_phase_plan.md`, and `docs/fundamental_screener_streamlit_frontend_plan.md` before changing Fundamental Screener product/core/app behavior.
+- Read `apps/fundamental-screener/README.md` before changing the Fundamental Screener Streamlit app.
 - Prefer small, reviewable patches.
 - After edits, run the smallest meaningful test command that covers the change.
 

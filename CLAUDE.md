@@ -71,8 +71,11 @@ All public fields are `snake_case`. Visual structure output is the **primary** o
 The core for quantitative fundamental screening. It answers "which sectors and companies deserve further research" through measurable comparison only. It does **not** generate research reports, buy/sell advice, or sector predictions. Keep scoring, sorting, data quality, lineage, repository, and sync logic here.
 - `schema.py` / `config.py` — public payload shapes, defaults, and supported options.
 - `repositories.py` / `sqlite_repository.py` — fixture and SQLite-backed repository contracts.
+- `sqlite_schema.py` — SQLite table definitions and schema initialization helpers.
 - `sector_rotation.py`, `company_ranking.py`, `financial_quality.py`, `valuation.py`, `screening.py` — core calculations and ranking pipelines.
-- `data_sources/akshare_source.py` / `sync.py` / `quality.py` / `lineage.py` — AkShare ingestion, SQLite sync, quality gates, and snapshot metadata.
+- `percentile.py` / `formatting.py` — shared percentile/scoring helpers and output formatting.
+- `data_sources/base.py`, `data_sources/akshare_source.py`, `data_sources/fake_source.py` — data source contracts, real AkShare ingestion, and injected fake source for tests/smoke paths.
+- `sync.py` / `quality.py` / `lineage.py` — SQLite sync, quality gates, and snapshot metadata.
 - `cli.py` — stable JSON-first entry point: `python -m packages.fundamentalscreener.cli <command> ...`.
 
 The screener core should remain UI-neutral and skill-neutral. Use fixtures for deterministic tests; real-market AkShare access belongs in the data source/sync layer and should not be copied into apps.
@@ -95,7 +98,7 @@ Product validation UI for `packages/fundamentalscreener`, focused on browsing se
 - Do not generate reports, trading advice, or sector forecasts.
 
 ### `docs/`
-Product and phase design notes — treat as source-of-truth for intent and boundaries (`product_design.md`, `phase2_tasks.md`, `chan_theory_v0.1.md`, plus `fundamental_screener_*` for the screener phase).
+Product and phase design notes — treat as source-of-truth for intent and boundaries (`product_design.md`, `phase2_tasks.md`, `chan_theory_v0.1.md`, plus `fundamental_screener_mvp.md`, `fundamental_screener_phase_plan.md`, and `fundamental_screener_streamlit_frontend_plan.md` for the screener phase).
 
 ## Change Conventions
 
