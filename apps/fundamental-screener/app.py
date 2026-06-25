@@ -555,7 +555,10 @@ def main() -> None:
                 st.warning(w)
 
     # ----------------- 板块走势图 + 表格 -----------------
-    st.subheader(_t("板块归一化走势", "Normalized Sector Curves"))
+    st.markdown(
+        f'<div class="page-title">{_t("板块归一化走势", "Normalized Sector Curves")}</div>',
+        unsafe_allow_html=True,
+    )
     chart_df = _chart_dataframe(board.chart_series)
     if chart_df is None or chart_df.empty:
         _empty_message(_t("当前没有可用的板块走势数据。", "No sector chart data available."))
@@ -625,11 +628,9 @@ def main() -> None:
         if detail_result.status in ("refresh_failed", "no_cache", "invalid"):
             st.warning(detail_result.message)
 
-    st.subheader(
-        _t(
-            f"公司排名 — {detail.sector_name}",
-            f"Company Ranking — {detail.sector_name}",
-        )
+    st.markdown(
+        f'<div class="page-title">{_t(f"公司排名 — {detail.sector_name}", f"Company Ranking — {detail.sector_name}")}</div>',
+        unsafe_allow_html=True,
     )
     company_rows = companies_to_rows(detail.companies)
     if not company_rows:

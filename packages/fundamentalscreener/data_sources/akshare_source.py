@@ -806,9 +806,11 @@ def _normalize_date(value: Any) -> Optional[str]:
 
 
 def _derive_market(code: str) -> Optional[str]:
-    """从 6 位代码推导交易所：``6`` → SH，``0/3`` → SZ，``4/8`` → BJ。"""
+    """从 6 位代码推导交易所：``6`` → SH，``0/3`` → SZ，``4/8/920`` → BJ。"""
     if not code or len(code) < 1:
         return None
+    if code.startswith("920"):  # 北交所 920 段
+        return "BJ"
     first = code[0]
     if first == "6":
         return "SH"
