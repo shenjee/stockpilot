@@ -6,6 +6,7 @@ from typing import Dict, List, Sequence
 
 from market_data import TencentStockDataProvider
 from repositories.kline_store import KLineStore, resolve_market_data_db_path
+from repositories.securities_store import SecuritiesStore
 from runtime_paths import RuntimePaths
 from services.kline_data_service import KLineDataService
 
@@ -26,6 +27,21 @@ def _get_kline_data_service() -> KLineDataService:
     return KLineDataService(provider, store)
 
 
+@lru_cache(maxsize=1)
+def _get_securities_store() -> SecuritiesStore:
+    """证券主数据仓储单例，与 K 线库共用同一个 SQLite 文件。"""
+
+    paths = _get_runtime_paths()
+    db_path = resolve_market_data_db_path(paths.db_dir)
+    return SecuritiesStore(db_path)
+
+
+def search_securities(query: str, limit: int = 50) -> List[Dict[str, object]]:
+    """按 code / 名称 / 拼音首字母搜索证券主数据，供前端下拉选择。"""
+
+    return _get_securities_store().search(query, limit=limit)
+
+
 def _estimate_limit(start_date: date, end_date: date, timeframe: str) -> int:
     bars_per_day = _BARS_PER_DAY.get(timeframe, 1)
     day_count = max((end_date - start_date).days + 1, 1)
@@ -38,6 +54,7 @@ def fetch_rows(
     timeframe: str,
     start_date: date,
     end_date: date,
+    security_type: str | None = None,
 ) -> List[Dict[str, object]]:
     service = _get_kline_data_service()
     return service.get_klines(
@@ -47,6 +64,7 @@ def fetch_rows(
         timeframe=timeframe,
         start_date=start_date.strftime("%Y-%m-%d"),
         limit=_estimate_limit(start_date, end_date, timeframe),
+        security_type=security_type,
     )
 
 
@@ -56,6 +74,7 @@ def fetch_rows_for_timeframes(
     timeframes: Sequence[str],
     start_date: date,
     end_date: date,
+    security_type: str | None = None,
 ) -> Dict[str, List[Dict[str, object]]]:
     rows_by_timeframe: Dict[str, List[Dict[str, object]]] = {}
     seen: set[str] = set()
@@ -69,6 +88,7 @@ def fetch_rows_for_timeframes(
             timeframe=timeframe,
             start_date=start_date,
             end_date=end_date,
+            security_type=security_type,
         )
         if rows:
             rows_by_timeframe[timeframe] = rows
@@ -96,6 +116,7 @@ def probe_market_suggestions(
     timeframe: str,
     start_date: date,
     end_date: date,
+    security_type: str | None = None,
 ) -> List[Dict[str, object]]:
     suggestions: List[Dict[str, object]] = []
     for candidate in ["sh", "sz", "bj"]:
@@ -107,6 +128,7 @@ def probe_market_suggestions(
             timeframe=timeframe,
             start_date=start_date,
             end_date=end_date,
+            security_type=security_type,
         )
         if rows:
             suggestions.append({"market": candidate, "count": len(rows)})

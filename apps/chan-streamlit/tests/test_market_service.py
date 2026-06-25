@@ -122,6 +122,23 @@ class MarketServiceTests(unittest.TestCase):
 
         self.assertEqual(name, "")
 
+    def test_search_securities_delegates_to_store(self):
+        class FakeSecuritiesStore:
+            def __init__(self):
+                self.calls = []
+
+            def search(self, query, limit=50):
+                self.calls.append((query, limit))
+                return [{"code": "000001", "market": "sz", "type": "stock", "name": "平安银行", "pinyin": "PAYH"}]
+
+        fake = FakeSecuritiesStore()
+        with patch.object(market_service, "_get_securities_store", return_value=fake):
+            result = market_service.search_securities("pa", limit=10)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["code"], "000001")
+        self.assertEqual(fake.calls[0], ("pa", 10))
+
 
 if __name__ == "__main__":
     unittest.main()

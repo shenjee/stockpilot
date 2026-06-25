@@ -7,7 +7,32 @@ from unittest.mock import patch
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from market_data import TencentStockDataProvider
+from market_data import TencentStockDataProvider, get_market_prefix
+
+
+class GetMarketPrefixTests(unittest.TestCase):
+    def test_explicit_market_wins(self):
+        self.assertEqual(get_market_prefix("000001", market="sh"), "sh")
+        self.assertEqual(get_market_prefix("159915", market="sh"), "sh")
+
+    def test_sh_stocks_and_etfs(self):
+        # 6xxxxx 沪市股票、5xxxxx 沪市 ETF
+        self.assertEqual(get_market_prefix("600519"), "sh")
+        self.assertEqual(get_market_prefix("510300"), "sh")
+        self.assertEqual(get_market_prefix("588000"), "sh")
+
+    def test_sz_stocks_and_etfs(self):
+        # 0/3 深市股票、1 深市 ETF 159xxx / 分级 150xxx
+        self.assertEqual(get_market_prefix("000001"), "sz")
+        self.assertEqual(get_market_prefix("300750"), "sz")
+        self.assertEqual(get_market_prefix("159915"), "sz")
+        self.assertEqual(get_market_prefix("150018"), "sz")
+
+    def test_bse_stocks(self):
+        # 北交所 8/4 开头，以及 920xxx 新股以 9 开头
+        self.assertEqual(get_market_prefix("830799"), "bj")
+        self.assertEqual(get_market_prefix("430047"), "bj")
+        self.assertEqual(get_market_prefix("920819"), "bj")
 
 
 class TencentStockDataProviderTests(unittest.TestCase):
@@ -120,6 +145,36 @@ class TencentStockDataProviderTests(unittest.TestCase):
         self.assertEqual(len(rows), 5)
         self.assertEqual(rows[0]["date"], "2025-10-21 10:30:00")
         self.assertEqual(rows[-1]["date"], "2026-03-16 10:30:00")
+
+    def test_get_kline_index_uses_no_adjustment(self):
+        # 指数在 qfq 下腾讯返回空；security_type="index" 应把 autype 折成 ""，
+        # 用不复权的 "day" 键取数据，且 URL 里不出现 qfq。
+        payload = {
+            "code": 0,
+            "data": {
+                "sh000001": {
+                    "day": [
+                        ["2026-06-11", "3000.00", "3010.00", "3015.00", "2995.00", "100"],
+                    ],
+                }
+            },
+        }
+        with patch.object(
+            TencentStockDataProvider, "_fetch_with_retry", return_value=json.dumps(payload)
+        ) as fetch:
+            rows = TencentStockDataProvider.get_kline(
+                code="000001",
+                market="sh",
+                start_date="2026-06-11",
+                end_date="2026-06-11",
+                ktype="day",
+                security_type="index",
+            )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["close"], 3010.00)
+        url = fetch.call_args.args[0]
+        self.assertIn("sh000001", url)
+        self.assertNotIn("qfq", url)
 
 
 if __name__ == "__main__":

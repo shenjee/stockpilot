@@ -27,7 +27,7 @@ from charts.axis_policy import (  # noqa: E402
 from chantheory import get_default_max_bi_num  # noqa: E402
 from charts.figure_builder import build_figure  # noqa: E402
 from services.analysis_service import run_analysis  # noqa: E402
-from services.market_service import fetch_rows, fetch_stock_name, probe_market_suggestions  # noqa: E402
+from services.market_service import fetch_rows, fetch_stock_name, probe_market_suggestions, search_securities  # noqa: E402
 from ui_text import (  # noqa: E402
     SUPPORTED_LANGUAGES,
     _build_display_summary,
@@ -87,6 +87,7 @@ MAX_Y_ZOOM = 3.0
 
 _fetch_rows = fetch_rows
 _probe_market_suggestions = probe_market_suggestions
+_search_securities = search_securities
 _build_figure = build_figure
 _is_minute_timeframe = is_minute_timeframe
 _build_x_axis_range = build_x_axis_range
@@ -98,6 +99,61 @@ _run_analysis = run_analysis
 
 def _ordered_rows(rows: Iterable[Dict[str, object]]) -> List[Dict[str, object]]:
     return sorted((dict(item) for item in rows), key=lambda item: str(item["date"]))
+
+
+# ---------------------------------------------------------------------------
+# 证券主数据搜索 / 下拉选择
+#
+# 单个搜索框（streamlit_searchbox）：输入 code / 名称 / 拼音首字母即联想出
+# 匹配项，点选一条。选中项携带 market 和 type；type=='index' 时下游拉 K 线
+# 会强制不复权（修指数 qfq 返回空的 bug）。内部值编码为 "market:code:type"。
+# ---------------------------------------------------------------------------
+
+_SELECTED_SECURITY_KEY = "chan_security_searchbox"
+# 首屏默认选中 上证指数（sh000001）——既验证指数不复权修复，又是常见起点。
+_DEFAULT_SECURITY_VALUE = "sh:000001:index"
+
+
+def _sec_search_options(searchterm: str) -> List[tuple]:
+    """streamlit_searchbox 的搜索函数：返回 [(显示文字, 内部值), ...]。
+
+    空输入默认联想 000001（平安银行 + 上证指数），给用户一个起点。
+    """
+
+    query = (searchterm or "").strip() or "000001"
+    matches = _search_securities(query, limit=10)
+    return [
+        (f"{m['code']}    {m['name']}", f"{m['market']}:{m['code']}:{m['type']}")
+        for m in matches
+    ]
+
+
+def _parse_security_value(value: object) -> Dict[str, object]:
+    """内部值 "market:code:type" -> dict；解析失败返回空选。"""
+
+    if not isinstance(value, str) or value.count(":") < 2:
+        return {"code": "", "market": "", "type": ""}
+    market, code, sec_type = value.split(":", 2)
+    return {"code": code, "market": market, "type": sec_type}
+
+
+def _resolve_security_selection(language: str) -> Dict[str, object]:
+    """单搜索框：输入即联想，点选一条拿到 code/market/type。
+
+    streamlit_searchbox 懒导入，避免测试桩环境（无该包）阻塞 app 导入；
+    未选中时回退到默认 上证指数。
+    """
+
+    from streamlit_searchbox import st_searchbox
+
+    selected = st_searchbox(
+        _sec_search_options,
+        placeholder=_t(language, "sec_search_placeholder"),
+        label=_t(language, "sec_search_label"),
+        default=_DEFAULT_SECURITY_VALUE,
+        key=_SELECTED_SECURITY_KEY,
+    )
+    return _parse_security_value(selected or _DEFAULT_SECURITY_VALUE)
 
 
 def _build_chart_key(
@@ -496,8 +552,10 @@ def main() -> None:
 
     with st.sidebar:
         st.markdown(_sidebar_section_title(_t(language, "inputs_header")), unsafe_allow_html=True)
-        symbol = st.text_input(_t(language, "symbol_label"), value="000001")
-        market = st.selectbox(_t(language, "market_label"), ["sz", "sh", "bj"], index=0)
+        selected_security = _resolve_security_selection(language)
+        symbol = str(selected_security["code"])
+        market = str(selected_security["market"])
+        security_type = str(selected_security["type"]) or None
         start_date = st.date_input(_t(language, "start_date_label"), value=DEFAULT_START)
         end_date = st.date_input(_t(language, "end_date_label"), value=DEFAULT_END)
         _default_max_bi = get_default_max_bi_num(st.session_state.chan_selected_timeframe)
@@ -521,6 +579,7 @@ def main() -> None:
     analysis_inputs = {
         "symbol": symbol.strip(),
         "market": market,
+        "security_type": security_type,
         "timeframe": timeframe,
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
@@ -543,6 +602,7 @@ def main() -> None:
             timeframe=timeframe,
             start_date=start_date,
             end_date=end_date,
+            security_type=security_type,
         )
         if not rows:
             st.session_state.pop("chan_chart_rows", None)
@@ -557,6 +617,7 @@ def main() -> None:
                 timeframe=timeframe,
                 start_date=start_date,
                 end_date=end_date,
+                security_type=security_type,
             )
             if suggestions:
                 suggestion_lines = ", ".join(f"{item['market']} ({item['count']} rows)" for item in suggestions)

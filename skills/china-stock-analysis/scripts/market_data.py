@@ -27,14 +27,23 @@ INDICES = {
 
 
 def get_market_prefix(code: str, market: str = None) -> str:
-    """Return exchange prefix, preferring explicit config over code inference."""
+    """Return exchange prefix, preferring explicit config over code inference.
+
+    按 6 位代码首字符推断沪深京三市场：
+    - 6 / 5 -> sh（沪市股票 6xxxxx、沪市 ETF 5xxxxx，含 510/511/512/513/588 等）
+    - 0 / 3 / 1 -> sz（深市股票 0/3 开头、深市 ETF 159xxx 与分级 150xxx）
+    - 4 / 8 / 9 -> bj（北交所股票 8/4 开头，以及 920xxx 新股以 9 开头）
+
+    其余兜底 sh，保持向后兼容。注意：指数代码（如 000001 上证指数）首字符是 0，
+    会被推断成 sz，因此指数必须由调用方显式传入 market，不能依赖本函数。
+    """
     if market:
         return market
-    if code.startswith("6"):
+    if code.startswith(("6", "5")):
         return "sh"
-    if code.startswith("0") or code.startswith("3"):
+    if code.startswith(("0", "3", "1")):
         return "sz"
-    if code.startswith("8") or code.startswith("4"):
+    if code.startswith(("8", "4", "9")):
         return "bj"
     return "sh"
 
@@ -48,10 +57,10 @@ class MarketDataProvider:
     def realtime(self, codes, markets=None):
         raise NotImplementedError
 
-    def get_kline(self, code: str, start_date: str, end_date: str, ktype: str = "day", autype: str = "qfq", market: str = None) -> list:
+    def get_kline(self, code: str, start_date: str, end_date: str, ktype: str = "day", autype: str = "qfq", market: str = None, security_type: str | None = None) -> list:
         raise NotImplementedError
 
-    def get_daily_quote(self, code: str, trade_date: str, autype: str = "qfq", market: str = None) -> dict:
+    def get_daily_quote(self, code: str, trade_date: str, autype: str = "qfq", market: str = None, security_type: str | None = None) -> dict:
         raise NotImplementedError
 
 
@@ -151,7 +160,7 @@ class TencentStockDataProvider(MarketDataProvider):
         return results[0] if len(results) == 1 and len(codes) == 1 else results
 
     @classmethod
-    def get_kline(cls, code: str, start_date: str, end_date: str, ktype: str = "day", autype: str = "qfq", market: str = None) -> list:
+    def get_kline(cls, code: str, start_date: str, end_date: str, ktype: str = "day", autype: str = "qfq", market: str = None, security_type: str | None = None) -> list:
         if ktype in cls.MINUTE_KTYPES:
             return cls.get_minute_kline(
                 code=code,
@@ -160,6 +169,12 @@ class TencentStockDataProvider(MarketDataProvider):
                 ktype=ktype,
                 market=market,
             )
+
+        # 指数没有复权概念：腾讯 fqkline 接口在 qfq/hfq 下对指数直接返回空，因此
+        # 指数强制使用不复权（autype=""）。security_type 由调用方（证券主数据选中
+        # 的标的类型）传入；未传时保持 qfq，向后兼容现有调用方。
+        if security_type == "index":
+            autype = ""
 
         prefix = cls._get_prefix(code, market)
         url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={prefix}{code},{ktype},{start_date},{end_date},500,{autype}"
@@ -302,14 +317,14 @@ class TencentStockDataProvider(MarketDataProvider):
             return ""
 
     @classmethod
-    def get_daily_quote(cls, code: str, trade_date: str, autype: str = "qfq", market: str = None) -> dict:
-        data_for_date = cls.get_kline(code, trade_date, trade_date, ktype="day", autype=autype, market=market)
+    def get_daily_quote(cls, code: str, trade_date: str, autype: str = "qfq", market: str = None, security_type: str | None = None) -> dict:
+        data_for_date = cls.get_kline(code, trade_date, trade_date, ktype="day", autype=autype, market=market, security_type=security_type)
         if not data_for_date:
             return None
 
         data = data_for_date[0]
         prev_date = (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
-        prev_data = cls.get_kline(code, prev_date, prev_date, ktype="day", autype=autype, market=market)
+        prev_data = cls.get_kline(code, prev_date, prev_date, ktype="day", autype=autype, market=market, security_type=security_type)
 
         if prev_data:
             pre_close = prev_data[0]["close"]

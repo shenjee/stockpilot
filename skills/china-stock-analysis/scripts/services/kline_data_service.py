@@ -25,6 +25,7 @@ class KLineDataService:
         timeframe: str = "day",
         start_date: str | None = None,
         min_local_count: int | None = None,
+        security_type: str | None = None,
     ) -> None:
         start_date = start_date or self._default_start_date(end_date)
         required_local_count = min_local_count or self._required_local_count(timeframe, start_date, end_date)
@@ -49,6 +50,7 @@ class KLineDataService:
             end_date=end_date,
             ktype=timeframe,
             market=market,
+            security_type=security_type,
         )
         if klines:
             self.store.upsert_many(code, market, klines, source=self.provider.provider_id, timeframe=timeframe)
@@ -62,6 +64,7 @@ class KLineDataService:
         start_date: str | None = None,
         limit: int = 120,
         min_local_count: int | None = None,
+        security_type: str | None = None,
     ) -> list:
         query_end_date = end_date if timeframe == "day" else f"{end_date} 23:59:59"
         self.ensure_local_klines(
@@ -71,6 +74,7 @@ class KLineDataService:
             timeframe=timeframe,
             start_date=start_date,
             min_local_count=min_local_count,
+            security_type=security_type,
         )
         return self.store.get_klines(
             code,

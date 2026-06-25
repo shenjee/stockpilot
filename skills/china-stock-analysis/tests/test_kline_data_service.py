@@ -17,8 +17,8 @@ class FakeProvider:
         self.rows = rows
         self.calls = []
 
-    def get_kline(self, code: str, start_date: str, end_date: str, ktype: str = "day", market: str = None):
-        self.calls.append((code, start_date, end_date, ktype, market))
+    def get_kline(self, code: str, start_date: str, end_date: str, ktype: str = "day", autype: str = "qfq", market: str = None, security_type: str | None = None):
+        self.calls.append((code, start_date, end_date, ktype, market, security_type))
         return list(self.rows)
 
 
@@ -197,6 +197,21 @@ class KLineDataServiceTests(unittest.TestCase):
             # Provider must be called because earliest 2026-06-16 > start_date 2026-03-01.
             self.assertEqual(len(provider.calls), 1)
             self.assertGreater(len(result), 3)
+
+    def test_security_type_forwarded_to_provider(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = KLineStore(Path(tmpdir) / "market_data.sqlite")
+            remote_rows = [
+                {"date": "2026-06-10", "open": 10.0, "close": 10.5, "high": 10.6, "low": 9.9, "volume": 100},
+                {"date": "2026-06-11", "open": 10.5, "close": 11.0, "high": 11.1, "low": 10.4, "volume": 120},
+            ]
+            provider = FakeProvider(rows=remote_rows)
+            service = KLineDataService(provider, store)
+
+            service.get_klines(code="000001", end_date="2026-06-11", market="sh", security_type="index", limit=10)
+
+            self.assertEqual(len(provider.calls), 1)
+            self.assertEqual(provider.calls[0][5], "index")
 
 
 if __name__ == "__main__":

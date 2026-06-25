@@ -168,7 +168,9 @@ class ReportDataService:
         for full_code, (name, market) in INDICES.items():
             code = full_code[2:]
             prefix = full_code[:2]
-            data = self.market_data.get_daily_quote(code, date_str, market=prefix)
+            # 指数在腾讯 qfq 下返回空，必须走不复权；显式声明 security_type="index"，
+            # 让 get_daily_quote -> get_kline 把 autype 折成 ""。
+            data = self.market_data.get_daily_quote(code, date_str, market=prefix, security_type="index")
             if not data:
                 continue
             results.append(
