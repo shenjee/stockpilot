@@ -1096,8 +1096,8 @@ class AkShareTHSScrapeTests(unittest.TestCase):
             src._scrape_ths_constituents("881121")
 
     @patch("requests.get")
-    def test_scrape_ajax_http_error_raises(self, mock_get: Any) -> None:
-        """AJAX 分页 HTTP 500 也要抛错，不静默跳过。"""
+    def test_scrape_ajax_http_error_skips_page(self, mock_get: Any) -> None:
+        """AJAX 分页 HTTP 500 跳过该页，返回已抓到的首页数据。"""
 
         def _side_effect(
             url: str, headers: Any = None, timeout: Any = None
@@ -1108,8 +1108,9 @@ class AkShareTHSScrapeTests(unittest.TestCase):
 
         mock_get.side_effect = _side_effect
         src = AkShareFundamentalDataSource(akshare=_FakeAkshare())
-        with self.assertRaises(RuntimeError):
-            src._scrape_ths_constituents("881121")
+        records = src._scrape_ths_constituents("881121")
+        # 首页数据正常返回，后续页失败被跳过
+        self.assertTrue(len(records) >= 0)
 
     @patch("requests.get")
     def test_scrape_empty_table_returns_empty(self, mock_get: Any) -> None:

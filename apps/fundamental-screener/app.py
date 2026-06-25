@@ -584,7 +584,7 @@ def main() -> None:
         key="sector_table",
     )
 
-    # 表格点击优先；未选中时回退到下拉选择，保证首次进入页面有默认板块。
+    # 表格点击优先；未选中时默认取第一个板块，保证首次进入页面有默认板块。
     selected_sector_id: Optional[str] = None
     try:
         selected_rows = selection.selection.rows  # type: ignore[attr-defined]
@@ -595,24 +595,24 @@ def main() -> None:
         if 0 <= idx < len(board.sectors):
             selected_sector_id = board.sectors[idx].sector_id
 
-    if selected_sector_id is None:
-        sector_labels = {
-            f"{s.sector_name} ({s.sector_id})": s.sector_id for s in board.sectors
-        }
-        fallback_label = st.selectbox(
-            _t("或下拉选择板块", "Or pick a sector"),
-            options=list(sector_labels.keys()),
-        )
-        selected_sector_id = sector_labels[fallback_label]
+    if selected_sector_id is None and board.sectors:
+        selected_sector_id = board.sectors[0].sector_id
 
-    # §15.9: 按需加载 — 先从当前快照构建详情，成分股为空时触发该板块的重量层同步
+    # §15.9: 按需加载 — 先从当前快照构建详情，成分股为空或缺少个股日线行情时
+    # 触发该板块的重量层同步。后者发生在首屏轻量同步已写入成分股、但未抓取
+    # company_daily_snapshot 的场景：此时 companies 非空但 market_cap /
+    # turnover_amount 全为 None。
     detail = build_sector_detail(
         snapshot,
         selected_sector_id,
         company_sort="combined_score",
         top=int(company_top),
     )
-    if not detail.companies:
+    _needs_detail_refresh = not detail.companies or all(
+        c.market_cap is None and c.turnover_amount is None
+        for c in detail.companies
+    )
+    if _needs_detail_refresh:
         with st.spinner(_t("正在加载板块详情...", "Loading sector detail...")):
             detail_result = refresh_sector_detail(
                 selected_sector_id,

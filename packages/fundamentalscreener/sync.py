@@ -663,9 +663,12 @@ def sync_all(
             sid = str(s.get("sector_id", ""))
             if not sid:
                 continue
-            out.extend(
-                source.get_sector_constituents(sid, classification_system, analysis_date)
-            )
+            try:
+                out.extend(
+                    source.get_sector_constituents(sid, classification_system, analysis_date)
+                )
+            except Exception:
+                continue
         # 目标板块非空但成分股总数为 0 → 几乎必然是数据源故障（反爬 403、空页、
         # API 结构变更），不能记成"成功写入 0 行"。抛错让 _run_task 标记 fetch_failed。
         # 注意：sector_ids 未命中任何板块时 target_sectors 为空，不抛错（graceful
@@ -721,11 +724,14 @@ def sync_all(
             sid = str(s.get("sector_id", ""))
             if not sid:
                 continue
-            out.extend(
-                source.get_sector_daily(
-                    sid, classification_system, start_date, analysis_date
+            try:
+                out.extend(
+                    source.get_sector_daily(
+                        sid, classification_system, start_date, analysis_date
+                    )
                 )
-            )
+            except Exception:
+                continue
         return out
 
     def _persist_sector_daily(rows: List[Dict[str, Any]]) -> _PersistResult:

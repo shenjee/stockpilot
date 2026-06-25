@@ -209,10 +209,6 @@ class AppSmokeTests(unittest.TestCase):
             recorder.dataframes,
             "expected at least one dataframe rendered for sectors",
         )
-        self.assertTrue(
-            any("下拉" in label for label in recorder.selectbox_calls),
-            f"expected selectbox fallback when no row selected, got {recorder.selectbox_calls}",
-        )
 
     def test_no_cache_shows_empty_state(self) -> None:
         """无缓存时展示空状态，不渲染表格。"""

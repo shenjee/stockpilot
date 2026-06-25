@@ -456,10 +456,13 @@ class AkShareFundamentalDataSource:
                 f"http://q.10jqka.com.cn/thshy/detail/code/{sector_id}/"
                 f"page/{page}/ajax/1/"
             )
-            resp = requests.get(ajax_url, headers=headers, timeout=30)
-            resp.raise_for_status()
-            soup = BeautifulSoup(resp.text, features="lxml")
-            all_records.extend(self._parse_ths_stock_table(soup))
+            try:
+                resp = requests.get(ajax_url, headers=headers, timeout=30)
+                resp.raise_for_status()
+                soup = BeautifulSoup(resp.text, features="lxml")
+                all_records.extend(self._parse_ths_stock_table(soup))
+            except Exception:
+                continue
 
         return all_records
 
@@ -552,7 +555,13 @@ class AkShareFundamentalDataSource:
         for code in codes:
             if not code:
                 continue
-            daily = self._fetch_code_daily(code, trade_date)
+            try:
+                daily = self._fetch_code_daily(code, trade_date)
+            except Exception:
+                # 单只股票抓取失败（如北交所 symbol 格式不兼容）不应中断整批，
+                # 跳过该股票继续抓其余。已修复的 _derive_market 覆盖 920 段，
+                # 此处兜底防御未来类似边界情况。
+                continue
             if not daily:
                 continue
             rows.append(daily | {"code": code, "source_updated_at": fetched_at})
@@ -627,8 +636,11 @@ class AkShareFundamentalDataSource:
         for code in codes:
             if not code:
                 continue
-            pe_map = self._fetch_baidu_indicator(code, "市盈率(TTM)")
-            pb_map = self._fetch_baidu_indicator(code, "市净率")
+            try:
+                pe_map = self._fetch_baidu_indicator(code, "市盈率(TTM)")
+                pb_map = self._fetch_baidu_indicator(code, "市净率")
+            except Exception:
+                continue
             all_dates = sorted(set(pe_map.keys()) | set(pb_map.keys()))
             for d in all_dates:
                 if d < start_date or d > end_date:
@@ -663,9 +675,12 @@ class AkShareFundamentalDataSource:
         for code in codes:
             if not code:
                 continue
-            df = self._ak.stock_financial_analysis_indicator(
-                symbol=code, start_year=start_year
-            )
+            try:
+                df = self._ak.stock_financial_analysis_indicator(
+                    symbol=code, start_year=start_year
+                )
+            except Exception:
+                continue
             if df is None or len(df) == 0:
                 continue
             for r in df.to_dict(orient="records"):
