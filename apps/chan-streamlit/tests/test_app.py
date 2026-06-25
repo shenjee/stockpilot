@@ -21,7 +21,19 @@ if "streamlit" not in sys.modules:
     streamlit_stub.set_page_config = lambda *args, **kwargs: None
     streamlit_stub.markdown = lambda *args, **kwargs: None
     streamlit_stub.text_input = lambda *args, **kwargs: ""
-    streamlit_stub.selectbox = lambda *args, **kwargs: "day"
+
+    def _selectbox_stub(*args, **kwargs):
+        # 没有 options 时退回旧行为；有 options 时返回第一项，避免未来 main()
+        # 测试把 "day" 误当 language / 证券选项。key 优先用 session_state 里已有的值。
+        key = kwargs.get("key")
+        if key is not None and key in streamlit_stub.session_state:
+            return streamlit_stub.session_state[key]
+        options = kwargs.get("options")
+        if isinstance(options, (list, tuple)) and options:
+            return options[0]
+        return "day"
+
+    streamlit_stub.selectbox = _selectbox_stub
     streamlit_stub.date_input = lambda *args, **kwargs: date(2026, 6, 12)
     streamlit_stub.number_input = lambda *args, **kwargs: 50
     streamlit_stub.checkbox = lambda *args, **kwargs: True

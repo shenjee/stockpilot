@@ -19,8 +19,8 @@ class FakeMarketData:
         self.realtime_calls.append(codes)
         return [{"code": "000001", "price": 3000.0, "pre_close": 2990.0, "change": 10.0, "change_pct": 0.33}]
 
-    def get_daily_quote(self, code: str, trade_date: str, market: str = None):
-        self.daily_quote_calls.append((code, trade_date, market))
+    def get_daily_quote(self, code: str, trade_date: str, market: str = None, security_type: str = None):
+        self.daily_quote_calls.append((code, trade_date, market, security_type))
         return {
             "close": 3000.0,
             "pre_close": 2990.0,
@@ -50,6 +50,8 @@ class ReportDataServiceTests(unittest.TestCase):
         self.assertGreater(len(result), 0)
         self.assertEqual(len(market_data.realtime_calls), 0)
         self.assertTrue(all(call[1] == "2026-06-12" for call in market_data.daily_quote_calls))
+        # 指数历史行情必须以 security_type="index" 走不复权，否则腾讯 qfq 返回空。
+        self.assertTrue(all(call[3] == "index" for call in market_data.daily_quote_calls))
 
     def test_realtime_index_data_uses_realtime_provider(self):
         market_data = FakeMarketData()

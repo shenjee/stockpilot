@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""生成证券主数据 JSON（securities_master.json）。
+
+一次性、幂等的生成脚本，产物提交进仓库供运行时导入到 SQLite。
+覆盖 A 股股票 / 指数 / ETF，每条记录包含 code / market / type / name / pinyin
+（pinyin 为名称拼音首字母大写，如 平安银行 -> PAYH），便于前端按代码 / 名称 /
+拼音首字母搜索。未来扩展 基金 / 可转债 时，往本脚本加新的 type 段即可。
+
+akshare 与 pypinyin 只在本脚本内使用，且采用懒导入：本模块可在没有这两个
+依赖的环境里被 import（例如只为了拿常量），只有在真正执行 `_build()` 时才需要。
+运行时 App 不依赖 akshare / pypinyin —— 主数据已在构建期算好并固化进 JSON。
+
+执行::
+
+    python skills/china-stock-analysis/scripts/build_securities_master.py
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+# 让脚本既能直接运行（相对导入 market_data）也能被 -m 调用。
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
+from market_data import INDICES, get_market_prefix  # noqa: E402
+
+OUTPUT_PATH = _SCRIPTS_DIR / "securities_master.json"
+
+
+def _pinyin_initials(name: str) -> str:
+    """名称 -> 拼音首字母大写。非汉字字符（数字/字母/符号）原样保留并大写。"""
+
+    from pypinyin import Style, lazy_pinyin
+
+    parts = lazy_pinyin(name, style=Style.FIRST_LETTER)
+    return "".join(p.upper() for p in parts if p)
+
+
+def _record(code: str, market: str, sec_type: str, name: str) -> dict:
+    code = str(code).strip().zfill(6)
+    name = str(name).strip()
+    return {
+        "code": code,
+        "market": market,
+        "type": sec_type,
+        "name": name,
+        "pinyin": _pinyin_initials(name),
+    }
+
+
+def _collect_stocks(records: list[dict]) -> None:
+    import akshare as ak
+
+    # ak.stock_info_a_code_name() 返回 code/name 两列，覆盖沪深京全市场 A 股。
+    df = ak.stock_info_a_code_name()
+    for _, row in df.iterrows():
+        code = str(row["code"]).strip()
+        records.append(_record(code, get_market_prefix(code), "stock", row["name"]))
+
+
+def _collect_etfs(records: list[dict]) -> None:
+    import akshare as ak
+
+    # ak.fund_etf_spot_em() 返回中文列名（代码 / 名称 / ...）。
+    df = ak.fund_etf_spot_em()
+    for _, row in df.iterrows():
+        code = str(row["代码"]).strip()
+        records.append(_record(code, get_market_prefix(code), "etf", row["名称"]))
+
+
+def _collect_indices(records: list[dict]) -> None:
+    # 指数的 market 必须取自 INDICES *键* 的前缀（如 "sh000001" -> "sh"），不能用
+    # get_market_prefix(code)：get_market_prefix("000001") 会误判成 "sz"，而
+    # 000001 在 sh 是上证指数。INDICES 值里的 exchange（大写）只是展示标签。
+    for sym, (name, exchange) in INDICES.items():
+        prefix = sym[:2].lower()
+        if prefix != exchange.lower():
+            # 标记 INDICES 里 key 前缀与 value 交易所不一致的情况（如 sz899050/北证50）。
+            # 这是既有的 INDICES 数据问题，与本特性正交，单独修；这里只用 key 前缀，
+            # 因为它才是腾讯行情接口的真实符号前缀。
+            print(
+                f"[WARN] INDICES 前缀与交易所不一致: {sym} prefix={prefix} "
+                f"exchange={exchange}，按 key 前缀 {prefix} 取用。",
+                file=sys.stderr,
+            )
+        records.append(_record(sym[2:], prefix, "index", name))
+
+
+def _build() -> None:
+    records: list[dict] = []
+    _collect_stocks(records)
+    _collect_etfs(records)
+    _collect_indices(records)
+
+    # 按 (code, market) 去重，再按 (type, code) 排序，保证 JSON diff 稳定。
+    seen: set[tuple[str, str]] = set()
+    unique: list[dict] = []
+    for r in records:
+        key = (r["code"], r["market"])
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(r)
+    unique.sort(key=lambda r: (r["type"], r["code"], r["market"]))
+
+    with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
+        json.dump(unique, f, ensure_ascii=False, indent=2)
+
+    by_type: dict[str, int] = {}
+    for r in unique:
+        by_type[r["type"]] = by_type.get(r["type"], 0) + 1
+    print(
+        f"写入 {OUTPUT_PATH}：共 {len(unique)} 条；"
+        + "；".join(f"{t} {c}" for t, c in sorted(by_type.items()))
+    )
+
+
+if __name__ == "__main__":
+    _build()
