@@ -32,10 +32,16 @@ OUTPUT_PATH = _SCRIPTS_DIR / "securities_master.json"
 
 
 def _pinyin_initials(name: str) -> str:
-    """名称 -> 拼音首字母大写。非汉字字符（数字/字母/符号）原样保留并大写。"""
+    """名称 -> 拼音首字母大写。非汉字字符（数字/字母/符号）原样保留并大写。
 
-    from pypinyin import Style, lazy_pinyin
+    pypinyin 默认把多音字「长」解析为 zhǎng（Z），但在证券名称里「长」几乎都是
+    cháng（如 长飞光纤、长江、长城、长三角）。这里把「长」的单字默认改为 cháng；
+    已知词组（成长、班长 等）仍由 PHRASES_DICT 优先正确解析为 zhǎng，不受影响。
+    """
 
+    from pypinyin import Style, lazy_pinyin, load_single_dict
+
+    load_single_dict({ord("长"): "cháng"})
     parts = lazy_pinyin(name, style=Style.FIRST_LETTER)
     return "".join(p.upper() for p in parts if p)
 

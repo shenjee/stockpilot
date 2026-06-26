@@ -5555,7 +5555,7 @@
     "market": "sh",
     "type": "etf",
     "name": "长三角ETF汇添富",
-    "pinyin": "ZSJETFHTF"
+    "pinyin": "CSJETFHTF"
   },
   {
     "code": "512660",
@@ -12765,7 +12765,7 @@
     "market": "sz",
     "type": "stock",
     "name": "岳阳兴长",
-    "pinyin": "YYXZ"
+    "pinyin": "YYXC"
   },
   {
     "code": "000820",
@@ -13409,7 +13409,7 @@
     "market": "sz",
     "type": "stock",
     "name": "长源电力",
-    "pinyin": "ZYDL"
+    "pinyin": "CYDL"
   },
   {
     "code": "000967",
@@ -17357,7 +17357,7 @@
     "market": "sz",
     "type": "stock",
     "name": "长高电气",
-    "pinyin": "ZGDQ"
+    "pinyin": "CGDQ"
   },
   {
     "code": "002453",
@@ -20066,7 +20066,7 @@
     "market": "sz",
     "type": "stock",
     "name": "长缆科技",
-    "pinyin": "ZLKJ"
+    "pinyin": "CLKJ"
   },
   {
     "code": "002880",
@@ -21711,7 +21711,7 @@
     "market": "sz",
     "type": "stock",
     "name": "长信科技",
-    "pinyin": "ZXKJ"
+    "pinyin": "CXKJ"
   },
   {
     "code": "300091",
@@ -21865,7 +21865,7 @@
     "market": "sz",
     "type": "stock",
     "name": "长盈精密",
-    "pinyin": "ZYJM"
+    "pinyin": "CYJM"
   },
   {
     "code": "300118",
@@ -22390,14 +22390,14 @@
     "market": "sz",
     "type": "stock",
     "name": "长荣股份",
-    "pinyin": "ZRGF"
+    "pinyin": "CRGF"
   },
   {
     "code": "300196",
     "market": "sz",
     "type": "stock",
     "name": "长海股份",
-    "pinyin": "ZHGF"
+    "pinyin": "CHGF"
   },
   {
     "code": "300197",
@@ -23363,7 +23363,7 @@
     "market": "sz",
     "type": "stock",
     "name": "长亮科技",
-    "pinyin": "ZLKJ"
+    "pinyin": "CLKJ"
   },
   {
     "code": "300349",
@@ -24672,7 +24672,7 @@
     "market": "sz",
     "type": "stock",
     "name": "长芯博创",
-    "pinyin": "ZXBC"
+    "pinyin": "CXBC"
   },
   {
     "code": "300549",
@@ -25827,7 +25827,7 @@
     "market": "sz",
     "type": "stock",
     "name": "长盛轴承",
-    "pinyin": "ZSZC"
+    "pinyin": "CSZC"
   },
   {
     "code": "300719",
@@ -30328,7 +30328,7 @@
     "market": "sz",
     "type": "stock",
     "name": "长华化学",
-    "pinyin": "ZHHX"
+    "pinyin": "CHHX"
   },
   {
     "code": "301519",
@@ -30748,7 +30748,7 @@
     "market": "sz",
     "type": "stock",
     "name": "长联科技",
-    "pinyin": "ZLKJ"
+    "pinyin": "CLKJ"
   },
   {
     "code": "301622",
@@ -31539,7 +31539,7 @@
     "market": "sh",
     "type": "stock",
     "name": "*ST长投",
-    "pinyin": "*STZT"
+    "pinyin": "*STCT"
   },
   {
     "code": "600120",
@@ -33611,7 +33611,7 @@
     "market": "sh",
     "type": "stock",
     "name": "ST长园",
-    "pinyin": "STZY"
+    "pinyin": "STCY"
   },
   {
     "code": "600526",
@@ -33807,7 +33807,7 @@
     "market": "sh",
     "type": "stock",
     "name": "江西长运",
-    "pinyin": "JXZY"
+    "pinyin": "JXCY"
   },
   {
     "code": "600562",
@@ -33947,7 +33947,7 @@
     "market": "sh",
     "type": "stock",
     "name": "长电科技",
-    "pinyin": "ZDKJ"
+    "pinyin": "CDKJ"
   },
   {
     "code": "600585",
@@ -35515,7 +35515,7 @@
     "market": "sh",
     "type": "stock",
     "name": "航天长峰",
-    "pinyin": "HTZF"
+    "pinyin": "HTCF"
   },
   {
     "code": "600857",
@@ -37475,7 +37475,7 @@
     "market": "sh",
     "type": "stock",
     "name": "长飞光纤",
-    "pinyin": "ZFGX"
+    "pinyin": "CFGX"
   },
   {
     "code": "601872",
@@ -40058,7 +40058,7 @@
     "market": "sh",
     "type": "stock",
     "name": "长裕集团",
-    "pinyin": "ZYJT"
+    "pinyin": "CYJT"
   },
   {
     "code": "603408",
@@ -41465,7 +41465,7 @@
     "market": "sh",
     "type": "stock",
     "name": "步长制药",
-    "pinyin": "BZZY"
+    "pinyin": "BCZY"
   },
   {
     "code": "603859",
@@ -41857,7 +41857,7 @@
     "market": "sh",
     "type": "stock",
     "name": "长源东谷",
-    "pinyin": "ZYDG"
+    "pinyin": "CYDG"
   },
   {
     "code": "603955",
@@ -42109,7 +42109,7 @@
     "market": "sh",
     "type": "stock",
     "name": "长鸿高科",
-    "pinyin": "ZHGK"
+    "pinyin": "CHGK"
   },
   {
     "code": "605009",
@@ -42137,7 +42137,7 @@
     "market": "sh",
     "type": "stock",
     "name": "XD长华集",
-    "pinyin": "XDZHJ"
+    "pinyin": "XDCHJ"
   },
   {
     "code": "605020",
@@ -42753,7 +42753,7 @@
     "market": "sh",
     "type": "stock",
     "name": "长龄液压",
-    "pinyin": "ZLYY"
+    "pinyin": "CLYY"
   },
   {
     "code": "605398",
@@ -43145,7 +43145,7 @@
     "market": "sh",
     "type": "stock",
     "name": "长光华芯",
-    "pinyin": "ZGHX"
+    "pinyin": "CGHX"
   },
   {
     "code": "688049",
@@ -43740,7 +43740,7 @@
     "market": "sh",
     "type": "stock",
     "name": "长盈通",
-    "pinyin": "ZYT"
+    "pinyin": "CYT"
   },
   {
     "code": "688146",
@@ -44671,7 +44671,7 @@
     "market": "sh",
     "type": "stock",
     "name": "长阳科技",
-    "pinyin": "ZYKJ"
+    "pinyin": "CYKJ"
   },
   {
     "code": "688300",
