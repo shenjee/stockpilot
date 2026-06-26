@@ -140,6 +140,12 @@ class _Recorder:
             return func
 
         st.cache_data = _cache_data
+
+        # column_config 子模块：NumberColumn 在真实 streamlit 里返回列描述对象，
+        # 测试中只需返回一个占位对象即可。
+        column_config = types.ModuleType("streamlit.column_config")
+        column_config.NumberColumn = lambda *a, **kw: object()
+        st.column_config = column_config
         return st
 
 

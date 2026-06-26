@@ -28,7 +28,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fundamentalscreener.config import (  # noqa: E402
     DEFAULT_PERIODS,
     DEFAULT_SECTOR_SORT,
-    SUPPORTED_SECTOR_SORTS,
 )
 from services.data_service import (  # noqa: E402
     build_sector_board,
@@ -155,29 +154,6 @@ _ENUM_LABELS: Dict[str, Dict[str, Dict[str, str]]] = {
         "index": {"zh": "指数板块", "en": "Index"},
     },
 }
-
-
-# 基准指数代码 → 可读名称。
-_SECTOR_SORT_LABELS: Dict[str, Dict[str, str]] = {
-    "return_1d": {"zh": "近1日涨跌幅", "en": "Return 1d"},
-    "return_5d": {"zh": "近5日涨跌幅", "en": "Return 5d"},
-    "return_20d": {"zh": "近20日涨跌幅", "en": "Return 20d"},
-    "return_60d": {"zh": "近60日涨跌幅", "en": "Return 60d"},
-    "relative_return": {"zh": "相对基准收益", "en": "Relative Return"},
-    "turnover_amount_change": {"zh": "成交额变化", "en": "Turnover Change"},
-    "rising_stock_ratio": {"zh": "上涨家数占比", "en": "Rising Stock Ratio"},
-    "score": {"zh": "评分", "en": "Score"},
-}
-
-
-def _sector_sort_label(sort_key: str) -> str:
-    """板块排序字段 code → 可读名称（如 return_5d → 近5日涨跌幅）。"""
-
-    entry = _SECTOR_SORT_LABELS.get(sort_key)
-    if entry:
-        lang = st.session_state.get("lang_idx", "zh")
-        return entry.get(lang) or entry["zh"]
-    return sort_key
 
 
 # 基准指数代码 → 可读名称。
@@ -325,25 +301,23 @@ _PERCENT_FIELDS: set = {
 def _to_display_rows(
     rows: List[Dict[str, Any]], lang: str
 ) -> List[Dict[str, Any]]:
-    """格式化百分比字段并翻译列名/枚举值，供 st.dataframe 直接展示。
+    """翻译列名/枚举值，供 st.dataframe 直接展示。
 
-    比率字段转为 ``"3.68%"`` 字符串；``None`` 原样保留。
+    比率字段保持数值类型（0-1 小数），由 ``_percent_column_config`` 通过
+    ``st.column_config.NumberColumn(format="percent")`` 负责展示为百分比；
+    这样表格点击列头排序时按数值而非字符串比较。``None`` 原样保留。
     """
 
-    formatted: List[Dict[str, Any]] = []
-    for row in rows:
-        new_row: Dict[str, Any] = {}
-        for key, value in row.items():
-            if (
-                key in _PERCENT_FIELDS
-                and value is not None
-                and isinstance(value, (int, float))
-            ):
-                new_row[key] = f"{value:.2%}"
-            else:
-                new_row[key] = value
-        formatted.append(new_row)
-    return _localize_rows(formatted, lang)
+    return _localize_rows(rows, lang)
+
+
+def _percent_column_config(lang: str) -> Dict[str, Any]:
+    """为所有百分比字段生成 ``column_config``，按数值排序、按百分比展示。"""
+
+    return {
+        _label(field, lang): st.column_config.NumberColumn(format="percent")
+        for field in _PERCENT_FIELDS
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -436,12 +410,6 @@ def main() -> None:
         )
         analysis_date_str = picked.isoformat()
 
-        sort_field = st.selectbox(
-            _t("板块排序字段", "Sector sort field"),
-            options=list(SUPPORTED_SECTOR_SORTS),
-            index=list(SUPPORTED_SECTOR_SORTS).index(DEFAULT_SECTOR_SORT),
-            format_func=_sector_sort_label,
-        )
         sector_top = st.number_input(
             _t("板块 Top N", "Sector Top N"),
             min_value=1,
@@ -534,7 +502,7 @@ def main() -> None:
 
     board = build_sector_board(
         snapshot,
-        sort=sort_field,
+        sort=DEFAULT_SECTOR_SORT,
         periods=DEFAULT_PERIODS,
         top=int(sector_top),
         metadata=result.metadata,
@@ -602,6 +570,7 @@ def main() -> None:
         hide_index=True,
         on_select="rerun",
         selection_mode="single-row",
+        column_config=_percent_column_config(lang),
         key="sector_table",
     )
 
@@ -657,7 +626,11 @@ def main() -> None:
     if not company_rows:
         _empty_message(_t("该板块当前没有公司数据。", "No companies in this sector."))
     else:
-        st.dataframe(_to_display_rows(company_rows, lang), use_container_width=True)
+        st.dataframe(
+            _to_display_rows(company_rows, lang),
+            use_container_width=True,
+            column_config=_percent_column_config(lang),
+        )
 
     # ----------------- 财务 / 估值 / Flags -----------------
     fin_tab, val_tab, flag_tab = st.tabs(
@@ -678,7 +651,11 @@ def main() -> None:
                 )
             )
         else:
-            st.dataframe(_to_display_rows(fin_rows, lang), use_container_width=True)
+            st.dataframe(
+                _to_display_rows(fin_rows, lang),
+                use_container_width=True,
+                column_config=_percent_column_config(lang),
+            )
 
     with val_tab:
         val_rows = valuations_to_rows(detail.valuations)
@@ -690,7 +667,11 @@ def main() -> None:
                 )
             )
         else:
-            st.dataframe(_to_display_rows(val_rows, lang), width="stretch")
+            st.dataframe(
+                _to_display_rows(val_rows, lang),
+                width="stretch",
+                column_config=_percent_column_config(lang),
+            )
 
     with flag_tab:
         flag_rows = collect_company_flags(
@@ -699,7 +680,11 @@ def main() -> None:
         if not flag_rows:
             _empty_message(_t("该板块当前没有标记数据。", "No flags for this sector."))
         else:
-            st.dataframe(_to_display_rows(flag_rows, lang), use_container_width=True)
+            st.dataframe(
+                _to_display_rows(flag_rows, lang),
+                use_container_width=True,
+                column_config=_percent_column_config(lang),
+            )
 
     if detail.warnings:
         with st.expander(
