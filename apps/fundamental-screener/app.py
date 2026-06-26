@@ -158,6 +158,29 @@ _ENUM_LABELS: Dict[str, Dict[str, Dict[str, str]]] = {
 
 
 # 基准指数代码 → 可读名称。
+_SECTOR_SORT_LABELS: Dict[str, Dict[str, str]] = {
+    "return_1d": {"zh": "近1日涨跌幅", "en": "Return 1d"},
+    "return_5d": {"zh": "近5日涨跌幅", "en": "Return 5d"},
+    "return_20d": {"zh": "近20日涨跌幅", "en": "Return 20d"},
+    "return_60d": {"zh": "近60日涨跌幅", "en": "Return 60d"},
+    "relative_return": {"zh": "相对基准收益", "en": "Relative Return"},
+    "turnover_amount_change": {"zh": "成交额变化", "en": "Turnover Change"},
+    "rising_stock_ratio": {"zh": "上涨家数占比", "en": "Rising Stock Ratio"},
+    "score": {"zh": "评分", "en": "Score"},
+}
+
+
+def _sector_sort_label(sort_key: str) -> str:
+    """板块排序字段 code → 可读名称（如 return_5d → 近5日涨跌幅）。"""
+
+    entry = _SECTOR_SORT_LABELS.get(sort_key)
+    if entry:
+        lang = st.session_state.get("lang_idx", "zh")
+        return entry.get(lang) or entry["zh"]
+    return sort_key
+
+
+# 基准指数代码 → 可读名称。
 _BENCHMARK_LABELS: Dict[str, Dict[str, str]] = {
     "hs300": {"zh": "沪深300", "en": "CSI 300"},
     "sse": {"zh": "上证综指", "en": "SSE Composite"},
@@ -410,10 +433,6 @@ def main() -> None:
         picked = st.date_input(
             _t("分析日期", "Analysis date"),
             value=default_date,
-            help=_t(
-                "默认使用最新可用交易日，可手动调整。",
-                "Defaults to the latest available trading date; adjust as needed.",
-            ),
         )
         analysis_date_str = picked.isoformat()
 
@@ -421,6 +440,7 @@ def main() -> None:
             _t("板块排序字段", "Sector sort field"),
             options=list(SUPPORTED_SECTOR_SORTS),
             index=list(SUPPORTED_SECTOR_SORTS).index(DEFAULT_SECTOR_SORT),
+            format_func=_sector_sort_label,
         )
         sector_top = st.number_input(
             _t("板块 Top N", "Sector Top N"),
@@ -437,8 +457,9 @@ def main() -> None:
             step=1,
         )
         refresh_clicked = st.button(
-            _t("获取数据 / 运行分析", "Fetch Data / Run Analysis"),
+            _t("分析", "Analyze"),
             type="primary",
+            use_container_width=True,
             help=_t(
                 "从同花顺行业板块同步最新数据并运行分析。",
                 "Sync latest data from THS industry sectors and run analysis.",
