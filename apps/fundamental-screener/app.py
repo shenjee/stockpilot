@@ -428,10 +428,6 @@ def main() -> None:
             _t("分析", "Analyze"),
             type="primary",
             use_container_width=True,
-            help=_t(
-                "从同花顺行业板块同步最新数据并运行分析。",
-                "Sync latest data from THS industry sectors and run analysis.",
-            ),
         )
         lang = st.selectbox(
             _t("界面语言", "Display language"),
