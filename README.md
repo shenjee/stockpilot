@@ -64,6 +64,36 @@ stockpilot/
         `-- assets/
 ```
 
+## Development Setup
+
+Create or activate a Python environment, then install the repository in editable
+mode from the repo root:
+
+```bash
+python -m pip install -e ".[dev]"
+```
+
+Common dependency sets:
+
+- `python -m pip install -e .` for core packages and the China stock analysis skill runtime
+- `python -m pip install -e ".[apps]"` for both Streamlit apps, including `streamlit-searchbox`
+- `python -m pip install -e ".[akshare]"` for AkShare-backed sync and master-data build helpers
+- `python -m pip install -e ".[dev]"` for the full local development environment
+
+Stable CLI entry points after installation:
+
+```bash
+stockpilot-fundamentalscreener sectors --format json
+stockpilot-fundamentalscreener screen --format json
+```
+
+The existing module invocation also remains valid:
+
+```bash
+python -m packages.fundamentalscreener.cli sectors --format json
+python -m packages.fundamentalscreener.cli screen --format json
+```
+
 ## Installation
 
 Install one skill by copying its directory into the target client's skills directory:

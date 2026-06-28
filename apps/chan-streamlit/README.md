@@ -20,11 +20,17 @@ It is intended for:
 
 ## Run
 
-Install local dependencies first if they are not already available:
+Install the app dependencies from the repo root:
 
 ```bash
-python3 -m pip install streamlit plotly
+python -m pip install -e ".[apps]"
 ```
+
+This extra includes:
+
+- `streamlit`
+- `plotly`
+- `streamlit-searchbox`
 
 Start the app from the repo root:
 

@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stockpilot"
+version = "0.1.0"
+description = "Stock-focused analysis workflows, reusable packages, apps, and installable skills."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "czsc==0.10.12",
+  "numpy>=1.26",
+  "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+apps = [
+  "streamlit>=1.36",
+  "plotly>=5.22",
+  "pandas>=2.2",
+  "streamlit-searchbox>=0.1.22",
+]
+akshare = [
+  "akshare>=1.16",
+  "pypinyin>=0.54",
+]
+dev = [
+  "streamlit>=1.36",
+  "plotly>=5.22",
+  "pandas>=2.2",
+  "streamlit-searchbox>=0.1.22",
+  "akshare>=1.16",
+  "pypinyin>=0.54",
+]
+all = [
+  "streamlit>=1.36",
+  "plotly>=5.22",
+  "pandas>=2.2",
+  "streamlit-searchbox>=0.1.22",
+  "akshare>=1.16",
+  "pypinyin>=0.54",
+]
+
+[project.scripts]
+stockpilot-fundamentalscreener = "packages.fundamentalscreener.cli:main"
+stockpilot-fundamentalscreener-sync = "packages.fundamentalscreener.sync:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["chantheory", "fundamentalscreener", "packages*"]
+namespaces = true

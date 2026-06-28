@@ -20,6 +20,7 @@ This file adds app-specific guidance for work inside `apps/chan-streamlit/`. It 
   - `chantheory` for analysis
   - `TencentStockDataProvider` for market data
   - Plotly for chart rendering
+  - `streamlit-searchbox` for symbol lookup
   - the local `chan_chart_widget/` component for chart interaction
 
 Keep those boundaries clear when editing.
@@ -48,10 +49,10 @@ source ~/.venvs/czsc/bin/activate
 streamlit run apps/chan-streamlit/app.py
 ```
 
-If Streamlit or Plotly are missing:
+If app dependencies are missing:
 
 ```bash
-python -m pip install streamlit plotly
+python -m pip install -e ".[apps]"
 ```
 
 ## Test Focus
