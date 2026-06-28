@@ -22,12 +22,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence
 
+from fundamentalscreener import snapshot_service as fs_snapshot_service
 from fundamentalscreener.company_ranking import compute_company_ranking, sort_companies
 from fundamentalscreener.config import DEFAULT_PERIODS, DEFAULT_SECTOR_SORT
-from fundamentalscreener.financial_quality import compute_financial_quality, sort_financials
-from fundamentalscreener.lineage import SnapshotMetadata, now_cn
+from fundamentalscreener.lineage import SnapshotMetadata
 from fundamentalscreener.quality import QualityReport
 from fundamentalscreener.repositories import FixtureRepository, MarketSnapshot
 from fundamentalscreener.schema import (
@@ -36,18 +36,11 @@ from fundamentalscreener.schema import (
     SectorEntry,
     ValuationEntry,
 )
-from fundamentalscreener.screening import ScreeningResult, run_screening
 from fundamentalscreener.sector_rotation import (
     SectorRotationResult,
     compute_sector_rotation,
     sort_entries,
 )
-from fundamentalscreener.sqlite_repository import (
-    QualityInvalidError,
-    SqliteFundamentalRepository,
-)
-from fundamentalscreener.sqlite_schema import connect, init_db
-from fundamentalscreener.valuation import compute_valuation, sort_valuations
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +141,10 @@ class FrontendSnapshotResult:
 # ---------------------------------------------------------------------------
 
 
+def _resolve_db_path(db_path: Optional[Path | str]) -> Path:
+    return Path(db_path) if db_path else DEFAULT_DB_PATH
+
+
 def load_snapshot(fixture_path: Path | str) -> MarketSnapshot:
     """读取 fixture 文件并返回 MarketSnapshot（Phase 0-5 行为，保留不变）。"""
 
@@ -161,32 +158,19 @@ def load_snapshot_from_db(
     classification_system: str = DEFAULT_CLASSIFICATION_SYSTEM,
     benchmark: str = DEFAULT_BENCHMARK,
 ) -> SnapshotLoadResult:
-    """从 SQLite 读取真实数据（Phase 7 真实数据入口）。
+    """从 SQLite 读取真实数据（Phase 7 真实数据入口）。"""
 
-    - 质量状态为 ``invalid`` 时 ``SqliteFundamentalRepository.load_snapshot()`` 抛
-      ``QualityInvalidError``，此处捕获并填入 ``quality_error``，返回空 snapshot，
-      由 UI 展示阻断原因而非崩溃。
-    - 正常时返回 snapshot + metadata + quality_report，供 UI 展示数据日期、来源
-      和质量 warnings（docs §19 Phase 7 DoD）。
-    """
-
-    repo = SqliteFundamentalRepository(
+    result = fs_snapshot_service.load_snapshot_from_db(
         db_path,
         analysis_date=analysis_date,
         classification_system=classification_system,
         benchmark=benchmark,
     )
-    try:
-        snapshot = repo.load_snapshot()
-    except QualityInvalidError as exc:
-        return SnapshotLoadResult(
-            quality_error=str(exc),
-            quality_report=repo.quality_report,
-        )
     return SnapshotLoadResult(
-        snapshot=snapshot,
-        metadata=repo.metadata,
-        quality_report=repo.quality_report,
+        snapshot=result.snapshot,
+        metadata=result.metadata,
+        quality_report=result.quality_report,
+        quality_error=result.quality_error,
     )
 
 
@@ -199,37 +183,12 @@ def _find_latest_analysis_date(
     db_path: Path,
     classification_system: Optional[str] = None,
 ) -> Optional[str]:
-    """查询 SQLite 缓存中指定口径的最新可用分析日期。
+    """查询 SQLite 缓存中指定口径的最新可用分析日期。"""
 
-    返回 ``sector_daily_bars`` 的 ``MAX(trade_date)``。当 ``classification_system``
-    非空时，按该口径过滤，避免 ``em_industry`` 缓存的较晚日期使 ``ths_industry``
-    路径误选到不存在的分析日期。如果数据库文件不存在、表不存在或表为空，返回
-    ``None``。
-    """
-
-    if not db_path.exists():
-        return None
-    try:
-        conn = connect(db_path)
-    except Exception:
-        return None
-    try:
-        init_db(conn)
-        if classification_system:
-            row = conn.execute(
-                "SELECT MAX(trade_date) FROM sector_daily_bars "
-                "WHERE classification_system = ?",
-                (classification_system,),
-            ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT MAX(trade_date) FROM sector_daily_bars"
-            ).fetchone()
-        return row[0] if row and row[0] else None
-    except Exception:
-        return None
-    finally:
-        conn.close()
+    return fs_snapshot_service._find_latest_analysis_date(
+        db_path,
+        classification_system,
+    )
 
 
 def _has_cache_for_date(
@@ -237,34 +196,13 @@ def _has_cache_for_date(
     analysis_date: str,
     classification_system: str,
 ) -> bool:
-    """检查缓存中是否存在该口径下 ``trade_date <= analysis_date`` 的板块行情。
+    """检查缓存中是否存在该口径下 ``trade_date <= analysis_date`` 的板块行情。"""
 
-    匹配 repository 的 point-in-time 语义（``sqlite_repository.py``：行情按
-    ``trade_date <= analysis_date`` 截断），因此用户选择非交易日或晚于最新缓存
-    交易日的日期时，只要存在更早的缓存行，repository 仍能组装快照。
-
-    用于在 ``load_latest_snapshot()`` 显式传入 ``analysis_date`` 时，先验证缓存
-    是否存在，避免空 DB 被质量检查判为 ``invalid``（违反 no-cache 契约）。
-    """
-
-    if not db_path.exists():
-        return False
-    try:
-        conn = connect(db_path)
-    except Exception:
-        return False
-    try:
-        init_db(conn)
-        row = conn.execute(
-            "SELECT 1 FROM sector_daily_bars "
-            "WHERE trade_date <= ? AND classification_system = ? LIMIT 1",
-            (analysis_date, classification_system),
-        ).fetchone()
-        return row is not None
-    except Exception:
-        return False
-    finally:
-        conn.close()
+    return fs_snapshot_service._has_cache_for_date(
+        db_path,
+        analysis_date,
+        classification_system,
+    )
 
 
 def get_latest_cached_date(
@@ -277,8 +215,10 @@ def get_latest_cached_date(
     回退到 ``date.today()``。
     """
 
-    db = Path(db_path) if db_path else DEFAULT_DB_PATH
-    return _find_latest_analysis_date(db, classification_system)
+    return fs_snapshot_service.get_latest_cached_date(
+        _resolve_db_path(db_path),
+        classification_system,
+    )
 
 
 def load_latest_snapshot(
@@ -287,58 +227,25 @@ def load_latest_snapshot(
     classification_system: str = DEFAULT_CLASSIFICATION_SYSTEM,
     benchmark: str = DEFAULT_BENCHMARK,
 ) -> FrontendSnapshotResult:
-    """读取最新可用真实数据缓存（前端计划 §2.8）。
+    """读取最新可用真实数据缓存（前端计划 §2.8）。"""
 
-    ``analysis_date`` 为 ``None`` 时自动发现该口径下最新可用分析日期；显式传入
-    时直接使用该日期（用于前端"指定分析日期"控件）。无缓存时返回
-    ``status="no_cache"`` + ``snapshot=None``，**不抛异常**。
-    以下情况均返回 ``no_cache``：
-    - 默认 SQLite 缓存文件不存在。
-    - 缓存表尚未初始化。
-    - 缓存表为空（按口径过滤后）。
-    - 找不到可用分析日期。
-    - 显式传入的 ``analysis_date`` 在缓存中无对应数据。
-
-    有缓存时通过 ``SqliteFundamentalRepository`` 组装 ``MarketSnapshot``。
-    """
-
-    db = Path(db_path) if db_path else DEFAULT_DB_PATH
-
-    if analysis_date is None:
-        analysis_date = _find_latest_analysis_date(db, classification_system)
-    if analysis_date is None:
-        return FrontendSnapshotResult(
-            status="no_cache",
-            message="暂无本地数据，请点击获取数据。",
-        )
-
-    # 显式传入 analysis_date 时仍需验证缓存是否存在，避免空 DB 被判为 invalid。
-    if not _has_cache_for_date(db, analysis_date, classification_system):
-        return FrontendSnapshotResult(
-            status="no_cache",
-            message="暂无本地数据，请点击获取数据。",
-        )
-
-    load_result = load_snapshot_from_db(
-        db, analysis_date, classification_system, benchmark
+    result = fs_snapshot_service.load_latest_snapshot(
+        db_path=_resolve_db_path(db_path),
+        analysis_date=analysis_date,
+        classification_system=classification_system,
+        benchmark=benchmark,
     )
-
-    if load_result.quality_error:
-        return FrontendSnapshotResult(
-            status="invalid",
-            message=load_result.quality_error,
-            quality_report=load_result.quality_report,
-        )
-
-    status = "ok"
-    if load_result.metadata:
-        status = load_result.metadata.data_quality_status or "ok"
-
+    message = ""
+    if result.status == "no_cache":
+        message = "暂无本地数据，请点击获取数据。"
+    elif result.status == "invalid":
+        message = result.reason
     return FrontendSnapshotResult(
-        snapshot=load_result.snapshot,
-        metadata=load_result.metadata,
-        quality_report=load_result.quality_report,
-        status=status,
+        snapshot=result.snapshot,
+        metadata=result.metadata,
+        quality_report=result.quality_report,
+        status=result.status,
+        message=message,
     )
 
 
@@ -351,134 +258,33 @@ def refresh_market_data(
     codes: Optional[Sequence[str]] = None,
     source: Optional[Any] = None,
 ) -> FrontendSnapshotResult:
-    """同步数据并写入内部缓存，然后读取最新快照。
+    """同步数据并写入内部缓存，然后读取最新快照。"""
 
-    内部调用 ``sync_all()`` 和同花顺行业板块数据源（``ths_industry``）。
-    刷新失败但有旧缓存时展示旧缓存和失败提示（``status="refresh_failed"``）。
-    刷新失败且无缓存时返回 ``status="no_cache"``。
-
-    ``source`` 参数仅供测试注入 fake 数据源；产品路径不传，默认构造
-    ``AkShareFundamentalDataSource()``（惰性导入 akshare）。
-    """
-
-    db = Path(db_path) if db_path else DEFAULT_DB_PATH
-    if analysis_date is None:
-        analysis_date = now_cn().date().isoformat()
-
-    # 构造数据源（默认 AkShare THS，可注入用于测试）
-    if source is None:
-        from fundamentalscreener.data_sources.akshare_source import (
-            AkShareFundamentalDataSource,
-        )
-        source = AkShareFundamentalDataSource()
-
-    from fundamentalscreener.sync import LIGHT_REQUIRED_TASKS, sync_all
-
-    refresh_result_dict: Optional[Dict[str, Any]] = None
-    sync_error: Optional[str] = None
-    try:
-        conn = connect(db)
-        try:
-            # §15.9: codes=None 时执行轻量层同步（sector_ids=[] 跳过成分股和
-            # 个股层），避免全市场 per-code 抓取阻塞首屏。codes 非空时回退
-            # 全量行为（向后兼容）。
-            sync_sector_ids: Optional[Sequence[str]] = [] if codes is None else None
-            result = sync_all(
-                conn,
-                source,
-                analysis_date=analysis_date,
-                classification_system=classification_system,
-                benchmark=benchmark,
-                history_days=history_days,
-                codes=codes,
-                sector_ids=sync_sector_ids,
-            )
-            refresh_result_dict = result.to_dict()
-            # §15.9.4a: 首屏只校验轻量必需集（板块列表 + 板块日线 + benchmark）。
-            # 成分股属重量层，失败不阻塞首屏——用户点进板块详情时才触发同步。
-            # 非轻量任务（get_stock_universe / get_company_daily_snapshot 等）失败
-            # 也不阻塞首屏：sync_all 的 _run_task 会捕获异常写进 result.tasks，
-            # 此处只按 LIGHT_REQUIRED_TASKS 判定，其它失败最多由质量检查降级。
-            by_task = {t["task"]: t for t in result.tasks}
-            required_ok = all(
-                by_task.get(t, {}).get("success")
-                and int(by_task.get(t, {}).get("row_count", 0) or 0) > 0
-                for t in LIGHT_REQUIRED_TASKS
-            )
-            if not required_ok:
-                failed_details = [
-                    f"{t}: {by_task.get(t, {}).get('error', 'unknown')}"
-                    for t in LIGHT_REQUIRED_TASKS
-                    if not by_task.get(t, {}).get("success")
-                ]
-                empty_required = [
-                    t
-                    for t in LIGHT_REQUIRED_TASKS
-                    if by_task.get(t, {}).get("success")
-                    and int(by_task.get(t, {}).get("row_count", 0) or 0) == 0
-                ]
-                sync_error = (
-                    "sync did not satisfy required tasks"
-                    + (f": failed=[{', '.join(failed_details)}]" if failed_details else "")
-                    + (
-                        f": empty_required={empty_required}"
-                        if empty_required
-                        else ""
-                    )
-                )
-        finally:
-            conn.close()
-    except Exception as exc:
-        sync_error = str(exc)
-
-    # 同步后读取快照（无论成功失败都尝试读取缓存）
-    load_result = load_snapshot_from_db(
-        db, analysis_date, classification_system, benchmark
+    result = fs_snapshot_service.refresh_market_data(
+        db_path=_resolve_db_path(db_path),
+        analysis_date=analysis_date,
+        classification_system=classification_system,
+        benchmark=benchmark,
+        history_days=history_days,
+        codes=codes,
+        source=source,
     )
-
-    if load_result.snapshot is not None:
-        status = "ok"
-        if load_result.metadata:
-            status = load_result.metadata.data_quality_status or "ok"
-        message = ""
-        if sync_error:
-            status = "refresh_failed"
-            message = f"数据刷新失败，展示最近可用缓存：{sync_error}"
-        return FrontendSnapshotResult(
-            snapshot=load_result.snapshot,
-            metadata=load_result.metadata,
-            quality_report=load_result.quality_report,
-            status=status,
-            message=message,
-            refresh_result=refresh_result_dict,
-        )
-
-    # 无缓存可用
-    if load_result.quality_error:
-        # sync 失败导致 DB 为空 → no_cache；sync 成功但质量检查阻断 → invalid
-        if sync_error:
-            return FrontendSnapshotResult(
-                status="no_cache",
-                message=(
-                    "数据刷新失败且无可用缓存。"
-                    + (f"原因：{sync_error}" if sync_error else "")
-                ),
-                refresh_result=refresh_result_dict,
-            )
-        return FrontendSnapshotResult(
-            status="invalid",
-            message=load_result.quality_error,
-            quality_report=load_result.quality_report,
-            refresh_result=refresh_result_dict,
-        )
-
+    message = ""
+    if result.status == "refresh_failed":
+        message = f"数据刷新失败，展示最近可用缓存：{result.reason}"
+    elif result.status == "invalid":
+        message = result.reason
+    elif result.status == "no_cache" and result.reason:
+        message = f"数据刷新失败且无可用缓存。原因：{result.reason}"
+    elif result.status == "no_cache":
+        message = "数据刷新失败且无可用缓存。"
     return FrontendSnapshotResult(
-        status="no_cache",
-        message=(
-            "数据刷新失败且无可用缓存。"
-            + (f"原因：{sync_error}" if sync_error else "")
-        ),
-        refresh_result=refresh_result_dict,
+        snapshot=result.snapshot,
+        metadata=result.metadata,
+        quality_report=result.quality_report,
+        status=result.status,
+        message=message,
+        refresh_result=result.refresh_result,
     )
 
 
@@ -552,30 +358,12 @@ def has_sector_detail_cache(
     ``refresh_sector_detail`` 同步重量层数据。
     """
 
-    db = Path(db_path) if db_path else DEFAULT_DB_PATH
-    if not db.exists():
-        return False
-    if analysis_date is None:
-        analysis_date = _find_latest_analysis_date(db, classification_system)
-    if analysis_date is None:
-        return False
-    try:
-        conn = connect(db)
-    except Exception:
-        return False
-    try:
-        init_db(conn)
-        row = conn.execute(
-            "SELECT 1 FROM sector_constituents "
-            "WHERE sector_id = ? AND classification_system = ? "
-            "AND as_of_date <= ? LIMIT 1",
-            (sector_id, classification_system, analysis_date),
-        ).fetchone()
-        return row is not None
-    except Exception:
-        return False
-    finally:
-        conn.close()
+    return fs_snapshot_service.has_sector_detail_cache(
+        sector_id,
+        db_path=_resolve_db_path(db_path),
+        analysis_date=analysis_date,
+        classification_system=classification_system,
+    )
 
 
 def refresh_sector_detail(
@@ -601,122 +389,49 @@ def refresh_sector_detail(
     同步失败且无缓存时返回 ``status="no_cache"``。
     """
 
-    db = Path(db_path) if db_path else DEFAULT_DB_PATH
-    if analysis_date is None:
-        analysis_date = _find_latest_analysis_date(db, classification_system)
-    if analysis_date is None:
-        return SectorDetailResult(
-            status="no_cache",
-            message="暂无本地数据，请先获取数据。",
-        )
-
-    # 构造数据源（默认 AkShare THS，可注入用于测试）
-    if source is None:
-        from fundamentalscreener.data_sources.akshare_source import (
-            AkShareFundamentalDataSource,
-        )
-        source = AkShareFundamentalDataSource()
-
-    from fundamentalscreener.sync import DETAIL_REQUIRED_TASKS, sync_all
-
-    refresh_result_dict: Optional[Dict[str, Any]] = None
-    sync_error: Optional[str] = None
-    try:
-        conn = connect(db)
-        try:
-            result = sync_all(
-                conn,
-                source,
-                analysis_date=analysis_date,
-                classification_system=classification_system,
-                benchmark=benchmark,
-                history_days=history_days,
-                sector_ids=[sector_id],
-            )
-            refresh_result_dict = result.to_dict()
-            # §15.9.4b: sync_all 的 _run_task 捕获异常后写进 result.tasks，
-            # 不会向上抛出，必须显式检查重量层必需任务（成分股）是否成功且有行。
-            # 失败或 0 行 → 视为 detail 层刷新失败，提示用户而非静默展示空详情。
-            by_task = {t["task"]: t for t in result.tasks}
-            failed_details = [
-                f"{t}: {by_task.get(t, {}).get('error', 'unknown')}"
-                for t in DETAIL_REQUIRED_TASKS
-                if not by_task.get(t, {}).get("success")
-            ]
-            empty_details = [
-                t
-                for t in DETAIL_REQUIRED_TASKS
-                if by_task.get(t, {}).get("success")
-                and int(by_task.get(t, {}).get("row_count", 0) or 0) == 0
-            ]
-            if failed_details or empty_details:
-                sync_error = (
-                    "sync did not satisfy detail required tasks"
-                    + (f": failed=[{', '.join(failed_details)}]" if failed_details else "")
-                    + (f": empty={empty_details}" if empty_details else "")
-                )
-        finally:
-            conn.close()
-    except Exception as exc:
-        sync_error = str(exc)
-
-    # 从 DB 加载快照（无论同步成功失败都尝试读取缓存）
-    load_result = load_snapshot_from_db(
-        db, analysis_date, classification_system, benchmark
+    result = fs_snapshot_service.refresh_sector_detail_snapshot(
+        sector_id,
+        db_path=_resolve_db_path(db_path),
+        analysis_date=analysis_date,
+        classification_system=classification_system,
+        benchmark=benchmark,
+        history_days=history_days,
+        source=source,
     )
 
-    if load_result.snapshot is not None:
+    detail = None
+    if result.snapshot is not None:
         detail = build_sector_detail(
-            load_result.snapshot, sector_id,
-            company_sort=company_sort, top=top,
-        )
-        status = "ok"
-        message = ""
-        if sync_error:
-            # 重量层失败但有旧缓存 → refresh_failed；若详情仍无公司则升级为 no_cache
-            # 语义（用户点进未加载板块，刷新失败且无可用详情）。
-            if not detail.companies:
-                return SectorDetailResult(
-                    detail=detail,
-                    status="no_cache",
-                    message=f"板块详情刷新失败且无可用成分股数据。原因：{sync_error}",
-                    refresh_result=refresh_result_dict,
-                )
-            status = "refresh_failed"
-            message = f"板块数据刷新失败，展示最近可用缓存：{sync_error}"
-        elif load_result.metadata:
-            qs = load_result.metadata.data_quality_status or "ok"
-            if qs in ("degraded", "stale"):
-                status = qs
-        return SectorDetailResult(
-            detail=detail,
-            status=status,
-            message=message,
-            refresh_result=refresh_result_dict,
+            result.snapshot,
+            sector_id,
+            company_sort=company_sort,
+            top=top,
         )
 
-    # 无缓存可用
-    if load_result.quality_error:
-        if sync_error:
-            return SectorDetailResult(
-                status="no_cache",
-                message=f"板块数据刷新失败且无可用缓存。原因：{sync_error}",
-                refresh_result=refresh_result_dict,
-            )
-        return SectorDetailResult(
-            status="invalid",
-            message=load_result.quality_error,
-            refresh_result=refresh_result_dict,
-        )
+    has_displayable_detail = detail is not None and bool(detail.companies)
+    status = result.status
+    if result.status in ("refresh_failed", "no_cache") and result.reason:
+        status = "refresh_failed" if has_displayable_detail else "no_cache"
+
+    if status == "refresh_failed":
+        message = f"板块数据刷新失败，展示最近可用缓存：{result.reason}"
+    elif status == "invalid":
+        message = result.reason
+    elif status == "no_cache" and result.reason:
+        if detail is not None:
+            message = f"板块详情刷新失败且无可用成分股数据。原因：{result.reason}"
+        else:
+            message = f"板块数据刷新失败且无可用缓存。原因：{result.reason}"
+    elif status == "no_cache":
+        message = "暂无本地数据，请先获取数据。"
+    else:
+        message = ""
 
     return SectorDetailResult(
-        status="no_cache",
-        message=(
-            f"板块数据刷新失败且无可用缓存。原因：{sync_error}"
-            if sync_error
-            else "暂无本地数据。"
-        ),
-        refresh_result=refresh_result_dict,
+        detail=detail,
+        status=status,
+        message=message,
+        refresh_result=result.refresh_result,
     )
 
 

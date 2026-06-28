@@ -14,6 +14,7 @@ import tempfile
 import unittest
 from datetime import date, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 
 APP_DIR = Path(__file__).resolve().parents[1]
@@ -805,6 +806,54 @@ class RefreshSectorDetailTests(unittest.TestCase):
             self.assertIsNotNone(result.detail, "should have old cache detail")
             self.assertTrue(result.detail.companies, "should have old companies")
             self.assertTrue(result.message)
+        finally:
+            if os.path.exists(db_path):
+                os.unlink(db_path)
+
+    def test_constituents_failure_with_filtered_empty_detail_returns_no_cache(self) -> None:
+        """最终 detail 为空时，失败语义按 app 构建结果回落为 no_cache。"""
+        db_fd, db_path = tempfile.mkstemp(suffix=".sqlite")
+        os.close(db_fd)
+        try:
+            refresh_sector_detail(
+                "BK0001",
+                db_path=db_path,
+                analysis_date="2026-06-19",
+                source=_FakeRefreshSource(),
+            )
+            result = refresh_sector_detail(
+                "BK0001",
+                db_path=db_path,
+                analysis_date="2026-06-19",
+                top=0,
+                source=_FakeRefreshSourceDetailFail(),
+            )
+            self.assertEqual(result.status, "no_cache")
+            self.assertIsNotNone(result.detail, "detail shell should still be returned")
+            self.assertFalse(result.detail.companies, "filtered detail should be empty")
+            self.assertTrue(result.message)
+        finally:
+            if os.path.exists(db_path):
+                os.unlink(db_path)
+
+    def test_source_bootstrap_failure_without_snapshot_reports_no_cache(self) -> None:
+        """没有 snapshot 时，no_cache + reason 仍应提示无可用缓存。"""
+        db_fd, db_path = tempfile.mkstemp(suffix=".sqlite")
+        os.close(db_fd)
+        try:
+            with patch(
+                "fundamentalscreener.snapshot_service.build_default_source",
+                side_effect=RuntimeError("source bootstrap failure"),
+            ):
+                result = refresh_sector_detail(
+                    "BK0001",
+                    db_path=db_path,
+                    analysis_date="2026-06-19",
+                )
+            self.assertEqual(result.status, "no_cache")
+            self.assertIsNone(result.detail)
+            self.assertIn("无可用缓存", result.message)
+            self.assertIn("source bootstrap failure", result.message)
         finally:
             if os.path.exists(db_path):
                 os.unlink(db_path)
