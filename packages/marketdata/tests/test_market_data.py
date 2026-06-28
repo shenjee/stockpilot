@@ -4,10 +4,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
-sys.path.insert(0, str(SCRIPTS_DIR))
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "packages"))
 
-from market_data import TencentStockDataProvider, get_market_prefix
+from marketdata.market_data import TencentStockDataProvider, get_market_prefix
 
 
 class GetMarketPrefixTests(unittest.TestCase):

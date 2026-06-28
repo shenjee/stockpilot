@@ -27,7 +27,9 @@ which python
 ## Repository Layout
 
 - `packages/chantheory/`: project-owned adapter layer around `czsc` for Chan Theory analysis.
+- `packages/marketdata/`: shared market-data provider, runtime path, K-line SQLite, and securities-store infrastructure used by the Chan app and stock-analysis skill.
 - `packages/chantheory/tests/`: unit tests and JSON fixtures for the adapter layer.
+- `packages/marketdata/tests/`: unit tests for shared market-data infrastructure and compatibility-sensitive storage behavior.
 - `packages/fundamentalscreener/`: core package for Fundamental Screener sector/company ranking, financial quality, valuation, data quality, repositories, data sources, SQLite schema, and sync.
 - `packages/fundamentalscreener/tests/`: unit tests and fixtures for Fundamental Screener core and CLI payloads.
 - `apps/chan-streamlit/`: Streamlit debug app used to validate `chantheory` output and chart overlays.
@@ -42,6 +44,7 @@ which python
 
 - Keep reusable Python logic in `packages/`, not in `apps/` or `skills/`.
 - Treat `chantheory` as the stable project-facing interface for Chan Theory analysis.
+- Treat `marketdata` as the shared infrastructure boundary for market providers, runtime paths, and cached K-line/securities storage.
 - Do not make higher-level code depend directly on raw `czsc` objects when `chantheory` can provide the needed contract.
 - Preserve the existing Phase 2 boundary: visualization-ready structure output is primary; narrative text is only supporting output.
 - Treat `packages/fundamentalscreener/` as the stable core for Fundamental Screener calculations, data contracts, repositories, sync, and quality gates.
@@ -75,6 +78,12 @@ Run Fundamental Screener core tests:
 
 ```bash
 python -m unittest discover -s packages/fundamentalscreener/tests -p 'test_*.py'
+```
+
+Run shared market-data tests:
+
+```bash
+python -m unittest discover -s packages/marketdata/tests -p 'test_*.py'
 ```
 
 Run the Chan Streamlit app smoke tests:
@@ -129,12 +138,14 @@ python -m pip install -e ".[apps]"
 - When changing chart output, verify that `plot_primitives` and any human-readable summaries remain aligned.
 - When changing structure mapping, check nearby fixtures in `packages/chantheory/tests/fixtures/`.
 - When changing Fundamental Screener output, keep CLI JSON payloads, app tables/charts, warnings, and lineage metadata aligned.
+- When changing shared market-data infrastructure, keep the app imports, skill compatibility wrappers, and bundled `securities_master.json` behavior aligned.
 - When changing screener calculations or repositories, check nearby fixtures in `packages/fundamentalscreener/tests/fixtures/`.
 
 ## Testing Expectations
 
 - For changes under `packages/chantheory/`, run the `chantheory` test suite first.
 - For changes under `packages/fundamentalscreener/`, run the Fundamental Screener core test suite first.
+- For changes under `packages/marketdata/`, run the shared market-data test suite first.
 - For changes under `apps/chan-streamlit/`, run the relevant tests under `apps/chan-streamlit/tests/` and, if relevant, launch the app for a quick manual smoke check.
 - For changes under `apps/fundamental-screener/`, run the relevant tests under `apps/fundamental-screener/tests/` and, if relevant, launch the app for a quick manual smoke check.
 - For changes under `skills/china-stock-analysis/scripts/`, run the relevant tests under `skills/china-stock-analysis/tests/`.

@@ -8,11 +8,11 @@ from unittest.mock import patch
 
 APP_DIR = Path(__file__).resolve().parents[1]
 ROOT = APP_DIR.parents[1]
-SCRIPTS_DIR = ROOT / "skills" / "china-stock-analysis" / "scripts"
 MODULE_PATH = APP_DIR / "services" / "market_service.py"
 
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "packages"))
 sys.path.insert(0, str(APP_DIR))
-sys.path.insert(0, str(SCRIPTS_DIR))
 
 SPEC = importlib.util.spec_from_file_location("chan_market_service", MODULE_PATH)
 market_service = importlib.util.module_from_spec(SPEC)

@@ -3,11 +3,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
-sys.path.insert(0, str(SCRIPTS_DIR))
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "packages"))
 
-from repositories.kline_store import KLineStore
-from services.kline_data_service import KLineDataService
+from marketdata.repositories.kline_store import KLineStore
+from marketdata.services.kline_data_service import KLineDataService
 
 
 class FakeProvider:

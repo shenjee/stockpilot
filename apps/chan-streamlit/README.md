@@ -40,6 +40,6 @@ streamlit run apps/chan-streamlit/app.py
 
 ## Notes
 
-- The app imports `packages/` and `skills/china-stock-analysis/scripts/` directly from the repo.
-- The current data provider path uses `TencentStockDataProvider`.
+- The app imports shared market/K-line infrastructure from `packages/marketdata/`.
+- The current data provider path uses `marketdata.TencentStockDataProvider`.
 - `divergences` now surface as `plot_primitives` overlays when the project stroke-and-pivot divergence rule is satisfied.

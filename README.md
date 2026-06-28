@@ -14,6 +14,7 @@ support, and product planning docs.
 | --- | --- | --- |
 | Reusable package | `packages/chantheory/` | Project-owned adapter layer around `czsc` for Chan Theory structure analysis. |
 | Reusable package | `packages/fundamentalscreener/` | Fundamental Screener core for sector rotation, company ranking, financial quality, valuation, repositories, lineage, CLI payloads, and SQLite sync/schema support. |
+| Reusable package | `packages/marketdata/` | Shared market-data provider, runtime path, K-line store, and securities-store infrastructure used by the Chan Streamlit app and China stock analysis skill. |
 | Local app | `apps/chan-streamlit/` | Streamlit debug app for validating `chantheory` chart overlays and structure output. |
 | Local app | `apps/fundamental-screener/` | Streamlit frontend for browsing Fundamental Screener outputs and validations. |
 | Installable skill | `skills/china-stock-analysis/` | Agent skill that generates factual China A-share daily reports using installable scripts, templates, and references. |
@@ -49,6 +50,7 @@ stockpilot/
 |   `-- stock_technical_concepts.zh.md
 |-- packages/
 |   |-- chantheory/
+|   |-- marketdata/
 |   `-- fundamentalscreener/
 `-- skills/
     `-- china-stock-analysis/
@@ -88,6 +90,7 @@ python -m packages.fundamentalscreener.cli screen --format json
 
 - `packages/chantheory/` is the stable project-facing Chan Theory adapter layer.
 - `packages/fundamentalscreener/` is the stable core for screening, scoring, quality checks, repositories, CLI output, and sync.
+- `packages/marketdata/` is the shared market-data and runtime infrastructure for the Chan app and stock-analysis skill.
 - Apps should render and orchestrate shared logic, not duplicate screening or structure-analysis rules.
 - Skills should keep runtime-specific scripting inside `skills/`, while shared analysis logic stays in `packages/`.
 
@@ -113,6 +116,7 @@ Common targeted tests:
 ```bash
 python -m unittest discover -s packages/chantheory/tests -p 'test_*.py'
 python -m unittest discover -s packages/fundamentalscreener/tests -p 'test_*.py'
+python -m unittest discover -s packages/marketdata/tests -p 'test_*.py'
 python -m unittest discover -s apps/chan-streamlit/tests -p 'test_*.py'
 python -m unittest discover -s apps/fundamental-screener/tests -p 'test_*.py'
 python -m unittest discover -s skills/china-stock-analysis/tests -p 'test_*.py'

@@ -15,10 +15,10 @@ This file adds app-specific guidance for work inside `apps/chan-streamlit/`. It 
 
 ## Local Architecture
 
-- `app.py` inserts repo-local import paths for `packages/` and `skills/china-stock-analysis/scripts/`.
+- `app.py` inserts repo-local import paths for `packages/` and the app directory itself.
 - The app depends on:
   - `chantheory` for analysis
-  - `TencentStockDataProvider` for market data
+  - `marketdata` for shared market data, runtime paths, and K-line/securities storage
   - Plotly for chart rendering
   - `streamlit-searchbox` for symbol lookup
   - the local `chan_chart_widget/` component for chart interaction
