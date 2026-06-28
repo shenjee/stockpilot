@@ -1,3 +1,0 @@
-chantheory
-fundamentalscreener
-packages
