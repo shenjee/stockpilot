@@ -6,10 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Environment & Commands
 
-This is a Python repo. There is no root `pyproject.toml`; some paths rely on `sys.path` insertion rather than package installation. Always activate the project virtualenv first:
+This is a Python repo. A root `pyproject.toml` now declares editable-install metadata and dependency extras, while some paths still rely on `sys.path` insertion. Always activate the project virtualenv first:
 
 ```bash
 source ~/.venvs/czsc/bin/activate
+python -m pip install -e ".[dev]"
 ```
 
 Run tests (each area is an independent `unittest` suite — run the one covering your change):
@@ -48,7 +49,7 @@ python -m packages.fundamentalscreener.cli sectors --format json
 python -m packages.fundamentalscreener.cli screen --format json
 ```
 
-If Streamlit/Plotly/Pandas are missing: `python -m pip install streamlit plotly pandas`.
+If app dependencies are missing: `python -m pip install -e ".[apps]"`.
 
 ## Big-Picture Architecture
 

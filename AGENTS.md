@@ -51,8 +51,8 @@ which python
 
 ## Python And Imports
 
-- The repo does not currently expose a root packaging file such as `pyproject.toml`.
-- Some code paths rely on direct `sys.path` insertion instead of installation as a package.
+- The repo now exposes a root `pyproject.toml` for editable installs and dependency extras.
+- Some code paths still rely on direct `sys.path` insertion; preserve that behavior unless the task explicitly refactors it.
 - When running targeted tests, prefer commands that point directly at the relevant test modules or directories.
 - If you introduce new shared logic, place it under `packages/` and keep imports consistent with the existing repo style.
 
@@ -62,6 +62,7 @@ Activate the environment first:
 
 ```bash
 source ~/.venvs/czsc/bin/activate
+python -m pip install -e ".[dev]"
 ```
 
 Run `chantheory` tests:
@@ -113,10 +114,10 @@ python -m packages.fundamentalscreener.cli sectors --format json
 python -m packages.fundamentalscreener.cli screen --format json
 ```
 
-If Streamlit, Plotly, or Pandas are missing in the active environment:
+If app dependencies are missing in the active environment:
 
 ```bash
-python -m pip install streamlit plotly pandas
+python -m pip install -e ".[apps]"
 ```
 
 ## Change Guidelines

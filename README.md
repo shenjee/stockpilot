@@ -27,6 +27,7 @@ Top-level repository roles:
 - `apps/`: local Streamlit apps for validation, debugging, and product iteration.
 - `skills/`: installable skill bundles with scripts, references, and config templates.
 - `docs/`: product design notes, plans, and technical documentation.
+- `pyproject.toml`: editable install metadata, dependency extras, and CLI entry points.
 - `CHANGELOG.md` and `CHANGELOG.zh.md`: change history.
 - `AGENTS.md`: repo-specific development and test guidance.
 
@@ -51,6 +52,36 @@ stockpilot/
 |   `-- fundamentalscreener/
 `-- skills/
     `-- china-stock-analysis/
+```
+
+## Development Setup
+
+Create or activate a Python environment, then install the repository in editable
+mode from the repo root:
+
+```bash
+python -m pip install -e ".[dev]"
+```
+
+Common dependency sets:
+
+- `python -m pip install -e .` for core packages and the China stock analysis skill runtime
+- `python -m pip install -e ".[apps]"` for both Streamlit apps, including `streamlit-searchbox`
+- `python -m pip install -e ".[akshare]"` for AkShare-backed sync and master-data build helpers
+- `python -m pip install -e ".[dev]"` for the full local development environment
+
+Stable CLI entry points after installation:
+
+```bash
+stockpilot-fundamentalscreener sectors --format json
+stockpilot-fundamentalscreener screen --format json
+```
+
+The existing module invocation also remains valid:
+
+```bash
+python -m packages.fundamentalscreener.cli sectors --format json
+python -m packages.fundamentalscreener.cli screen --format json
 ```
 
 ## Architecture Notes
