@@ -53,6 +53,17 @@ from .sync_cli import (
     build_parser,
     compute_sync_exit_code,
 )
+from .sync_fetchers import (
+    derive_effective_company_codes,
+    fetch_benchmark_daily,
+    fetch_company_daily,
+    fetch_company_valuation_history,
+    fetch_financial_metrics,
+    fetch_sector_constituents,
+    fetch_sector_daily,
+    fetch_sectors,
+    fetch_stock_universe,
+)
 from .sync_persistence import (
     _run_task,
     _ts,
@@ -126,6 +137,28 @@ class SyncResult:
         }
 
 
+def _append_task(
+    result: SyncResult,
+    conn,
+    *,
+    fetch_run_id: str,
+    source_name: str,
+    task: str,
+    fetch,
+    persist,
+) -> None:
+    result.tasks.append(
+        _run_task(
+            conn,
+            fetch_run_id=fetch_run_id,
+            source_name=source_name,
+            task=task,
+            fetch=fetch,
+            persist=persist,
+        )
+    )
+
+
 # ---------------------------------------------------------------------------
 # 公共 API
 # ---------------------------------------------------------------------------
@@ -189,23 +222,22 @@ def sync_all(
 
     def _fetch_sectors() -> List[Dict[str, Any]]:
         nonlocal sectors_rows
-        sectors_rows = source.list_sectors(classification_system)
+        sectors_rows = fetch_sectors(source, classification_system)
         return sectors_rows
 
-    result.tasks.append(
-        _run_task(
+    _append_task(
+        result,
+        conn,
+        fetch_run_id=fetch_run_id,
+        source_name=source_name,
+        task="list_sectors",
+        fetch=_fetch_sectors,
+        persist=build_sectors_persist(
             conn,
-            fetch_run_id=fetch_run_id,
             source_name=source_name,
-            task="list_sectors",
-            fetch=_fetch_sectors,
-            persist=build_sectors_persist(
-                conn,
-                source_name=source_name,
-                fetch_run_id=fetch_run_id,
-                classification_system=classification_system,
-            ),
-        )
+            fetch_run_id=fetch_run_id,
+            classification_system=classification_system,
+        ),
     )
 
     # 板块成分 & 板块行情：以 sectors_rows 为驱动
@@ -213,211 +245,178 @@ def sync_all(
 
     def _fetch_constituents() -> List[Dict[str, Any]]:
         nonlocal constituents_rows
-        # §15.9.5：sector_ids 非空时只遍历指定板块（按需加载），否则遍历全部
-        # sectors_rows（向后兼容）。轻量层（list_sectors）始终全量，此处成分股属
-        # 重量层。
-        if sector_ids is not None:
-            wanted = set(str(s) for s in sector_ids)
-            target_sectors = [
-                s for s in sectors_rows if str(s.get("sector_id", "")) in wanted
-            ]
-        else:
-            target_sectors = sectors_rows
-        out: List[Dict[str, Any]] = []
-        for s in target_sectors:
-            sid = str(s.get("sector_id", ""))
-            if not sid:
-                continue
-            try:
-                out.extend(
-                    source.get_sector_constituents(sid, classification_system, analysis_date)
-                )
-            except Exception:
-                continue
-        # 目标板块非空但成分股总数为 0 → 几乎必然是数据源故障（反爬 403、空页、
-        # API 结构变更），不能记成"成功写入 0 行"。抛错让 _run_task 标记 fetch_failed。
-        # 注意：sector_ids 未命中任何板块时 target_sectors 为空，不抛错（graceful
-        # no-op），避免按需加载指定了尚未出现在 sectors 表的板块时误判为故障。
-        if target_sectors and not out:
-            raise RuntimeError(
-                f"get_sector_constituents: {len(target_sectors)} sector(s) targeted but "
-                f"0 constituents returned — likely a data source failure "
-                f"(anti-crawl, HTTP error, or API structure change)."
-            )
-        constituents_rows = out
-        return out
-
-    result.tasks.append(
-        _run_task(
-            conn,
-            fetch_run_id=fetch_run_id,
-            source_name=source_name,
-            task="get_sector_constituents",
-            fetch=_fetch_constituents,
-            persist=build_sector_constituents_persist(
-                conn,
-                source_name=source_name,
-                fetch_run_id=fetch_run_id,
-                classification_system=classification_system,
-                analysis_date=analysis_date,
-            ),
+        constituents_rows = fetch_sector_constituents(
+            source,
+            sectors_rows=sectors_rows,
+            classification_system=classification_system,
+            analysis_date=analysis_date,
+            sector_ids=sector_ids,
         )
+        return constituents_rows
+
+    _append_task(
+        result,
+        conn,
+        fetch_run_id=fetch_run_id,
+        source_name=source_name,
+        task="get_sector_constituents",
+        fetch=_fetch_constituents,
+        persist=build_sector_constituents_persist(
+            conn,
+            source_name=source_name,
+            fetch_run_id=fetch_run_id,
+            classification_system=classification_system,
+            analysis_date=analysis_date,
+        ),
     )
 
     def _fetch_sector_daily() -> List[Dict[str, Any]]:
-        out: List[Dict[str, Any]] = []
-        for s in sectors_rows:
-            sid = str(s.get("sector_id", ""))
-            if not sid:
-                continue
-            try:
-                out.extend(
-                    source.get_sector_daily(
-                        sid, classification_system, start_date, analysis_date
-                    )
-                )
-            except Exception:
-                continue
-        return out
-
-    result.tasks.append(
-        _run_task(
-            conn,
-            fetch_run_id=fetch_run_id,
-            source_name=source_name,
-            task="get_sector_daily",
-            fetch=_fetch_sector_daily,
-            persist=build_sector_daily_persist(
-                conn,
-                source_name=source_name,
-                fetch_run_id=fetch_run_id,
-                classification_system=classification_system,
-            ),
+        return fetch_sector_daily(
+            source,
+            sectors_rows=sectors_rows,
+            classification_system=classification_system,
+            start_date=start_date,
+            analysis_date=analysis_date,
         )
+
+    _append_task(
+        result,
+        conn,
+        fetch_run_id=fetch_run_id,
+        source_name=source_name,
+        task="get_sector_daily",
+        fetch=_fetch_sector_daily,
+        persist=build_sector_daily_persist(
+            conn,
+            source_name=source_name,
+            fetch_run_id=fetch_run_id,
+            classification_system=classification_system,
+        ),
     )
 
     # 基准日线：独立写入 ``benchmark_daily_bars``，不污染 sector_daily_bars。
     # 详见 docs §18：benchmark 与 sector 是不同实体，schema 上必须区分。
     def _fetch_benchmark() -> List[Dict[str, Any]]:
-        return source.get_benchmark_daily(benchmark, start_date, analysis_date)
-
-    result.tasks.append(
-        _run_task(
-            conn,
-            fetch_run_id=fetch_run_id,
-            source_name=source_name,
-            task="get_benchmark_daily",
-            fetch=_fetch_benchmark,
-            persist=build_benchmark_persist(
-                conn,
-                source_name=source_name,
-                fetch_run_id=fetch_run_id,
-                benchmark=benchmark,
-            ),
+        return fetch_benchmark_daily(
+            source,
+            benchmark=benchmark,
+            start_date=start_date,
+            analysis_date=analysis_date,
         )
+
+    _append_task(
+        result,
+        conn,
+        fetch_run_id=fetch_run_id,
+        source_name=source_name,
+        task="get_benchmark_daily",
+        fetch=_fetch_benchmark,
+        persist=build_benchmark_persist(
+            conn,
+            source_name=source_name,
+            fetch_run_id=fetch_run_id,
+            benchmark=benchmark,
+        ),
     )
 
     # 公司层
     def _fetch_universe() -> List[Dict[str, Any]]:
-        return source.get_stock_universe(analysis_date)
-
-    result.tasks.append(
-        _run_task(
-            conn,
-            fetch_run_id=fetch_run_id,
-            source_name=source_name,
-            task="get_stock_universe",
-            fetch=_fetch_universe,
-            persist=build_stock_universe_persist(
-                conn,
-                source_name=source_name,
-                fetch_run_id=fetch_run_id,
-                analysis_date=analysis_date,
-            ),
+        return fetch_stock_universe(
+            source,
+            analysis_date=analysis_date,
         )
+
+    _append_task(
+        result,
+        conn,
+        fetch_run_id=fetch_run_id,
+        source_name=source_name,
+        task="get_stock_universe",
+        fetch=_fetch_universe,
+        persist=build_stock_universe_persist(
+            conn,
+            source_name=source_name,
+            fetch_run_id=fetch_run_id,
+            analysis_date=analysis_date,
+        ),
     )
 
     def _effective_company_codes() -> List[str]:
-        # §15.9.5：确定 per-code 公司层任务（日线快照 + 估值 + 财务）的 code 集合。
-        # - sector_ids 非空（按需加载）：从已抓取成分股派生 distinct codes；若 codes
-        #   显式传入则取交集，否则直接用派生 codes。
-        # - sector_ids=None（向后兼容）：codes 参数驱动 per-code 任务；未传则跳过。
-        if sector_ids is not None:
-            derived = sorted(
-                {str(r.get("code", "")) for r in constituents_rows if r.get("code")}
-            )
-            if codes is not None:
-                wanted = set(str(c) for c in codes)
-                return [c for c in derived if c in wanted]
-            return derived
-        return [c for c in (codes or []) if c]
+        return derive_effective_company_codes(
+            codes=codes,
+            sector_ids=sector_ids,
+            constituents_rows=constituents_rows,
+        )
 
     def _fetch_company_daily() -> List[Dict[str, Any]]:
-        # §15.9.5：sector_ids 非空时用派生 codes 驱动 per-code 日线快照；
-        # sector_ids=None 时回退全市场（codes=None），保持向后兼容。
-        if sector_ids is not None:
-            return source.get_company_daily_snapshot(
-                analysis_date, codes=_effective_company_codes()
-            )
-        return source.get_company_daily_snapshot(analysis_date)
-
-    result.tasks.append(
-        _run_task(
-            conn,
-            fetch_run_id=fetch_run_id,
-            source_name=source_name,
-            task="get_company_daily_snapshot",
-            fetch=_fetch_company_daily,
-            persist=build_company_daily_persist(
-                conn,
-                source_name=source_name,
-                fetch_run_id=fetch_run_id,
-                analysis_date=analysis_date,
-            ),
+        return fetch_company_daily(
+            source,
+            analysis_date=analysis_date,
+            sector_ids=sector_ids,
+            effective_codes=_effective_company_codes(),
         )
+
+    _append_task(
+        result,
+        conn,
+        fetch_run_id=fetch_run_id,
+        source_name=source_name,
+        task="get_company_daily_snapshot",
+        fetch=_fetch_company_daily,
+        persist=build_company_daily_persist(
+            conn,
+            source_name=source_name,
+            fetch_run_id=fetch_run_id,
+            analysis_date=analysis_date,
+        ),
     )
 
     effective_codes = _effective_company_codes()
     if effective_codes:
         # --- 估值历史（per-code：每只股票 2 次百度接口调用）---
         def _fetch_valuation_history() -> List[Dict[str, Any]]:
-            return source.get_company_valuation_history(
-                effective_codes, start_date, analysis_date
+            return fetch_company_valuation_history(
+                source,
+                effective_codes=effective_codes,
+                start_date=start_date,
+                analysis_date=analysis_date,
             )
 
-        result.tasks.append(
-            _run_task(
+        _append_task(
+            result,
+            conn,
+            fetch_run_id=fetch_run_id,
+            source_name=source_name,
+            task="get_company_valuation_history",
+            fetch=_fetch_valuation_history,
+            persist=build_company_valuation_persist(
                 conn,
-                fetch_run_id=fetch_run_id,
                 source_name=source_name,
-                task="get_company_valuation_history",
-                fetch=_fetch_valuation_history,
-                persist=build_company_valuation_persist(
-                    conn,
-                    source_name=source_name,
-                    fetch_run_id=fetch_run_id,
-                ),
-            )
+                fetch_run_id=fetch_run_id,
+            ),
         )
 
         # --- 财务指标（per-code：每只股票 1 次新浪接口调用）---
         def _fetch_financial() -> List[Dict[str, Any]]:
-            return source.get_financial_metrics(effective_codes, analysis_date)
-
-        result.tasks.append(
-            _run_task(
-                conn,
-                fetch_run_id=fetch_run_id,
-                source_name=source_name,
-                task="get_financial_metrics",
-                fetch=_fetch_financial,
-                persist=build_financial_metrics_persist(
-                    conn,
-                    source_name=source_name,
-                    fetch_run_id=fetch_run_id,
-                    analysis_date=analysis_date,
-                ),
+            return fetch_financial_metrics(
+                source,
+                effective_codes=effective_codes,
+                analysis_date=analysis_date,
             )
+
+        _append_task(
+            result,
+            conn,
+            fetch_run_id=fetch_run_id,
+            source_name=source_name,
+            task="get_financial_metrics",
+            fetch=_fetch_financial,
+            persist=build_financial_metrics_persist(
+                conn,
+                source_name=source_name,
+                fetch_run_id=fetch_run_id,
+                analysis_date=analysis_date,
+            ),
         )
 
     result.finished_at = _ts()
