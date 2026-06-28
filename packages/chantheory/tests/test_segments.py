@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import unittest
+from dataclasses import asdict
 from pathlib import Path
 from typing import List, Tuple
 
@@ -352,10 +353,58 @@ class DeriveSegmentsRegressionTests(unittest.TestCase):
         ]
 
         self.assertTrue(target_segments, "应识别 05-13 13:50 @77.14 的上升线段终点")
-        feature_break = target_segments[0].meta.get("feature_sequence_break")
+        target_segment = target_segments[0]
+        feature_break = target_segment.meta.get("feature_sequence_break")
         self.assertIsInstance(feature_break, dict)
         self.assertEqual(feature_break.get("feature_sequence_indices"), [25, 27, 29])
         self.assertEqual(feature_break.get("confirmation_case"), "no_gap_feature_fractal")
+        self.assertEqual(
+            {
+                "id": target_segment.id,
+                "direction": target_segment.direction,
+                "start_timestamp": target_segment.start_timestamp,
+                "end_timestamp": target_segment.end_timestamp,
+                "start_price": target_segment.start_price,
+                "end_price": target_segment.end_price,
+                "confirmed": target_segment.confirmed,
+                "meta_status": target_segment.meta.get("status"),
+                "meta_start_stroke_index": target_segment.meta.get("start_stroke_index"),
+                "meta_endpoint_abs": target_segment.meta.get("endpoint_is_absolute_extreme"),
+                "stroke_ids": list(target_segment.stroke_ids),
+                "feature_break": {
+                    "feature_sequence_indices": feature_break.get("feature_sequence_indices"),
+                    "feature_sequence_direction": feature_break.get("feature_sequence_direction"),
+                    "first_second_has_gap": feature_break.get("first_second_has_gap"),
+                    "break_fractal": feature_break.get("break_fractal"),
+                    "left_contained_by_middle": feature_break.get("left_contained_by_middle"),
+                    "confirmation_case": feature_break.get("confirmation_case"),
+                    "followup_required": feature_break.get("followup_required"),
+                },
+            },
+            {
+                "id": "segment_025_2026-05-12 14:20:00_2026-05-13 13:50:00",
+                "direction": "up",
+                "start_timestamp": "2026-05-12 14:20:00",
+                "end_timestamp": "2026-05-13 13:50:00",
+                "start_price": 72.57,
+                "end_price": 77.14,
+                "confirmed": True,
+                "meta_status": "confirmed",
+                "meta_start_stroke_index": 24,
+                "meta_endpoint_abs": True,
+                "stroke_ids": ["stroke_025", "stroke_026", "stroke_027"],
+                "feature_break": {
+                    "feature_sequence_indices": [25, 27, 29],
+                    "feature_sequence_direction": "down",
+                    "first_second_has_gap": False,
+                    "break_fractal": True,
+                    "left_contained_by_middle": False,
+                    "confirmation_case": "no_gap_feature_fractal",
+                    "followup_required": False,
+                },
+            },
+        )
+        self.assertEqual(asdict(target_segment)["stroke_ids"], ["stroke_025", "stroke_026", "stroke_027"])
 
         non_absolute_segments = [
             segment for segment in segments

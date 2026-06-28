@@ -26,7 +26,6 @@ Phase 6B+6C 实现：
 
 from __future__ import annotations
 
-import argparse
 import json
 import sys
 from dataclasses import dataclass, field
@@ -50,6 +49,12 @@ from .lineage import (
 )
 from .quality import QualityReport
 from .sqlite_schema import connect, init_db, list_tables
+from .sync_cli import (
+    _parse_codes,
+    _parse_sector_ids,
+    build_parser,
+    compute_sync_exit_code,
+)
 
 # ---------------------------------------------------------------------------
 # 同步任务定义
@@ -1042,71 +1047,6 @@ def build_snapshot_metadata(
     )
 
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-
-
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="python -m packages.fundamentalscreener.sync",
-        description="Fundamental Screener 数据治理同步入口（Phase 6A）。",
-    )
-    sub = parser.add_subparsers(dest="command", required=True)
-
-    p_init = sub.add_parser("init-db", help="幂等初始化 SQLite schema。")
-    p_init.add_argument("--db", required=True, help="SQLite 路径。")
-
-    p_sync = sub.add_parser(
-        "sync",
-        help="运行同步任务。默认接入同花顺行业板块（ths_industry），东方财富（em_industry）为对照源。",
-    )
-    p_sync.add_argument("--db", required=True)
-    p_sync.add_argument("--date", required=True, help="分析日期 YYYY-MM-DD。")
-    p_sync.add_argument(
-        "--classification-system",
-        dest="classification_system",
-        default="ths_industry",
-        help="板块分类口径，默认 ths_industry（同花顺）。em_industry 为东方财富对照源。",
-    )
-    p_sync.add_argument("--benchmark", default="hs300")
-    p_sync.add_argument(
-        "--history-days",
-        dest="history_days",
-        type=int,
-        default=90,
-        help="回采历史天数（自然日），需覆盖 60 个交易日以支持 60 日收益。",
-    )
-    p_sync.add_argument(
-        "--codes",
-        default="",
-        help="逗号分隔的股票代码。未提供时跳过 per-code 公司层任务（估值历史 + "
-        "财务指标），仅运行 batch 任务（股票池 + 日度快照）。",
-    )
-    p_sync.add_argument(
-        "--sector-ids",
-        dest="sector_ids",
-        default="",
-        help="逗号分隔的板块代码（§15.9.5 按需加载）。非空时只抓指定板块的成分股，"
-        "并从成分股派生 codes 驱动个股层任务。未提供时回退全量行为。",
-    )
-
-    p_quality = sub.add_parser(
-        "quality", help="读取 SQLite 并输出结构化质量报告（Phase 6D）。"
-    )
-    p_quality.add_argument("--db", required=True)
-    p_quality.add_argument("--date", required=True)
-    p_quality.add_argument(
-        "--classification-system",
-        dest="classification_system",
-        default="ths_industry",
-        help="板块分类口径，默认 ths_industry（同花顺）。",
-    )
-    p_quality.add_argument("--benchmark", default="hs300")
-
-    return parser
-
-
 def _akshare_available() -> bool:
     """探测 akshare 是否可导入。真实同步需要 akshare；未安装时 CLI 给出明确错误。"""
 
@@ -1115,24 +1055,6 @@ def _akshare_available() -> bool:
     except ImportError:
         return False
     return True
-
-
-def _parse_codes(raw: str) -> Optional[List[str]]:
-    """解析 ``--codes`` 参数：逗号分隔的股票代码列表，空串返回 ``None``。"""
-
-    if not raw:
-        return None
-    codes = [c.strip() for c in raw.split(",") if c.strip()]
-    return codes or None
-
-
-def _parse_sector_ids(raw: str) -> Optional[List[str]]:
-    """解析 ``--sector-ids`` 参数：逗号分隔的板块代码列表，空串返回 ``None``。"""
-
-    if not raw:
-        return None
-    ids = [s.strip() for s in raw.split(",") if s.strip()]
-    return ids or None
 
 
 def main(
@@ -1230,17 +1152,12 @@ def main(
         # 全量同步（sector_ids is None）时仍要求成分股成功且有行；按需加载
         # （sector_ids 非空）时成分股为用户显式请求的板块，同样要求成功。
         # JSON 始终输出便于排查。akshare 缺失/口径不支持在前面已返回 rc=2。
-        by_task = {t["task"]: t for t in result.tasks}
-        required_tasks = list(LIGHT_REQUIRED_TASKS)
-        # 成分股在两种模式下都是必需的：全量同步遍历全部板块，按需加载只抓
-        # 指定板块——用户显式请求的板块成分股失败应被 CLI 报告为 rc=1。
-        required_tasks.extend(DETAIL_REQUIRED_TASKS)
-        required_ok = all(
-            by_task.get(t, {}).get("success")
-            and int(by_task.get(t, {}).get("row_count", 0) or 0) > 0
-            for t in required_tasks
+        return compute_sync_exit_code(
+            result.tasks,
+            result.failure_count,
+            LIGHT_REQUIRED_TASKS,
+            DETAIL_REQUIRED_TASKS,
         )
-        return 0 if (result.failure_count == 0 and required_ok) else 1
 
     if args.command == "quality":
         # Phase 6D：读取 SQLite 并输出结构化质量报告。

@@ -3,6 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Sequence, Set
 
+from .segment_helpers import (
+    StrokeRange,
+    _is_more_extreme,
+    _range_contains,
+    _ranges_have_gap,
+    _stroke_range,
+)
 from .schema import Segment, Stroke
 
 
@@ -15,13 +22,6 @@ class SegmentEndpoint:
     direction: str
     timestamp: str
     price: float
-
-
-@dataclass(frozen=True)
-class StrokeRange:
-    stroke_index: int
-    low: float
-    high: float
 
 
 @dataclass(frozen=True)
@@ -447,14 +447,6 @@ def _segments_are_connected(previous: Segment, current: Segment) -> bool:
     return previous.end_timestamp == current.start_timestamp and abs(previous.end_price - current.start_price) < 1e-9
 
 
-def _is_more_extreme(direction: str, current_price: float, candidate_price: float) -> bool:
-    if direction == "up":
-        return candidate_price > current_price
-    if direction == "down":
-        return candidate_price < current_price
-    return False
-
-
 def _find_window_extreme_start_index(
     strokes: Sequence[Stroke],
     start_index: int,
@@ -746,22 +738,6 @@ def _opposite_segment_break_signal(
     # 元素不足，数据不够）区分开：这里是"有足够特征序列但未形成分型"，按缠论
     # 规则线段未被破坏，应保持 growing 而不是固定终点。
     return FeatureBreakSignal(False, "no_feature_fractal", {})
-
-
-def _stroke_range(index: int, stroke: Stroke) -> StrokeRange:
-    return StrokeRange(
-        stroke_index=index,
-        low=min(stroke.start_price, stroke.end_price),
-        high=max(stroke.start_price, stroke.end_price),
-    )
-
-
-def _ranges_have_gap(left: StrokeRange, right: StrokeRange) -> bool:
-    return left.high < right.low or right.high < left.low
-
-
-def _range_contains(container: StrokeRange, inner: StrokeRange) -> bool:
-    return container.low <= inner.low and container.high >= inner.high
 
 
 def _has_gap_followup_reverse_fractal(
