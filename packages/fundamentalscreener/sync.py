@@ -54,19 +54,18 @@ from .sync_cli import (
     compute_sync_exit_code,
 )
 from .sync_persistence import (
-    _BENCHMARK_COLUMNS,
-    _COMPANY_DAILY_COLUMNS,
-    _COMPANY_VAL_COLUMNS,
-    _FINANCIAL_COLUMNS,
-    _SECTOR_COLUMNS,
-    _SECTOR_CONSTITUENTS_COLUMNS,
-    _SECTOR_DAILY_COLUMNS,
-    _STOCKS_COLUMNS,
-    _PersistResult,
-    _lineage_columns,
-    _persist_with_validation,
     _run_task,
     _ts,
+)
+from .sync_task_builders import (
+    build_benchmark_persist,
+    build_company_daily_persist,
+    build_company_valuation_persist,
+    build_financial_metrics_persist,
+    build_sector_constituents_persist,
+    build_sector_daily_persist,
+    build_sectors_persist,
+    build_stock_universe_persist,
 )
 
 # ---------------------------------------------------------------------------
@@ -186,31 +185,6 @@ def sync_all(
         tasks=[],
     )
 
-    # 板块列表
-    def _enrich_sector(r: Dict[str, Any]) -> Dict[str, Any]:
-        return _lineage_columns(
-            {
-                "sector_id": str(r.get("sector_id", "")),
-                "classification_system": str(
-                    r.get("classification_system", classification_system)
-                ),
-                "sector_name": r.get("sector_name"),
-                "source_updated_at": r.get("source_updated_at"),
-            },
-            source_name,
-            fetch_run_id,
-        )
-
-    def _persist_sectors(rows: List[Dict[str, Any]]) -> _PersistResult:
-        return _persist_with_validation(
-            conn,
-            table="sectors",
-            rows=rows,
-            pk_columns=("sector_id", "classification_system"),
-            column_order=_SECTOR_COLUMNS,
-            enrich=_enrich_sector,
-        )
-
     sectors_rows: List[Dict[str, Any]] = []
 
     def _fetch_sectors() -> List[Dict[str, Any]]:
@@ -225,7 +199,12 @@ def sync_all(
             source_name=source_name,
             task="list_sectors",
             fetch=_fetch_sectors,
-            persist=_persist_sectors,
+            persist=build_sectors_persist(
+                conn,
+                source_name=source_name,
+                fetch_run_id=fetch_run_id,
+                classification_system=classification_system,
+            ),
         )
     )
 
@@ -268,31 +247,6 @@ def sync_all(
         constituents_rows = out
         return out
 
-    def _persist_constituents(rows: List[Dict[str, Any]]) -> _PersistResult:
-        def _enrich(r: Dict[str, Any]) -> Dict[str, Any]:
-            return _lineage_columns(
-                {
-                    "sector_id": str(r.get("sector_id", "")),
-                    "classification_system": str(
-                        r.get("classification_system", classification_system)
-                    ),
-                    "code": str(r.get("code", "")),
-                    "as_of_date": str(r.get("as_of_date", analysis_date)),
-                    "source_updated_at": r.get("source_updated_at"),
-                },
-                source_name,
-                fetch_run_id,
-            )
-
-        return _persist_with_validation(
-            conn,
-            table="sector_constituents",
-            rows=rows,
-            pk_columns=("sector_id", "classification_system", "code", "as_of_date"),
-            column_order=_SECTOR_CONSTITUENTS_COLUMNS,
-            enrich=_enrich,
-        )
-
     result.tasks.append(
         _run_task(
             conn,
@@ -300,7 +254,13 @@ def sync_all(
             source_name=source_name,
             task="get_sector_constituents",
             fetch=_fetch_constituents,
-            persist=_persist_constituents,
+            persist=build_sector_constituents_persist(
+                conn,
+                source_name=source_name,
+                fetch_run_id=fetch_run_id,
+                classification_system=classification_system,
+                analysis_date=analysis_date,
+            ),
         )
     )
 
@@ -320,37 +280,6 @@ def sync_all(
                 continue
         return out
 
-    def _persist_sector_daily(rows: List[Dict[str, Any]]) -> _PersistResult:
-        def _enrich(r: Dict[str, Any]) -> Dict[str, Any]:
-            return _lineage_columns(
-                {
-                    "sector_id": str(r.get("sector_id", "")),
-                    "classification_system": str(
-                        r.get("classification_system", classification_system)
-                    ),
-                    "trade_date": str(r.get("trade_date", "")),
-                    "open": r.get("open"),
-                    "high": r.get("high"),
-                    "low": r.get("low"),
-                    "close": r.get("close"),
-                    "turnover_amount": r.get("turnover_amount"),
-                    "rising_count": r.get("rising_count"),
-                    "total_count": r.get("total_count"),
-                    "source_updated_at": r.get("source_updated_at"),
-                },
-                source_name,
-                fetch_run_id,
-            )
-
-        return _persist_with_validation(
-            conn,
-            table="sector_daily_bars",
-            rows=rows,
-            pk_columns=("sector_id", "classification_system", "trade_date"),
-            column_order=_SECTOR_DAILY_COLUMNS,
-            enrich=_enrich,
-        )
-
     result.tasks.append(
         _run_task(
             conn,
@@ -358,7 +287,12 @@ def sync_all(
             source_name=source_name,
             task="get_sector_daily",
             fetch=_fetch_sector_daily,
-            persist=_persist_sector_daily,
+            persist=build_sector_daily_persist(
+                conn,
+                source_name=source_name,
+                fetch_run_id=fetch_run_id,
+                classification_system=classification_system,
+            ),
         )
     )
 
@@ -367,32 +301,6 @@ def sync_all(
     def _fetch_benchmark() -> List[Dict[str, Any]]:
         return source.get_benchmark_daily(benchmark, start_date, analysis_date)
 
-    def _persist_benchmark(rows: List[Dict[str, Any]]) -> _PersistResult:
-        def _enrich(r: Dict[str, Any]) -> Dict[str, Any]:
-            return _lineage_columns(
-                {
-                    "benchmark": str(r.get("benchmark", benchmark)),
-                    "trade_date": str(r.get("trade_date", "")),
-                    "open": r.get("open"),
-                    "high": r.get("high"),
-                    "low": r.get("low"),
-                    "close": r.get("close"),
-                    "turnover_amount": r.get("turnover_amount"),
-                    "source_updated_at": r.get("source_updated_at"),
-                },
-                source_name,
-                fetch_run_id,
-            )
-
-        return _persist_with_validation(
-            conn,
-            table="benchmark_daily_bars",
-            rows=rows,
-            pk_columns=("benchmark", "trade_date"),
-            column_order=_BENCHMARK_COLUMNS,
-            enrich=_enrich,
-        )
-
     result.tasks.append(
         _run_task(
             conn,
@@ -400,38 +308,18 @@ def sync_all(
             source_name=source_name,
             task="get_benchmark_daily",
             fetch=_fetch_benchmark,
-            persist=_persist_benchmark,
+            persist=build_benchmark_persist(
+                conn,
+                source_name=source_name,
+                fetch_run_id=fetch_run_id,
+                benchmark=benchmark,
+            ),
         )
     )
 
     # 公司层
     def _fetch_universe() -> List[Dict[str, Any]]:
         return source.get_stock_universe(analysis_date)
-
-    def _persist_universe(rows: List[Dict[str, Any]]) -> _PersistResult:
-        def _enrich(r: Dict[str, Any]) -> Dict[str, Any]:
-            return _lineage_columns(
-                {
-                    "code": str(r.get("code", "")),
-                    "name": r.get("name"),
-                    "market": r.get("market"),
-                    "listing_status": r.get("listing_status"),
-                    "delisted_at": r.get("delisted_at"),
-                    "as_of_date": str(r.get("as_of_date", analysis_date)),
-                    "source_updated_at": r.get("source_updated_at"),
-                },
-                source_name,
-                fetch_run_id,
-            )
-
-        return _persist_with_validation(
-            conn,
-            table="stocks",
-            rows=rows,
-            pk_columns=("code",),
-            column_order=_STOCKS_COLUMNS,
-            enrich=_enrich,
-        )
 
     result.tasks.append(
         _run_task(
@@ -440,7 +328,12 @@ def sync_all(
             source_name=source_name,
             task="get_stock_universe",
             fetch=_fetch_universe,
-            persist=_persist_universe,
+            persist=build_stock_universe_persist(
+                conn,
+                source_name=source_name,
+                fetch_run_id=fetch_run_id,
+                analysis_date=analysis_date,
+            ),
         )
     )
 
@@ -468,32 +361,6 @@ def sync_all(
             )
         return source.get_company_daily_snapshot(analysis_date)
 
-    def _persist_company_daily(rows: List[Dict[str, Any]]) -> _PersistResult:
-        def _enrich(r: Dict[str, Any]) -> Dict[str, Any]:
-            return _lineage_columns(
-                {
-                    "code": str(r.get("code", "")),
-                    "trade_date": str(r.get("trade_date", analysis_date)),
-                    "close": r.get("close"),
-                    "turnover_amount": r.get("turnover_amount"),
-                    "turnover_rate": r.get("turnover_rate"),
-                    "market_cap": r.get("market_cap"),
-                    "change_pct": r.get("change_pct"),
-                    "source_updated_at": r.get("source_updated_at"),
-                },
-                source_name,
-                fetch_run_id,
-            )
-
-        return _persist_with_validation(
-            conn,
-            table="company_daily_snapshot",
-            rows=rows,
-            pk_columns=("code", "trade_date"),
-            column_order=_COMPANY_DAILY_COLUMNS,
-            enrich=_enrich,
-        )
-
     result.tasks.append(
         _run_task(
             conn,
@@ -501,7 +368,12 @@ def sync_all(
             source_name=source_name,
             task="get_company_daily_snapshot",
             fetch=_fetch_company_daily,
-            persist=_persist_company_daily,
+            persist=build_company_daily_persist(
+                conn,
+                source_name=source_name,
+                fetch_run_id=fetch_run_id,
+                analysis_date=analysis_date,
+            ),
         )
     )
 
@@ -513,32 +385,6 @@ def sync_all(
                 effective_codes, start_date, analysis_date
             )
 
-        def _persist_valuation_history(rows: List[Dict[str, Any]]) -> _PersistResult:
-            def _enrich(r: Dict[str, Any]) -> Dict[str, Any]:
-                return _lineage_columns(
-                    {
-                        "code": str(r.get("code", "")),
-                        "trade_date": str(r.get("trade_date", "")),
-                        "market": r.get("market"),
-                        "pe": r.get("pe"),
-                        "pb": r.get("pb"),
-                        "ps": r.get("ps"),
-                        "dividend_yield": r.get("dividend_yield"),
-                        "source_updated_at": r.get("source_updated_at"),
-                    },
-                    source_name,
-                    fetch_run_id,
-                )
-
-            return _persist_with_validation(
-                conn,
-                table="company_valuation_history",
-                rows=rows,
-                pk_columns=("code", "trade_date"),
-                column_order=_COMPANY_VAL_COLUMNS,
-                enrich=_enrich,
-            )
-
         result.tasks.append(
             _run_task(
                 conn,
@@ -546,55 +392,17 @@ def sync_all(
                 source_name=source_name,
                 task="get_company_valuation_history",
                 fetch=_fetch_valuation_history,
-                persist=_persist_valuation_history,
+                persist=build_company_valuation_persist(
+                    conn,
+                    source_name=source_name,
+                    fetch_run_id=fetch_run_id,
+                ),
             )
         )
 
         # --- 财务指标（per-code：每只股票 1 次新浪接口调用）---
         def _fetch_financial() -> List[Dict[str, Any]]:
             return source.get_financial_metrics(effective_codes, analysis_date)
-
-        def _persist_financial(rows: List[Dict[str, Any]]) -> _PersistResult:
-            def _enrich(r: Dict[str, Any]) -> Dict[str, Any]:
-                return _lineage_columns(
-                    {
-                        "code": str(r.get("code", "")),
-                        "report_period": str(r.get("report_period", "")),
-                        "period_end_date": str(r.get("period_end_date", "")),
-                        "disclosure_date": str(r.get("disclosure_date", "")),
-                        "period_type": str(r.get("period_type", "annual")),
-                        "as_of_date": str(r.get("as_of_date", analysis_date)),
-                        "revenue_yoy": r.get("revenue_yoy"),
-                        "net_profit_yoy": r.get("net_profit_yoy"),
-                        "deducted_net_profit_yoy": r.get("deducted_net_profit_yoy"),
-                        "gross_margin": r.get("gross_margin"),
-                        "net_margin": r.get("net_margin"),
-                        "roe": r.get("roe"),
-                        "operating_cashflow_to_profit": r.get(
-                            "operating_cashflow_to_profit"
-                        ),
-                        "free_cashflow": r.get("free_cashflow"),
-                        "debt_to_asset": r.get("debt_to_asset"),
-                        "interest_bearing_debt_ratio": r.get(
-                            "interest_bearing_debt_ratio"
-                        ),
-                        "accounts_receivable_yoy": r.get("accounts_receivable_yoy"),
-                        "inventory_yoy": r.get("inventory_yoy"),
-                        "gross_margin_yoy_change": r.get("gross_margin_yoy_change"),
-                        "source_updated_at": r.get("source_updated_at"),
-                    },
-                    source_name,
-                    fetch_run_id,
-                )
-
-            return _persist_with_validation(
-                conn,
-                table="financial_metrics",
-                rows=rows,
-                pk_columns=("code", "report_period", "period_type", "disclosure_date"),
-                column_order=_FINANCIAL_COLUMNS,
-                enrich=_enrich,
-            )
 
         result.tasks.append(
             _run_task(
@@ -603,7 +411,12 @@ def sync_all(
                 source_name=source_name,
                 task="get_financial_metrics",
                 fetch=_fetch_financial,
-                persist=_persist_financial,
+                persist=build_financial_metrics_persist(
+                    conn,
+                    source_name=source_name,
+                    fetch_run_id=fetch_run_id,
+                    analysis_date=analysis_date,
+                ),
             )
         )
 
