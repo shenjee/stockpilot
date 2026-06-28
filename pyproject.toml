@@ -48,5 +48,8 @@ stockpilot-fundamentalscreener-sync = "packages.fundamentalscreener.sync:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["chantheory", "fundamentalscreener", "packages*"]
+include = ["chantheory", "fundamentalscreener", "marketdata", "packages*"]
 namespaces = true
+
+[tool.setuptools.package-data]
+"packages.marketdata" = ["securities_master.json"]

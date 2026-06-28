@@ -4,11 +4,11 @@ from datetime import date
 from functools import lru_cache
 from typing import Dict, List, Sequence
 
-from market_data import TencentStockDataProvider
-from repositories.kline_store import KLineStore, resolve_market_data_db_path
-from repositories.securities_store import SecuritiesStore
-from runtime_paths import RuntimePaths
-from services.kline_data_service import KLineDataService
+from marketdata.market_data import TencentStockDataProvider
+from marketdata.repositories.kline_store import KLineStore, resolve_market_data_db_path
+from marketdata.repositories.securities_store import SecuritiesStore
+from marketdata.runtime_paths import RuntimePaths
+from marketdata.services.kline_data_service import KLineDataService
 
 _BARS_PER_DAY = {"1m": 240, "5m": 48, "30m": 8, "60m": 4, "day": 1}
 

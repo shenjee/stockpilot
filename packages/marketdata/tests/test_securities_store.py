@@ -6,10 +6,11 @@ from contextlib import redirect_stderr
 from io import StringIO
 from pathlib import Path
 
-SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
-sys.path.insert(0, str(SCRIPTS_DIR))
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "packages"))
 
-from repositories.securities_store import SecuritiesStore  # noqa: E402
+from marketdata.repositories.securities_store import SecuritiesStore  # noqa: E402
 
 
 def _fixture_records() -> list[dict]:
@@ -99,6 +100,14 @@ class SecuritiesStoreTests(unittest.TestCase):
             store = self._new_store(tmpdir, _fixture_records())
             # 构造时已自动 ensure_loaded，应已导入
             self.assertTrue(store.search("PAYH"))
+
+    def test_default_bundled_json_is_available(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            err = StringIO()
+            with redirect_stderr(err):
+                store = SecuritiesStore(Path(tmpdir) / "market_data.sqlite")
+            self.assertTrue(store.search("000001"))
+            self.assertEqual(err.getvalue(), "")
 
     def test_ensure_loaded_skips_when_populated(self):
         with tempfile.TemporaryDirectory() as tmpdir:

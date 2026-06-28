@@ -45,7 +45,7 @@ metadata:
 ## 数据来源
 
 - 默认使用腾讯财经公开 API provider（零依赖，标准库实现）
-- 行情数据请求封装在 `scripts/market_data.py`，后续可新增其他 provider
+- 行情数据请求封装在 `scripts/market_data.py`；在完整仓库里优先复用共享 `marketdata` 包，在独立 skill 安装里自动回退到随 skill 分发的兼容实现
 - 本地配置：`config/watchlist.yaml`、`config/portfolio.yaml`
 
 ## 功能

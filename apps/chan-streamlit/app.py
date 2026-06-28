@@ -14,7 +14,6 @@ chan_chart_widget = components.declare_component("chan_chart_widget", path=str(_
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "packages"))
-sys.path.insert(0, str(ROOT / "skills" / "china-stock-analysis" / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from charts.axis_policy import (  # noqa: E402

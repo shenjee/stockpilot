@@ -1,125 +1,30 @@
-from __future__ import annotations
+"""Compatibility wrapper for the shared K-line data service."""
 
-from datetime import datetime, timedelta
+from importlib import import_module as _import_module
+from pathlib import Path
+import sys
 
+_SCRIPTS_DIR = Path(__file__).resolve().parents[1]
+_ROOT = Path(__file__).resolve().parents[4]
+_PACKAGES_DIR = _ROOT / "packages"
+for _path in (str(_SCRIPTS_DIR), str(_ROOT), str(_PACKAGES_DIR)):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
 
-DEFAULT_LOOKBACK_DAYS = 140
-DEFAULT_MIN_LOCAL_COUNT = 60
-MINUTE_TIMEFRAMES = {"1m", "5m", "30m", "60m"}
+try:
+    _impl = _import_module("marketdata.services.kline_data_service")
+except ModuleNotFoundError as exc:
+    if exc.name != "marketdata":
+        raise
+    _impl = _import_module("_standalone_marketdata.services.kline_data_service")
 
+__all__ = [
+    "DEFAULT_LOOKBACK_DAYS",
+    "DEFAULT_MIN_LOCAL_COUNT",
+    "MINUTE_TIMEFRAMES",
+    "KLineDataService",
+]
+__doc__ = _impl.__doc__
 
-class KLineDataService:
-    """统一的 K 线读取与同步流程。"""
-
-    def __init__(self, provider, store, lookback_days: int = DEFAULT_LOOKBACK_DAYS, min_local_count: int = DEFAULT_MIN_LOCAL_COUNT):
-        self.provider = provider
-        self.store = store
-        self.lookback_days = lookback_days
-        self.min_local_count = min_local_count
-
-    def ensure_local_klines(
-        self,
-        code: str,
-        end_date: str,
-        market: str | None = None,
-        timeframe: str = "day",
-        start_date: str | None = None,
-        min_local_count: int | None = None,
-        security_type: str | None = None,
-    ) -> None:
-        start_date = start_date or self._default_start_date(end_date)
-        required_local_count = min_local_count or self._required_local_count(timeframe, start_date, end_date)
-        required_latest = self._required_latest_timestamp(end_date, timeframe)
-        query_end = end_date if timeframe == "day" else f"{end_date} 23:59:59"
-
-        latest = self.store.latest_date(code, market, timeframe=timeframe)
-        earliest = self.store.earliest_timestamp(code, market, timeframe=timeframe)
-        local_count = self.store.count_since(code, start_date, market, timeframe=timeframe, end_date=query_end)
-        if (
-            latest
-            and earliest
-            and latest >= required_latest
-            and self._covers_start_date(earliest, start_date, timeframe)
-            and local_count >= required_local_count
-        ):
-            return
-
-        klines = self.provider.get_kline(
-            code=code,
-            start_date=start_date,
-            end_date=end_date,
-            ktype=timeframe,
-            market=market,
-            security_type=security_type,
-        )
-        if klines:
-            self.store.upsert_many(code, market, klines, source=self.provider.provider_id, timeframe=timeframe)
-
-    def get_klines(
-        self,
-        code: str,
-        end_date: str,
-        market: str | None = None,
-        timeframe: str = "day",
-        start_date: str | None = None,
-        limit: int = 120,
-        min_local_count: int | None = None,
-        security_type: str | None = None,
-    ) -> list:
-        query_end_date = end_date if timeframe == "day" else f"{end_date} 23:59:59"
-        self.ensure_local_klines(
-            code=code,
-            end_date=end_date,
-            market=market,
-            timeframe=timeframe,
-            start_date=start_date,
-            min_local_count=min_local_count,
-            security_type=security_type,
-        )
-        return self.store.get_klines(
-            code,
-            query_end_date,
-            market=market,
-            limit=limit,
-            timeframe=timeframe,
-            start_date=start_date,
-        )
-
-    def _default_start_date(self, end_date: str) -> str:
-        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
-        return (end_dt - timedelta(days=self.lookback_days)).strftime("%Y-%m-%d")
-
-    def _required_local_count(self, timeframe: str, start_date: str | None = None, end_date: str | None = None) -> int:
-        if timeframe in MINUTE_TIMEFRAMES:
-            bars_per_day = {
-                "1m": 240,
-                "5m": 48,
-                "30m": 8,
-                "60m": 4,
-            }.get(timeframe, 1)
-            if start_date and end_date:
-                start_day = datetime.strptime(start_date, "%Y-%m-%d").date()
-                end_day = datetime.strptime(end_date, "%Y-%m-%d").date()
-                day_count = max((end_day - start_day).days + 1, 1)
-                # Calendar days overestimate trading days (~67%); use a conservative
-                # factor so the cache check triggers a refetch when coverage is insufficient.
-                return max(int(day_count * bars_per_day * 0.6), bars_per_day)
-            return bars_per_day
-        return self.min_local_count
-
-    def _required_latest_timestamp(self, end_date: str, timeframe: str) -> str:
-        if timeframe in MINUTE_TIMEFRAMES:
-            return f"{end_date} 15:00:00"
-        return end_date
-
-    @staticmethod
-    def _covers_start_date(earliest: str, start_date: str, timeframe: str) -> bool:
-        """Check whether the earliest local bar covers the requested start_date.
-
-        For minute timeframes the stored timestamp includes a time component
-        (``YYYY-MM-DD HH:MM:SS``), so only the date prefix is compared against
-        the ``YYYY-MM-DD`` start_date.
-        """
-        if timeframe in MINUTE_TIMEFRAMES:
-            return earliest[:10] <= start_date
-        return earliest <= start_date
+for _name in __all__:
+    globals()[_name] = getattr(_impl, _name)
