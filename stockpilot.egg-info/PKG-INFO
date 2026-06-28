@@ -1,3 +1,35 @@
+Metadata-Version: 2.4
+Name: stockpilot
+Version: 0.1.0
+Summary: Stock-focused analysis workflows, reusable packages, apps, and installable skills.
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: czsc==0.10.12
+Requires-Dist: numpy>=1.26
+Requires-Dist: PyYAML>=6.0
+Provides-Extra: apps
+Requires-Dist: streamlit>=1.36; extra == "apps"
+Requires-Dist: plotly>=5.22; extra == "apps"
+Requires-Dist: pandas>=2.2; extra == "apps"
+Requires-Dist: streamlit-searchbox>=0.1.22; extra == "apps"
+Provides-Extra: akshare
+Requires-Dist: akshare>=1.16; extra == "akshare"
+Requires-Dist: pypinyin>=0.54; extra == "akshare"
+Provides-Extra: dev
+Requires-Dist: streamlit>=1.36; extra == "dev"
+Requires-Dist: plotly>=5.22; extra == "dev"
+Requires-Dist: pandas>=2.2; extra == "dev"
+Requires-Dist: streamlit-searchbox>=0.1.22; extra == "dev"
+Requires-Dist: akshare>=1.16; extra == "dev"
+Requires-Dist: pypinyin>=0.54; extra == "dev"
+Provides-Extra: all
+Requires-Dist: streamlit>=1.36; extra == "all"
+Requires-Dist: plotly>=5.22; extra == "all"
+Requires-Dist: pandas>=2.2; extra == "all"
+Requires-Dist: streamlit-searchbox>=0.1.22; extra == "all"
+Requires-Dist: akshare>=1.16; extra == "all"
+Requires-Dist: pypinyin>=0.54; extra == "all"
+
 # StockPilot
 
 StockPilot is the core project for stock-focused analysis workflows. It contains reusable analysis packages, CLI modules, local validation apps, installable agent skills, and future agent-facing applications.

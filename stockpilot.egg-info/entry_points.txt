@@ -1,0 +1,3 @@
+[console_scripts]
+stockpilot-fundamentalscreener = packages.fundamentalscreener.cli:main
+stockpilot-fundamentalscreener-sync = packages.fundamentalscreener.sync:main
