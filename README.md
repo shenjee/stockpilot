@@ -1,67 +1,57 @@
 # StockPilot
 
-StockPilot is the core project for stock-focused analysis workflows. It contains reusable analysis packages, CLI modules, local validation apps, installable agent skills, and future agent-facing applications.
+StockPilot is a Python repository for stock-focused analysis workflows. It
+contains reusable analysis packages, Streamlit apps for local validation and
+product exploration, installable agent skills, and supporting product docs.
 
-The repository is organized as a product codebase, not only a skill collection. Installable skills live under `skills/<skill-name>/`, reusable Python packages live under `packages/`, local apps live under `apps/`, and CLI capabilities should be exposed through shared core logic instead of being duplicated in skills or apps.
+The repository is no longer only a Chan Theory skill prototype. The current
+codebase also includes a broader Fundamental Screener core, app, CLI, SQLite
+support, and product planning docs.
 
-## Skills
+## Current Components
 
-| Skill | Description |
-| --- | --- |
-| `china-stock-analysis` | Generates factual China A-share daily market reports for indexes, watchlists, and portfolios. |
-
-## Phase 2: Chan Structure Analysis
-
-Phase 2 adds a project-owned `chantheory` adapter layer for Chan Theory structure analysis. It uses `czsc` as the underlying engine, but skills, agents, and UIs consume the stable project schema instead of `czsc` native objects.
-
-Current Phase 2 boundaries:
-
-- `chantheory` normalizes OHLCV input, calls `czsc`, maps results into a project schema, and emits `plot_primitives`, summaries, and warnings.
-- Visual structure output is the primary output; text is only a short supporting summary.
-- Candidate buy/sell points are structure-only candidates. They are not standalone trading instructions; signal synthesis belongs to a later phase.
-- The Streamlit app under `apps/chan-streamlit/` is a debug and validation tool, not the long-term product UI.
-
-Related docs:
-
-- [docs/product_design.md](docs/product_design.md)
-- [docs/product_design.zh.md](docs/product_design.zh.md)
-- [docs/chan_theory_v0.1.md](docs/chan_theory_v0.1.md)
-- [docs/phase2_tasks.md](docs/phase2_tasks.md)
-
-## Version History
-
-See [CHANGELOG.md](CHANGELOG.md).
+| Area | Path | Role |
+| --- | --- | --- |
+| Reusable package | `packages/chantheory/` | Project-owned adapter layer around `czsc` for Chan Theory structure analysis. |
+| Reusable package | `packages/fundamentalscreener/` | Fundamental Screener core for sector rotation, company ranking, financial quality, valuation, repositories, lineage, CLI payloads, and SQLite sync/schema support. |
+| Local app | `apps/chan-streamlit/` | Streamlit debug app for validating `chantheory` chart overlays and structure output. |
+| Local app | `apps/fundamental-screener/` | Streamlit frontend for browsing Fundamental Screener outputs and validations. |
+| Installable skill | `skills/china-stock-analysis/` | Agent skill that generates factual China A-share daily reports using installable scripts, templates, and references. |
+| Product docs | `docs/` | Chan Theory design docs, Fundamental Screener MVP/phase plans, and supporting technical notes. |
 
 ## Repository Layout
 
+Top-level repository roles:
+
+- `packages/`: shared Python logic that can be reused by apps, skills, and CLIs.
+- `apps/`: local Streamlit apps for validation, debugging, and product iteration.
+- `skills/`: installable skill bundles with scripts, references, and config templates.
+- `docs/`: product design notes, plans, and technical documentation.
+- `pyproject.toml`: editable install metadata, dependency extras, and CLI entry points.
+- `CHANGELOG.md` and `CHANGELOG.zh.md`: change history.
+- `AGENTS.md`: repo-specific development and test guidance.
+
+Key subdirectories today:
+
 ```text
 stockpilot/
-|-- README.md
-|-- CHANGELOG.md
+|-- apps/
+|   |-- chan-streamlit/
+|   `-- fundamental-screener/
 |-- docs/
+|   |-- chan_theory_v0.1.md
+|   |-- fundamental_screener_mvp.md
+|   |-- fundamental_screener_phase_plan.md
+|   |-- fundamental_screener_streamlit_frontend_plan.md
 |   |-- product_design.md
 |   |-- product_design.zh.md
-|   |-- phase2_tasks.md
-|   `-- chan_theory_v0.1.md
+|   |-- software_technical_document.zh.md
+|   `-- stock_technical_concepts.zh.md
 |-- packages/
-|   `-- chantheory/
-|       |-- normalize.py
-|       |-- adapters.py
-|       |-- schema.py
-|       |-- plotting.py
-|       |-- describe.py
-|       `-- config.py
-|-- apps/
-|   `-- chan-streamlit/
-|       |-- app.py
-|       |-- README.md
-|       `-- sample_data/
+|   |-- chantheory/
+|   `-- fundamentalscreener/
 `-- skills/
     `-- china-stock-analysis/
-        |-- SKILL.md
-        |-- scripts/
-        |-- references/
-        `-- assets/
 ```
 
 ## Development Setup
@@ -94,28 +84,50 @@ python -m packages.fundamentalscreener.cli sectors --format json
 python -m packages.fundamentalscreener.cli screen --format json
 ```
 
-## Installation
+## Architecture Notes
 
-Install one skill by copying its directory into the target client's skills directory:
+- `packages/chantheory/` is the stable project-facing Chan Theory adapter layer.
+- `packages/fundamentalscreener/` is the stable core for screening, scoring, quality checks, repositories, CLI output, and sync.
+- Apps should render and orchestrate shared logic, not duplicate screening or structure-analysis rules.
+- Skills should keep runtime-specific scripting inside `skills/`, while shared analysis logic stays in `packages/`.
+
+## Development Entry Points
+
+Use the validated environment from `AGENTS.md` before running Python commands:
 
 ```bash
-cp -R skills/china-stock-analysis <target-skills-dir>/
+source ~/.venvs/czsc/bin/activate
 ```
 
-Expected installed layout:
+Common entry points:
 
-```text
-<target-skills-dir>/
-`-- china-stock-analysis/
-    |-- SKILL.md
-    |-- scripts/
-    |-- references/
-    `-- assets/
+```bash
+streamlit run apps/chan-streamlit/app.py
+streamlit run apps/fundamental-screener/app.py
+python -m packages.fundamentalscreener.cli sectors --format json
+python -m packages.fundamentalscreener.cli screen --format json
 ```
 
-The target skills directory is defined by the client or by the install command parameters. For example, a client may install to a user-level skills directory, a workspace-level skills directory, or a custom path selected by the user.
+Common targeted tests:
 
-Runtime data should stay outside the installed skill directory:
+```bash
+python -m unittest discover -s packages/chantheory/tests -p 'test_*.py'
+python -m unittest discover -s packages/fundamentalscreener/tests -p 'test_*.py'
+python -m unittest discover -s apps/chan-streamlit/tests -p 'test_*.py'
+python -m unittest discover -s apps/fundamental-screener/tests -p 'test_*.py'
+python -m unittest discover -s skills/china-stock-analysis/tests -p 'test_*.py'
+```
+
+For the fuller command matrix and repo-specific workflow guidance, see
+[AGENTS.md](AGENTS.md).
+
+## Runtime Data Boundary
+
+The repository stores source code, docs, and committed test fixtures. Private or
+generated runtime data should stay outside the installed skill directory and, in
+general, outside the source repository.
+
+Expected runtime layout:
 
 ```text
 <workspace-or-project-dir>/
@@ -125,29 +137,7 @@ Runtime data should stay outside the installed skill directory:
     `-- reports/
 ```
 
-The runtime directory is configurable. By default, `runtime_dir` is `stockpilot`.
-Directory fields such as `config_dir`, `db_dir`, and `reports_dir` are resolved
-under `runtime_dir` unless an absolute path is provided:
-
-```json
-{
-  "workspace": ".",
-  "runtime_dir": "stockpilot",
-  "config_dir": "config",
-  "db_dir": "db",
-  "reports_dir": "reports",
-  "data_source": {
-    "provider": "tencent"
-  }
-}
-```
-
-Market data providers are isolated under the skill scripts. The default provider
-is Tencent Finance; future providers should implement the same provider contract
-instead of adding HTTP request code to `generate_report.py`.
-
-Installed skills live in the target client's skills directory, separate from
-runtime data:
+Expected installed skill layout:
 
 ```text
 <target-skills-dir>/
@@ -158,8 +148,17 @@ runtime data:
     `-- assets/
 ```
 
-This keeps the skill install immutable and keeps private state out of the source repository.
+This keeps skill installs immutable and prevents private state from being mixed
+into the repo.
 
-## Development
+## Related Docs
 
-Edit installable skill code under `skills/<skill-name>/`. Keep project-owned reusable packages under `packages/`, local validation apps under `apps/`, and product notes or long-form design documents under `docs/`.
+- Chan Theory: [docs/chan_theory_v0.1.md](docs/chan_theory_v0.1.md)
+- Chan Theory product notes: [docs/product_design.md](docs/product_design.md)
+- Fundamental Screener MVP: [docs/fundamental_screener_mvp.md](docs/fundamental_screener_mvp.md)
+- Fundamental Screener phase plan: [docs/fundamental_screener_phase_plan.md](docs/fundamental_screener_phase_plan.md)
+- Fundamental Screener app plan: [docs/fundamental_screener_streamlit_frontend_plan.md](docs/fundamental_screener_streamlit_frontend_plan.md)
+
+## Version History
+
+See [CHANGELOG.md](CHANGELOG.md).
