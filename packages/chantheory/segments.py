@@ -23,6 +23,11 @@ from .segment_endpoint_helpers import (
     _find_window_extreme_start_index as _find_window_extreme_start_index_impl,
     _potential_endpoint_indices as _potential_endpoint_indices_impl,
 )
+from .segment_break_helpers import (
+    _has_gap_followup_reverse_fractal as _has_gap_followup_reverse_fractal_impl,
+    _is_feature_break_fractal as _is_feature_break_fractal_impl,
+    _opposite_segment_break_signal as _opposite_segment_break_signal_impl,
+)
 from .segment_seed_helpers import (
     _is_valid_segment_seed as _is_valid_segment_seed_impl,
     _segment_has_directional_price_span as _segment_has_directional_price_span_impl,
@@ -423,148 +428,17 @@ def _opposite_segment_break_signal(
     current_end_index: int,
     direction: str,
 ) -> FeatureBreakSignal:
-    f1_index = current_end_index - 1
-    f2_index = current_end_index + 1
-
-    if f2_index >= len(strokes):
-        return FeatureBreakSignal(False, "insufficient_feature_sequence", {})
-
-    # 反向特征序列的方向 = 与当前段方向相反
-    opposite_direction = "down" if direction == "up" else "up"
-
-    # Extract all feature strokes
-    feature_strokes = []
-    for idx in range(f1_index, len(strokes), 2):
-        if idx >= 0:
-            stroke = strokes[idx]
-            # 防御性方向校验：特征序列每根笔都应等于反向段方向。
-            # 如果上游 strokes 不严格交替，直接报错跳过，避免错误特征序列。
-            if stroke.direction != opposite_direction:
-                return FeatureBreakSignal(
-                    False,
-                    "feature_sequence_direction_mismatch",
-                    {
-                        "expected_direction": opposite_direction,
-                        "violating_index": idx,
-                        "violating_direction": stroke.direction,
-                    },
-                )
-            feature_strokes.append((idx, _stroke_range(idx, stroke)))
-
-    if len(feature_strokes) < 3:
-        # Check if we found a new peak in the same direction strokes
-        if len(strokes) % 2 != (current_end_index % 2):
-            last_idx = len(strokes) - 1
-            if _is_more_extreme(direction, current_price=strokes[current_end_index].end_price, candidate_price=strokes[last_idx].end_price):
-                return FeatureBreakSignal(False, "new_peak_found", {"new_peak_index": last_idx})
-        return FeatureBreakSignal(False, "insufficient_feature_sequence", {})
-
-    # 特征序列不做包含合并：每根反向笔作为独立元素参与分型判断。
-    # 缠论特征序列分型只要求中间元素相对左右元素成极值，不需要像 K 线那样先做包含合并。
-    processed_features = [(idx, r, [idx]) for idx, r in feature_strokes]
-
-    # Find the first chronological new peak
-    first_new_peak_idx = None
-    for idx in range(current_end_index + 2, len(strokes), 2):
-        if _is_more_extreme(direction, current_price=strokes[current_end_index].end_price, candidate_price=strokes[idx].end_price):
-            first_new_peak_idx = idx
-            break
-            
-    if len(strokes) % 2 != (current_end_index % 2):
-        last_idx = len(strokes) - 1
-        if first_new_peak_idx is None and _is_more_extreme(direction, current_price=strokes[current_end_index].end_price, candidate_price=strokes[last_idx].end_price):
-            first_new_peak_idx = last_idx
-
-    first_fractal_signal = None
-    first_fractal_completion_idx = None
-
-    # Now look for a fractal in the processed features
-    for i in range(len(processed_features) - 2):
-        f1_idx, f1_r, f1_orig = processed_features[i]
-        f2_idx, f2_r, f2_orig = processed_features[i+1]
-        f3_idx, f3_r, f3_orig = processed_features[i+2]
-        
-        # Is f2 the extreme?
-        is_fractal = False
-        if direction == "up":
-            # Looking for TOP fractal
-            if f2_r.high > f3_r.high and f2_r.low > f3_r.low:
-                if f2_r.high > f1_r.high and f2_r.low > f1_r.low:
-                    is_fractal = True
-                elif _range_contains(f2_r, f1_r):
-                    is_fractal = True
-        else:
-            # Looking for BOTTOM fractal
-            if f2_r.low < f3_r.low and f2_r.high < f3_r.high:
-                if f2_r.low < f1_r.low and f2_r.high < f1_r.high:
-                    is_fractal = True
-                elif _range_contains(f2_r, f1_r):
-                    is_fractal = True
-                    
-        if is_fractal:
-            has_gap = _ranges_have_gap(f1_r, f2_r)
-            base_meta: Dict[str, Any] = {
-                "feature_sequence_indices": f1_orig + f2_orig + f3_orig,
-                "feature_sequence_direction": strokes[f1_idx].direction,
-                "first_second_has_gap": has_gap,
-                "break_fractal": True,
-                "left_contained_by_middle": _range_contains(f2_r, f1_r),
-            }
-            first_fractal_completion_idx = f3_idx
-            if not has_gap:
-                first_fractal_signal = FeatureBreakSignal(
-                    True,
-                    "no_gap_feature_fractal",
-                    {**base_meta, "confirmation_case": "no_gap_feature_fractal", "followup_required": False},
-                )
-            else:
-                # 第一二特征元素之间有缺口：必须再出现一个反向特征序列分型才确认。
-                followup = _has_gap_followup_reverse_fractal(
-                    strokes=strokes,
-                    current_end_index=current_end_index,
-                    direction=direction,
-                )
-                if followup.confirmed:
-                    first_fractal_signal = FeatureBreakSignal(
-                        True,
-                        "gap_feature_fractal_with_followup_reverse_fractal",
-                        {
-                            **base_meta,
-                            **followup.meta,
-                            "confirmation_case": "gap_feature_fractal_with_followup_reverse_fractal",
-                            "followup_required": True,
-                        },
-                    )
-                else:
-                    first_fractal_signal = FeatureBreakSignal(
-                        False,
-                        "gap_feature_fractal_waiting_for_followup_reverse_fractal",
-                        {
-                            **base_meta,
-                            **followup.meta,
-                            "confirmation_case": "gap_feature_fractal_waiting",
-                            "followup_required": True,
-                            "pending_reason": "gap_feature_fractal_waiting_for_followup_reverse_fractal",
-                        },
-                    )
-            break
-
-    # Compare chronological order of new peak vs fractal completion
-    if first_new_peak_idx is not None and first_fractal_completion_idx is not None:
-        if first_new_peak_idx < first_fractal_completion_idx:
-            return FeatureBreakSignal(False, "new_peak_found", {"new_peak_index": first_new_peak_idx})
-        else:
-            return first_fractal_signal
-    elif first_new_peak_idx is not None:
-        return FeatureBreakSignal(False, "new_peak_found", {"new_peak_index": first_new_peak_idx})
-    elif first_fractal_signal is not None:
-        return first_fractal_signal
-
-    # 到这里说明特征序列已有足够元素（len(feature_strokes) >= 3），但既没有
-    # 形成分型，也没有出现新峰值。与 "insufficient_feature_sequence"（特征序列
-    # 元素不足，数据不够）区分开：这里是"有足够特征序列但未形成分型"，按缠论
-    # 规则线段未被破坏，应保持 growing 而不是固定终点。
-    return FeatureBreakSignal(False, "no_feature_fractal", {})
+    return _opposite_segment_break_signal_impl(
+        strokes=strokes,
+        current_end_index=current_end_index,
+        direction=direction,
+        stroke_range=_stroke_range,
+        is_more_extreme=_is_more_extreme,
+        range_contains=_range_contains,
+        ranges_have_gap=_ranges_have_gap,
+        has_gap_followup_reverse_fractal=_has_gap_followup_reverse_fractal,
+        feature_break_signal_factory=FeatureBreakSignal,
+    )
 
 
 def _has_gap_followup_reverse_fractal(
@@ -572,61 +446,15 @@ def _has_gap_followup_reverse_fractal(
     current_end_index: int,
     direction: str,
 ) -> FeatureBreakSignal:
-    """缺口特征分型出现后，等待反向段特征序列形成分型再确认。
-
-    direction 是当前段方向。缺口分型在反向特征序列中出现后，
-    需要用反向段方向的特征序列（反向笔）再形成一个分型来确认段结束。
-
-    反向段特征序列起点 = current_end_index + 1（第一根反向笔），
-    步长 2，取三元素：current_end_index + 1, +3, +5。
-    分型方向 = 反向段方向（与当前段方向相反）。
-    """
-    opposite_direction = "down" if direction == "up" else "up"
-    reverse_feature_indices = [
-        current_end_index + 1,
-        current_end_index + 3,
-        current_end_index + 5,
-    ]
-    if reverse_feature_indices[-1] >= len(strokes):
-        return FeatureBreakSignal(
-            False,
-            "insufficient_followup_reverse_sequence",
-            {"followup_reverse_feature_indices": reverse_feature_indices},
-        )
-
-    # 反向段特征序列的方向应等于 opposite_direction
-    if any(strokes[index].direction != opposite_direction for index in reverse_feature_indices):
-        return FeatureBreakSignal(
-            False,
-            "followup_reverse_direction_mismatch",
-            {"followup_reverse_feature_indices": reverse_feature_indices},
-        )
-
-    ranges = [_stroke_range(index, strokes[index]) for index in reverse_feature_indices]
-    # 反向段分型：opposite_direction == 'down' → 底分型（中间最低）
-    #            opposite_direction == 'up' → 顶分型（中间最高）
-    confirmed = _is_feature_break_fractal(direction=opposite_direction, ranges=ranges)
-    return FeatureBreakSignal(
-        confirmed,
-        "followup_reverse_fractal" if confirmed else "no_followup_reverse_fractal",
-        {
-            "followup_reverse_feature_indices": reverse_feature_indices,
-            "followup_reverse_fractal": confirmed,
-        },
+    return _has_gap_followup_reverse_fractal_impl(
+        strokes=strokes,
+        current_end_index=current_end_index,
+        direction=direction,
+        stroke_range=_stroke_range,
+        is_feature_break_fractal=_is_feature_break_fractal,
+        feature_break_signal_factory=FeatureBreakSignal,
     )
 
 
 def _is_feature_break_fractal(direction: str, ranges: Sequence[StrokeRange]) -> bool:
-    """三元素特征序列分型：direction 是当前段方向。
-
-    direction == 'up'  → 顶分型（中间最高）
-    direction == 'down' → 底分型（中间最低）
-    """
-    if len(ranges) < 3:
-        return False
-    left, middle, right = ranges[:3]
-    if direction == "up":
-        return middle.high >= left.high and middle.high > right.high
-    if direction == "down":
-        return middle.low <= left.low and middle.low < right.low
-    return False
+    return _is_feature_break_fractal_impl(direction=direction, ranges=ranges)

@@ -416,6 +416,54 @@ class DeriveSegmentsRegressionTests(unittest.TestCase):
 
 
 class SegmentCompatibilityTests(unittest.TestCase):
+    def test_old_followup_patch_path_still_affects_break_signal(self):
+        strokes = _build_strokes([
+            ("t0", 10.0), ("t1", 12.0), ("t2", 11.0), ("t3", 15.0),
+            ("t4", 13.0), ("t5", 20.0), ("t6", 16.0), ("t7", 17.0),
+            ("t8", 14.0), ("t9", 15.0), ("t10", 14.5),
+        ])
+
+        baseline = segments_mod._opposite_segment_break_signal(
+            strokes=strokes,
+            current_end_index=4,
+            direction="up",
+        )
+        self.assertTrue(baseline.confirmed)
+        self.assertEqual(
+            baseline.reason,
+            "gap_feature_fractal_with_followup_reverse_fractal",
+        )
+
+        patched_signal = segments_mod.FeatureBreakSignal(
+            False,
+            "no_followup_reverse_fractal",
+            {
+                "followup_reverse_feature_indices": [5, 7, 9],
+                "followup_reverse_fractal": False,
+            },
+        )
+        with patch.object(
+            segments_mod,
+            "_has_gap_followup_reverse_fractal",
+            return_value=patched_signal,
+        ) as mocked_followup:
+            result = segments_mod._opposite_segment_break_signal(
+                strokes=strokes,
+                current_end_index=4,
+                direction="up",
+            )
+
+        self.assertTrue(mocked_followup.called)
+        self.assertFalse(result.confirmed)
+        self.assertEqual(
+            result.reason,
+            "gap_feature_fractal_waiting_for_followup_reverse_fractal",
+        )
+        self.assertEqual(
+            result.meta.get("pending_reason"),
+            "gap_feature_fractal_waiting_for_followup_reverse_fractal",
+        )
+
     def test_old_private_endpoint_builder_patch_path_still_affects_potential_endpoints(self):
         strokes = _build_strokes([
             ("t0", 10.0),
