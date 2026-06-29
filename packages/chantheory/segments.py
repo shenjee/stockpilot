@@ -18,6 +18,11 @@ from .segment_postprocess import (
     _merge_adjacent_same_direction_segments as _merge_adjacent_same_direction_segments_impl,
     _segments_are_connected_to_stroke as _segments_are_connected_to_stroke_impl,
 )
+from .segment_seed_helpers import (
+    _is_valid_segment_seed as _is_valid_segment_seed_impl,
+    _segment_has_directional_price_span as _segment_has_directional_price_span_impl,
+    _strokes_have_overlap as _strokes_have_overlap_impl,
+)
 from .schema import Segment, Stroke
 
 
@@ -441,62 +446,27 @@ def _endpoint_from_stroke(index: int, stroke: Stroke) -> SegmentEndpoint:
 
 
 def _strokes_have_overlap(strokes: Sequence[Stroke]) -> bool:
-    if len(strokes) < 3:
-        return False
-
-    lows = [min(stroke.start_price, stroke.end_price) for stroke in strokes[:3]]
-    highs = [max(stroke.start_price, stroke.end_price) for stroke in strokes[:3]]
-    return max(lows) <= min(highs)
+    return _strokes_have_overlap_impl(strokes)
 
 
 def _is_valid_segment_seed(strokes: Sequence[Stroke]) -> bool:
-    if len(strokes) < 3:
-        return False
-    direction = strokes[0].direction
-    if direction not in {"up", "down"}:
-        return False
-    
-    # Fast path for standard 3-stroke seed
-    if (
-        strokes[1].direction != direction
-        and strokes[2].direction == direction
-        and _strokes_have_overlap(strokes[:3])
-        and _segment_has_directional_price_span(
-            segment_direction=direction,
-            start_price=strokes[0].start_price,
-            end_price=strokes[2].end_price,
-        )
-    ):
-        return True
-
-    # Check for longer seeds (5, 7, etc. strokes) that eventually break out
-    # They must start with an overlapping 3-stroke base.
-    if not (
-        strokes[1].direction != direction
-        and strokes[2].direction == direction
-        and _strokes_have_overlap(strokes[:3])
-    ):
-        return False
-
-    # Look ahead to see if a subsequent stroke in the same direction breaks out
-    for i in range(4, len(strokes), 2):
-        if strokes[i].direction == direction:
-            if _segment_has_directional_price_span(
-                segment_direction=direction,
-                start_price=strokes[0].start_price,
-                end_price=strokes[i].end_price,
-            ):
-                return True
-
-    return False
+    return _is_valid_segment_seed_impl(
+        strokes,
+        strokes_have_overlap=_strokes_have_overlap,
+        segment_has_directional_price_span=_segment_has_directional_price_span,
+    )
 
 
-def _segment_has_directional_price_span(segment_direction: str, start_price: float, end_price: float) -> bool:
-    if segment_direction == "up":
-        return start_price < end_price
-    if segment_direction == "down":
-        return start_price > end_price
-    return False
+def _segment_has_directional_price_span(
+    segment_direction: str,
+    start_price: float,
+    end_price: float,
+) -> bool:
+    return _segment_has_directional_price_span_impl(
+        segment_direction,
+        start_price,
+        end_price,
+    )
 
 
 def _opposite_segment_break_signal(

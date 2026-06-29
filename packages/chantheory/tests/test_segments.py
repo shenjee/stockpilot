@@ -416,6 +416,26 @@ class DeriveSegmentsRegressionTests(unittest.TestCase):
 
 
 class SegmentCompatibilityTests(unittest.TestCase):
+    def test_old_private_directional_span_patch_path_still_affects_seed_validation(self):
+        strokes = _build_strokes([
+            ("t0", 10.0),
+            ("t1", 12.0),
+            ("t2", 11.0),
+            ("t3", 13.0),
+        ])
+
+        self.assertTrue(segments_mod._is_valid_segment_seed(strokes))
+
+        with patch.object(
+            segments_mod,
+            "_segment_has_directional_price_span",
+            return_value=False,
+        ) as mocked_span:
+            result = segments_mod._is_valid_segment_seed(strokes)
+
+        self.assertTrue(mocked_span.called)
+        self.assertFalse(result)
+
     def test_old_private_confirmation_path_still_available(self):
         first = segments_mod.Segment(
             id="segment_001",
