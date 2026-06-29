@@ -12,8 +12,11 @@ from .segment_helpers import (
 )
 from .segment_postprocess import (
     _apply_segment_confirmation as _apply_segment_confirmation_impl,
+    _append_unfinished_tail_segment as _append_unfinished_tail_segment_impl,
     _extend_segment_if_more_extreme as _extend_segment_if_more_extreme_impl,
+    _make_unfinished_tail_segment as _make_unfinished_tail_segment_impl,
     _merge_adjacent_same_direction_segments as _merge_adjacent_same_direction_segments_impl,
+    _segments_are_connected_to_stroke as _segments_are_connected_to_stroke_impl,
 )
 from .schema import Segment, Stroke
 
@@ -314,43 +317,8 @@ def _enforce_segment_contract(segments: Sequence[Segment], strokes: Sequence[Str
     return valid
 
 
-def _append_unfinished_tail_segment(
-    segments: List[Segment],
-    strokes: Sequence[Stroke],
-    potential_endpoints: Set[int],
-) -> None:
-    if not segments:
-        return
-
-    last_segment = segments[-1]
-    feature_break = last_segment.meta.get("feature_sequence_break")
-    if isinstance(feature_break, dict) and feature_break.get("pending_reason") == "gap_feature_fractal_waiting_for_followup_reverse_fractal":
-        return
-
-    last_end_index = int(last_segment.meta.get("end_stroke_index", -1))
-    tail_start_index = last_end_index + 1
-    if tail_start_index >= len(strokes):
-        return
-
-    first_tail = strokes[tail_start_index]
-    if first_tail.direction == last_segment.direction:
-        return
-    if not _segments_are_connected_to_stroke(last_segment, first_tail):
-        return
-
-    tail_end_index = len(strokes) - 1
-    segment = _make_unfinished_tail_segment(
-        strokes=strokes,
-        start_index=tail_start_index,
-        end_index=tail_end_index,
-        potential_endpoints=potential_endpoints,
-    )
-    if segment is not None:
-        segments.append(segment)
-
-
 def _segments_are_connected_to_stroke(previous: Segment, stroke: Stroke) -> bool:
-    return previous.end_timestamp == stroke.start_timestamp and abs(previous.end_price - stroke.start_price) < 1e-9
+    return _segments_are_connected_to_stroke_impl(previous, stroke)
 
 
 def _make_unfinished_tail_segment(
@@ -359,66 +327,27 @@ def _make_unfinished_tail_segment(
     end_index: int,
     potential_endpoints: Set[int],
 ) -> Segment | None:
-    window = list(strokes[start_index : end_index + 1])
-    first = window[0]
-    direction = first.direction
-    drawable_end_index = start_index
-    for index in range(start_index, end_index + 1):
-        if strokes[index].direction != direction:
-            continue
-        if _segment_has_directional_price_span(
-            segment_direction=direction,
-            start_price=first.start_price,
-            end_price=strokes[index].end_price,
-        ) and _is_more_extreme(
-            direction=direction,
-            current_price=strokes[drawable_end_index].end_price,
-            candidate_price=strokes[index].end_price,
-        ):
-            drawable_end_index = index
+    return _make_unfinished_tail_segment_impl(
+        strokes=strokes,
+        start_index=start_index,
+        end_index=end_index,
+        potential_endpoints=potential_endpoints,
+        mapping_strategy=SEGMENT_MAPPING_STRATEGY,
+        segment_has_directional_price_span=_segment_has_directional_price_span,
+    )
 
-    # growing 段的 endpoint 取同方向最极端的笔，但 stroke_ids 必须延伸到最新笔，
-    # 否则 drawable_end_index 之后的笔不会出现在任何线段中，导致线段不覆盖最新数据。
-    endpoint_stroke = strokes[drawable_end_index]
-    if not first.start_timestamp or not endpoint_stroke.end_timestamp:
-        return None
-    if not _segment_has_directional_price_span(
-        segment_direction=direction,
-        start_price=first.start_price,
-        end_price=endpoint_stroke.end_price,
-    ):
-        return None
 
-    full_window = list(strokes[start_index : end_index + 1])
-
-    return Segment(
-        id=f"segment_growing_{start_index + 1:03d}_{first.start_timestamp}_{endpoint_stroke.end_timestamp}",
-        direction=direction,
-        stroke_ids=[stroke.id for stroke in full_window],
-        start_timestamp=first.start_timestamp,
-        end_timestamp=endpoint_stroke.end_timestamp,
-        start_price=first.start_price,
-        end_price=endpoint_stroke.end_price,
-        confirmed=False,
-        meta={
-            "mapping_strategy": SEGMENT_MAPPING_STRATEGY,
-            "status": "growing",
-            "provisional": True,
-            "stroke_count": len(full_window),
-            "start_stroke_index": start_index,
-            "end_stroke_index": end_index,
-            "drawable_end_stroke_index": drawable_end_index,
-            "available_tail_end_stroke_index": end_index,
-            "endpoint_is_potential_extreme": drawable_end_index in potential_endpoints,
-            "endpoint_direction_valid": _segment_has_directional_price_span(
-                segment_direction=direction,
-                start_price=first.start_price,
-                end_price=endpoint_stroke.end_price,
-            ),
-            "endpoint_update_indices": [],
-            "feature_sequence_break": None,
-            "confirmed_by_segment_id": None,
-        },
+def _append_unfinished_tail_segment(
+    segments: List[Segment],
+    strokes: Sequence[Stroke],
+    potential_endpoints: Set[int],
+) -> None:
+    _append_unfinished_tail_segment_impl(
+        segments=segments,
+        strokes=strokes,
+        potential_endpoints=potential_endpoints,
+        segments_are_connected_to_stroke=_segments_are_connected_to_stroke,
+        make_unfinished_tail_segment=_make_unfinished_tail_segment,
     )
 
 

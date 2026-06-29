@@ -560,6 +560,112 @@ class SegmentCompatibilityTests(unittest.TestCase):
         self.assertEqual(merged[0].end_timestamp, "t5")
         self.assertEqual(merged[0].end_price, 15.0)
 
+    def test_old_private_tail_builder_patch_path_can_change_append_behavior(self):
+        last_segment = segments_mod.Segment(
+            id="segment_001",
+            direction="up",
+            stroke_ids=["stroke_001", "stroke_002", "stroke_003"],
+            start_timestamp="t0",
+            end_timestamp="t3",
+            start_price=10.0,
+            end_price=13.0,
+            confirmed=False,
+            meta={
+                "status": "pending",
+                "end_stroke_index": 2,
+                "feature_sequence_break": None,
+            },
+        )
+        sentinel = segments_mod.Segment(
+            id="segment_growing_custom",
+            direction="down",
+            stroke_ids=["stroke_004", "stroke_005"],
+            start_timestamp="t3",
+            end_timestamp="t5",
+            start_price=13.0,
+            end_price=9.0,
+            confirmed=False,
+            meta={"status": "growing"},
+        )
+        strokes = [
+            Stroke(
+                id="stroke_001",
+                direction="up",
+                start_fractal_id="fractal_000",
+                end_fractal_id="fractal_001",
+                start_timestamp="t0",
+                end_timestamp="t1",
+                start_price=10.0,
+                end_price=11.0,
+                confirmed=True,
+                meta={},
+            ),
+            Stroke(
+                id="stroke_002",
+                direction="down",
+                start_fractal_id="fractal_001",
+                end_fractal_id="fractal_002",
+                start_timestamp="t1",
+                end_timestamp="t2",
+                start_price=11.0,
+                end_price=10.5,
+                confirmed=True,
+                meta={},
+            ),
+            Stroke(
+                id="stroke_003",
+                direction="up",
+                start_fractal_id="fractal_002",
+                end_fractal_id="fractal_003",
+                start_timestamp="t2",
+                end_timestamp="t3",
+                start_price=10.5,
+                end_price=13.0,
+                confirmed=True,
+                meta={},
+            ),
+            Stroke(
+                id="stroke_004",
+                direction="down",
+                start_fractal_id="fractal_003",
+                end_fractal_id="fractal_004",
+                start_timestamp="t3",
+                end_timestamp="t4",
+                start_price=13.0,
+                end_price=11.0,
+                confirmed=True,
+                meta={},
+            ),
+            Stroke(
+                id="stroke_005",
+                direction="up",
+                start_fractal_id="fractal_004",
+                end_fractal_id="fractal_005",
+                start_timestamp="t4",
+                end_timestamp="t5",
+                start_price=11.0,
+                end_price=12.0,
+                confirmed=True,
+                meta={},
+            ),
+        ]
+        segments = [last_segment]
+
+        with patch.object(
+            segments_mod,
+            "_make_unfinished_tail_segment",
+            return_value=sentinel,
+        ) as mocked_make_tail:
+            segments_mod._append_unfinished_tail_segment(
+                segments=segments,
+                strokes=strokes,
+                potential_endpoints={3},
+            )
+
+        self.assertTrue(mocked_make_tail.called)
+        self.assertEqual(segments[-1], sentinel)
+        self.assertEqual(len(segments), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -95,3 +95,120 @@ def _apply_segment_confirmation(segments: Sequence[Segment]) -> None:
             segment.confirmed = True
             segment.meta["status"] = "confirmed"
             segment.meta["confirmed_by_segment_id"] = next_segment.id
+
+
+def _segments_are_connected_to_stroke(previous: Segment, stroke: Stroke) -> bool:
+    return (
+        previous.end_timestamp == stroke.start_timestamp
+        and abs(previous.end_price - stroke.start_price) < 1e-9
+    )
+
+
+def _make_unfinished_tail_segment(
+    strokes: Sequence[Stroke],
+    start_index: int,
+    end_index: int,
+    potential_endpoints: Set[int],
+    *,
+    mapping_strategy: str,
+    segment_has_directional_price_span: Callable[[str, float, float], bool],
+) -> Segment | None:
+    window = list(strokes[start_index : end_index + 1])
+    first = window[0]
+    direction = first.direction
+    drawable_end_index = start_index
+    for index in range(start_index, end_index + 1):
+        if strokes[index].direction != direction:
+            continue
+        if segment_has_directional_price_span(
+            segment_direction=direction,
+            start_price=first.start_price,
+            end_price=strokes[index].end_price,
+        ) and _is_more_extreme(
+            direction=direction,
+            current_price=strokes[drawable_end_index].end_price,
+            candidate_price=strokes[index].end_price,
+        ):
+            drawable_end_index = index
+
+    endpoint_stroke = strokes[drawable_end_index]
+    if not first.start_timestamp or not endpoint_stroke.end_timestamp:
+        return None
+    if not segment_has_directional_price_span(
+        segment_direction=direction,
+        start_price=first.start_price,
+        end_price=endpoint_stroke.end_price,
+    ):
+        return None
+
+    full_window = list(strokes[start_index : end_index + 1])
+
+    return Segment(
+        id=f"segment_growing_{start_index + 1:03d}_{first.start_timestamp}_{endpoint_stroke.end_timestamp}",
+        direction=direction,
+        stroke_ids=[stroke.id for stroke in full_window],
+        start_timestamp=first.start_timestamp,
+        end_timestamp=endpoint_stroke.end_timestamp,
+        start_price=first.start_price,
+        end_price=endpoint_stroke.end_price,
+        confirmed=False,
+        meta={
+            "mapping_strategy": mapping_strategy,
+            "status": "growing",
+            "provisional": True,
+            "stroke_count": len(full_window),
+            "start_stroke_index": start_index,
+            "end_stroke_index": end_index,
+            "drawable_end_stroke_index": drawable_end_index,
+            "available_tail_end_stroke_index": end_index,
+            "endpoint_is_potential_extreme": drawable_end_index in potential_endpoints,
+            "endpoint_direction_valid": segment_has_directional_price_span(
+                segment_direction=direction,
+                start_price=first.start_price,
+                end_price=endpoint_stroke.end_price,
+            ),
+            "endpoint_update_indices": [],
+            "feature_sequence_break": None,
+            "confirmed_by_segment_id": None,
+        },
+    )
+
+
+def _append_unfinished_tail_segment(
+    segments: list[Segment],
+    strokes: Sequence[Stroke],
+    potential_endpoints: Set[int],
+    *,
+    segments_are_connected_to_stroke: Callable[[Segment, Stroke], bool] = _segments_are_connected_to_stroke,
+    make_unfinished_tail_segment: Callable[[Sequence[Stroke], int, int, Set[int]], Segment | None],
+) -> None:
+    if not segments:
+        return
+
+    last_segment = segments[-1]
+    feature_break = last_segment.meta.get("feature_sequence_break")
+    if isinstance(feature_break, dict) and feature_break.get("pending_reason") == (
+        "gap_feature_fractal_waiting_for_followup_reverse_fractal"
+    ):
+        return
+
+    last_end_index = int(last_segment.meta.get("end_stroke_index", -1))
+    tail_start_index = last_end_index + 1
+    if tail_start_index >= len(strokes):
+        return
+
+    first_tail = strokes[tail_start_index]
+    if first_tail.direction == last_segment.direction:
+        return
+    if not segments_are_connected_to_stroke(last_segment, first_tail):
+        return
+
+    tail_end_index = len(strokes) - 1
+    segment = make_unfinished_tail_segment(
+        strokes=strokes,
+        start_index=tail_start_index,
+        end_index=tail_end_index,
+        potential_endpoints=potential_endpoints,
+    )
+    if segment is not None:
+        segments.append(segment)
