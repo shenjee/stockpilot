@@ -5,11 +5,13 @@ import unittest
 from dataclasses import asdict
 from pathlib import Path
 from typing import List, Tuple
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "packages"))
 
+import chantheory.segments as segments_mod
 from chantheory.schema import Stroke
 from chantheory.segments import derive_segments
 
@@ -411,6 +413,152 @@ class DeriveSegmentsRegressionTests(unittest.TestCase):
             if segment.meta.get("endpoint_is_absolute_extreme") is False
         ]
         self.assertTrue(non_absolute_segments, "非绝对极值端点应保留为诊断，而不是触发级联丢弃")
+
+
+class SegmentCompatibilityTests(unittest.TestCase):
+    def test_old_private_confirmation_path_still_available(self):
+        first = segments_mod.Segment(
+            id="segment_001",
+            direction="up",
+            stroke_ids=["stroke_001", "stroke_002", "stroke_003"],
+            start_timestamp="t0",
+            end_timestamp="t3",
+            start_price=10.0,
+            end_price=13.0,
+            confirmed=False,
+            meta={"status": "pending", "feature_sequence_break": None},
+        )
+        second = segments_mod.Segment(
+            id="segment_002",
+            direction="down",
+            stroke_ids=["stroke_004", "stroke_005", "stroke_006"],
+            start_timestamp="t3",
+            end_timestamp="t6",
+            start_price=13.0,
+            end_price=9.0,
+            confirmed=False,
+            meta={"status": "pending", "feature_sequence_break": None},
+        )
+
+        segments_mod._apply_segment_confirmation([first, second])
+
+        self.assertTrue(first.confirmed)
+        self.assertEqual(first.meta["status"], "confirmed")
+        self.assertEqual(first.meta["confirmed_by_segment_id"], "segment_002")
+        self.assertFalse(second.confirmed)
+        self.assertEqual(second.meta["status"], "pending")
+
+    def test_old_private_extend_patch_path_still_intercepts_merge_flow(self):
+        first = segments_mod.Segment(
+            id="segment_001",
+            direction="up",
+            stroke_ids=["stroke_001", "stroke_002", "stroke_003"],
+            start_timestamp="t0",
+            end_timestamp="t3",
+            start_price=10.0,
+            end_price=13.0,
+            confirmed=False,
+            meta={
+                "status": "pending",
+                "start_stroke_index": 0,
+                "end_stroke_index": 2,
+                "endpoint_update_indices": [],
+            },
+        )
+        second = segments_mod.Segment(
+            id="segment_002",
+            direction="up",
+            stroke_ids=["stroke_003", "stroke_004", "stroke_005"],
+            start_timestamp="t3",
+            end_timestamp="t5",
+            start_price=13.0,
+            end_price=15.0,
+            confirmed=False,
+            meta={
+                "status": "pending",
+                "start_stroke_index": 2,
+                "end_stroke_index": 4,
+                "endpoint_update_indices": [],
+            },
+        )
+        strokes = [
+            Stroke(
+                id="stroke_001",
+                direction="up",
+                start_fractal_id="fractal_000",
+                end_fractal_id="fractal_001",
+                start_timestamp="t0",
+                end_timestamp="t1",
+                start_price=10.0,
+                end_price=11.0,
+                confirmed=True,
+                meta={},
+            ),
+            Stroke(
+                id="stroke_002",
+                direction="down",
+                start_fractal_id="fractal_001",
+                end_fractal_id="fractal_002",
+                start_timestamp="t1",
+                end_timestamp="t2",
+                start_price=11.0,
+                end_price=10.5,
+                confirmed=True,
+                meta={},
+            ),
+            Stroke(
+                id="stroke_003",
+                direction="up",
+                start_fractal_id="fractal_002",
+                end_fractal_id="fractal_003",
+                start_timestamp="t2",
+                end_timestamp="t3",
+                start_price=10.5,
+                end_price=13.0,
+                confirmed=True,
+                meta={},
+            ),
+            Stroke(
+                id="stroke_004",
+                direction="down",
+                start_fractal_id="fractal_003",
+                end_fractal_id="fractal_004",
+                start_timestamp="t3",
+                end_timestamp="t4",
+                start_price=13.0,
+                end_price=12.0,
+                confirmed=True,
+                meta={},
+            ),
+            Stroke(
+                id="stroke_005",
+                direction="up",
+                start_fractal_id="fractal_004",
+                end_fractal_id="fractal_005",
+                start_timestamp="t4",
+                end_timestamp="t5",
+                start_price=12.0,
+                end_price=15.0,
+                confirmed=True,
+                meta={},
+            ),
+        ]
+
+        with patch.object(
+            segments_mod,
+            "_extend_segment_if_more_extreme",
+            wraps=segments_mod._extend_segment_if_more_extreme,
+        ) as mocked_extend:
+            merged = segments_mod._merge_adjacent_same_direction_segments(
+                [first, second],
+                strokes=strokes,
+                potential_endpoints={4},
+            )
+
+        self.assertTrue(mocked_extend.called)
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0].end_timestamp, "t5")
+        self.assertEqual(merged[0].end_price, 15.0)
 
 
 if __name__ == "__main__":
