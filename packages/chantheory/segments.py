@@ -3,6 +3,36 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Sequence, Set
 
+from .segment_helpers import (
+    StrokeRange,
+    _is_more_extreme,
+    _range_contains,
+    _ranges_have_gap,
+    _stroke_range,
+)
+from .segment_postprocess import (
+    _apply_segment_confirmation as _apply_segment_confirmation_impl,
+    _append_unfinished_tail_segment as _append_unfinished_tail_segment_impl,
+    _extend_segment_if_more_extreme as _extend_segment_if_more_extreme_impl,
+    _make_unfinished_tail_segment as _make_unfinished_tail_segment_impl,
+    _merge_adjacent_same_direction_segments as _merge_adjacent_same_direction_segments_impl,
+    _segments_are_connected_to_stroke as _segments_are_connected_to_stroke_impl,
+)
+from .segment_endpoint_helpers import (
+    _endpoint_from_stroke as _endpoint_from_stroke_impl,
+    _find_window_extreme_start_index as _find_window_extreme_start_index_impl,
+    _potential_endpoint_indices as _potential_endpoint_indices_impl,
+)
+from .segment_break_helpers import (
+    _has_gap_followup_reverse_fractal as _has_gap_followup_reverse_fractal_impl,
+    _is_feature_break_fractal as _is_feature_break_fractal_impl,
+    _opposite_segment_break_signal as _opposite_segment_break_signal_impl,
+)
+from .segment_seed_helpers import (
+    _is_valid_segment_seed as _is_valid_segment_seed_impl,
+    _segment_has_directional_price_span as _segment_has_directional_price_span_impl,
+    _strokes_have_overlap as _strokes_have_overlap_impl,
+)
 from .schema import Segment, Stroke
 
 
@@ -15,13 +45,6 @@ class SegmentEndpoint:
     direction: str
     timestamp: str
     price: float
-
-
-@dataclass(frozen=True)
-class StrokeRange:
-    stroke_index: int
-    low: float
-    high: float
 
 
 @dataclass(frozen=True)
@@ -213,29 +236,12 @@ def _extend_segment_if_more_extreme(
     end_index: int,
     potential_endpoints: Set[int],
 ) -> bool:
-    new_end = strokes[end_index]
-    if not _is_more_extreme(segment.direction, current_price=segment.end_price, candidate_price=new_end.end_price):
-        return False
-
-    previous_end_index = int(segment.meta.get("end_stroke_index", -1))
-    append_from = max(previous_end_index + 1, 0)
-    for stroke in strokes[append_from : end_index + 1]:
-        if stroke.id not in segment.stroke_ids:
-            segment.stroke_ids.append(stroke.id)
-
-    segment.end_timestamp = new_end.end_timestamp
-    segment.end_price = new_end.end_price
-    segment.id = f"segment_{int(segment.meta.get('start_stroke_index', 0)) + 1:03d}_{segment.start_timestamp}_{segment.end_timestamp}"
-    segment.confirmed = False
-    segment.meta["status"] = "pending"
-    segment.meta["stroke_count"] = len(segment.stroke_ids)
-    segment.meta["end_stroke_index"] = end_index
-    segment.meta["endpoint_is_potential_extreme"] = end_index in potential_endpoints
-    segment.meta.setdefault("endpoint_update_indices", []).append(end_index)
-    segment.meta["same_direction_candidate_merged"] = True
-    segment.meta["same_direction_candidate_merge_policy"] = "extend_pending_segment_instead_of_creating_same_direction_segment"
-    segment.meta["confirmed_by_segment_id"] = None
-    return True
+    return _extend_segment_if_more_extreme_impl(
+        segment=segment,
+        strokes=strokes,
+        end_index=end_index,
+        potential_endpoints=potential_endpoints,
+    )
 
 
 def _merge_adjacent_same_direction_segments(
@@ -243,25 +249,16 @@ def _merge_adjacent_same_direction_segments(
     strokes: Sequence[Stroke],
     potential_endpoints: Set[int],
 ) -> List[Segment]:
-    merged: List[Segment] = []
-    for segment in segments:
-        if not merged or merged[-1].direction != segment.direction:
-            merged.append(segment)
-            continue
+    return _merge_adjacent_same_direction_segments_impl(
+        segments=segments,
+        strokes=strokes,
+        potential_endpoints=potential_endpoints,
+        extend_segment_if_more_extreme=_extend_segment_if_more_extreme,
+    )
 
-        end_index = int(segment.meta.get("end_stroke_index", -1))
-        if end_index >= 0 and _extend_segment_if_more_extreme(
-            segment=merged[-1],
-            strokes=strokes,
-            end_index=end_index,
-            potential_endpoints=potential_endpoints,
-        ):
-            merged[-1].meta["adjacent_same_direction_segment_merged"] = True
-            continue
 
-        merged[-1].meta["adjacent_same_direction_segment_dropped"] = segment.id
-
-    return merged
+def _apply_segment_confirmation(segments: Sequence[Segment]) -> None:
+    _apply_segment_confirmation_impl(segments)
 
 
 def _enforce_segment_contract(segments: Sequence[Segment], strokes: Sequence[Stroke] = None) -> List[Segment]:
@@ -335,43 +332,8 @@ def _enforce_segment_contract(segments: Sequence[Segment], strokes: Sequence[Str
     return valid
 
 
-def _append_unfinished_tail_segment(
-    segments: List[Segment],
-    strokes: Sequence[Stroke],
-    potential_endpoints: Set[int],
-) -> None:
-    if not segments:
-        return
-
-    last_segment = segments[-1]
-    feature_break = last_segment.meta.get("feature_sequence_break")
-    if isinstance(feature_break, dict) and feature_break.get("pending_reason") == "gap_feature_fractal_waiting_for_followup_reverse_fractal":
-        return
-
-    last_end_index = int(last_segment.meta.get("end_stroke_index", -1))
-    tail_start_index = last_end_index + 1
-    if tail_start_index >= len(strokes):
-        return
-
-    first_tail = strokes[tail_start_index]
-    if first_tail.direction == last_segment.direction:
-        return
-    if not _segments_are_connected_to_stroke(last_segment, first_tail):
-        return
-
-    tail_end_index = len(strokes) - 1
-    segment = _make_unfinished_tail_segment(
-        strokes=strokes,
-        start_index=tail_start_index,
-        end_index=tail_end_index,
-        potential_endpoints=potential_endpoints,
-    )
-    if segment is not None:
-        segments.append(segment)
-
-
 def _segments_are_connected_to_stroke(previous: Segment, stroke: Stroke) -> bool:
-    return previous.end_timestamp == stroke.start_timestamp and abs(previous.end_price - stroke.start_price) < 1e-9
+    return _segments_are_connected_to_stroke_impl(previous, stroke)
 
 
 def _make_unfinished_tail_segment(
@@ -380,79 +342,32 @@ def _make_unfinished_tail_segment(
     end_index: int,
     potential_endpoints: Set[int],
 ) -> Segment | None:
-    window = list(strokes[start_index : end_index + 1])
-    first = window[0]
-    direction = first.direction
-    drawable_end_index = start_index
-    for index in range(start_index, end_index + 1):
-        if strokes[index].direction != direction:
-            continue
-        if _segment_has_directional_price_span(
-            segment_direction=direction,
-            start_price=first.start_price,
-            end_price=strokes[index].end_price,
-        ) and _is_more_extreme(
-            direction=direction,
-            current_price=strokes[drawable_end_index].end_price,
-            candidate_price=strokes[index].end_price,
-        ):
-            drawable_end_index = index
+    return _make_unfinished_tail_segment_impl(
+        strokes=strokes,
+        start_index=start_index,
+        end_index=end_index,
+        potential_endpoints=potential_endpoints,
+        mapping_strategy=SEGMENT_MAPPING_STRATEGY,
+        segment_has_directional_price_span=_segment_has_directional_price_span,
+    )
 
-    # growing 段的 endpoint 取同方向最极端的笔，但 stroke_ids 必须延伸到最新笔，
-    # 否则 drawable_end_index 之后的笔不会出现在任何线段中，导致线段不覆盖最新数据。
-    endpoint_stroke = strokes[drawable_end_index]
-    if not first.start_timestamp or not endpoint_stroke.end_timestamp:
-        return None
-    if not _segment_has_directional_price_span(
-        segment_direction=direction,
-        start_price=first.start_price,
-        end_price=endpoint_stroke.end_price,
-    ):
-        return None
 
-    full_window = list(strokes[start_index : end_index + 1])
-
-    return Segment(
-        id=f"segment_growing_{start_index + 1:03d}_{first.start_timestamp}_{endpoint_stroke.end_timestamp}",
-        direction=direction,
-        stroke_ids=[stroke.id for stroke in full_window],
-        start_timestamp=first.start_timestamp,
-        end_timestamp=endpoint_stroke.end_timestamp,
-        start_price=first.start_price,
-        end_price=endpoint_stroke.end_price,
-        confirmed=False,
-        meta={
-            "mapping_strategy": SEGMENT_MAPPING_STRATEGY,
-            "status": "growing",
-            "provisional": True,
-            "stroke_count": len(full_window),
-            "start_stroke_index": start_index,
-            "end_stroke_index": end_index,
-            "drawable_end_stroke_index": drawable_end_index,
-            "available_tail_end_stroke_index": end_index,
-            "endpoint_is_potential_extreme": drawable_end_index in potential_endpoints,
-            "endpoint_direction_valid": _segment_has_directional_price_span(
-                segment_direction=direction,
-                start_price=first.start_price,
-                end_price=endpoint_stroke.end_price,
-            ),
-            "endpoint_update_indices": [],
-            "feature_sequence_break": None,
-            "confirmed_by_segment_id": None,
-        },
+def _append_unfinished_tail_segment(
+    segments: List[Segment],
+    strokes: Sequence[Stroke],
+    potential_endpoints: Set[int],
+) -> None:
+    _append_unfinished_tail_segment_impl(
+        segments=segments,
+        strokes=strokes,
+        potential_endpoints=potential_endpoints,
+        segments_are_connected_to_stroke=_segments_are_connected_to_stroke,
+        make_unfinished_tail_segment=_make_unfinished_tail_segment,
     )
 
 
 def _segments_are_connected(previous: Segment, current: Segment) -> bool:
     return previous.end_timestamp == current.start_timestamp and abs(previous.end_price - current.start_price) < 1e-9
-
-
-def _is_more_extreme(direction: str, current_price: float, candidate_price: float) -> bool:
-    if direction == "up":
-        return candidate_price > current_price
-    if direction == "down":
-        return candidate_price < current_price
-    return False
 
 
 def _find_window_extreme_start_index(
@@ -461,142 +376,51 @@ def _find_window_extreme_start_index(
     end_index: int,
     direction: str,
 ) -> int:
-    """找到段 window 内的真正极值起点。
-
-    对于向上段，起点应该是 window 最低点之后的第一根向上笔。
-    对于向下段，起点应该是 window 最高点之后的第一根向下笔。
-
-    返回真正起点的 stroke index。如果当前起点已经是极值，返回 start_index。
-    """
-    window = list(strokes[start_index : end_index + 1])
-    if not window:
-        return start_index
-
-    first = window[0]
-    eps = 1e-9
-
-    if direction == "up":
-        first_low = min(first.start_price, first.end_price)
-        window_min = min(min(s.start_price, s.end_price) for s in window)
-        if first_low <= window_min + eps:
-            return start_index
-        # 找到最低点对应的笔
-        for idx in range(start_index, end_index + 1):
-            s = strokes[idx]
-            if abs(min(s.start_price, s.end_price) - window_min) > eps:
-                continue
-            # 最低点在 down 笔的终点 → 下一根 up 笔是真正起点
-            if s.direction == "down" and abs(s.end_price - window_min) < eps:
-                return idx + 1
-            # 最低点在 up 笔的起点 → 这根 up 笔就是真正起点
-            if s.direction == "up" and abs(s.start_price - window_min) < eps:
-                return idx
-            return idx + 1
-        return start_index
-
-    if direction == "down":
-        first_high = max(first.start_price, first.end_price)
-        window_max = max(max(s.start_price, s.end_price) for s in window)
-        if first_high >= window_max - eps:
-            return start_index
-        for idx in range(start_index, end_index + 1):
-            s = strokes[idx]
-            if abs(max(s.start_price, s.end_price) - window_max) > eps:
-                continue
-            if s.direction == "up" and abs(s.end_price - window_max) < eps:
-                return idx + 1
-            if s.direction == "down" and abs(s.start_price - window_max) < eps:
-                return idx
-            return idx + 1
-        return start_index
-
-    return start_index
+    return _find_window_extreme_start_index_impl(
+        strokes=strokes,
+        start_index=start_index,
+        end_index=end_index,
+        direction=direction,
+    )
 
 
 def _potential_endpoint_indices(strokes: Sequence[Stroke]) -> Set[int]:
-    endpoints = [_endpoint_from_stroke(index, stroke) for index, stroke in enumerate(strokes)]
-    result: Set[int] = set()
-
-    for direction in ("up", "down"):
-        same_direction = [endpoint for endpoint in endpoints if endpoint.direction == direction]
-        for index in range(1, len(same_direction) - 1):
-            previous = same_direction[index - 1]
-            current = same_direction[index]
-            next_endpoint = same_direction[index + 1]
-            if direction == "up" and previous.price < current.price > next_endpoint.price:
-                result.add(current.stroke_index)
-            if direction == "down" and previous.price > current.price < next_endpoint.price:
-                result.add(current.stroke_index)
-
-    return result
+    return _potential_endpoint_indices_impl(
+        strokes=strokes,
+        endpoint_from_stroke=_endpoint_from_stroke,
+    )
 
 
 def _endpoint_from_stroke(index: int, stroke: Stroke) -> SegmentEndpoint:
-    return SegmentEndpoint(
-        stroke_index=index,
-        direction=stroke.direction,
-        timestamp=stroke.end_timestamp,
-        price=stroke.end_price,
+    return _endpoint_from_stroke_impl(
+        index=index,
+        stroke=stroke,
+        endpoint_factory=SegmentEndpoint,
     )
 
 
 def _strokes_have_overlap(strokes: Sequence[Stroke]) -> bool:
-    if len(strokes) < 3:
-        return False
-
-    lows = [min(stroke.start_price, stroke.end_price) for stroke in strokes[:3]]
-    highs = [max(stroke.start_price, stroke.end_price) for stroke in strokes[:3]]
-    return max(lows) <= min(highs)
+    return _strokes_have_overlap_impl(strokes)
 
 
 def _is_valid_segment_seed(strokes: Sequence[Stroke]) -> bool:
-    if len(strokes) < 3:
-        return False
-    direction = strokes[0].direction
-    if direction not in {"up", "down"}:
-        return False
-    
-    # Fast path for standard 3-stroke seed
-    if (
-        strokes[1].direction != direction
-        and strokes[2].direction == direction
-        and _strokes_have_overlap(strokes[:3])
-        and _segment_has_directional_price_span(
-            segment_direction=direction,
-            start_price=strokes[0].start_price,
-            end_price=strokes[2].end_price,
-        )
-    ):
-        return True
-
-    # Check for longer seeds (5, 7, etc. strokes) that eventually break out
-    # They must start with an overlapping 3-stroke base.
-    if not (
-        strokes[1].direction != direction
-        and strokes[2].direction == direction
-        and _strokes_have_overlap(strokes[:3])
-    ):
-        return False
-
-    # Look ahead to see if a subsequent stroke in the same direction breaks out
-    for i in range(4, len(strokes), 2):
-        if strokes[i].direction == direction:
-            if _segment_has_directional_price_span(
-                segment_direction=direction,
-                start_price=strokes[0].start_price,
-                end_price=strokes[i].end_price,
-            ):
-                return True
-
-    return False
+    return _is_valid_segment_seed_impl(
+        strokes,
+        strokes_have_overlap=_strokes_have_overlap,
+        segment_has_directional_price_span=_segment_has_directional_price_span,
+    )
 
 
-def _segment_has_directional_price_span(segment_direction: str, start_price: float, end_price: float) -> bool:
-    if segment_direction == "up":
-        return start_price < end_price
-    if segment_direction == "down":
-        return start_price > end_price
-    return False
+def _segment_has_directional_price_span(
+    segment_direction: str,
+    start_price: float,
+    end_price: float,
+) -> bool:
+    return _segment_has_directional_price_span_impl(
+        segment_direction,
+        start_price,
+        end_price,
+    )
 
 
 def _opposite_segment_break_signal(
@@ -604,164 +428,17 @@ def _opposite_segment_break_signal(
     current_end_index: int,
     direction: str,
 ) -> FeatureBreakSignal:
-    f1_index = current_end_index - 1
-    f2_index = current_end_index + 1
-
-    if f2_index >= len(strokes):
-        return FeatureBreakSignal(False, "insufficient_feature_sequence", {})
-
-    # 反向特征序列的方向 = 与当前段方向相反
-    opposite_direction = "down" if direction == "up" else "up"
-
-    # Extract all feature strokes
-    feature_strokes = []
-    for idx in range(f1_index, len(strokes), 2):
-        if idx >= 0:
-            stroke = strokes[idx]
-            # 防御性方向校验：特征序列每根笔都应等于反向段方向。
-            # 如果上游 strokes 不严格交替，直接报错跳过，避免错误特征序列。
-            if stroke.direction != opposite_direction:
-                return FeatureBreakSignal(
-                    False,
-                    "feature_sequence_direction_mismatch",
-                    {
-                        "expected_direction": opposite_direction,
-                        "violating_index": idx,
-                        "violating_direction": stroke.direction,
-                    },
-                )
-            feature_strokes.append((idx, _stroke_range(idx, stroke)))
-
-    if len(feature_strokes) < 3:
-        # Check if we found a new peak in the same direction strokes
-        if len(strokes) % 2 != (current_end_index % 2):
-            last_idx = len(strokes) - 1
-            if _is_more_extreme(direction, current_price=strokes[current_end_index].end_price, candidate_price=strokes[last_idx].end_price):
-                return FeatureBreakSignal(False, "new_peak_found", {"new_peak_index": last_idx})
-        return FeatureBreakSignal(False, "insufficient_feature_sequence", {})
-
-    # 特征序列不做包含合并：每根反向笔作为独立元素参与分型判断。
-    # 缠论特征序列分型只要求中间元素相对左右元素成极值，不需要像 K 线那样先做包含合并。
-    processed_features = [(idx, r, [idx]) for idx, r in feature_strokes]
-
-    # Find the first chronological new peak
-    first_new_peak_idx = None
-    for idx in range(current_end_index + 2, len(strokes), 2):
-        if _is_more_extreme(direction, current_price=strokes[current_end_index].end_price, candidate_price=strokes[idx].end_price):
-            first_new_peak_idx = idx
-            break
-            
-    if len(strokes) % 2 != (current_end_index % 2):
-        last_idx = len(strokes) - 1
-        if first_new_peak_idx is None and _is_more_extreme(direction, current_price=strokes[current_end_index].end_price, candidate_price=strokes[last_idx].end_price):
-            first_new_peak_idx = last_idx
-
-    first_fractal_signal = None
-    first_fractal_completion_idx = None
-
-    # Now look for a fractal in the processed features
-    for i in range(len(processed_features) - 2):
-        f1_idx, f1_r, f1_orig = processed_features[i]
-        f2_idx, f2_r, f2_orig = processed_features[i+1]
-        f3_idx, f3_r, f3_orig = processed_features[i+2]
-        
-        # Is f2 the extreme?
-        is_fractal = False
-        if direction == "up":
-            # Looking for TOP fractal
-            if f2_r.high > f3_r.high and f2_r.low > f3_r.low:
-                if f2_r.high > f1_r.high and f2_r.low > f1_r.low:
-                    is_fractal = True
-                elif _range_contains(f2_r, f1_r):
-                    is_fractal = True
-        else:
-            # Looking for BOTTOM fractal
-            if f2_r.low < f3_r.low and f2_r.high < f3_r.high:
-                if f2_r.low < f1_r.low and f2_r.high < f1_r.high:
-                    is_fractal = True
-                elif _range_contains(f2_r, f1_r):
-                    is_fractal = True
-                    
-        if is_fractal:
-            has_gap = _ranges_have_gap(f1_r, f2_r)
-            base_meta: Dict[str, Any] = {
-                "feature_sequence_indices": f1_orig + f2_orig + f3_orig,
-                "feature_sequence_direction": strokes[f1_idx].direction,
-                "first_second_has_gap": has_gap,
-                "break_fractal": True,
-                "left_contained_by_middle": _range_contains(f2_r, f1_r),
-            }
-            first_fractal_completion_idx = f3_idx
-            if not has_gap:
-                first_fractal_signal = FeatureBreakSignal(
-                    True,
-                    "no_gap_feature_fractal",
-                    {**base_meta, "confirmation_case": "no_gap_feature_fractal", "followup_required": False},
-                )
-            else:
-                # 第一二特征元素之间有缺口：必须再出现一个反向特征序列分型才确认。
-                followup = _has_gap_followup_reverse_fractal(
-                    strokes=strokes,
-                    current_end_index=current_end_index,
-                    direction=direction,
-                )
-                if followup.confirmed:
-                    first_fractal_signal = FeatureBreakSignal(
-                        True,
-                        "gap_feature_fractal_with_followup_reverse_fractal",
-                        {
-                            **base_meta,
-                            **followup.meta,
-                            "confirmation_case": "gap_feature_fractal_with_followup_reverse_fractal",
-                            "followup_required": True,
-                        },
-                    )
-                else:
-                    first_fractal_signal = FeatureBreakSignal(
-                        False,
-                        "gap_feature_fractal_waiting_for_followup_reverse_fractal",
-                        {
-                            **base_meta,
-                            **followup.meta,
-                            "confirmation_case": "gap_feature_fractal_waiting",
-                            "followup_required": True,
-                            "pending_reason": "gap_feature_fractal_waiting_for_followup_reverse_fractal",
-                        },
-                    )
-            break
-
-    # Compare chronological order of new peak vs fractal completion
-    if first_new_peak_idx is not None and first_fractal_completion_idx is not None:
-        if first_new_peak_idx < first_fractal_completion_idx:
-            return FeatureBreakSignal(False, "new_peak_found", {"new_peak_index": first_new_peak_idx})
-        else:
-            return first_fractal_signal
-    elif first_new_peak_idx is not None:
-        return FeatureBreakSignal(False, "new_peak_found", {"new_peak_index": first_new_peak_idx})
-    elif first_fractal_signal is not None:
-        return first_fractal_signal
-
-    # 到这里说明特征序列已有足够元素（len(feature_strokes) >= 3），但既没有
-    # 形成分型，也没有出现新峰值。与 "insufficient_feature_sequence"（特征序列
-    # 元素不足，数据不够）区分开：这里是"有足够特征序列但未形成分型"，按缠论
-    # 规则线段未被破坏，应保持 growing 而不是固定终点。
-    return FeatureBreakSignal(False, "no_feature_fractal", {})
-
-
-def _stroke_range(index: int, stroke: Stroke) -> StrokeRange:
-    return StrokeRange(
-        stroke_index=index,
-        low=min(stroke.start_price, stroke.end_price),
-        high=max(stroke.start_price, stroke.end_price),
+    return _opposite_segment_break_signal_impl(
+        strokes=strokes,
+        current_end_index=current_end_index,
+        direction=direction,
+        stroke_range=_stroke_range,
+        is_more_extreme=_is_more_extreme,
+        range_contains=_range_contains,
+        ranges_have_gap=_ranges_have_gap,
+        has_gap_followup_reverse_fractal=_has_gap_followup_reverse_fractal,
+        feature_break_signal_factory=FeatureBreakSignal,
     )
-
-
-def _ranges_have_gap(left: StrokeRange, right: StrokeRange) -> bool:
-    return left.high < right.low or right.high < left.low
-
-
-def _range_contains(container: StrokeRange, inner: StrokeRange) -> bool:
-    return container.low <= inner.low and container.high >= inner.high
 
 
 def _has_gap_followup_reverse_fractal(
@@ -769,86 +446,15 @@ def _has_gap_followup_reverse_fractal(
     current_end_index: int,
     direction: str,
 ) -> FeatureBreakSignal:
-    """缺口特征分型出现后，等待反向段特征序列形成分型再确认。
-
-    direction 是当前段方向。缺口分型在反向特征序列中出现后，
-    需要用反向段方向的特征序列（反向笔）再形成一个分型来确认段结束。
-
-    反向段特征序列起点 = current_end_index + 1（第一根反向笔），
-    步长 2，取三元素：current_end_index + 1, +3, +5。
-    分型方向 = 反向段方向（与当前段方向相反）。
-    """
-    opposite_direction = "down" if direction == "up" else "up"
-    reverse_feature_indices = [
-        current_end_index + 1,
-        current_end_index + 3,
-        current_end_index + 5,
-    ]
-    if reverse_feature_indices[-1] >= len(strokes):
-        return FeatureBreakSignal(
-            False,
-            "insufficient_followup_reverse_sequence",
-            {"followup_reverse_feature_indices": reverse_feature_indices},
-        )
-
-    # 反向段特征序列的方向应等于 opposite_direction
-    if any(strokes[index].direction != opposite_direction for index in reverse_feature_indices):
-        return FeatureBreakSignal(
-            False,
-            "followup_reverse_direction_mismatch",
-            {"followup_reverse_feature_indices": reverse_feature_indices},
-        )
-
-    ranges = [_stroke_range(index, strokes[index]) for index in reverse_feature_indices]
-    # 反向段分型：opposite_direction == 'down' → 底分型（中间最低）
-    #            opposite_direction == 'up' → 顶分型（中间最高）
-    confirmed = _is_feature_break_fractal(direction=opposite_direction, ranges=ranges)
-    return FeatureBreakSignal(
-        confirmed,
-        "followup_reverse_fractal" if confirmed else "no_followup_reverse_fractal",
-        {
-            "followup_reverse_feature_indices": reverse_feature_indices,
-            "followup_reverse_fractal": confirmed,
-        },
+    return _has_gap_followup_reverse_fractal_impl(
+        strokes=strokes,
+        current_end_index=current_end_index,
+        direction=direction,
+        stroke_range=_stroke_range,
+        is_feature_break_fractal=_is_feature_break_fractal,
+        feature_break_signal_factory=FeatureBreakSignal,
     )
 
 
 def _is_feature_break_fractal(direction: str, ranges: Sequence[StrokeRange]) -> bool:
-    """三元素特征序列分型：direction 是当前段方向。
-
-    direction == 'up'  → 顶分型（中间最高）
-    direction == 'down' → 底分型（中间最低）
-    """
-    if len(ranges) < 3:
-        return False
-    left, middle, right = ranges[:3]
-    if direction == "up":
-        return middle.high >= left.high and middle.high > right.high
-    if direction == "down":
-        return middle.low <= left.low and middle.low < right.low
-    return False
-
-
-def _apply_segment_confirmation(segments: Sequence[Segment]) -> None:
-    for index, segment in enumerate(segments):
-        segment.confirmed = False
-        segment.meta["status"] = "pending"
-        segment.meta["confirmed_by_segment_id"] = None
-
-        if index + 1 >= len(segments):
-            continue
-
-        next_segment = segments[index + 1]
-        feature_break = segment.meta.get("feature_sequence_break")
-        if isinstance(feature_break, dict):
-            pending_reason = feature_break.get("pending_reason")
-            # 缺口分型等待后续反向分型：保持 pending
-            if pending_reason == "gap_feature_fractal_waiting_for_followup_reverse_fractal":
-                continue
-            # 有足够特征序列但未形成分型：按缠论规则线段未被破坏，保持 pending
-            if pending_reason == "no_feature_fractal":
-                continue
-        if next_segment.direction != segment.direction:
-            segment.confirmed = True
-            segment.meta["status"] = "confirmed"
-            segment.meta["confirmed_by_segment_id"] = next_segment.id
+    return _is_feature_break_fractal_impl(direction=direction, ranges=ranges)

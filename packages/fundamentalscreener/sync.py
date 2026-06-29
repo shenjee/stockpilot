@@ -26,13 +26,12 @@ Phase 6B+6C 实现：
 
 from __future__ import annotations
 
-import argparse
 import json
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .data_sources import (
     AkShareFundamentalDataSource,
@@ -45,11 +44,40 @@ from .lineage import (
     SnapshotMetadata,
     SourceSet,
     new_fetch_run_id,
-    now_cn,
-    now_cn_isoformat,
 )
 from .quality import QualityReport
 from .sqlite_schema import connect, init_db, list_tables
+from .sync_cli import (
+    _parse_codes,
+    _parse_sector_ids,
+    build_parser,
+    compute_sync_exit_code,
+)
+from .sync_fetchers import (
+    derive_effective_company_codes,
+    fetch_benchmark_daily,
+    fetch_company_daily,
+    fetch_company_valuation_history,
+    fetch_financial_metrics,
+    fetch_sector_constituents,
+    fetch_sector_daily,
+    fetch_sectors,
+    fetch_stock_universe,
+)
+from .sync_persistence import (
+    _run_task,
+    _ts,
+)
+from .sync_task_builders import (
+    build_benchmark_persist,
+    build_company_daily_persist,
+    build_company_valuation_persist,
+    build_financial_metrics_persist,
+    build_sector_constituents_persist,
+    build_sector_daily_persist,
+    build_sectors_persist,
+    build_stock_universe_persist,
+)
 
 # ---------------------------------------------------------------------------
 # 同步任务定义
@@ -109,436 +137,26 @@ class SyncResult:
         }
 
 
-# ---------------------------------------------------------------------------
-# 写入工具
-# ---------------------------------------------------------------------------
-
-
-def _ts() -> str:
-    return now_cn_isoformat()
-
-
-def _lineage_columns(row: Dict[str, Any], source: str, fetch_run_id: str) -> Dict[str, Any]:
-    """填充任意采集行的血缘列，保留外部已显式给出的字段。"""
-
-    now = _ts()
-    enriched = dict(row)
-    enriched.setdefault("source", source)
-    enriched["fetch_run_id"] = fetch_run_id
-    enriched.setdefault("source_updated_at", None)
-    enriched.setdefault("created_at", now)
-    enriched["updated_at"] = now
-    return enriched
-
-
-def _upsert(
-    conn,
-    table: str,
-    rows: Iterable[Dict[str, Any]],
-    *,
-    pk_columns: Sequence[str],
-    column_order: Sequence[str],
-) -> int:
-    """通用 UPSERT：在主键冲突时更新非主键列。"""
-
-    count = 0
-    placeholders = ", ".join("?" for _ in column_order)
-    columns = ", ".join(column_order)
-    pk = ", ".join(pk_columns)
-    update_cols = [c for c in column_order if c not in pk_columns and c != "created_at"]
-    update_sql = ", ".join(f"{c}=excluded.{c}" for c in update_cols)
-    sql = (
-        f"INSERT INTO {table} ({columns}) VALUES ({placeholders}) "
-        f"ON CONFLICT({pk}) DO UPDATE SET {update_sql}"
-    )
-    for row in rows:
-        values = tuple(row.get(c) for c in column_order)
-        conn.execute(sql, values)
-        count += 1
-    return count
-
-
-# 各表写入器：返回 (rows 写入数, raw rows 数)。
-# 入参 ``raw_rows`` 已是单条 dict 的列表；血缘列在写入时自动补齐。
-
-
-_SECTOR_COLUMNS = (
-    "sector_id",
-    "classification_system",
-    "sector_name",
-    "source",
-    "fetch_run_id",
-    "source_updated_at",
-    "created_at",
-    "updated_at",
-)
-_SECTOR_CONSTITUENTS_COLUMNS = (
-    "sector_id",
-    "classification_system",
-    "code",
-    "as_of_date",
-    "source",
-    "fetch_run_id",
-    "source_updated_at",
-    "created_at",
-    "updated_at",
-)
-_SECTOR_DAILY_COLUMNS = (
-    "sector_id",
-    "classification_system",
-    "trade_date",
-    "open",
-    "high",
-    "low",
-    "close",
-    "turnover_amount",
-    "rising_count",
-    "total_count",
-    "source",
-    "fetch_run_id",
-    "source_updated_at",
-    "created_at",
-    "updated_at",
-)
-_STOCKS_COLUMNS = (
-    "code",
-    "name",
-    "market",
-    "listing_status",
-    "delisted_at",
-    "as_of_date",
-    "source",
-    "fetch_run_id",
-    "source_updated_at",
-    "created_at",
-    "updated_at",
-)
-_COMPANY_DAILY_COLUMNS = (
-    "code",
-    "trade_date",
-    "close",
-    "turnover_amount",
-    "turnover_rate",
-    "market_cap",
-    "change_pct",
-    "source",
-    "fetch_run_id",
-    "source_updated_at",
-    "created_at",
-    "updated_at",
-)
-_COMPANY_VAL_COLUMNS = (
-    "code",
-    "trade_date",
-    "market",
-    "pe",
-    "pb",
-    "ps",
-    "dividend_yield",
-    "source",
-    "fetch_run_id",
-    "source_updated_at",
-    "created_at",
-    "updated_at",
-)
-_FINANCIAL_COLUMNS = (
-    "code",
-    "report_period",
-    "period_end_date",
-    "disclosure_date",
-    "period_type",
-    "as_of_date",
-    "revenue_yoy",
-    "net_profit_yoy",
-    "deducted_net_profit_yoy",
-    "gross_margin",
-    "net_margin",
-    "roe",
-    "operating_cashflow_to_profit",
-    "free_cashflow",
-    "debt_to_asset",
-    "interest_bearing_debt_ratio",
-    "accounts_receivable_yoy",
-    "inventory_yoy",
-    "gross_margin_yoy_change",
-    "source",
-    "fetch_run_id",
-    "source_updated_at",
-    "created_at",
-    "updated_at",
-)
-_BENCHMARK_COLUMNS = (
-    "benchmark",
-    "trade_date",
-    "open",
-    "high",
-    "low",
-    "close",
-    "turnover_amount",
-    "source",
-    "fetch_run_id",
-    "source_updated_at",
-    "created_at",
-    "updated_at",
-)
-
-
-# 各表的必填主键字段（不能为空字符串 / None）。在 ``_upsert`` 前会先做这层校验，
-# 避免上游返回的畸形行被静默写入成 PK="" 的"成功缓存"。
-REQUIRED_PK_FIELDS: Dict[str, Tuple[str, ...]] = {
-    "sectors": ("sector_id", "classification_system"),
-    "sector_constituents": ("sector_id", "classification_system", "code", "as_of_date"),
-    "sector_daily_bars": ("sector_id", "classification_system", "trade_date"),
-    "benchmark_daily_bars": ("benchmark", "trade_date"),
-    "stocks": ("code",),
-    "company_daily_snapshot": ("code", "trade_date"),
-    "company_valuation_history": ("code", "trade_date"),
-    "financial_metrics": (
-        "code",
-        "report_period",
-        "period_type",
-        "disclosure_date",
-    ),
-}
-
-
-@dataclass
-class _PersistResult:
-    """单任务 persist 阶段的汇总：写入数 + 被拒行（带原因）。
-
-    - ``written`` 实际 UPSERT 的行数。
-    - ``rejected`` 被校验拒绝的行：每条 ``{"reason": ..., "row": <原 dict>}``。
-    - ``rejections`` 便捷计数。
-    若 ``rejected`` 非空，``_run_task`` 会把摘要写入 ``data_fetch_log.details``，
-    并在"所有行都被拒"时把整个任务标记为失败。
-    """
-
-    written: int = 0
-    rejected: List[Dict[str, Any]] = field(default_factory=list)
-
-    @property
-    def rejections(self) -> int:
-        return len(self.rejected)
-
-
-def _validate_required(
-    table: str, rows: Iterable[Dict[str, Any]]
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """按 ``REQUIRED_PK_FIELDS[table]`` 过滤 rows。
-
-    返回 ``(accepted, rejected)``。``rejected`` 每条形如
-    ``{"reason": "missing_pk: sector_id", "row": <原 dict>}``，便于审计。
-    空字符串和 ``None`` 都视为 missing。
-    """
-
-    required = REQUIRED_PK_FIELDS.get(table, ())
-    accepted: List[Dict[str, Any]] = []
-    rejected: List[Dict[str, Any]] = []
-    for r in rows:
-        missing = [
-            f for f in required if r.get(f) in (None, "") or (isinstance(r.get(f), str) and not r.get(f).strip())
-        ]
-        if missing:
-            rejected.append({"reason": f"missing_pk: {','.join(missing)}", "row": dict(r)})
-        else:
-            accepted.append(r)
-    return accepted, rejected
-
-
-def _persist_with_validation(
-    conn,
-    *,
-    table: str,
-    rows: List[Dict[str, Any]],
-    pk_columns: Sequence[str],
-    column_order: Sequence[str],
-    enrich: Callable[[Dict[str, Any]], Dict[str, Any]],
-) -> _PersistResult:
-    """通用 persist：enrich → 校验 → UPSERT，返回 ``_PersistResult``。
-
-    顺序很重要：先 enrich 再校验。enricher 会填入 sync 层上下文派生的 PK 字段
-    （例如 ``classification_system`` / ``as_of_date`` / ``benchmark``），这些字段
-    在源数据里可以缺省。如果先校验再 enrich，这些合法的缺省行会被误拒。
-
-    被拒行不会被写入，但会出现在结果里，供 ``_run_task`` 记录到
-    ``data_fetch_log.details.rejected``。``rejected`` 里的 ``row`` 是 enriched
-    后的行，便于审计最终 PK 字段状态。
-    """
-
-    enriched = [enrich(r) for r in rows]
-    accepted, rejected = _validate_required(table, enriched)
-    written = _upsert(
-        conn,
-        table,
-        accepted,
-        pk_columns=pk_columns,
-        column_order=column_order,
-    )
-    return _PersistResult(written=written, rejected=rejected)
-
-
-# ---------------------------------------------------------------------------
-# 任务运行器
-# ---------------------------------------------------------------------------
-
-
-def _log_fetch(
-    conn,
-    *,
-    fetch_run_id: str,
-    source: str,
-    task: str,
-    started_at: str,
-    finished_at: str,
-    success: bool,
-    row_count: int,
-    used_cache: bool = False,
-    error: Optional[str] = None,
-    details: Optional[Dict[str, Any]] = None,
-) -> None:
-    conn.execute(
-        "INSERT INTO data_fetch_log "
-        "(fetch_run_id, source, task, started_at, finished_at, success, "
-        "row_count, used_cache, error, details) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (
-            fetch_run_id,
-            source,
-            task,
-            started_at,
-            finished_at,
-            1 if success else 0,
-            int(row_count or 0),
-            1 if used_cache else 0,
-            error,
-            json.dumps(details, ensure_ascii=False) if details is not None else None,
-        ),
-    )
-
-
-def _run_task(
+def _append_task(
+    result: SyncResult,
     conn,
     *,
     fetch_run_id: str,
     source_name: str,
     task: str,
-    fetch: Callable[[], List[Dict[str, Any]]],
-    persist: Callable[[List[Dict[str, Any]]], _PersistResult],
-) -> Dict[str, Any]:
-    """运行单个同步子任务并写入 data_fetch_log。
-
-    fetch 失败时返回失败记录；persist 在单独的事务内执行，失败时回滚不会破坏
-    其他任务已写入的数据。persist 返回 ``_PersistResult``：
-    - 若所有行都被 PK 校验拒绝（``written == 0 and rejections > 0``），任务标记
-      为失败，错误码 ``all_rows_rejected``，被拒行摘要写入 ``details.rejected``。
-    - 若部分行被拒但仍有写入，任务仍记为成功，但 ``details.rejected`` 会带上
-      被拒行摘要，便于后续质量检查。
-    """
-
-    started_at = _ts()
-    try:
-        rows = list(fetch())
-    except Exception as exc:  # noqa: BLE001
-        finished_at = _ts()
-        with conn:
-            _log_fetch(
-                conn,
-                fetch_run_id=fetch_run_id,
-                source=source_name,
-                task=task,
-                started_at=started_at,
-                finished_at=finished_at,
-                success=False,
-                row_count=0,
-                error=f"fetch_failed: {exc}",
-            )
-        return {
-            "task": task,
-            "success": False,
-            "row_count": 0,
-            "error": f"fetch_failed: {exc}",
-        }
-    try:
-        with conn:
-            result = persist(rows)
-    except Exception as exc:  # noqa: BLE001
-        finished_at = _ts()
-        with conn:
-            _log_fetch(
-                conn,
-                fetch_run_id=fetch_run_id,
-                source=source_name,
-                task=task,
-                started_at=started_at,
-                finished_at=finished_at,
-                success=False,
-                row_count=0,
-                error=f"persist_failed: {exc}",
-            )
-        return {
-            "task": task,
-            "success": False,
-            "row_count": 0,
-            "error": f"persist_failed: {exc}",
-        }
-
-    written = int(result.written or 0)
-    rejections = int(result.rejections or 0)
-    # 全部行被 PK 校验拒绝 → 任务失败，不能记成"成功 0 行"。
-    success = not (written == 0 and rejections > 0)
-    error: Optional[str] = None
-    details: Optional[Dict[str, Any]] = None
-    if rejections > 0:
-        # 截断被拒行摘要，避免 details 字段过大；每条只保留 reason + 关键 PK 字段。
-        sample = [
-            {"reason": r["reason"], "row": _summarize_row(r["row"])}
-            for r in result.rejected[:20]
-        ]
-        details = {
-            "rejected_count": rejections,
-            "rejected_sample": sample,
-        }
-        if not success:
-            error = f"all_rows_rejected: {rejections} row(s) missing required PK fields"
-
-    finished_at = _ts()
-    with conn:
-        _log_fetch(
+    fetch,
+    persist,
+) -> None:
+    result.tasks.append(
+        _run_task(
             conn,
             fetch_run_id=fetch_run_id,
-            source=source_name,
+            source_name=source_name,
             task=task,
-            started_at=started_at,
-            finished_at=finished_at,
-            success=success,
-            row_count=written,
-            error=error,
-            details=details,
+            fetch=fetch,
+            persist=persist,
         )
-    return {
-        "task": task,
-        "success": success,
-        "row_count": written,
-        "error": error,
-        "rejections": rejections,
-    }
-
-
-def _summarize_row(row: Dict[str, Any]) -> Dict[str, Any]:
-    """压缩被拒行，只保留小体量字段，避免 details 字段爆炸。"""
-
-    keep = (
-        "sector_id",
-        "classification_system",
-        "code",
-        "trade_date",
-        "benchmark",
-        "report_period",
-        "period_type",
-        "disclosure_date",
-        "as_of_date",
     )
-    return {k: row.get(k) for k in keep if k in row}
 
 
 # ---------------------------------------------------------------------------
@@ -600,47 +218,26 @@ def sync_all(
         tasks=[],
     )
 
-    # 板块列表
-    def _enrich_sector(r: Dict[str, Any]) -> Dict[str, Any]:
-        return _lineage_columns(
-            {
-                "sector_id": str(r.get("sector_id", "")),
-                "classification_system": str(
-                    r.get("classification_system", classification_system)
-                ),
-                "sector_name": r.get("sector_name"),
-                "source_updated_at": r.get("source_updated_at"),
-            },
-            source_name,
-            fetch_run_id,
-        )
-
-    def _persist_sectors(rows: List[Dict[str, Any]]) -> _PersistResult:
-        return _persist_with_validation(
-            conn,
-            table="sectors",
-            rows=rows,
-            pk_columns=("sector_id", "classification_system"),
-            column_order=_SECTOR_COLUMNS,
-            enrich=_enrich_sector,
-        )
-
     sectors_rows: List[Dict[str, Any]] = []
 
     def _fetch_sectors() -> List[Dict[str, Any]]:
         nonlocal sectors_rows
-        sectors_rows = source.list_sectors(classification_system)
+        sectors_rows = fetch_sectors(source, classification_system)
         return sectors_rows
 
-    result.tasks.append(
-        _run_task(
+    _append_task(
+        result,
+        conn,
+        fetch_run_id=fetch_run_id,
+        source_name=source_name,
+        task="list_sectors",
+        fetch=_fetch_sectors,
+        persist=build_sectors_persist(
             conn,
-            fetch_run_id=fetch_run_id,
             source_name=source_name,
-            task="list_sectors",
-            fetch=_fetch_sectors,
-            persist=_persist_sectors,
-        )
+            fetch_run_id=fetch_run_id,
+            classification_system=classification_system,
+        ),
     )
 
     # 板块成分 & 板块行情：以 sectors_rows 为驱动
@@ -648,377 +245,178 @@ def sync_all(
 
     def _fetch_constituents() -> List[Dict[str, Any]]:
         nonlocal constituents_rows
-        # §15.9.5：sector_ids 非空时只遍历指定板块（按需加载），否则遍历全部
-        # sectors_rows（向后兼容）。轻量层（list_sectors）始终全量，此处成分股属
-        # 重量层。
-        if sector_ids is not None:
-            wanted = set(str(s) for s in sector_ids)
-            target_sectors = [
-                s for s in sectors_rows if str(s.get("sector_id", "")) in wanted
-            ]
-        else:
-            target_sectors = sectors_rows
-        out: List[Dict[str, Any]] = []
-        for s in target_sectors:
-            sid = str(s.get("sector_id", ""))
-            if not sid:
-                continue
-            try:
-                out.extend(
-                    source.get_sector_constituents(sid, classification_system, analysis_date)
-                )
-            except Exception:
-                continue
-        # 目标板块非空但成分股总数为 0 → 几乎必然是数据源故障（反爬 403、空页、
-        # API 结构变更），不能记成"成功写入 0 行"。抛错让 _run_task 标记 fetch_failed。
-        # 注意：sector_ids 未命中任何板块时 target_sectors 为空，不抛错（graceful
-        # no-op），避免按需加载指定了尚未出现在 sectors 表的板块时误判为故障。
-        if target_sectors and not out:
-            raise RuntimeError(
-                f"get_sector_constituents: {len(target_sectors)} sector(s) targeted but "
-                f"0 constituents returned — likely a data source failure "
-                f"(anti-crawl, HTTP error, or API structure change)."
-            )
-        constituents_rows = out
-        return out
-
-    def _persist_constituents(rows: List[Dict[str, Any]]) -> _PersistResult:
-        def _enrich(r: Dict[str, Any]) -> Dict[str, Any]:
-            return _lineage_columns(
-                {
-                    "sector_id": str(r.get("sector_id", "")),
-                    "classification_system": str(
-                        r.get("classification_system", classification_system)
-                    ),
-                    "code": str(r.get("code", "")),
-                    "as_of_date": str(r.get("as_of_date", analysis_date)),
-                    "source_updated_at": r.get("source_updated_at"),
-                },
-                source_name,
-                fetch_run_id,
-            )
-
-        return _persist_with_validation(
-            conn,
-            table="sector_constituents",
-            rows=rows,
-            pk_columns=("sector_id", "classification_system", "code", "as_of_date"),
-            column_order=_SECTOR_CONSTITUENTS_COLUMNS,
-            enrich=_enrich,
+        constituents_rows = fetch_sector_constituents(
+            source,
+            sectors_rows=sectors_rows,
+            classification_system=classification_system,
+            analysis_date=analysis_date,
+            sector_ids=sector_ids,
         )
+        return constituents_rows
 
-    result.tasks.append(
-        _run_task(
+    _append_task(
+        result,
+        conn,
+        fetch_run_id=fetch_run_id,
+        source_name=source_name,
+        task="get_sector_constituents",
+        fetch=_fetch_constituents,
+        persist=build_sector_constituents_persist(
             conn,
-            fetch_run_id=fetch_run_id,
             source_name=source_name,
-            task="get_sector_constituents",
-            fetch=_fetch_constituents,
-            persist=_persist_constituents,
-        )
+            fetch_run_id=fetch_run_id,
+            classification_system=classification_system,
+            analysis_date=analysis_date,
+        ),
     )
 
     def _fetch_sector_daily() -> List[Dict[str, Any]]:
-        out: List[Dict[str, Any]] = []
-        for s in sectors_rows:
-            sid = str(s.get("sector_id", ""))
-            if not sid:
-                continue
-            try:
-                out.extend(
-                    source.get_sector_daily(
-                        sid, classification_system, start_date, analysis_date
-                    )
-                )
-            except Exception:
-                continue
-        return out
-
-    def _persist_sector_daily(rows: List[Dict[str, Any]]) -> _PersistResult:
-        def _enrich(r: Dict[str, Any]) -> Dict[str, Any]:
-            return _lineage_columns(
-                {
-                    "sector_id": str(r.get("sector_id", "")),
-                    "classification_system": str(
-                        r.get("classification_system", classification_system)
-                    ),
-                    "trade_date": str(r.get("trade_date", "")),
-                    "open": r.get("open"),
-                    "high": r.get("high"),
-                    "low": r.get("low"),
-                    "close": r.get("close"),
-                    "turnover_amount": r.get("turnover_amount"),
-                    "rising_count": r.get("rising_count"),
-                    "total_count": r.get("total_count"),
-                    "source_updated_at": r.get("source_updated_at"),
-                },
-                source_name,
-                fetch_run_id,
-            )
-
-        return _persist_with_validation(
-            conn,
-            table="sector_daily_bars",
-            rows=rows,
-            pk_columns=("sector_id", "classification_system", "trade_date"),
-            column_order=_SECTOR_DAILY_COLUMNS,
-            enrich=_enrich,
+        return fetch_sector_daily(
+            source,
+            sectors_rows=sectors_rows,
+            classification_system=classification_system,
+            start_date=start_date,
+            analysis_date=analysis_date,
         )
 
-    result.tasks.append(
-        _run_task(
+    _append_task(
+        result,
+        conn,
+        fetch_run_id=fetch_run_id,
+        source_name=source_name,
+        task="get_sector_daily",
+        fetch=_fetch_sector_daily,
+        persist=build_sector_daily_persist(
             conn,
-            fetch_run_id=fetch_run_id,
             source_name=source_name,
-            task="get_sector_daily",
-            fetch=_fetch_sector_daily,
-            persist=_persist_sector_daily,
-        )
+            fetch_run_id=fetch_run_id,
+            classification_system=classification_system,
+        ),
     )
 
     # 基准日线：独立写入 ``benchmark_daily_bars``，不污染 sector_daily_bars。
     # 详见 docs §18：benchmark 与 sector 是不同实体，schema 上必须区分。
     def _fetch_benchmark() -> List[Dict[str, Any]]:
-        return source.get_benchmark_daily(benchmark, start_date, analysis_date)
-
-    def _persist_benchmark(rows: List[Dict[str, Any]]) -> _PersistResult:
-        def _enrich(r: Dict[str, Any]) -> Dict[str, Any]:
-            return _lineage_columns(
-                {
-                    "benchmark": str(r.get("benchmark", benchmark)),
-                    "trade_date": str(r.get("trade_date", "")),
-                    "open": r.get("open"),
-                    "high": r.get("high"),
-                    "low": r.get("low"),
-                    "close": r.get("close"),
-                    "turnover_amount": r.get("turnover_amount"),
-                    "source_updated_at": r.get("source_updated_at"),
-                },
-                source_name,
-                fetch_run_id,
-            )
-
-        return _persist_with_validation(
-            conn,
-            table="benchmark_daily_bars",
-            rows=rows,
-            pk_columns=("benchmark", "trade_date"),
-            column_order=_BENCHMARK_COLUMNS,
-            enrich=_enrich,
+        return fetch_benchmark_daily(
+            source,
+            benchmark=benchmark,
+            start_date=start_date,
+            analysis_date=analysis_date,
         )
 
-    result.tasks.append(
-        _run_task(
+    _append_task(
+        result,
+        conn,
+        fetch_run_id=fetch_run_id,
+        source_name=source_name,
+        task="get_benchmark_daily",
+        fetch=_fetch_benchmark,
+        persist=build_benchmark_persist(
             conn,
-            fetch_run_id=fetch_run_id,
             source_name=source_name,
-            task="get_benchmark_daily",
-            fetch=_fetch_benchmark,
-            persist=_persist_benchmark,
-        )
+            fetch_run_id=fetch_run_id,
+            benchmark=benchmark,
+        ),
     )
 
     # 公司层
     def _fetch_universe() -> List[Dict[str, Any]]:
-        return source.get_stock_universe(analysis_date)
-
-    def _persist_universe(rows: List[Dict[str, Any]]) -> _PersistResult:
-        def _enrich(r: Dict[str, Any]) -> Dict[str, Any]:
-            return _lineage_columns(
-                {
-                    "code": str(r.get("code", "")),
-                    "name": r.get("name"),
-                    "market": r.get("market"),
-                    "listing_status": r.get("listing_status"),
-                    "delisted_at": r.get("delisted_at"),
-                    "as_of_date": str(r.get("as_of_date", analysis_date)),
-                    "source_updated_at": r.get("source_updated_at"),
-                },
-                source_name,
-                fetch_run_id,
-            )
-
-        return _persist_with_validation(
-            conn,
-            table="stocks",
-            rows=rows,
-            pk_columns=("code",),
-            column_order=_STOCKS_COLUMNS,
-            enrich=_enrich,
+        return fetch_stock_universe(
+            source,
+            analysis_date=analysis_date,
         )
 
-    result.tasks.append(
-        _run_task(
+    _append_task(
+        result,
+        conn,
+        fetch_run_id=fetch_run_id,
+        source_name=source_name,
+        task="get_stock_universe",
+        fetch=_fetch_universe,
+        persist=build_stock_universe_persist(
             conn,
-            fetch_run_id=fetch_run_id,
             source_name=source_name,
-            task="get_stock_universe",
-            fetch=_fetch_universe,
-            persist=_persist_universe,
-        )
+            fetch_run_id=fetch_run_id,
+            analysis_date=analysis_date,
+        ),
     )
 
     def _effective_company_codes() -> List[str]:
-        # §15.9.5：确定 per-code 公司层任务（日线快照 + 估值 + 财务）的 code 集合。
-        # - sector_ids 非空（按需加载）：从已抓取成分股派生 distinct codes；若 codes
-        #   显式传入则取交集，否则直接用派生 codes。
-        # - sector_ids=None（向后兼容）：codes 参数驱动 per-code 任务；未传则跳过。
-        if sector_ids is not None:
-            derived = sorted(
-                {str(r.get("code", "")) for r in constituents_rows if r.get("code")}
-            )
-            if codes is not None:
-                wanted = set(str(c) for c in codes)
-                return [c for c in derived if c in wanted]
-            return derived
-        return [c for c in (codes or []) if c]
+        return derive_effective_company_codes(
+            codes=codes,
+            sector_ids=sector_ids,
+            constituents_rows=constituents_rows,
+        )
 
     def _fetch_company_daily() -> List[Dict[str, Any]]:
-        # §15.9.5：sector_ids 非空时用派生 codes 驱动 per-code 日线快照；
-        # sector_ids=None 时回退全市场（codes=None），保持向后兼容。
-        if sector_ids is not None:
-            return source.get_company_daily_snapshot(
-                analysis_date, codes=_effective_company_codes()
-            )
-        return source.get_company_daily_snapshot(analysis_date)
-
-    def _persist_company_daily(rows: List[Dict[str, Any]]) -> _PersistResult:
-        def _enrich(r: Dict[str, Any]) -> Dict[str, Any]:
-            return _lineage_columns(
-                {
-                    "code": str(r.get("code", "")),
-                    "trade_date": str(r.get("trade_date", analysis_date)),
-                    "close": r.get("close"),
-                    "turnover_amount": r.get("turnover_amount"),
-                    "turnover_rate": r.get("turnover_rate"),
-                    "market_cap": r.get("market_cap"),
-                    "change_pct": r.get("change_pct"),
-                    "source_updated_at": r.get("source_updated_at"),
-                },
-                source_name,
-                fetch_run_id,
-            )
-
-        return _persist_with_validation(
-            conn,
-            table="company_daily_snapshot",
-            rows=rows,
-            pk_columns=("code", "trade_date"),
-            column_order=_COMPANY_DAILY_COLUMNS,
-            enrich=_enrich,
+        return fetch_company_daily(
+            source,
+            analysis_date=analysis_date,
+            sector_ids=sector_ids,
+            effective_codes=_effective_company_codes(),
         )
 
-    result.tasks.append(
-        _run_task(
+    _append_task(
+        result,
+        conn,
+        fetch_run_id=fetch_run_id,
+        source_name=source_name,
+        task="get_company_daily_snapshot",
+        fetch=_fetch_company_daily,
+        persist=build_company_daily_persist(
             conn,
-            fetch_run_id=fetch_run_id,
             source_name=source_name,
-            task="get_company_daily_snapshot",
-            fetch=_fetch_company_daily,
-            persist=_persist_company_daily,
-        )
+            fetch_run_id=fetch_run_id,
+            analysis_date=analysis_date,
+        ),
     )
 
     effective_codes = _effective_company_codes()
     if effective_codes:
         # --- 估值历史（per-code：每只股票 2 次百度接口调用）---
         def _fetch_valuation_history() -> List[Dict[str, Any]]:
-            return source.get_company_valuation_history(
-                effective_codes, start_date, analysis_date
+            return fetch_company_valuation_history(
+                source,
+                effective_codes=effective_codes,
+                start_date=start_date,
+                analysis_date=analysis_date,
             )
 
-        def _persist_valuation_history(rows: List[Dict[str, Any]]) -> _PersistResult:
-            def _enrich(r: Dict[str, Any]) -> Dict[str, Any]:
-                return _lineage_columns(
-                    {
-                        "code": str(r.get("code", "")),
-                        "trade_date": str(r.get("trade_date", "")),
-                        "market": r.get("market"),
-                        "pe": r.get("pe"),
-                        "pb": r.get("pb"),
-                        "ps": r.get("ps"),
-                        "dividend_yield": r.get("dividend_yield"),
-                        "source_updated_at": r.get("source_updated_at"),
-                    },
-                    source_name,
-                    fetch_run_id,
-                )
-
-            return _persist_with_validation(
+        _append_task(
+            result,
+            conn,
+            fetch_run_id=fetch_run_id,
+            source_name=source_name,
+            task="get_company_valuation_history",
+            fetch=_fetch_valuation_history,
+            persist=build_company_valuation_persist(
                 conn,
-                table="company_valuation_history",
-                rows=rows,
-                pk_columns=("code", "trade_date"),
-                column_order=_COMPANY_VAL_COLUMNS,
-                enrich=_enrich,
-            )
-
-        result.tasks.append(
-            _run_task(
-                conn,
-                fetch_run_id=fetch_run_id,
                 source_name=source_name,
-                task="get_company_valuation_history",
-                fetch=_fetch_valuation_history,
-                persist=_persist_valuation_history,
-            )
+                fetch_run_id=fetch_run_id,
+            ),
         )
 
         # --- 财务指标（per-code：每只股票 1 次新浪接口调用）---
         def _fetch_financial() -> List[Dict[str, Any]]:
-            return source.get_financial_metrics(effective_codes, analysis_date)
-
-        def _persist_financial(rows: List[Dict[str, Any]]) -> _PersistResult:
-            def _enrich(r: Dict[str, Any]) -> Dict[str, Any]:
-                return _lineage_columns(
-                    {
-                        "code": str(r.get("code", "")),
-                        "report_period": str(r.get("report_period", "")),
-                        "period_end_date": str(r.get("period_end_date", "")),
-                        "disclosure_date": str(r.get("disclosure_date", "")),
-                        "period_type": str(r.get("period_type", "annual")),
-                        "as_of_date": str(r.get("as_of_date", analysis_date)),
-                        "revenue_yoy": r.get("revenue_yoy"),
-                        "net_profit_yoy": r.get("net_profit_yoy"),
-                        "deducted_net_profit_yoy": r.get("deducted_net_profit_yoy"),
-                        "gross_margin": r.get("gross_margin"),
-                        "net_margin": r.get("net_margin"),
-                        "roe": r.get("roe"),
-                        "operating_cashflow_to_profit": r.get(
-                            "operating_cashflow_to_profit"
-                        ),
-                        "free_cashflow": r.get("free_cashflow"),
-                        "debt_to_asset": r.get("debt_to_asset"),
-                        "interest_bearing_debt_ratio": r.get(
-                            "interest_bearing_debt_ratio"
-                        ),
-                        "accounts_receivable_yoy": r.get("accounts_receivable_yoy"),
-                        "inventory_yoy": r.get("inventory_yoy"),
-                        "gross_margin_yoy_change": r.get("gross_margin_yoy_change"),
-                        "source_updated_at": r.get("source_updated_at"),
-                    },
-                    source_name,
-                    fetch_run_id,
-                )
-
-            return _persist_with_validation(
-                conn,
-                table="financial_metrics",
-                rows=rows,
-                pk_columns=("code", "report_period", "period_type", "disclosure_date"),
-                column_order=_FINANCIAL_COLUMNS,
-                enrich=_enrich,
+            return fetch_financial_metrics(
+                source,
+                effective_codes=effective_codes,
+                analysis_date=analysis_date,
             )
 
-        result.tasks.append(
-            _run_task(
+        _append_task(
+            result,
+            conn,
+            fetch_run_id=fetch_run_id,
+            source_name=source_name,
+            task="get_financial_metrics",
+            fetch=_fetch_financial,
+            persist=build_financial_metrics_persist(
                 conn,
-                fetch_run_id=fetch_run_id,
                 source_name=source_name,
-                task="get_financial_metrics",
-                fetch=_fetch_financial,
-                persist=_persist_financial,
-            )
+                fetch_run_id=fetch_run_id,
+                analysis_date=analysis_date,
+            ),
         )
 
     result.finished_at = _ts()
@@ -1042,71 +440,6 @@ def build_snapshot_metadata(
     )
 
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-
-
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="python -m packages.fundamentalscreener.sync",
-        description="Fundamental Screener 数据治理同步入口（Phase 6A）。",
-    )
-    sub = parser.add_subparsers(dest="command", required=True)
-
-    p_init = sub.add_parser("init-db", help="幂等初始化 SQLite schema。")
-    p_init.add_argument("--db", required=True, help="SQLite 路径。")
-
-    p_sync = sub.add_parser(
-        "sync",
-        help="运行同步任务。默认接入同花顺行业板块（ths_industry），东方财富（em_industry）为对照源。",
-    )
-    p_sync.add_argument("--db", required=True)
-    p_sync.add_argument("--date", required=True, help="分析日期 YYYY-MM-DD。")
-    p_sync.add_argument(
-        "--classification-system",
-        dest="classification_system",
-        default="ths_industry",
-        help="板块分类口径，默认 ths_industry（同花顺）。em_industry 为东方财富对照源。",
-    )
-    p_sync.add_argument("--benchmark", default="hs300")
-    p_sync.add_argument(
-        "--history-days",
-        dest="history_days",
-        type=int,
-        default=90,
-        help="回采历史天数（自然日），需覆盖 60 个交易日以支持 60 日收益。",
-    )
-    p_sync.add_argument(
-        "--codes",
-        default="",
-        help="逗号分隔的股票代码。未提供时跳过 per-code 公司层任务（估值历史 + "
-        "财务指标），仅运行 batch 任务（股票池 + 日度快照）。",
-    )
-    p_sync.add_argument(
-        "--sector-ids",
-        dest="sector_ids",
-        default="",
-        help="逗号分隔的板块代码（§15.9.5 按需加载）。非空时只抓指定板块的成分股，"
-        "并从成分股派生 codes 驱动个股层任务。未提供时回退全量行为。",
-    )
-
-    p_quality = sub.add_parser(
-        "quality", help="读取 SQLite 并输出结构化质量报告（Phase 6D）。"
-    )
-    p_quality.add_argument("--db", required=True)
-    p_quality.add_argument("--date", required=True)
-    p_quality.add_argument(
-        "--classification-system",
-        dest="classification_system",
-        default="ths_industry",
-        help="板块分类口径，默认 ths_industry（同花顺）。",
-    )
-    p_quality.add_argument("--benchmark", default="hs300")
-
-    return parser
-
-
 def _akshare_available() -> bool:
     """探测 akshare 是否可导入。真实同步需要 akshare；未安装时 CLI 给出明确错误。"""
 
@@ -1115,24 +448,6 @@ def _akshare_available() -> bool:
     except ImportError:
         return False
     return True
-
-
-def _parse_codes(raw: str) -> Optional[List[str]]:
-    """解析 ``--codes`` 参数：逗号分隔的股票代码列表，空串返回 ``None``。"""
-
-    if not raw:
-        return None
-    codes = [c.strip() for c in raw.split(",") if c.strip()]
-    return codes or None
-
-
-def _parse_sector_ids(raw: str) -> Optional[List[str]]:
-    """解析 ``--sector-ids`` 参数：逗号分隔的板块代码列表，空串返回 ``None``。"""
-
-    if not raw:
-        return None
-    ids = [s.strip() for s in raw.split(",") if s.strip()]
-    return ids or None
 
 
 def main(
@@ -1230,17 +545,12 @@ def main(
         # 全量同步（sector_ids is None）时仍要求成分股成功且有行；按需加载
         # （sector_ids 非空）时成分股为用户显式请求的板块，同样要求成功。
         # JSON 始终输出便于排查。akshare 缺失/口径不支持在前面已返回 rc=2。
-        by_task = {t["task"]: t for t in result.tasks}
-        required_tasks = list(LIGHT_REQUIRED_TASKS)
-        # 成分股在两种模式下都是必需的：全量同步遍历全部板块，按需加载只抓
-        # 指定板块——用户显式请求的板块成分股失败应被 CLI 报告为 rc=1。
-        required_tasks.extend(DETAIL_REQUIRED_TASKS)
-        required_ok = all(
-            by_task.get(t, {}).get("success")
-            and int(by_task.get(t, {}).get("row_count", 0) or 0) > 0
-            for t in required_tasks
+        return compute_sync_exit_code(
+            result.tasks,
+            result.failure_count,
+            LIGHT_REQUIRED_TASKS,
+            DETAIL_REQUIRED_TASKS,
         )
-        return 0 if (result.failure_count == 0 and required_ok) else 1
 
     if args.command == "quality":
         # Phase 6D：读取 SQLite 并输出结构化质量报告。

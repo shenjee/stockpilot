@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import sys
 import unittest
+from dataclasses import asdict
 from pathlib import Path
 from typing import List, Tuple
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "packages"))
 
+import chantheory.segments as segments_mod
 from chantheory.schema import Stroke
 from chantheory.segments import derive_segments
 
@@ -352,16 +355,411 @@ class DeriveSegmentsRegressionTests(unittest.TestCase):
         ]
 
         self.assertTrue(target_segments, "应识别 05-13 13:50 @77.14 的上升线段终点")
-        feature_break = target_segments[0].meta.get("feature_sequence_break")
+        target_segment = target_segments[0]
+        feature_break = target_segment.meta.get("feature_sequence_break")
         self.assertIsInstance(feature_break, dict)
         self.assertEqual(feature_break.get("feature_sequence_indices"), [25, 27, 29])
         self.assertEqual(feature_break.get("confirmation_case"), "no_gap_feature_fractal")
+        self.assertEqual(
+            {
+                "id": target_segment.id,
+                "direction": target_segment.direction,
+                "start_timestamp": target_segment.start_timestamp,
+                "end_timestamp": target_segment.end_timestamp,
+                "start_price": target_segment.start_price,
+                "end_price": target_segment.end_price,
+                "confirmed": target_segment.confirmed,
+                "meta_status": target_segment.meta.get("status"),
+                "meta_start_stroke_index": target_segment.meta.get("start_stroke_index"),
+                "meta_endpoint_abs": target_segment.meta.get("endpoint_is_absolute_extreme"),
+                "stroke_ids": list(target_segment.stroke_ids),
+                "feature_break": {
+                    "feature_sequence_indices": feature_break.get("feature_sequence_indices"),
+                    "feature_sequence_direction": feature_break.get("feature_sequence_direction"),
+                    "first_second_has_gap": feature_break.get("first_second_has_gap"),
+                    "break_fractal": feature_break.get("break_fractal"),
+                    "left_contained_by_middle": feature_break.get("left_contained_by_middle"),
+                    "confirmation_case": feature_break.get("confirmation_case"),
+                    "followup_required": feature_break.get("followup_required"),
+                },
+            },
+            {
+                "id": "segment_025_2026-05-12 14:20:00_2026-05-13 13:50:00",
+                "direction": "up",
+                "start_timestamp": "2026-05-12 14:20:00",
+                "end_timestamp": "2026-05-13 13:50:00",
+                "start_price": 72.57,
+                "end_price": 77.14,
+                "confirmed": True,
+                "meta_status": "confirmed",
+                "meta_start_stroke_index": 24,
+                "meta_endpoint_abs": True,
+                "stroke_ids": ["stroke_025", "stroke_026", "stroke_027"],
+                "feature_break": {
+                    "feature_sequence_indices": [25, 27, 29],
+                    "feature_sequence_direction": "down",
+                    "first_second_has_gap": False,
+                    "break_fractal": True,
+                    "left_contained_by_middle": False,
+                    "confirmation_case": "no_gap_feature_fractal",
+                    "followup_required": False,
+                },
+            },
+        )
+        self.assertEqual(asdict(target_segment)["stroke_ids"], ["stroke_025", "stroke_026", "stroke_027"])
 
         non_absolute_segments = [
             segment for segment in segments
             if segment.meta.get("endpoint_is_absolute_extreme") is False
         ]
         self.assertTrue(non_absolute_segments, "非绝对极值端点应保留为诊断，而不是触发级联丢弃")
+
+
+class SegmentCompatibilityTests(unittest.TestCase):
+    def test_old_followup_patch_path_still_affects_break_signal(self):
+        strokes = _build_strokes([
+            ("t0", 10.0), ("t1", 12.0), ("t2", 11.0), ("t3", 15.0),
+            ("t4", 13.0), ("t5", 20.0), ("t6", 16.0), ("t7", 17.0),
+            ("t8", 14.0), ("t9", 15.0), ("t10", 14.5),
+        ])
+
+        baseline = segments_mod._opposite_segment_break_signal(
+            strokes=strokes,
+            current_end_index=4,
+            direction="up",
+        )
+        self.assertTrue(baseline.confirmed)
+        self.assertEqual(
+            baseline.reason,
+            "gap_feature_fractal_with_followup_reverse_fractal",
+        )
+
+        patched_signal = segments_mod.FeatureBreakSignal(
+            False,
+            "no_followup_reverse_fractal",
+            {
+                "followup_reverse_feature_indices": [5, 7, 9],
+                "followup_reverse_fractal": False,
+            },
+        )
+        with patch.object(
+            segments_mod,
+            "_has_gap_followup_reverse_fractal",
+            return_value=patched_signal,
+        ) as mocked_followup:
+            result = segments_mod._opposite_segment_break_signal(
+                strokes=strokes,
+                current_end_index=4,
+                direction="up",
+            )
+
+        self.assertTrue(mocked_followup.called)
+        self.assertFalse(result.confirmed)
+        self.assertEqual(
+            result.reason,
+            "gap_feature_fractal_waiting_for_followup_reverse_fractal",
+        )
+        self.assertEqual(
+            result.meta.get("pending_reason"),
+            "gap_feature_fractal_waiting_for_followup_reverse_fractal",
+        )
+
+    def test_old_private_endpoint_builder_patch_path_still_affects_potential_endpoints(self):
+        strokes = _build_strokes([
+            ("t0", 10.0),
+            ("t1", 12.0),
+            ("t2", 11.0),
+            ("t3", 15.0),
+            ("t4", 13.0),
+            ("t5", 14.0),
+        ])
+
+        self.assertEqual(segments_mod._potential_endpoint_indices(strokes), {2})
+
+        with patch.object(
+            segments_mod,
+            "_endpoint_from_stroke",
+            side_effect=lambda index, stroke: segments_mod.SegmentEndpoint(
+                stroke_index=index,
+                direction=stroke.direction,
+                timestamp=stroke.end_timestamp,
+                price=0.0,
+            ),
+        ) as mocked_endpoint:
+            result = segments_mod._potential_endpoint_indices(strokes)
+
+        self.assertTrue(mocked_endpoint.called)
+        self.assertEqual(result, set())
+
+    def test_old_private_directional_span_patch_path_still_affects_seed_validation(self):
+        strokes = _build_strokes([
+            ("t0", 10.0),
+            ("t1", 12.0),
+            ("t2", 11.0),
+            ("t3", 13.0),
+        ])
+
+        self.assertTrue(segments_mod._is_valid_segment_seed(strokes))
+
+        with patch.object(
+            segments_mod,
+            "_segment_has_directional_price_span",
+            return_value=False,
+        ) as mocked_span:
+            result = segments_mod._is_valid_segment_seed(strokes)
+
+        self.assertTrue(mocked_span.called)
+        self.assertFalse(result)
+
+    def test_old_private_confirmation_path_still_available(self):
+        first = segments_mod.Segment(
+            id="segment_001",
+            direction="up",
+            stroke_ids=["stroke_001", "stroke_002", "stroke_003"],
+            start_timestamp="t0",
+            end_timestamp="t3",
+            start_price=10.0,
+            end_price=13.0,
+            confirmed=False,
+            meta={"status": "pending", "feature_sequence_break": None},
+        )
+        second = segments_mod.Segment(
+            id="segment_002",
+            direction="down",
+            stroke_ids=["stroke_004", "stroke_005", "stroke_006"],
+            start_timestamp="t3",
+            end_timestamp="t6",
+            start_price=13.0,
+            end_price=9.0,
+            confirmed=False,
+            meta={"status": "pending", "feature_sequence_break": None},
+        )
+
+        segments_mod._apply_segment_confirmation([first, second])
+
+        self.assertTrue(first.confirmed)
+        self.assertEqual(first.meta["status"], "confirmed")
+        self.assertEqual(first.meta["confirmed_by_segment_id"], "segment_002")
+        self.assertFalse(second.confirmed)
+        self.assertEqual(second.meta["status"], "pending")
+
+    def test_old_private_extend_patch_path_still_intercepts_merge_flow(self):
+        first = segments_mod.Segment(
+            id="segment_001",
+            direction="up",
+            stroke_ids=["stroke_001", "stroke_002", "stroke_003"],
+            start_timestamp="t0",
+            end_timestamp="t3",
+            start_price=10.0,
+            end_price=13.0,
+            confirmed=False,
+            meta={
+                "status": "pending",
+                "start_stroke_index": 0,
+                "end_stroke_index": 2,
+                "endpoint_update_indices": [],
+            },
+        )
+        second = segments_mod.Segment(
+            id="segment_002",
+            direction="up",
+            stroke_ids=["stroke_003", "stroke_004", "stroke_005"],
+            start_timestamp="t3",
+            end_timestamp="t5",
+            start_price=13.0,
+            end_price=15.0,
+            confirmed=False,
+            meta={
+                "status": "pending",
+                "start_stroke_index": 2,
+                "end_stroke_index": 4,
+                "endpoint_update_indices": [],
+            },
+        )
+        strokes = [
+            Stroke(
+                id="stroke_001",
+                direction="up",
+                start_fractal_id="fractal_000",
+                end_fractal_id="fractal_001",
+                start_timestamp="t0",
+                end_timestamp="t1",
+                start_price=10.0,
+                end_price=11.0,
+                confirmed=True,
+                meta={},
+            ),
+            Stroke(
+                id="stroke_002",
+                direction="down",
+                start_fractal_id="fractal_001",
+                end_fractal_id="fractal_002",
+                start_timestamp="t1",
+                end_timestamp="t2",
+                start_price=11.0,
+                end_price=10.5,
+                confirmed=True,
+                meta={},
+            ),
+            Stroke(
+                id="stroke_003",
+                direction="up",
+                start_fractal_id="fractal_002",
+                end_fractal_id="fractal_003",
+                start_timestamp="t2",
+                end_timestamp="t3",
+                start_price=10.5,
+                end_price=13.0,
+                confirmed=True,
+                meta={},
+            ),
+            Stroke(
+                id="stroke_004",
+                direction="down",
+                start_fractal_id="fractal_003",
+                end_fractal_id="fractal_004",
+                start_timestamp="t3",
+                end_timestamp="t4",
+                start_price=13.0,
+                end_price=12.0,
+                confirmed=True,
+                meta={},
+            ),
+            Stroke(
+                id="stroke_005",
+                direction="up",
+                start_fractal_id="fractal_004",
+                end_fractal_id="fractal_005",
+                start_timestamp="t4",
+                end_timestamp="t5",
+                start_price=12.0,
+                end_price=15.0,
+                confirmed=True,
+                meta={},
+            ),
+        ]
+
+        with patch.object(
+            segments_mod,
+            "_extend_segment_if_more_extreme",
+            wraps=segments_mod._extend_segment_if_more_extreme,
+        ) as mocked_extend:
+            merged = segments_mod._merge_adjacent_same_direction_segments(
+                [first, second],
+                strokes=strokes,
+                potential_endpoints={4},
+            )
+
+        self.assertTrue(mocked_extend.called)
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0].end_timestamp, "t5")
+        self.assertEqual(merged[0].end_price, 15.0)
+
+    def test_old_private_tail_builder_patch_path_can_change_append_behavior(self):
+        last_segment = segments_mod.Segment(
+            id="segment_001",
+            direction="up",
+            stroke_ids=["stroke_001", "stroke_002", "stroke_003"],
+            start_timestamp="t0",
+            end_timestamp="t3",
+            start_price=10.0,
+            end_price=13.0,
+            confirmed=False,
+            meta={
+                "status": "pending",
+                "end_stroke_index": 2,
+                "feature_sequence_break": None,
+            },
+        )
+        sentinel = segments_mod.Segment(
+            id="segment_growing_custom",
+            direction="down",
+            stroke_ids=["stroke_004", "stroke_005"],
+            start_timestamp="t3",
+            end_timestamp="t5",
+            start_price=13.0,
+            end_price=9.0,
+            confirmed=False,
+            meta={"status": "growing"},
+        )
+        strokes = [
+            Stroke(
+                id="stroke_001",
+                direction="up",
+                start_fractal_id="fractal_000",
+                end_fractal_id="fractal_001",
+                start_timestamp="t0",
+                end_timestamp="t1",
+                start_price=10.0,
+                end_price=11.0,
+                confirmed=True,
+                meta={},
+            ),
+            Stroke(
+                id="stroke_002",
+                direction="down",
+                start_fractal_id="fractal_001",
+                end_fractal_id="fractal_002",
+                start_timestamp="t1",
+                end_timestamp="t2",
+                start_price=11.0,
+                end_price=10.5,
+                confirmed=True,
+                meta={},
+            ),
+            Stroke(
+                id="stroke_003",
+                direction="up",
+                start_fractal_id="fractal_002",
+                end_fractal_id="fractal_003",
+                start_timestamp="t2",
+                end_timestamp="t3",
+                start_price=10.5,
+                end_price=13.0,
+                confirmed=True,
+                meta={},
+            ),
+            Stroke(
+                id="stroke_004",
+                direction="down",
+                start_fractal_id="fractal_003",
+                end_fractal_id="fractal_004",
+                start_timestamp="t3",
+                end_timestamp="t4",
+                start_price=13.0,
+                end_price=11.0,
+                confirmed=True,
+                meta={},
+            ),
+            Stroke(
+                id="stroke_005",
+                direction="up",
+                start_fractal_id="fractal_004",
+                end_fractal_id="fractal_005",
+                start_timestamp="t4",
+                end_timestamp="t5",
+                start_price=11.0,
+                end_price=12.0,
+                confirmed=True,
+                meta={},
+            ),
+        ]
+        segments = [last_segment]
+
+        with patch.object(
+            segments_mod,
+            "_make_unfinished_tail_segment",
+            return_value=sentinel,
+        ) as mocked_make_tail:
+            segments_mod._append_unfinished_tail_segment(
+                segments=segments,
+                strokes=strokes,
+                potential_endpoints={3},
+            )
+
+        self.assertTrue(mocked_make_tail.called)
+        self.assertEqual(segments[-1], sentinel)
+        self.assertEqual(len(segments), 2)
 
 
 if __name__ == "__main__":
