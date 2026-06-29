@@ -416,6 +416,33 @@ class DeriveSegmentsRegressionTests(unittest.TestCase):
 
 
 class SegmentCompatibilityTests(unittest.TestCase):
+    def test_old_private_endpoint_builder_patch_path_still_affects_potential_endpoints(self):
+        strokes = _build_strokes([
+            ("t0", 10.0),
+            ("t1", 12.0),
+            ("t2", 11.0),
+            ("t3", 15.0),
+            ("t4", 13.0),
+            ("t5", 14.0),
+        ])
+
+        self.assertEqual(segments_mod._potential_endpoint_indices(strokes), {2})
+
+        with patch.object(
+            segments_mod,
+            "_endpoint_from_stroke",
+            side_effect=lambda index, stroke: segments_mod.SegmentEndpoint(
+                stroke_index=index,
+                direction=stroke.direction,
+                timestamp=stroke.end_timestamp,
+                price=0.0,
+            ),
+        ) as mocked_endpoint:
+            result = segments_mod._potential_endpoint_indices(strokes)
+
+        self.assertTrue(mocked_endpoint.called)
+        self.assertEqual(result, set())
+
     def test_old_private_directional_span_patch_path_still_affects_seed_validation(self):
         strokes = _build_strokes([
             ("t0", 10.0),

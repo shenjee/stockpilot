@@ -18,6 +18,11 @@ from .segment_postprocess import (
     _merge_adjacent_same_direction_segments as _merge_adjacent_same_direction_segments_impl,
     _segments_are_connected_to_stroke as _segments_are_connected_to_stroke_impl,
 )
+from .segment_endpoint_helpers import (
+    _endpoint_from_stroke as _endpoint_from_stroke_impl,
+    _find_window_extreme_start_index as _find_window_extreme_start_index_impl,
+    _potential_endpoint_indices as _potential_endpoint_indices_impl,
+)
 from .segment_seed_helpers import (
     _is_valid_segment_seed as _is_valid_segment_seed_impl,
     _segment_has_directional_price_span as _segment_has_directional_price_span_impl,
@@ -366,82 +371,26 @@ def _find_window_extreme_start_index(
     end_index: int,
     direction: str,
 ) -> int:
-    """找到段 window 内的真正极值起点。
-
-    对于向上段，起点应该是 window 最低点之后的第一根向上笔。
-    对于向下段，起点应该是 window 最高点之后的第一根向下笔。
-
-    返回真正起点的 stroke index。如果当前起点已经是极值，返回 start_index。
-    """
-    window = list(strokes[start_index : end_index + 1])
-    if not window:
-        return start_index
-
-    first = window[0]
-    eps = 1e-9
-
-    if direction == "up":
-        first_low = min(first.start_price, first.end_price)
-        window_min = min(min(s.start_price, s.end_price) for s in window)
-        if first_low <= window_min + eps:
-            return start_index
-        # 找到最低点对应的笔
-        for idx in range(start_index, end_index + 1):
-            s = strokes[idx]
-            if abs(min(s.start_price, s.end_price) - window_min) > eps:
-                continue
-            # 最低点在 down 笔的终点 → 下一根 up 笔是真正起点
-            if s.direction == "down" and abs(s.end_price - window_min) < eps:
-                return idx + 1
-            # 最低点在 up 笔的起点 → 这根 up 笔就是真正起点
-            if s.direction == "up" and abs(s.start_price - window_min) < eps:
-                return idx
-            return idx + 1
-        return start_index
-
-    if direction == "down":
-        first_high = max(first.start_price, first.end_price)
-        window_max = max(max(s.start_price, s.end_price) for s in window)
-        if first_high >= window_max - eps:
-            return start_index
-        for idx in range(start_index, end_index + 1):
-            s = strokes[idx]
-            if abs(max(s.start_price, s.end_price) - window_max) > eps:
-                continue
-            if s.direction == "up" and abs(s.end_price - window_max) < eps:
-                return idx + 1
-            if s.direction == "down" and abs(s.start_price - window_max) < eps:
-                return idx
-            return idx + 1
-        return start_index
-
-    return start_index
+    return _find_window_extreme_start_index_impl(
+        strokes=strokes,
+        start_index=start_index,
+        end_index=end_index,
+        direction=direction,
+    )
 
 
 def _potential_endpoint_indices(strokes: Sequence[Stroke]) -> Set[int]:
-    endpoints = [_endpoint_from_stroke(index, stroke) for index, stroke in enumerate(strokes)]
-    result: Set[int] = set()
-
-    for direction in ("up", "down"):
-        same_direction = [endpoint for endpoint in endpoints if endpoint.direction == direction]
-        for index in range(1, len(same_direction) - 1):
-            previous = same_direction[index - 1]
-            current = same_direction[index]
-            next_endpoint = same_direction[index + 1]
-            if direction == "up" and previous.price < current.price > next_endpoint.price:
-                result.add(current.stroke_index)
-            if direction == "down" and previous.price > current.price < next_endpoint.price:
-                result.add(current.stroke_index)
-
-    return result
+    return _potential_endpoint_indices_impl(
+        strokes=strokes,
+        endpoint_from_stroke=_endpoint_from_stroke,
+    )
 
 
 def _endpoint_from_stroke(index: int, stroke: Stroke) -> SegmentEndpoint:
-    return SegmentEndpoint(
-        stroke_index=index,
-        direction=stroke.direction,
-        timestamp=stroke.end_timestamp,
-        price=stroke.end_price,
+    return _endpoint_from_stroke_impl(
+        index=index,
+        stroke=stroke,
+        endpoint_factory=SegmentEndpoint,
     )
 
 
