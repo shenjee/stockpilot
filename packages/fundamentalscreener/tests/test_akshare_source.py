@@ -1065,6 +1065,20 @@ class AkShareTHSScrapeTests(unittest.TestCase):
         self.assertEqual(mock_get.call_count, 1)
 
     @patch("requests.get")
+    def test_old_parser_patch_path_still_affects_scrape(self, mock_get: Any) -> None:
+        mock_get.return_value = _FakeResponse(text=_THS_SINGLE_PAGE_HTML)
+        src = AkShareFundamentalDataSource(akshare=_FakeAkshare())
+        sentinel = [{"代码": "999999", "名称": "Sentinel"}]
+        with patch.object(
+            AkShareFundamentalDataSource,
+            "_parse_ths_stock_table",
+            return_value=sentinel,
+        ) as mocked:
+            records = src._scrape_ths_constituents("881121")
+            self.assertEqual(records, sentinel)
+            self.assertTrue(mocked.called)
+
+    @patch("requests.get")
     def test_scrape_multi_page_follows_pagination(self, mock_get: Any) -> None:
         """多页（1/3）：第一页解析总页数，后续 2 页走 AJAX 端点。"""
 
