@@ -42,7 +42,7 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant User
-    participant App as chan-streamlit app.py
+    participant App as chan-viewer app.py
     participant MarketService
     participant AnalysisService
     participant KLineService as KLineDataService

@@ -50,7 +50,7 @@ AkShare / 公开源
 
 ```text
 packages/chantheory/              # 技术面缠论适配层
-apps/chan-streamlit/              # 缠论调试 app
+apps/chan-viewer/              # 缠论调试 app
 skills/china-stock-analysis/      # 当前 skill
 stockpilot/db/market_data.sqlite  # 当前本地行情库
 ```

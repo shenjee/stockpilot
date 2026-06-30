@@ -1,6 +1,6 @@
 # AGENT.md
 
-This file adds app-specific guidance for work inside `apps/chan-streamlit/`. It inherits the root `AGENT.md`.
+This file adds app-specific guidance for work inside `apps/chan-viewer/`. It inherits the root `AGENT.md`.
 
 ## Scope
 
@@ -39,14 +39,14 @@ Run the app test from the repo root with the validated environment active:
 
 ```bash
 source ~/.venvs/czsc/bin/activate
-python -m unittest discover -s apps/chan-streamlit/tests -p 'test_*.py'
+python -m unittest discover -s apps/chan-viewer/tests -p 'test_*.py'
 ```
 
 For manual validation, launch the app:
 
 ```bash
 source ~/.venvs/czsc/bin/activate
-streamlit run apps/chan-streamlit/app.py
+streamlit run apps/chan-viewer/app.py
 ```
 
 If app dependencies are missing:

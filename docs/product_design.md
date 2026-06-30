@@ -720,7 +720,7 @@ stockpilot/
 │       ├── plotting.py
 │       └── config.py
 ├── apps/
-│   └── chan-streamlit/
+│   └── chan-viewer/
 │       ├── README.md
 │       ├── app.py
 │       └── pages/

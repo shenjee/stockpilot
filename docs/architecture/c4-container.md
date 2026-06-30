@@ -21,7 +21,7 @@ graph TD
     subgraph StockPilot[StockPilot Local Workspace]
         Chantheory[packages/chantheory<br/>Chan analysis core adapter]
         FundamentalCore[packages/fundamentalscreener<br/>Fundamental Screener core, repository, sync, quality]
-        ChanApp[apps/chan-streamlit<br/>Streamlit debug app]
+        ChanApp[apps/chan-viewer<br/>Streamlit debug app]
         FsApp[apps/fundamental-screener<br/>Streamlit workbench app]
         Skill[skills/china-stock-analysis<br/>Installable report-generation skill]
         RuntimeData[stockpilot/config + db + reports]
@@ -61,7 +61,7 @@ graph TD
 - Builds stable domain snapshots from fixture or SQLite-backed sources.
 - Exposes reusable logic to CLI and app layers.
 
-### `apps/chan-streamlit`
+### `apps/chan-viewer`
 
 - A validation/debug UI for chart overlays and Chan structure output.
 - Calls shared services and `chantheory`; it should not duplicate domain logic

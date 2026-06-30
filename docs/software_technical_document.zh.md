@@ -4,7 +4,7 @@
 
 本文档描述 `stockpilot` 当前已落地的软件架构，重点覆盖以下两个重构热点：
 
-- `apps/chan-streamlit`
+- `apps/chan-viewer`
 - `skills/china-stock-analysis/scripts`
 
 文档目标：
@@ -32,7 +32,7 @@
   - 稳定分析接口层。
   - 对输入 K 线进行缠论分析，输出结构化结果与绘图原语。
 
-- `apps/chan-streamlit`
+- `apps/chan-viewer`
   - 调试与验证型前端应用。
   - 负责参数输入、状态管理、结果展示。
 
@@ -62,15 +62,15 @@
   - 报告编排层。
   - 组织运行时、数据准备、渲染与保存，不下沉到 SQLite 读写细节。
 
-- `apps/chan-streamlit/services/market_service.py`
+- `apps/chan-viewer/services/market_service.py`
   - App 侧行情访问服务。
   - 复用共享 `KLineDataService`，不重复实现腾讯抓取逻辑。
 
-- `apps/chan-streamlit/services/analysis_service.py`
+- `apps/chan-viewer/services/analysis_service.py`
   - App 侧分析调用适配层。
   - 对 `chantheory` 做薄封装。
 
-- `apps/chan-streamlit/charts/*`
+- `apps/chan-viewer/charts/*`
   - 图表构建与坐标轴策略层。
   - 将 Figure 装配、坐标规则、Plotly 原语映射拆分。
 
@@ -80,11 +80,11 @@
 
 表现层包含以下模块：
 
-- `apps/chan-streamlit/app.py`
-- `apps/chan-streamlit/ui_text.py`
-- `apps/chan-streamlit/charts/figure_builder.py`
-- `apps/chan-streamlit/charts/axis_policy.py`
-- `apps/chan-streamlit/charts/primitive_renderer.py`
+- `apps/chan-viewer/app.py`
+- `apps/chan-viewer/ui_text.py`
+- `apps/chan-viewer/charts/figure_builder.py`
+- `apps/chan-viewer/charts/axis_policy.py`
+- `apps/chan-viewer/charts/primitive_renderer.py`
 - `skills/china-stock-analysis/scripts/renderers/markdown_report_renderer.py`
 
 职责特点：
@@ -98,8 +98,8 @@
 
 应用服务层包含以下模块：
 
-- `apps/chan-streamlit/services/market_service.py`
-- `apps/chan-streamlit/services/analysis_service.py`
+- `apps/chan-viewer/services/market_service.py`
+- `apps/chan-viewer/services/analysis_service.py`
 - `skills/china-stock-analysis/scripts/services/kline_data_service.py`
 - `skills/china-stock-analysis/scripts/services/report_data_service.py`
 - `skills/china-stock-analysis/scripts/services/indicator_service.py`
@@ -350,7 +350,7 @@ classDiagram
 ### 7.2 低耦合表现
 
 - App 页面层不直接实现腾讯抓取逻辑；
-- App 通过 `apps/chan-streamlit/services/market_service.py` 适配到共享 `KLineDataService`；
+- App 通过 `apps/chan-viewer/services/market_service.py` 适配到共享 `KLineDataService`；
 - K 线同步策略统一由 `skills/china-stock-analysis/scripts/services/kline_data_service.py` 负责；
 - 当前 Provider 实例仍在 App 侧适配服务中组装，后续如需多 Provider 可再收口到工厂或配置；
 - 报告编排层不直接依赖 SQLite SQL；
@@ -376,7 +376,7 @@ classDiagram
   - 作为兼容入口继续存在；
 - `ReportGenerator = ReportOrchestrator`
   - 保持旧导入名可用；
-- `apps/chan-streamlit/app.py`
+- `apps/chan-viewer/app.py`
   - 保留部分测试依赖的兼容导出；
 - 日线历史数据
   - 通过仓储层兼容旧表结构并迁移到统一 `klines` 表。
@@ -391,9 +391,9 @@ classDiagram
   - 验证 SQLite 日线与分钟线存取；
 - `skills/china-stock-analysis/tests/test_kline_data_service.py`
   - 验证本地优先、远端补齐、回写后再读取；
-- `apps/chan-streamlit/tests/test_app.py`
+- `apps/chan-viewer/tests/test_app.py`
   - 验证图表与排序兼容行为；
-- `apps/chan-streamlit/tests/test_market_service.py`
+- `apps/chan-viewer/tests/test_market_service.py`
   - 验证 App 侧已复用共享 K 线服务。
 
 手工验证关注点：

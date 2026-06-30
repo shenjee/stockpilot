@@ -17,10 +17,10 @@ This view covers:
 
 ```mermaid
 graph TD
-    AppUI[apps/chan-streamlit/app.py]
-    MarketService[apps/chan-streamlit/services/market_service.py]
-    AnalysisService[apps/chan-streamlit/services/analysis_service.py]
-    FigureBuilder[apps/chan-streamlit/charts/*]
+    AppUI[apps/chan-viewer/app.py]
+    MarketService[apps/chan-viewer/services/market_service.py]
+    AnalysisService[apps/chan-viewer/services/analysis_service.py]
+    FigureBuilder[apps/chan-viewer/charts/*]
 
     ReportOrchestrator[skills/china-stock-analysis/scripts/report_orchestrator.py]
     ReportDataService[skills/china-stock-analysis/scripts/services/report_data_service.py]
@@ -60,7 +60,7 @@ graph TD
 
 ### UI And Delivery Components
 
-- `apps/chan-streamlit/app.py` collects user input and renders results.
+- `apps/chan-viewer/app.py` collects user input and renders results.
 - `market_service.py` adapts the app to the shared K-line service.
 - `analysis_service.py` is a thin wrapper around `packages/chantheory`.
 - `charts/*` turn stable analysis output into Plotly-friendly rendering.

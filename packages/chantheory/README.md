@@ -31,7 +31,7 @@ Phase 2 P2 adds:
 - project-level `divergences` mapping based on weaker same-direction stroke extensions around pivot zones
 - stable `plot_primitives` for markers, lines, boxes, labels, and structure-only candidate points
 - short summary and warning generation for unstable tail strokes and insufficient bars
-- a Streamlit debug app under `apps/chan-streamlit/`
+- a Streamlit debug app under `apps/chan-viewer/`
 - deterministic JSON and row fixtures under `packages/chantheory/tests/fixtures/`
 
 ## Public API
@@ -283,4 +283,4 @@ Committed P2 fixtures:
 
 - `packages/chantheory/tests/fixtures/p2_sample_rows.json`
 - `packages/chantheory/tests/fixtures/p2_sample_result.json`
-- `apps/chan-streamlit/sample_data/000001_sz_day_rows.json`
+- `apps/chan-viewer/sample_data/000001_sz_day_rows.json`

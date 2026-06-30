@@ -60,7 +60,7 @@ if "streamlit" not in sys.modules:
 
 APP_DIR = Path(__file__).resolve().parents[1]
 APP_PATH = APP_DIR / "app.py"
-SPEC = importlib.util.spec_from_file_location("chan_streamlit_app", APP_PATH)
+SPEC = importlib.util.spec_from_file_location("chan_viewer_app", APP_PATH)
 app = None
 APP_IMPORT_ERROR = None
 if SPEC and SPEC.loader:

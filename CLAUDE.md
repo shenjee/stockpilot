@@ -18,7 +18,7 @@ Run tests (each area is an independent `unittest` suite — run the one covering
 ```bash
 python -m unittest discover -s packages/chantheory/tests -p 'test_*.py'          # adapter layer
 python -m unittest discover -s packages/fundamentalscreener/tests -p 'test_*.py' # fundamental screener core
-python -m unittest discover -s apps/chan-streamlit/tests -p 'test_*.py'          # debug app
+python -m unittest discover -s apps/chan-viewer/tests -p 'test_*.py'          # debug app
 python -m unittest discover -s apps/fundamental-screener/tests -p 'test_*.py'    # screener app
 python -m unittest discover -s skills/china-stock-analysis/tests -p 'test_*.py'  # skill scripts
 ```
@@ -33,7 +33,7 @@ python -m unittest packages.chantheory.tests.test_structure_mapping.TestX.test_y
 Launch the debug app:
 
 ```bash
-streamlit run apps/chan-streamlit/app.py
+streamlit run apps/chan-viewer/app.py
 ```
 
 Launch the Fundamental Screener app:
@@ -88,7 +88,7 @@ Generates factual (no buy/sell advice) China A-share daily market reports. Insta
 - `scripts/services/` (indicator, kline_data, report_data, rule_evaluator), `scripts/repositories/kline_store.py` (SQLite cache), `scripts/renderers/` (markdown).
 - Config templates live in `assets/config_templates/`; actual `config/*.yaml` are runtime/private (gitignored).
 
-### `apps/chan-streamlit/` — Streamlit debug/validation app
+### `apps/chan-viewer/` — Streamlit debug/validation app
 A debug surface for `chantheory`, **not** the product UI. `app.py` uses `sys.path.insert` to import from `packages/` and `skills/.../scripts/`. Local structure: `charts/` (axis policy, figure builder, primitive renderer), `services/` (analysis + market), `chan_chart_widget/` (Plotly component), `ui_text.py` (bilingual `zh`/`en` labels — keep both in sync when adding strings). Reads analysis from `chantheory`; never re-implements it here.
 
 ### `apps/fundamental-screener/` — Streamlit screener app

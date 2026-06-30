@@ -15,7 +15,7 @@ support, and product planning docs.
 | Reusable package | `packages/chantheory/` | Project-owned adapter layer around `czsc` for Chan Theory structure analysis. |
 | Reusable package | `packages/fundamentalscreener/` | Fundamental Screener core for sector rotation, company ranking, financial quality, valuation, repositories, lineage, CLI payloads, and SQLite sync/schema support. |
 | Reusable package | `packages/marketdata/` | Shared market-data provider, runtime path, K-line store, and securities-store infrastructure used by the Chan Streamlit app and China stock analysis skill. |
-| Local app | `apps/chan-streamlit/` | Streamlit debug app for validating `chantheory` chart overlays and structure output. |
+| Local app | `apps/chan-viewer/` | Streamlit debug app for validating `chantheory` chart overlays and structure output. |
 | Local app | `apps/fundamental-screener/` | Streamlit frontend for browsing Fundamental Screener outputs and validations. |
 | Installable skill | `skills/china-stock-analysis/` | Agent skill that generates factual China A-share daily reports using installable scripts, templates, and references. |
 | Product docs | `docs/` | Chan Theory design docs, Fundamental Screener MVP/phase plans, and supporting technical notes. |
@@ -37,7 +37,7 @@ Key subdirectories today:
 ```text
 stockpilot/
 |-- apps/
-|   |-- chan-streamlit/
+|   |-- chan-viewer/
 |   `-- fundamental-screener/
 |-- docs/
 |   |-- chan_theory_v0.1.md
@@ -105,7 +105,7 @@ source ~/.venvs/czsc/bin/activate
 Common entry points:
 
 ```bash
-streamlit run apps/chan-streamlit/app.py
+streamlit run apps/chan-viewer/app.py
 streamlit run apps/fundamental-screener/app.py
 python -m packages.fundamentalscreener.cli sectors --format json
 python -m packages.fundamentalscreener.cli screen --format json
@@ -117,7 +117,7 @@ Common targeted tests:
 python -m unittest discover -s packages/chantheory/tests -p 'test_*.py'
 python -m unittest discover -s packages/fundamentalscreener/tests -p 'test_*.py'
 python -m unittest discover -s packages/marketdata/tests -p 'test_*.py'
-python -m unittest discover -s apps/chan-streamlit/tests -p 'test_*.py'
+python -m unittest discover -s apps/chan-viewer/tests -p 'test_*.py'
 python -m unittest discover -s apps/fundamental-screener/tests -p 'test_*.py'
 python -m unittest discover -s skills/china-stock-analysis/tests -p 'test_*.py'
 ```

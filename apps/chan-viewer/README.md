@@ -1,6 +1,6 @@
-# chan-streamlit
+# chan-viewer
 
-`apps/chan-streamlit/` is the Phase 2 Streamlit debug app for validating `chantheory` output.
+`apps/chan-viewer/` is the Phase 2 Streamlit debug app for validating `chantheory` output.
 
 It is intended for:
 
@@ -35,7 +35,7 @@ This extra includes:
 Start the app from the repo root:
 
 ```bash
-streamlit run apps/chan-streamlit/app.py
+streamlit run apps/chan-viewer/app.py
 ```
 
 ## Notes

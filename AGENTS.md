@@ -32,8 +32,8 @@ which python
 - `packages/marketdata/tests/`: unit tests for shared market-data infrastructure and compatibility-sensitive storage behavior.
 - `packages/fundamentalscreener/`: core package for Fundamental Screener sector/company ranking, financial quality, valuation, data quality, repositories, data sources, SQLite schema, and sync.
 - `packages/fundamentalscreener/tests/`: unit tests and fixtures for Fundamental Screener core and CLI payloads.
-- `apps/chan-streamlit/`: Streamlit debug app used to validate `chantheory` output and chart overlays.
-- `apps/chan-streamlit/tests/`: app-focused tests.
+- `apps/chan-viewer/`: Streamlit debug app used to validate `chantheory` output and chart overlays.
+- `apps/chan-viewer/tests/`: app-focused tests.
 - `apps/fundamental-screener/`: Streamlit validation/product app for browsing Fundamental Screener output.
 - `apps/fundamental-screener/tests/`: app/service tests for the screener UI layer.
 - `skills/china-stock-analysis/`: installable agent skill with scripts, config templates, and references.
@@ -89,7 +89,7 @@ python -m unittest discover -s packages/marketdata/tests -p 'test_*.py'
 Run the Chan Streamlit app smoke tests:
 
 ```bash
-python -m unittest discover -s apps/chan-streamlit/tests -p 'test_*.py'
+python -m unittest discover -s apps/chan-viewer/tests -p 'test_*.py'
 ```
 
 Run the Fundamental Screener app tests:
@@ -107,7 +107,7 @@ python -m unittest discover -s skills/china-stock-analysis/tests -p 'test_*.py'
 Start the debug app:
 
 ```bash
-streamlit run apps/chan-streamlit/app.py
+streamlit run apps/chan-viewer/app.py
 ```
 
 Start the Fundamental Screener app:
@@ -146,7 +146,7 @@ python -m pip install -e ".[apps]"
 - For changes under `packages/chantheory/`, run the `chantheory` test suite first.
 - For changes under `packages/fundamentalscreener/`, run the Fundamental Screener core test suite first.
 - For changes under `packages/marketdata/`, run the shared market-data test suite first.
-- For changes under `apps/chan-streamlit/`, run the relevant tests under `apps/chan-streamlit/tests/` and, if relevant, launch the app for a quick manual smoke check.
+- For changes under `apps/chan-viewer/`, run the relevant tests under `apps/chan-viewer/tests/` and, if relevant, launch the app for a quick manual smoke check.
 - For changes under `apps/fundamental-screener/`, run the relevant tests under `apps/fundamental-screener/tests/` and, if relevant, launch the app for a quick manual smoke check.
 - For changes under `skills/china-stock-analysis/scripts/`, run the relevant tests under `skills/china-stock-analysis/tests/`.
 - Add or update tests when behavior changes or regression risk is non-trivial.
@@ -166,7 +166,7 @@ python -m pip install -e ".[apps]"
 
 - Read `README.md` first for repo-level context.
 - Read `packages/chantheory/README.md` before changing adapter behavior or schema expectations.
-- Read `apps/chan-streamlit/README.md` before changing the debug app.
+- Read `apps/chan-viewer/README.md` before changing the debug app.
 - Read `docs/fundamental_screener_mvp.md`, `docs/fundamental_screener_phase_plan.md`, and `docs/fundamental_screener_streamlit_frontend_plan.md` before changing Fundamental Screener product/core/app behavior.
 - Read `apps/fundamental-screener/README.md` before changing the Fundamental Screener Streamlit app.
 - Prefer small, reviewable patches.

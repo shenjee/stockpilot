@@ -151,7 +151,7 @@
 - [x] 生成结构摘要，且保持短句化
 - [x] 生成不足数据、结构不稳、转换异常等 `warnings`
 - [x] 定义 agent 可读、日报可用的摘要文案
-- [x] 创建 `apps/chan-streamlit/`
+- [x] 创建 `apps/chan-viewer/`
 - [x] 添加 `app.py`
 - [x] 添加 Streamlit README
 - [x] 提供 symbol、timeframe、date range、参数控制项
