@@ -136,6 +136,7 @@ TEXT = {
         "y_zoom_caption": "{scale:.2f}x 区间",
         "pan_label": "移动",
         "reset_label": "重置",
+        "show_all_label": "全部",
         "fullscreen_label": "全屏",
     },
     "en": {
@@ -261,6 +262,7 @@ TEXT = {
         "y_zoom_caption": "{scale:.2f}x range",
         "pan_label": "Pan",
         "reset_label": "Reset",
+        "show_all_label": "All",
         "fullscreen_label": "Full",
     },
 }

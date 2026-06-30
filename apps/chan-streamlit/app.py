@@ -72,28 +72,42 @@ LAYER_KEYS = (
     "volume_panel",
     "macd_panel",
 )
-_BARS_PER_DAY = {"1m": 240, "5m": 48, "15m": 16, "30m": 8, "60m": 4, "day": 1, "week": 1, "month": 1}
-_X_WINDOW_CAP = 5000
+_X_WINDOW_POLICY = {
+    "1m": {"minimum": 120, "default": 240, "maximum": 720},
+    "5m": {"minimum": 96, "default": 240, "maximum": 480},
+    "15m": {"minimum": 64, "default": 160, "maximum": 360},
+    "30m": {"minimum": 48, "default": 160, "maximum": 320},
+    "60m": {"minimum": 40, "default": 120, "maximum": 240},
+    "day": {"minimum": 60, "default": 180, "maximum": 480},
+    "week": {"minimum": 40, "default": 120, "maximum": 360},
+    "month": {"minimum": 36, "default": 120, "maximum": 240},
+}
+_FALLBACK_X_WINDOW_POLICY = {"minimum": 60, "default": 180, "maximum": 480}
 
 
 def _default_x_window(timeframe: str, row_count: int) -> int:
-    """默认可见 K 线数量，按周期换算到约 90 个交易日，上限 5000 根。"""
-    bars_per_day = _BARS_PER_DAY.get(timeframe, 1)
-    target = min(90 * bars_per_day, _X_WINDOW_CAP)
+    """默认可见 K 线数量：按可读性固定窗口，不随取数范围膨胀。"""
+    policy = _X_WINDOW_POLICY.get(timeframe, _FALLBACK_X_WINDOW_POLICY)
+    target = policy["default"]
     return min(target, max(row_count, 1))
 
 
 def _x_window_steps(timeframe: str, row_count: int) -> list[int]:
-    """可选窗口步进，日线用原步进，分钟线按交易日倍数生成。"""
-    bars_per_day = _BARS_PER_DAY.get(timeframe, 1)
-    if bars_per_day == 1:
-        base_steps = [30, 60, 90, 120, 240, 360, 480]
-    else:
-        base_steps = [d * bars_per_day for d in (5, 10, 20, 40, 60, 90, 120)]
-    steps = [n for n in base_steps if n <= row_count]
-    if row_count not in steps:
-        steps.append(row_count)
-    return steps
+    """可选窗口步进，围绕最小/默认/最大窗口提供细粒度缩放。"""
+    policy = _X_WINDOW_POLICY.get(timeframe, _FALLBACK_X_WINDOW_POLICY)
+    available_rows = max(row_count, 1)
+    base_steps = sorted(
+        {
+            policy["minimum"],
+            max(policy["minimum"], policy["default"] // 2),
+            _default_x_window(timeframe, row_count),
+            policy["default"],
+            min(policy["maximum"], policy["default"] * 2),
+            policy["maximum"],
+        }
+    )
+    steps = [n for n in base_steps if n <= available_rows]
+    return steps or [available_rows]
 Y_ZOOM_STEP = 1.2
 MIN_Y_ZOOM = 0.45
 MAX_Y_ZOOM = 3.0
@@ -373,6 +387,7 @@ def main() -> None:
             "yZoomCaption": _frontend_template(language, "y_zoom_caption"),
             "pan": _t(language, "pan_label"),
             "reset": _t(language, "reset_label"),
+            "showAll": _t(language, "show_all_label"),
             "fullscreen": _t(language, "fullscreen_label"),
         },
     }

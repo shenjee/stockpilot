@@ -534,6 +534,26 @@ Notes:
 - `czsc` owns the underlying Chan core recognition, while `chantheory` owns project-side adaptation, constraints, and unified output
 - The skill and the desktop app should both depend on the `chantheory` adapter layer instead of UI components or `czsc` internals
 
+Chart window policy:
+
+- Data fetch range and visible chart window must be separate: fetched rows can serve Chan calculation, MACD, divergence, and candidate-point analysis; the default visible window serves readability and should not grow with the total fetched row count
+- Normal zoom windows use fixed per-timeframe readability policies instead of deriving counts from `trading days * bars per day`:
+
+| Timeframe | Minimum normal window | Default window | Maximum normal window |
+|---|---:|---:|---:|
+| 1m | 120 | 240 | 720 |
+| 5m | 96 | 240 | 480 |
+| 15m | 64 | 160 | 360 |
+| 30m | 48 | 160 | 320 |
+| 60m | 40 | 120 | 240 |
+| day | 60 | 180 | 480 |
+| week | 40 | 120 | 360 |
+| month | 36 | 120 | 240 |
+
+- `xWindowSteps` represents only normal reading windows and should not automatically append `row_count` as the final zoom step
+- "Show all" is a separate action, not a normal zoom step: clicking it again should return to the previous window; time-axis zoom or reset exits the show-all state
+- The default window must be present in the normal zoom steps; implementation should maintain `defaultXWindow in xWindowSteps` so short ranges do not fall back to the minimum step when the default is unavailable
+
 ### Phase 3: Strategy Rules and Quantitative Signals
 
 Corresponding PRD modules: 5.4 Experience Strategy Library, 5.5 Quantitative Signal System, and 5.8 Portfolio and Review System (signal part).

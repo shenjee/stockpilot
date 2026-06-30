@@ -74,7 +74,7 @@
     }
 
     let isInitialized = false;
-    let currentState = { xWindowIndex: 0, yZoom: 1.0, dragmode: "pan" };
+    let currentState = { xWindowIndex: 0, previousXWindowIndex: null, showAll: false, yZoom: 1.0, dragmode: "pan" };
     let currentPayload = null;
     let currentChartKey = null;
     const chartDiv = document.getElementById("chan-plotly-chart");
@@ -91,10 +91,16 @@
         if (chartChanged) {
           currentChartKey = payload.chartKey;
           currentState.xWindowIndex = Math.max(payload.xWindowSteps.indexOf(payload.defaultXWindow), 0);
+          currentState.previousXWindowIndex = null;
+          currentState.showAll = false;
           currentState.yZoom = payload.defaultYZoom;
           currentState.dragmode = "pan";
         } else {
           currentState.xWindowIndex = Math.min(currentState.xWindowIndex, Math.max(payload.xWindowSteps.length - 1, 0));
+          if (currentState.showAll && payload.rows.length <= payload.xWindowSteps[currentState.xWindowIndex]) {
+            currentState.previousXWindowIndex = null;
+            currentState.showAll = false;
+          }
           currentState.yZoom = Math.min(payload.maxYZoom, Math.max(payload.minYZoom, currentState.yZoom));
         }
 
@@ -130,6 +136,7 @@
 
       document.getElementById("overlay-actions").innerHTML = `
         <button class="chan-action-button ${currentState.dragmode === 'pan' ? 'is-active' : ''}" data-action="pan">${payload.text.pan}</button>
+        <button class="chan-action-button ${currentState.showAll ? 'is-active' : ''}" data-action="show_all">${payload.text.showAll}</button>
         <button class="chan-action-button" data-action="reset">${payload.text.reset}</button>
         <button class="chan-action-button" data-action="fullscreen">${payload.text.fullscreen}</button>
       `;
@@ -140,7 +147,7 @@
     function syncCaptions() {
       if (!currentPayload) return;
       document.getElementById("caption-x").textContent = renderCaption(currentPayload.text.xWindowCaption, {
-        count: currentPayload.xWindowSteps[currentState.xWindowIndex]
+        count: currentState.showAll ? currentPayload.rows.length : currentPayload.xWindowSteps[currentState.xWindowIndex]
       });
       document.getElementById("caption-y").textContent = renderCaption(currentPayload.text.yZoomCaption, {
         scale: currentState.yZoom.toFixed(2)
@@ -150,7 +157,7 @@
     function getAxisRanges() {
       const rows = currentPayload.rows;
       const xValues = rows.map(r => r.date);
-      const windowCount = currentPayload.xWindowSteps[currentState.xWindowIndex];
+      const windowCount = currentState.showAll ? rows.length : currentPayload.xWindowSteps[currentState.xWindowIndex];
       const visibleRows = rows.slice(-windowCount);
 
       let xRange = null;
@@ -254,6 +261,9 @@
         if (axis === "x") {
           if (dir === "in" && currentState.xWindowIndex > 0) currentState.xWindowIndex--;
           else if (dir === "out" && currentState.xWindowIndex < currentPayload.xWindowSteps.length - 1) currentState.xWindowIndex++;
+          currentState.previousXWindowIndex = null;
+          currentState.showAll = false;
+          document.querySelectorAll('[data-action="show_all"]').forEach(b => b.classList.remove('is-active'));
         } else if (axis === "y") {
           if (dir === "in") currentState.yZoom = Math.max(currentPayload.minYZoom, currentState.yZoom / currentPayload.yZoomStep);
           else if (dir === "out") currentState.yZoom = Math.min(currentPayload.maxYZoom, currentState.yZoom * currentPayload.yZoomStep);
@@ -269,11 +279,28 @@
           currentState.dragmode = "pan";
           document.querySelectorAll('[data-action="pan"]').forEach(b => b.classList.add('is-active'));
           Plotly.relayout(chartDiv, { dragmode: "pan" });
+        } else if (action === "show_all") {
+          if (!currentState.showAll) {
+            currentState.previousXWindowIndex = currentState.xWindowIndex;
+            currentState.showAll = true;
+            document.querySelectorAll('[data-action="show_all"]').forEach(b => b.classList.add('is-active'));
+          } else {
+            if (currentState.previousXWindowIndex !== null) {
+              currentState.xWindowIndex = Math.min(currentState.previousXWindowIndex, Math.max(currentPayload.xWindowSteps.length - 1, 0));
+            }
+            currentState.previousXWindowIndex = null;
+            currentState.showAll = false;
+            document.querySelectorAll('[data-action="show_all"]').forEach(b => b.classList.remove('is-active'));
+          }
+          applyRanges();
         } else if (action === "reset") {
           currentState.xWindowIndex = Math.max(currentPayload.xWindowSteps.indexOf(currentPayload.defaultXWindow), 0);
+          currentState.previousXWindowIndex = null;
+          currentState.showAll = false;
           currentState.yZoom = currentPayload.defaultYZoom;
           currentState.dragmode = "pan";
           document.querySelectorAll('[data-action="pan"]').forEach(b => b.classList.add('is-active'));
+          document.querySelectorAll('[data-action="show_all"]').forEach(b => b.classList.remove('is-active'));
           Plotly.relayout(chartDiv, { dragmode: "pan" });
           applyRanges();
         } else if (action === "fullscreen") {

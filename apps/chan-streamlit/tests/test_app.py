@@ -75,6 +75,31 @@ if SPEC and SPEC.loader:
 
 @unittest.skipIf(app is None, f"app dependencies unavailable: {APP_IMPORT_ERROR}")
 class ChartAxisTests(unittest.TestCase):
+    def test_default_x_window_uses_readable_timeframe_policy(self):
+        self.assertEqual(app._default_x_window("1m", 1200), 240)
+        self.assertEqual(app._default_x_window("5m", 1200), 240)
+        self.assertEqual(app._default_x_window("30m", 1200), 160)
+        self.assertEqual(app._default_x_window("60m", 1200), 120)
+        self.assertEqual(app._default_x_window("day", 1200), 180)
+
+    def test_default_x_window_does_not_exceed_available_rows(self):
+        self.assertEqual(app._default_x_window("1m", 80), 80)
+        self.assertEqual(app._default_x_window("day", 30), 30)
+        self.assertEqual(app._default_x_window("1m", 0), 1)
+
+    def test_x_window_steps_keep_show_all_as_explicit_endpoint(self):
+        self.assertEqual(app._x_window_steps("1m", 1200), [120, 240, 480, 720])
+        self.assertEqual(app._x_window_steps("30m", 1200), [48, 80, 160, 320])
+        self.assertEqual(app._x_window_steps("day", 1200), [60, 90, 180, 360, 480])
+
+    def test_x_window_steps_include_available_rows_when_smaller_than_minimum(self):
+        self.assertEqual(app._x_window_steps("1m", 60), [60])
+
+    def test_x_window_steps_include_default_when_available_rows_are_limited(self):
+        for timeframe, row_count in (("1m", 200), ("30m", 100), ("day", 120)):
+            with self.subTest(timeframe=timeframe, row_count=row_count):
+                self.assertIn(app._default_x_window(timeframe, row_count), app._x_window_steps(timeframe, row_count))
+
     def test_minute_timeframe_uses_continuous_category_axis(self):
         rows = [
             {"date": "2026-06-11 14:30:00", "open": 10, "close": 11, "high": 11.2, "low": 9.8, "volume": 100},
