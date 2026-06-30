@@ -222,6 +222,34 @@ class TencentStockDataProviderTests(unittest.TestCase):
         self.assertTrue(result.errors())
         self.assertEqual(result.errors()[0].reason_code, "unexpected_response_shape")
 
+    def test_get_kline_result_top_level_list_is_error(self):
+        with patch.object(TencentStockDataProvider, "_fetch_with_retry", return_value="[]"):
+            result = TencentStockDataProvider.get_kline_result(
+                code="600519",
+                market="sh",
+                start_date="2026-06-11",
+                end_date="2026-06-11",
+                ktype="day",
+            )
+        self.assertFalse(result.success)
+        self.assertEqual(result.data, [])
+        self.assertTrue(result.errors())
+        self.assertEqual(result.errors()[0].reason_code, "unexpected_response_shape")
+
+    def test_get_minute_kline_result_top_level_list_is_error(self):
+        with patch.object(TencentStockDataProvider, "_fetch_with_retry", return_value="[]"):
+            result = TencentStockDataProvider.get_minute_kline_result(
+                code="600519",
+                market="sh",
+                start_date="2026-06-11",
+                end_date="2026-06-11",
+                ktype="1m",
+            )
+        self.assertFalse(result.success)
+        self.assertEqual(result.data, [])
+        self.assertTrue(result.errors())
+        self.assertEqual(result.errors()[0].reason_code, "unexpected_response_shape")
+
     def test_get_kline_result_no_data_is_warning(self):
         payload = {"code": 0, "data": {"sh600519": {"qfqday": []}}}
         with patch.object(

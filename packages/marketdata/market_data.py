@@ -298,6 +298,25 @@ class TencentStockDataProvider(MarketDataProvider):
             cls._log_errors(issues)
             return MarketDataResult(success=False, data=[], issues=issues)
 
+        if not isinstance(data, dict):
+            issues = [
+                cls._make_issue(
+                    level="error",
+                    reason_code="unexpected_response_shape",
+                    message="tencent kline response is not a dict",
+                    context={
+                        "operation": "get_kline",
+                        "code": code,
+                        "market": market,
+                        "ktype": ktype,
+                        "security_type": security_type,
+                        "response_type": type(data).__name__,
+                    },
+                )
+            ]
+            cls._log_errors(issues)
+            return MarketDataResult(success=False, data=[], issues=issues)
+
         provider_code = data.get("code")
         if provider_code != 0:
             issues = [
@@ -477,6 +496,24 @@ class TencentStockDataProvider(MarketDataProvider):
                             "ref": ref,
                         },
                         exc=exc,
+                    )
+                )
+                break
+
+            if not isinstance(data, dict):
+                issues.append(
+                    cls._make_issue(
+                        level="error",
+                        reason_code="unexpected_response_shape",
+                        message="tencent minute kline response is not a dict",
+                        context={
+                            "operation": "get_minute_kline",
+                            "code": code,
+                            "market": market,
+                            "ktype": ktype,
+                            "ref": ref,
+                            "response_type": type(data).__name__,
+                        },
                     )
                 )
                 break
