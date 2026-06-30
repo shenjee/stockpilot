@@ -1,6 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import logging
+
+from ..provider_result import MarketDataResult, ProviderIssue
+
+
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
 
 
 DEFAULT_LOOKBACK_DAYS = 140
@@ -27,6 +34,26 @@ class KLineDataService:
         min_local_count: int | None = None,
         security_type: str | None = None,
     ) -> None:
+        self.ensure_local_klines_result(
+            code=code,
+            end_date=end_date,
+            market=market,
+            timeframe=timeframe,
+            start_date=start_date,
+            min_local_count=min_local_count,
+            security_type=security_type,
+        )
+
+    def ensure_local_klines_result(
+        self,
+        code: str,
+        end_date: str,
+        market: str | None = None,
+        timeframe: str = "day",
+        start_date: str | None = None,
+        min_local_count: int | None = None,
+        security_type: str | None = None,
+    ) -> MarketDataResult[None]:
         start_date = start_date or self._default_start_date(end_date)
         required_local_count = min_local_count or self._required_local_count(timeframe, start_date, end_date)
         required_latest = self._required_latest_timestamp(end_date, timeframe)
@@ -42,9 +69,9 @@ class KLineDataService:
             and self._covers_start_date(earliest, start_date, timeframe)
             and local_count >= required_local_count
         ):
-            return
+            return MarketDataResult(success=True, data=None)
 
-        klines = self.provider.get_kline(
+        result = self._fetch_remote_klines_result(
             code=code,
             start_date=start_date,
             end_date=end_date,
@@ -52,8 +79,18 @@ class KLineDataService:
             market=market,
             security_type=security_type,
         )
-        if klines:
-            self.store.upsert_many(code, market, klines, source=self.provider.provider_id, timeframe=timeframe)
+        self._log_error_issues(
+            result.issues,
+            code=code,
+            start_date=start_date,
+            end_date=end_date,
+            market=market,
+            timeframe=timeframe,
+            security_type=security_type,
+        )
+        if result.data:
+            self.store.upsert_many(code, market, result.data, source=self.provider.provider_id, timeframe=timeframe)
+        return MarketDataResult(success=result.success, data=None, issues=result.issues)
 
     def get_klines(
         self,
@@ -84,6 +121,38 @@ class KLineDataService:
             timeframe=timeframe,
             start_date=start_date,
         )
+
+    def get_klines_result(
+        self,
+        code: str,
+        end_date: str,
+        market: str | None = None,
+        timeframe: str = "day",
+        start_date: str | None = None,
+        limit: int = 120,
+        min_local_count: int | None = None,
+        security_type: str | None = None,
+    ) -> MarketDataResult[list]:
+        query_end_date = end_date if timeframe == "day" else f"{end_date} 23:59:59"
+        sync_result = self.ensure_local_klines_result(
+            code=code,
+            end_date=end_date,
+            market=market,
+            timeframe=timeframe,
+            start_date=start_date,
+            min_local_count=min_local_count,
+            security_type=security_type,
+        )
+        rows = self.store.get_klines(
+            code,
+            query_end_date,
+            market=market,
+            limit=limit,
+            timeframe=timeframe,
+            start_date=start_date,
+        )
+        success = True if rows else sync_result.success
+        return MarketDataResult(success=success, data=rows, issues=sync_result.issues)
 
     def _default_start_date(self, end_date: str) -> str:
         end_dt = datetime.strptime(end_date, "%Y-%m-%d")
@@ -123,3 +192,63 @@ class KLineDataService:
         if timeframe in MINUTE_TIMEFRAMES:
             return earliest[:10] <= start_date
         return earliest <= start_date
+
+    def _fetch_remote_klines_result(
+        self,
+        *,
+        code: str,
+        start_date: str,
+        end_date: str,
+        ktype: str,
+        market: str | None,
+        security_type: str | None,
+    ) -> MarketDataResult[list]:
+        result_func = getattr(self.provider, "get_kline_result", None)
+        if callable(result_func):
+            return result_func(
+                code=code,
+                start_date=start_date,
+                end_date=end_date,
+                ktype=ktype,
+                market=market,
+                security_type=security_type,
+            )
+        rows = self.provider.get_kline(
+            code=code,
+            start_date=start_date,
+            end_date=end_date,
+            ktype=ktype,
+            market=market,
+            security_type=security_type,
+        )
+        return MarketDataResult(success=True, data=rows, issues=[])
+
+    def _log_error_issues(
+        self,
+        issues: list[ProviderIssue],
+        *,
+        code: str,
+        start_date: str,
+        end_date: str,
+        market: str | None,
+        timeframe: str,
+        security_type: str | None,
+    ) -> None:
+        provider_id = getattr(self.provider, "provider_id", "")
+        for issue in issues:
+            if issue.level != "error":
+                continue
+            logger.warning(
+                issue.message,
+                extra={
+                    "provider_id": provider_id,
+                    "reason_code": issue.reason_code,
+                    "code": code,
+                    "market": market,
+                    "timeframe": timeframe,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "security_type": security_type,
+                    **(issue.context or {}),
+                },
+            )

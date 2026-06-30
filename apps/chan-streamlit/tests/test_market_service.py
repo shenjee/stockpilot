@@ -20,6 +20,8 @@ assert SPEC and SPEC.loader
 sys.modules[SPEC.name] = market_service
 SPEC.loader.exec_module(market_service)
 
+from marketdata import MarketDataResult, ProviderIssue
+
 
 class FakeKLineDataService:
     def __init__(self):
@@ -105,8 +107,8 @@ class MarketServiceTests(unittest.TestCase):
     def test_fetch_stock_name_returns_name_from_realtime(self):
         with patch.object(
             market_service.TencentStockDataProvider,
-            "realtime",
-            return_value={"name": "北方稀土", "code": "600111"},
+            "realtime_result",
+            return_value=MarketDataResult(success=True, data={"name": "北方稀土", "code": "600111"}, issues=[]),
         ):
             name = market_service.fetch_stock_name("600111", "sh")
 
@@ -115,8 +117,12 @@ class MarketServiceTests(unittest.TestCase):
     def test_fetch_stock_name_returns_empty_on_failure(self):
         with patch.object(
             market_service.TencentStockDataProvider,
-            "realtime",
-            side_effect=RuntimeError("network error"),
+            "realtime_result",
+            return_value=MarketDataResult(
+                success=False,
+                data=[],
+                issues=[ProviderIssue(level="error", reason_code="request_failed", message="network error")],
+            ),
         ):
             name = market_service.fetch_stock_name("600111", "sh")
 

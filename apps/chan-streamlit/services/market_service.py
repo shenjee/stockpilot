@@ -101,12 +101,9 @@ def fetch_stock_name(symbol: str, market: str) -> str:
     Returns an empty string when the name cannot be resolved so callers can
     fall back to a symbol-only title.
     """
-    try:
-        result = TencentStockDataProvider.realtime(symbol, markets=[market])
-        if isinstance(result, dict):
-            return str(result.get("name", "")).strip()
-    except Exception:
-        pass
+    result = TencentStockDataProvider.realtime_result(symbol, markets=[market])
+    if isinstance(result.data, dict):
+        return str(result.data.get("name", "")).strip()
     return ""
 
 

@@ -9,6 +9,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "packages"))
 
 from marketdata.market_data import TencentStockDataProvider, get_market_prefix
+from marketdata.provider_result import MarketDataResult
 
 
 class GetMarketPrefixTests(unittest.TestCase):
@@ -176,6 +177,154 @@ class TencentStockDataProviderTests(unittest.TestCase):
         url = fetch.call_args.args[0]
         self.assertIn("sh000001", url)
         self.assertNotIn("qfq", url)
+
+    def test_realtime_result_request_failed(self):
+        with patch.object(
+            TencentStockDataProvider, "_fetch_with_retry", side_effect=RuntimeError("boom")
+        ):
+            result = TencentStockDataProvider.realtime_result("600519", markets=["sh"])
+        self.assertFalse(result.success)
+        self.assertEqual(result.data, [])
+        self.assertTrue(result.errors())
+        self.assertEqual(result.errors()[0].reason_code, "request_failed")
+
+    def test_get_kline_result_nonzero_code_is_error(self):
+        payload = {"code": 1, "msg": "bad"}
+        with patch.object(
+            TencentStockDataProvider, "_fetch_with_retry", return_value=json.dumps(payload)
+        ):
+            result = TencentStockDataProvider.get_kline_result(
+                code="600519",
+                market="sh",
+                start_date="2026-06-11",
+                end_date="2026-06-11",
+                ktype="day",
+            )
+        self.assertFalse(result.success)
+        self.assertEqual(result.data, [])
+        self.assertTrue(result.errors())
+        self.assertEqual(result.errors()[0].reason_code, "provider_nonzero_code")
+
+    def test_get_kline_result_unexpected_shape_is_error(self):
+        payload = {"code": 0, "data": []}
+        with patch.object(
+            TencentStockDataProvider, "_fetch_with_retry", return_value=json.dumps(payload)
+        ):
+            result = TencentStockDataProvider.get_kline_result(
+                code="600519",
+                market="sh",
+                start_date="2026-06-11",
+                end_date="2026-06-11",
+                ktype="day",
+            )
+        self.assertFalse(result.success)
+        self.assertEqual(result.data, [])
+        self.assertTrue(result.errors())
+        self.assertEqual(result.errors()[0].reason_code, "unexpected_response_shape")
+
+    def test_get_kline_result_top_level_list_is_error(self):
+        with patch.object(TencentStockDataProvider, "_fetch_with_retry", return_value="[]"):
+            result = TencentStockDataProvider.get_kline_result(
+                code="600519",
+                market="sh",
+                start_date="2026-06-11",
+                end_date="2026-06-11",
+                ktype="day",
+            )
+        self.assertFalse(result.success)
+        self.assertEqual(result.data, [])
+        self.assertTrue(result.errors())
+        self.assertEqual(result.errors()[0].reason_code, "unexpected_response_shape")
+
+    def test_get_minute_kline_result_top_level_list_is_error(self):
+        with patch.object(TencentStockDataProvider, "_fetch_with_retry", return_value="[]"):
+            result = TencentStockDataProvider.get_minute_kline_result(
+                code="600519",
+                market="sh",
+                start_date="2026-06-11",
+                end_date="2026-06-11",
+                ktype="1m",
+            )
+        self.assertFalse(result.success)
+        self.assertEqual(result.data, [])
+        self.assertTrue(result.errors())
+        self.assertEqual(result.errors()[0].reason_code, "unexpected_response_shape")
+
+    def test_get_kline_result_no_data_is_warning(self):
+        payload = {"code": 0, "data": {"sh600519": {"qfqday": []}}}
+        with patch.object(
+            TencentStockDataProvider, "_fetch_with_retry", return_value=json.dumps(payload)
+        ):
+            result = TencentStockDataProvider.get_kline_result(
+                code="600519",
+                market="sh",
+                start_date="2026-06-11",
+                end_date="2026-06-11",
+                ktype="day",
+            )
+        self.assertTrue(result.success)
+        self.assertEqual(result.data, [])
+        self.assertTrue(result.warnings())
+        self.assertEqual(result.warnings()[0].reason_code, "no_data")
+
+    def test_get_kline_result_parse_failed_is_warning_when_partial(self):
+        payload = {
+            "code": 0,
+            "data": {
+                "sh600519": {
+                    "qfqday": [
+                        ["2026-06-11", "100.00", "101.00", "102.00", "99.00", "100"],
+                        ["2026-06-12", "bad", "101.00", "102.00", "99.00", "100"],
+                    ]
+                }
+            },
+        }
+        with patch.object(
+            TencentStockDataProvider, "_fetch_with_retry", return_value=json.dumps(payload)
+        ):
+            result = TencentStockDataProvider.get_kline_result(
+                code="600519",
+                market="sh",
+                start_date="2026-06-11",
+                end_date="2026-06-12",
+                ktype="day",
+            )
+        self.assertTrue(result.success)
+        self.assertEqual(len(result.data), 1)
+        self.assertTrue(any(issue.reason_code == "parse_failed" for issue in result.warnings()))
+
+    def test_wrappers_keep_original_shapes(self):
+        with patch.object(
+            TencentStockDataProvider,
+            "realtime_result",
+            return_value=MarketDataResult(success=True, data={"name": "x"}, issues=[]),
+        ):
+            self.assertIsInstance(
+                TencentStockDataProvider.realtime("600519", markets=["sh"]), dict
+            )
+
+        with patch.object(
+            TencentStockDataProvider,
+            "get_kline_result",
+            return_value=MarketDataResult(success=True, data=[{"date": "2026-06-11"}], issues=[]),
+        ):
+            self.assertIsInstance(
+                TencentStockDataProvider.get_kline(
+                    "600519", "2026-06-11", "2026-06-11", market="sh"
+                ),
+                list,
+            )
+
+        with patch.object(
+            TencentStockDataProvider,
+            "get_daily_quote_result",
+            return_value=MarketDataResult(success=True, data=None, issues=[]),
+        ):
+            self.assertIsNone(
+                TencentStockDataProvider.get_daily_quote(
+                    "600519", "2026-06-11", market="sh"
+                )
+            )
 
 
 if __name__ == "__main__":
