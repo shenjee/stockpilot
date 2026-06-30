@@ -8,6 +8,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "packages"))
 
 from marketdata.repositories.kline_store import KLineStore
+from marketdata.provider_result import MarketDataResult, ProviderIssue
 from marketdata.services.kline_data_service import KLineDataService
 
 
@@ -21,6 +22,21 @@ class FakeProvider:
     def get_kline(self, code: str, start_date: str, end_date: str, ktype: str = "day", autype: str = "qfq", market: str = None, security_type: str | None = None):
         self.calls.append((code, start_date, end_date, ktype, market, security_type))
         return list(self.rows)
+
+
+class FakeResultProvider:
+    provider_id = "fake-result"
+
+    def __init__(self, result: MarketDataResult[list]):
+        self.result = result
+        self.calls = []
+
+    def get_kline_result(self, *, code: str, start_date: str, end_date: str, ktype: str = "day", autype: str = "qfq", market: str = None, security_type: str | None = None):
+        self.calls.append((code, start_date, end_date, ktype, market, security_type))
+        return self.result
+
+    def get_kline(self, *args, **kwargs):
+        raise AssertionError("get_kline should not be called when get_kline_result exists")
 
 
 class KLineDataServiceTests(unittest.TestCase):
@@ -213,6 +229,29 @@ class KLineDataServiceTests(unittest.TestCase):
 
             self.assertEqual(len(provider.calls), 1)
             self.assertEqual(provider.calls[0][5], "index")
+
+    def test_prefers_provider_get_kline_result_when_available(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = KLineStore(Path(tmpdir) / "market_data.sqlite")
+            remote_rows = [
+                {"date": "2026-06-10", "open": 10.0, "close": 10.5, "high": 10.6, "low": 9.9, "volume": 100},
+                {"date": "2026-06-11", "open": 10.5, "close": 11.0, "high": 11.1, "low": 10.4, "volume": 120},
+            ]
+            provider = FakeResultProvider(
+                MarketDataResult(
+                    success=False,
+                    data=remote_rows,
+                    issues=[ProviderIssue(level="error", reason_code="request_failed", message="network error")],
+                )
+            )
+            service = KLineDataService(provider, store)
+
+            result = service.get_klines_result(code="600519", end_date="2026-06-11", market="sh", limit=10)
+
+            self.assertEqual(len(provider.calls), 1)
+            self.assertEqual(result.data, remote_rows)
+            self.assertEqual(result.issues[0].reason_code, "request_failed")
+            self.assertTrue(result.success)
 
 
 if __name__ == "__main__":
