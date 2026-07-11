@@ -48,6 +48,23 @@
     .chan-action-button { border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 8px; background: rgba(255, 255, 255, 0.9); color: #0f172a; font-size: 12px; font-weight: 600; padding: 6px 12px; cursor: pointer; transition: all 0.15s; pointer-events: auto; box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05); }
     .chan-action-button:hover { background: #f8fafc; transform: translateY(-1px); }
     .chan-action-button.is-active { background: #dbeafe; color: #1d4ed8; border-color: #bfdbfe; }
+
+    .chan-help-button { position: absolute; top: 12px; right: 16px; z-index: 30; width: 28px; height: 28px; border-radius: 50%; border: 1px solid rgba(148, 163, 184, 0.3); background: rgba(255, 255, 255, 0.9); color: #475569; font-size: 15px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; pointer-events: auto; box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08); backdrop-filter: blur(8px); transition: all 0.15s; }
+    .chan-help-button:hover { background: #f8fafc; transform: translateY(-1px); }
+
+    .chan-help-modal { position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 50; background: rgba(15, 23, 42, 0.4); display: flex; align-items: center; justify-content: center; pointer-events: auto; }
+    .chan-help-card { background: #ffffff; border-radius: 12px; max-width: 560px; width: 90%; max-height: 80%; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(15, 23, 42, 0.2); }
+    .chan-help-card__header { display: flex; justify-content: space-between; align-items: center; padding: 14px 20px; border-bottom: 1px solid rgba(15, 23, 42, 0.06); }
+    .chan-help-card__title { font-size: 14px; font-weight: 700; color: #0f172a; }
+    .chan-help-card__close { border: 0; background: #f1f5f9; color: #475569; font-size: 12px; font-weight: 600; padding: 4px 12px; border-radius: 6px; cursor: pointer; }
+    .chan-help-card__close:hover { background: #e2e8f0; }
+    .chan-help-card__body { padding: 8px 20px 16px; overflow-y: auto; }
+    .chan-help-item { display: flex; align-items: flex-start; gap: 12px; padding: 10px 0; border-bottom: 1px solid rgba(15, 23, 42, 0.04); }
+    .chan-help-item:last-child { border-bottom: 0; }
+    .chan-help-item__swatch { flex-shrink: 0; width: 64px; display: flex; align-items: center; justify-content: center; gap: 4px; min-height: 24px; }
+    .chan-help-item__text { flex: 1; }
+    .chan-help-item__label { font-size: 13px; font-weight: 600; color: #0f172a; margin-bottom: 2px; }
+    .chan-help-item__desc { font-size: 12px; color: #64748b; line-height: 1.5; }
   </style>
 </head>
 <body>
@@ -55,6 +72,8 @@
     <div id="chart-wrapper">
       <div id="chan-plotly-chart"></div>
       <div class="chan-overlay chan-overlay--top" id="overlay-top"></div>
+      <button class="chan-help-button" id="help-button" title="">?</button>
+      <div class="chan-help-modal" id="help-modal" style="display:none;"></div>
     </div>
     <div class="chan-bottom-bar">
       <div class="chan-bottom-bar__left" id="overlay-bottom"></div>
@@ -201,7 +220,62 @@
         <button class="chan-action-button" data-action="fullscreen">${payload.text.fullscreen}</button>
       `;
 
+      const helpBtn = document.getElementById("help-button");
+      if (helpBtn) helpBtn.title = payload.text.helpButton || "";
+
+      const helpModal = document.getElementById("help-modal");
+      if (helpModal) helpModal.innerHTML = renderHelpModal(payload);
+
       syncCaptions();
+    }
+
+    function escapeHTML(s) {
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function buildSwatchHTML(key) {
+      const bar = (c, h) => `<span style="display:inline-block;width:5px;height:${h}px;background:${c};border-radius:1px;"></span>`;
+      const line = (c, w) => `<span style="display:inline-block;width:24px;height:${w}px;background:${c};border-radius:1px;"></span>`;
+      const dashedLine = (c, w) => `<span style="display:inline-block;width:24px;height:${w}px;background:repeating-linear-gradient(90deg,${c} 0 6px,transparent 6px 10px);border-radius:1px;"></span>`;
+      const box = (c) => `<span style="display:inline-block;width:20px;height:14px;border:2px solid ${c};border-radius:2px;background:${c}33;"></span>`;
+      const swatches = {
+        candles: bar('#DC2626', 16) + bar('#16A34A', 16),
+        fractals: '<span style="color:#DC2626;font-size:13px;">\u25BC</span><span style="color:#16A34A;font-size:13px;">\u25B2</span>',
+        strokes: line('#2563EB', 3) + line('#F97316', 3) + dashedLine('#2563EB', 3),
+        segments: line('rgba(124,58,237,0.5)', 5) + line('rgba(147,51,234,0.5)', 5) + dashedLine('rgba(124,58,237,0.5)', 5),
+        stroke_pivot_zones: box('#F59E0B') + box('#FCD34D'),
+        segment_pivot_zones: box('#8B5CF6') + box('#C4B5FD'),
+        divergences: '<span style="color:#059669;font-size:10px;font-weight:700;">Bull</span><span style="color:#B91C1C;font-size:10px;font-weight:700;">Bear</span>',
+        candidate_points: '<span style="color:#059669;font-size:11px;font-weight:700;">\u21911B</span><span style="color:#B91C1C;font-size:11px;font-weight:700;">\u21931S</span>',
+        volume: bar('#DC2626', 16) + bar('#16A34A', 16),
+        macd_hist: bar('#DC2626', 12) + '<span style="display:inline-block;width:5px;height:8px;background:#16A34A;border-radius:1px;align-self:flex-end;"></span>',
+        dif: line('#2563EB', 2),
+        dea: line('#F59E0B', 2),
+      };
+      return swatches[key] || '';
+    }
+
+    function renderHelpModal(payload) {
+      const text = payload.text;
+      const items = text.helpItems || [];
+      const itemsHTML = items.map(item => `
+        <div class="chan-help-item">
+          <div class="chan-help-item__swatch">${buildSwatchHTML(item.key)}</div>
+          <div class="chan-help-item__text">
+            <div class="chan-help-item__label">${escapeHTML(item.label)}</div>
+            <div class="chan-help-item__desc">${escapeHTML(item.desc)}</div>
+          </div>
+        </div>
+      `).join('');
+      return `
+        <div class="chan-help-card">
+          <div class="chan-help-card__header">
+            <span class="chan-help-card__title">${escapeHTML(text.helpTitle)}</span>
+            <button class="chan-help-card__close" id="help-close-btn">${escapeHTML(text.helpClose)}</button>
+          </div>
+          <div class="chan-help-card__body">${itemsHTML}</div>
+        </div>
+      `;
     }
 
     function syncCaptions() {
@@ -346,6 +420,26 @@
           else if (dir === "out") currentState.yZoom = Math.min(currentPayload.maxYZoom, currentState.yZoom * currentPayload.yZoomStep);
         }
         applyRanges();
+        return;
+      }
+
+      const helpBtn = e.target.closest("#help-button");
+      if (helpBtn) {
+        const modal = document.getElementById("help-modal");
+        if (modal) modal.style.display = "flex";
+        return;
+      }
+
+      const helpCloseBtn = e.target.closest("#help-close-btn");
+      if (helpCloseBtn) {
+        const modal = document.getElementById("help-modal");
+        if (modal) modal.style.display = "none";
+        return;
+      }
+
+      const helpModalBackdrop = e.target.closest("#help-modal");
+      if (helpModalBackdrop && e.target === helpModalBackdrop) {
+        helpModalBackdrop.style.display = "none";
         return;
       }
 

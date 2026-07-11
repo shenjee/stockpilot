@@ -289,7 +289,7 @@ class ChartAxisTests(unittest.TestCase):
 
         self.assertEqual(len(figure.data), 5)
         self.assertEqual([trace.name for trace in figure.data], ["K-line", "Volume", "MACD Hist", "DIF", "DEA"])
-        self.assertTrue(figure.layout.showlegend)
+        self.assertFalse(figure.layout.showlegend)
         self.assertEqual(figure.layout.yaxis2.title.text, "Volume")
         self.assertEqual(figure.layout.yaxis3.title.text, "MACD")
 
@@ -498,7 +498,7 @@ class ChartAxisTests(unittest.TestCase):
         self.assertEqual(event_rows[0]["Event"], "switched")
         self.assertEqual(event_rows[0]["Change"], "neutral -> bullish")
 
-    def test_build_figure_respects_legend_hover_and_overlay_legend_groups(self):
+    def test_build_figure_respects_hover_and_overlay_traces(self):
         rows = [
             {"date": "2026-06-10", "open": 10.0, "close": 10.5, "high": 10.6, "low": 9.9, "volume": 100},
             {"date": "2026-06-11", "open": 10.5, "close": 10.2, "high": 10.7, "low": 10.0, "volume": 140},
@@ -530,15 +530,12 @@ class ChartAxisTests(unittest.TestCase):
             timeframe="day",
             language="en",
             x_window=120,
-            show_legend=True,
             unified_hover=False,
         )
 
-        self.assertTrue(figure.layout.showlegend)
+        self.assertFalse(figure.layout.showlegend)
         self.assertEqual(figure.layout.hovermode, "closest")
         self.assertEqual(figure.data[1].name, "Show Strokes")
-        self.assertTrue(figure.data[1].showlegend)
-        self.assertFalse(figure.data[2].showlegend)
 
     def test_build_figure_filters_pivot_zones_by_level(self):
         rows = [

@@ -89,7 +89,6 @@ TEXT = {
         "signal_event_type_switched": "切换",
         "signal_event_type_invalidated": "失效",
         "display_header": "显示",
-        "show_legend_label": "显示图例",
         "crosshair_link_label": "联动十字光标",
         "overview_header": "数据卡",
         "overview_col_field": "字段",
@@ -138,6 +137,9 @@ TEXT = {
         "reset_label": "重置",
         "show_all_label": "全部",
         "fullscreen_label": "全屏",
+        "help_button_label": "图示说明",
+        "help_title": "图示说明",
+        "help_close_label": "关闭",
     },
     "en": {
         "page_title": "Chan Theory Debug App",
@@ -215,7 +217,6 @@ TEXT = {
         "signal_event_type_switched": "switched",
         "signal_event_type_invalidated": "invalidated",
         "display_header": "Display",
-        "show_legend_label": "Show Legend",
         "crosshair_link_label": "Linked Crosshair",
         "overview_header": "Data Card",
         "overview_col_field": "Field",
@@ -264,6 +265,9 @@ TEXT = {
         "reset_label": "Reset",
         "show_all_label": "All",
         "fullscreen_label": "Full",
+        "help_button_label": "Legend",
+        "help_title": "Chart Legend",
+        "help_close_label": "Close",
     },
 }
 
@@ -280,6 +284,43 @@ def _frontend_template(language: str, key: str) -> str:
 
 def _layer_label(layer: str, language: str) -> str:
     return _t(language, f"layer_{layer}")
+
+
+_HELP_ITEMS = {
+    "zh": [
+        ("candles", "K线", "红色涨、绿色跌的蜡烛图。实体表示开盘价与收盘价区间，上下影线表示最高价和最低价。"),
+        ("fractals", "分型", "顶分型为红色 ▼ 标记，底分型为绿色 ▲ 标记。"),
+        ("strokes", "笔", "上升笔为蓝色实线，下降笔为橙色实线。未确认的笔以虚线显示。"),
+        ("segments", "线段", "紫色粗线表示，生长中的线段为虚线。"),
+        ("stroke_pivot_zones", "笔中枢", "橙色矩形框标注笔级别中枢区间。"),
+        ("segment_pivot_zones", "段中枢", "紫色矩形框标注线段级别中枢区间。"),
+        ("divergences", "背驰", "绿色 Bull Div 标注看多背驰，红色 Bear Div 标注看空背驰。"),
+        ("candidate_points", "买卖点", "绿色 ↑ 标注买点（1B/2B/3B），红色 ↓ 标注卖点（1S/2S/3S）。"),
+        ("volume", "成交量", "副图红绿柱状图，颜色随当根 K 线涨跌。"),
+        ("macd_hist", "MACD 柱", "MACD 副图红绿柱状图，正值红色、负值绿色。"),
+        ("dif", "DIF 线", "蓝色线，为 12 日 EMA 与 26 日 EMA 之差。"),
+        ("dea", "DEA 线", "橙色线，为 DIF 的 9 日 EMA。"),
+    ],
+    "en": [
+        ("candles", "K-line", "Red candles indicate price up, green indicates price down. Body shows open-close range, wicks show high-low."),
+        ("fractals", "Fractals", "Top fractals marked with red ▼, bottom fractals with green ▲."),
+        ("strokes", "Strokes", "Up strokes in blue solid lines, down strokes in orange solid lines. Unconfirmed strokes shown as dashed."),
+        ("segments", "Segments", "Thick purple lines. Growing segments shown as dashed."),
+        ("stroke_pivot_zones", "Stroke Pivot Zones", "Orange rectangular boxes marking stroke-level pivot zones."),
+        ("segment_pivot_zones", "Segment Pivot Zones", "Purple rectangular boxes marking segment-level pivot zones."),
+        ("divergences", "Divergences", "Green Bull Div marks bullish divergence, red Bear Div marks bearish divergence."),
+        ("candidate_points", "Buy/Sell Points", "Green ↑ marks buy points (1B/2B/3B), red ↓ marks sell points (1S/2S/3S)."),
+        ("volume", "Volume", "Sub-panel red/green bars matching candle direction."),
+        ("macd_hist", "MACD Hist", "MACD sub-panel red/green bars. Positive in red, negative in green."),
+        ("dif", "DIF", "Blue line, difference between 12-day and 26-day EMA."),
+        ("dea", "DEA", "Orange line, 9-day EMA of DIF."),
+    ],
+}
+
+
+def _build_help_items(language: str) -> List[Dict[str, str]]:
+    items = _HELP_ITEMS.get(language, _HELP_ITEMS["en"])
+    return [{"key": k, "label": l, "desc": d} for k, l, d in items]
 
 
 def _format_direction(direction: str, language: str) -> str:

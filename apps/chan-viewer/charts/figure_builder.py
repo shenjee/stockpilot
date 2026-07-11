@@ -26,7 +26,6 @@ def build_figure(
     language: str,
     x_window: int | None = None,
     y_zoom: float = 1.0,
-    show_legend: bool = True,
     unified_hover: bool = True,
 ) -> go.Figure:
     ordered_rows = sorted(rows, key=lambda item: str(item["date"]))
@@ -116,7 +115,6 @@ def build_figure(
         language,
         row=1,
         col=1,
-        show_legend=show_legend,
         timestamp_to_index=timestamp_to_index,
     )
 
@@ -186,17 +184,10 @@ def build_figure(
         dragmode="pan",
         hovermode="x unified" if unified_hover else "closest",
         xaxis_rangeslider_visible=False,
-        showlegend=show_legend,
+        showlegend=False,
         template="plotly_white",
         paper_bgcolor="#FFFFFF",
         plot_bgcolor="#FFFFFF",
-        legend={
-            "orientation": "h",
-            "yanchor": "bottom",
-            "y": 1.02,
-            "xanchor": "right",
-            "x": 1.0,
-        },
     )
     figure.update_annotations(font={"size": 12})
 

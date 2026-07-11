@@ -34,12 +34,10 @@ def render_plot_primitives(
     language: str,
     row: int | None = None,
     col: int | None = None,
-    show_legend: bool = False,
     timestamp_to_index: Dict[str, int] | None = None,
 ) -> None:
     trace_kwargs = {"row": row, "col": col} if row is not None and col is not None else {}
     layout_kwargs = {"row": row, "col": col} if row is not None and col is not None else {}
-    legend_layers: set[str] = set()
     for primitive in result_payload.get("plot_primitives", []):
         layer = str(primitive.get("layer", ""))
         primitive_meta = dict(primitive.get("meta", {}) or {})
@@ -49,13 +47,10 @@ def render_plot_primitives(
             if not visibility.get(visibility_key, True):
                 continue
             legend_name = _layer_label(visibility_key, language)
-            legend_group = visibility_key
         else:
             if not visibility.get(layer, True):
                 continue
             legend_name = _layer_label(layer, language)
-            legend_group = layer
-        trace_showlegend = show_legend and legend_group not in legend_layers
         primitive_type = primitive.get("type")
         handled_trace = False
         if primitive_type == "marker":
@@ -74,8 +69,7 @@ def render_plot_primitives(
                         textposition=str(primitive_meta.get("textposition", "top center")),
                         textfont={"color": primitive.get("color", "#2563EB")},
                         name=legend_name,
-                        legendgroup=legend_group,
-                        showlegend=trace_showlegend,
+                        showlegend=False,
                         hoverinfo="skip",
                     ),
                     **trace_kwargs,
@@ -98,8 +92,7 @@ def render_plot_primitives(
                         marker={"color": primitive.get("color", "#2563EB"), "size": 10, "symbol": marker_symbol},
                         textfont={"color": primitive.get("color", "#2563EB")},
                         name=legend_name,
-                        legendgroup=legend_group,
-                        showlegend=trace_showlegend,
+                        showlegend=False,
                         hoverinfo="skip",
                     ),
                     **trace_kwargs,
@@ -123,8 +116,7 @@ def render_plot_primitives(
                         "width": int(2 * width_multiplier),
                     },
                     name=legend_name,
-                    legendgroup=legend_group,
-                    showlegend=trace_showlegend,
+                    showlegend=False,
                     hoverinfo="skip",
                 ),
                 **trace_kwargs,
@@ -162,5 +154,3 @@ def render_plot_primitives(
         elif primitive_type == "label":
             # 走势图上不再渲染 label 类提示语（如"最新活跃中枢区间..."），相关内容仅保留在摘要文本中。
             continue
-        if handled_trace and trace_showlegend:
-            legend_layers.add(legend_group)

@@ -50,6 +50,7 @@ from services.signal_payloads import (  # noqa: E402
 from ui_text import (  # noqa: E402
     SUPPORTED_LANGUAGES,
     _build_display_summary,
+    _build_help_items,
     _display_timestamp,
     _format_alert_message,
     _format_severity,
@@ -228,7 +229,6 @@ def main() -> None:
         st.markdown(_sidebar_section_title(_t(language, "layers_header")), unsafe_allow_html=True)
         visibility = {layer: st.checkbox(_layer_label(layer, language), value=(layer != "segments")) for layer in LAYER_KEYS}
         st.markdown(_sidebar_section_title(_t(language, "display_header")), unsafe_allow_html=True)
-        show_legend = st.checkbox(_t(language, "show_legend_label"), value=True)
         unified_hover = st.checkbox(_t(language, "crosshair_link_label"), value=True)
         run = st.button(_t(language, "run_button"), type="primary")
         st.selectbox(
@@ -332,7 +332,6 @@ def main() -> None:
         language=language,
         x_window=_x_window,
         y_zoom=1.0,
-        show_legend=show_legend,
         unified_hover=unified_hover,
     )
 
@@ -370,6 +369,10 @@ def main() -> None:
             "reset": _t(language, "reset_label"),
             "showAll": _t(language, "show_all_label"),
             "fullscreen": _t(language, "fullscreen_label"),
+            "helpButton": _t(language, "help_button_label"),
+            "helpTitle": _t(language, "help_title"),
+            "helpClose": _t(language, "help_close_label"),
+            "helpItems": _build_help_items(language),
         },
     }
 
