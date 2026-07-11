@@ -62,6 +62,7 @@ def render_plot_primitives(
                         name=legend_name,
                         legendgroup=legend_group,
                         showlegend=trace_showlegend,
+                        hoverinfo="skip",
                     ),
                     **trace_kwargs,
                 )
@@ -85,6 +86,7 @@ def render_plot_primitives(
                         name=legend_name,
                         legendgroup=legend_group,
                         showlegend=trace_showlegend,
+                        hoverinfo="skip",
                     ),
                     **trace_kwargs,
                 )
@@ -105,6 +107,7 @@ def render_plot_primitives(
                     name=legend_name,
                     legendgroup=legend_group,
                     showlegend=trace_showlegend,
+                    hoverinfo="skip",
                 ),
                 **trace_kwargs,
             )
