@@ -17,6 +17,16 @@ def _to_rgba(hex_color: str, alpha: float) -> str:
     return f"rgba({red}, {green}, {blue}, {alpha})"
 
 
+def _resolve_x(value: object, timestamp_to_index: Dict[str, int] | None) -> int | None:
+    """将图元的时间戳 x 值转换为 slot 索引；未命中返回 None，由调用方跳过。"""
+    if timestamp_to_index is None:
+        if isinstance(value, (int, float)):
+            return int(value)
+        return None
+    index = timestamp_to_index.get(str(value))
+    return int(index) if index is not None else None
+
+
 def render_plot_primitives(
     figure: go.Figure,
     result_payload: Dict[str, object],
@@ -25,6 +35,7 @@ def render_plot_primitives(
     row: int | None = None,
     col: int | None = None,
     show_legend: bool = False,
+    timestamp_to_index: Dict[str, int] | None = None,
 ) -> None:
     trace_kwargs = {"row": row, "col": col} if row is not None and col is not None else {}
     layout_kwargs = {"row": row, "col": col} if row is not None and col is not None else {}
@@ -50,10 +61,13 @@ def render_plot_primitives(
         if primitive_type == "marker":
             primitive_meta = dict(primitive.get("meta", {}) or {})
             style = primitive.get("style", "circle")
+            x_val = _resolve_x(primitive.get("x"), timestamp_to_index)
+            if x_val is None:
+                continue
             if style == "text":
                 figure.add_trace(
                     go.Scatter(
-                        x=[primitive.get("x")],
+                        x=[x_val],
                         y=[primitive.get("y")],
                         mode="text",
                         text=[primitive.get("text", "")],
@@ -76,7 +90,7 @@ def render_plot_primitives(
                 marker_symbol = style_mapping.get(style, "circle")
                 figure.add_trace(
                     go.Scatter(
-                        x=[primitive.get("x")],
+                        x=[x_val],
                         y=[primitive.get("y")],
                         mode="markers+text",
                         text=[primitive.get("text", "")],
@@ -94,9 +108,13 @@ def render_plot_primitives(
         elif primitive_type == "line":
             primitive_meta = primitive.get("meta") or {}
             width_multiplier = float(primitive_meta.get("width_multiplier", 1.0))
+            x1_val = _resolve_x(primitive.get("x1"), timestamp_to_index)
+            x2_val = _resolve_x(primitive.get("x2"), timestamp_to_index)
+            if x1_val is None or x2_val is None:
+                continue
             figure.add_trace(
                 go.Scatter(
-                    x=[primitive.get("x1"), primitive.get("x2")],
+                    x=[x1_val, x2_val],
                     y=[primitive.get("y1"), primitive.get("y2")],
                     mode="lines",
                     line={
@@ -113,10 +131,14 @@ def render_plot_primitives(
             )
             handled_trace = True
         elif primitive_type == "box":
+            x1_val = _resolve_x(primitive.get("x1"), timestamp_to_index)
+            x2_val = _resolve_x(primitive.get("x2"), timestamp_to_index)
+            if x1_val is None or x2_val is None:
+                continue
             figure.add_shape(
                 type="rect",
-                x0=primitive.get("x1"),
-                x1=primitive.get("x2"),
+                x0=x1_val,
+                x1=x2_val,
                 y0=primitive.get("y2"),
                 y1=primitive.get("y1"),
                 line={"color": primitive.get("color", "#F59E0B"), "width": 2},
@@ -130,7 +152,7 @@ def render_plot_primitives(
                 else:
                     box_label = primitive.get("text")
                 figure.add_annotation(
-                    x=primitive.get("x2"),
+                    x=x2_val,
                     y=primitive.get("y1"),
                     text=box_label,
                     showarrow=False,

@@ -17,11 +17,17 @@ sys.path.insert(0, str(ROOT / "packages"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from charts.axis_policy import (  # noqa: E402
-    build_daily_rangebreaks,
-    build_intraday_date_ticks,
-    build_x_axis_range,
     build_y_axis_range,
     is_minute_timeframe,
+)
+from charts.window_policy import (  # noqa: E402
+    DEFAULT_SLOTS,
+    MAX_SLOTS,
+    MIN_SLOTS,
+    ZOOM_STEP_DENOMINATOR,
+    ZOOM_STEP_MIN,
+    default_slots,
+    zoom_step,
 )
 from chantheory import get_default_max_bi_num  # noqa: E402
 from charts.figure_builder import build_figure  # noqa: E402
@@ -73,42 +79,6 @@ LAYER_KEYS = (
     "volume_panel",
     "macd_panel",
 )
-_X_WINDOW_POLICY = {
-    "1m": {"minimum": 120, "default": 240, "maximum": 720},
-    "5m": {"minimum": 96, "default": 240, "maximum": 480},
-    "15m": {"minimum": 64, "default": 160, "maximum": 360},
-    "30m": {"minimum": 48, "default": 160, "maximum": 320},
-    "60m": {"minimum": 40, "default": 120, "maximum": 240},
-    "day": {"minimum": 60, "default": 180, "maximum": 480},
-    "week": {"minimum": 40, "default": 120, "maximum": 360},
-    "month": {"minimum": 36, "default": 120, "maximum": 240},
-}
-_FALLBACK_X_WINDOW_POLICY = {"minimum": 60, "default": 180, "maximum": 480}
-
-
-def _default_x_window(timeframe: str, row_count: int) -> int:
-    """默认可见 K 线数量：按可读性固定窗口，不随取数范围膨胀。"""
-    policy = _X_WINDOW_POLICY.get(timeframe, _FALLBACK_X_WINDOW_POLICY)
-    target = policy["default"]
-    return min(target, max(row_count, 1))
-
-
-def _x_window_steps(timeframe: str, row_count: int) -> list[int]:
-    """可选窗口步进，围绕最小/默认/最大窗口提供细粒度缩放。"""
-    policy = _X_WINDOW_POLICY.get(timeframe, _FALLBACK_X_WINDOW_POLICY)
-    available_rows = max(row_count, 1)
-    base_steps = sorted(
-        {
-            policy["minimum"],
-            max(policy["minimum"], policy["default"] // 2),
-            _default_x_window(timeframe, row_count),
-            policy["default"],
-            min(policy["maximum"], policy["default"] * 2),
-            policy["maximum"],
-        }
-    )
-    steps = [n for n in base_steps if n <= available_rows]
-    return steps or [available_rows]
 Y_ZOOM_STEP = 1.2
 MIN_Y_ZOOM = 0.45
 MAX_Y_ZOOM = 3.0
@@ -118,10 +88,9 @@ _probe_market_suggestions = probe_market_suggestions
 _search_securities = search_securities
 _build_figure = build_figure
 _is_minute_timeframe = is_minute_timeframe
-_build_x_axis_range = build_x_axis_range
-_build_intraday_date_ticks = build_intraday_date_ticks
 _build_y_axis_range = build_y_axis_range
-_build_daily_rangebreaks = build_daily_rangebreaks
+_default_slots = default_slots
+_zoom_step = zoom_step
 _run_analysis = run_analysis
 
 
@@ -354,7 +323,7 @@ def main() -> None:
 
     chart_rows = _ordered_rows(rows)
     row_count = len(chart_rows)
-    _x_window = _default_x_window(timeframe, row_count)
+    _x_window = _default_slots()
     figure = _build_figure(
         rows=chart_rows,
         result_payload=result.to_dict(),
@@ -366,8 +335,6 @@ def main() -> None:
         show_legend=show_legend,
         unified_hover=unified_hover,
     )
-
-    x_steps = _x_window_steps(timeframe, row_count)
 
     payload = {
         "figure": json.loads(figure.to_json()),
@@ -382,9 +349,12 @@ def main() -> None:
         ),
         "timeframes": [{"value": tf, "label": _format_timeframe(tf, language)} for tf in TIMEFRAME_OPTIONS],
         "activeTimeframe": timeframe,
-        "useContinuousBarAxis": _is_minute_timeframe(timeframe),
-        "xWindowSteps": x_steps,
-        "defaultXWindow": _x_window,
+        "useContinuousBarAxis": True,
+        "minSlots": MIN_SLOTS,
+        "maxSlots": MAX_SLOTS,
+        "defaultSlots": _x_window,
+        "zoomStepDenominator": ZOOM_STEP_DENOMINATOR,
+        "zoomStepMin": ZOOM_STEP_MIN,
         "defaultYZoom": 1.0,
         "yZoomStep": Y_ZOOM_STEP,
         "minYZoom": MIN_Y_ZOOM,

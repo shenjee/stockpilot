@@ -23,8 +23,6 @@ if "streamlit" not in sys.modules:
     streamlit_stub.text_input = lambda *args, **kwargs: ""
 
     def _selectbox_stub(*args, **kwargs):
-        # 没有 options 时退回旧行为；有 options 时返回第一项，避免未来 main()
-        # 测试把 "day" 误当 language / 证券选项。key 优先用 session_state 里已有的值。
         key = kwargs.get("key")
         if key is not None and key in streamlit_stub.session_state:
             return streamlit_stub.session_state[key]
@@ -42,6 +40,7 @@ if "streamlit" not in sys.modules:
     streamlit_stub.warning = lambda *args, **kwargs: None
     streamlit_stub.write = lambda *args, **kwargs: None
     streamlit_stub.json = lambda *args, **kwargs: None
+    streamlit_stub.captions = lambda *args, **kwargs: None
     streamlit_stub.caption = lambda *args, **kwargs: None
     streamlit_stub.dataframe = lambda *args, **kwargs: None
     streamlit_stub.rerun = lambda: None
@@ -75,32 +74,51 @@ if SPEC and SPEC.loader:
 
 @unittest.skipIf(app is None, f"app dependencies unavailable: {APP_IMPORT_ERROR}")
 class ChartAxisTests(unittest.TestCase):
-    def test_default_x_window_uses_readable_timeframe_policy(self):
-        self.assertEqual(app._default_x_window("1m", 1200), 240)
-        self.assertEqual(app._default_x_window("5m", 1200), 240)
-        self.assertEqual(app._default_x_window("30m", 1200), 160)
-        self.assertEqual(app._default_x_window("60m", 1200), 120)
-        self.assertEqual(app._default_x_window("day", 1200), 180)
+    def test_default_slots_is_constant_120(self):
+        self.assertEqual(app._default_slots(), 120)
 
-    def test_default_x_window_does_not_exceed_available_rows(self):
-        self.assertEqual(app._default_x_window("1m", 80), 80)
-        self.assertEqual(app._default_x_window("day", 30), 30)
-        self.assertEqual(app._default_x_window("1m", 0), 1)
+    def test_zoom_step_uses_proportional_ratio(self):
+        """zoom_step(current) = max(10, round(current / 6))"""
+        self.assertEqual(app._zoom_step(120), 20)
+        self.assertEqual(app._zoom_step(240), 40)
+        self.assertEqual(app._zoom_step(40), 10)
+        self.assertEqual(app._zoom_step(60), 10)
 
-    def test_x_window_steps_keep_show_all_as_explicit_endpoint(self):
-        self.assertEqual(app._x_window_steps("1m", 1200), [120, 240, 480, 720])
-        self.assertEqual(app._x_window_steps("30m", 1200), [48, 80, 160, 320])
-        self.assertEqual(app._x_window_steps("day", 1200), [60, 90, 180, 360, 480])
+    def test_zoom_step_clamps_to_minimum_10(self):
+        self.assertEqual(app._zoom_step(1), 10)
+        self.assertEqual(app._zoom_step(0), 10)
 
-    def test_x_window_steps_include_available_rows_when_smaller_than_minimum(self):
-        self.assertEqual(app._x_window_steps("1m", 60), [60])
+    def test_zoom_step_uses_shared_constants(self):
+        """ZOOM_STEP 常量与 zoom_step 公式一致，前端通过 payload 使用同一组常量。"""
+        from charts.window_policy import ZOOM_STEP_DENOMINATOR, ZOOM_STEP_MIN
+        self.assertEqual(ZOOM_STEP_DENOMINATOR, 6)
+        self.assertEqual(ZOOM_STEP_MIN, 10)
+        # current = denominator * N -> step = N (当 N >= min)
+        self.assertEqual(app._zoom_step(ZOOM_STEP_DENOMINATOR * 20), 20)
+        # current < denominator * min -> step = min
+        self.assertEqual(app._zoom_step(1), ZOOM_STEP_MIN)
 
-    def test_x_window_steps_include_default_when_available_rows_are_limited(self):
-        for timeframe, row_count in (("1m", 200), ("30m", 100), ("day", 120)):
-            with self.subTest(timeframe=timeframe, row_count=row_count):
-                self.assertIn(app._default_x_window(timeframe, row_count), app._x_window_steps(timeframe, row_count))
+    def test_unified_linear_axis_for_day_timeframe(self):
+        rows = [
+            {"date": "2026-06-10", "open": 10, "close": 11, "high": 11.2, "low": 9.8, "volume": 100},
+            {"date": "2026-06-11", "open": 11, "close": 10.5, "high": 11.1, "low": 10.4, "volume": 120},
+            {"date": "2026-06-12", "open": 10.6, "close": 10.8, "high": 11.0, "low": 10.5, "volume": 130},
+        ]
 
-    def test_minute_timeframe_uses_continuous_category_axis(self):
+        figure = app._build_figure(
+            rows=rows,
+            result_payload={"plot_primitives": []},
+            visibility={},
+            timeframe="day",
+            language="zh",
+            x_window=120,
+        )
+
+        self.assertEqual(figure.layout.xaxis.type, "linear")
+        self.assertEqual(tuple(figure.layout.xaxis.range), (-0.5, 119.5))
+        self.assertEqual(tuple(figure.layout.xaxis3.range), (-0.5, 119.5))
+
+    def test_unified_linear_axis_for_minute_timeframe(self):
         rows = [
             {"date": "2026-06-11 14:30:00", "open": 10, "close": 11, "high": 11.2, "low": 9.8, "volume": 100},
             {"date": "2026-06-11 15:00:00", "open": 11, "close": 10.5, "high": 11.1, "low": 10.4, "volume": 120},
@@ -114,36 +132,144 @@ class ChartAxisTests(unittest.TestCase):
             visibility={},
             timeframe="30m",
             language="zh",
-            x_window=3,
+            x_window=120,
         )
 
-        self.assertEqual(figure.layout.xaxis.type, "category")
-        self.assertEqual(figure.layout.xaxis3.type, "category")
-        self.assertEqual(tuple(figure.layout.xaxis.categoryarray), tuple(row["date"] for row in rows))
-        self.assertEqual(tuple(figure.layout.xaxis.tickvals), ("2026-06-11 14:30:00", "2026-06-12 09:30:00"))
-        self.assertEqual(tuple(figure.layout.xaxis.ticktext), ("2026-06-11", "2026-06-12"))
-        self.assertEqual(tuple(figure.layout.xaxis.range), (0.5, 3.5))
-        self.assertEqual(tuple(figure.layout.xaxis3.range), (0.5, 3.5))
+        self.assertEqual(figure.layout.xaxis.type, "linear")
+        self.assertEqual(tuple(figure.layout.xaxis.range), (-0.5, 119.5))
+        self.assertEqual(tuple(figure.layout.xaxis3.range), (-0.5, 119.5))
 
-    def test_day_timeframe_keeps_date_range(self):
+    def test_left_align_right_empty_when_data_less_than_slots(self):
+        """43 根数据 + 120 slot -> 左对齐，右侧留空。"""
         rows = [
-            {"date": "2026-06-10", "open": 10, "close": 11, "high": 11.2, "low": 9.8, "volume": 100},
-            {"date": "2026-06-11", "open": 11, "close": 10.5, "high": 11.1, "low": 10.4, "volume": 120},
-            {"date": "2026-06-12", "open": 10.6, "close": 10.8, "high": 11.0, "low": 10.5, "volume": 130},
+            {"date": f"2026-01-{day:02d}", "open": 10.0, "close": 10.5, "high": 10.6, "low": 9.9, "volume": 100}
+            for day in range(1, 44)
         ]
 
         figure = app._build_figure(
             rows=rows,
             result_payload={"plot_primitives": []},
-            visibility={},
+            visibility={"volume_panel": False, "macd_panel": False},
             timeframe="day",
             language="zh",
-            x_window=2,
+            x_window=120,
         )
 
-        self.assertIsNone(figure.layout.xaxis.type)
-        self.assertEqual(tuple(figure.layout.xaxis.range), ("2026-06-11", "2026-06-12"))
-        self.assertEqual(tuple(figure.layout.xaxis3.range), ("2026-06-11", "2026-06-12"))
+        self.assertEqual(figure.layout.xaxis.type, "linear")
+        self.assertEqual(tuple(figure.layout.xaxis.range), (-0.5, 119.5))
+
+    def test_right_align_when_data_exceeds_slots(self):
+        """200 根数据 + 120 slot -> 右对齐，显示最新 120 根。"""
+        rows = [
+            {"date": f"2025-{month:02d}-15", "open": 10.0, "close": 10.5, "high": 10.6, "low": 9.9, "volume": 100}
+            for month in range(1, 13)
+            for day in [1, 15]
+        ] * 9  # ~216 rows
+
+        figure = app._build_figure(
+            rows=rows,
+            result_payload={"plot_primitives": []},
+            visibility={"volume_panel": False, "macd_panel": False},
+            timeframe="day",
+            language="zh",
+            x_window=120,
+        )
+
+        row_count = len(rows)
+        expected_start = row_count - 120 - 0.5
+        expected_end = row_count - 1 + 0.5
+        self.assertEqual(figure.layout.xaxis.type, "linear")
+        self.assertAlmostEqual(figure.layout.xaxis.range[0], expected_start, places=2)
+        self.assertAlmostEqual(figure.layout.xaxis.range[1], expected_end, places=2)
+
+    def test_tick_labels_generated_by_target_count(self):
+        rows = [
+            {"date": f"2026-06-{day:02d}", "open": 10.0, "close": 10.5, "high": 10.6, "low": 9.9, "volume": 100}
+            for day in range(1, 13)
+        ]
+
+        figure = app._build_figure(
+            rows=rows,
+            result_payload={"plot_primitives": []},
+            visibility={"volume_panel": False, "macd_panel": False},
+            timeframe="day",
+            language="zh",
+            x_window=120,
+        )
+
+        tickvals = figure.layout.xaxis.tickvals
+        ticktext = figure.layout.xaxis.ticktext
+        self.assertTrue(len(tickvals) > 0)
+        self.assertTrue(all(isinstance(v, (int, float)) for v in tickvals))
+        self.assertTrue(len(ticktext) > 0)
+
+    def test_tick_labels_month_timeframe_uses_year_month(self):
+        rows = [
+            {"date": f"2025-{month:02d}-15", "open": 10.0, "close": 10.5, "high": 10.6, "low": 9.9, "volume": 100}
+            for month in range(1, 13)
+        ]
+
+        figure = app._build_figure(
+            rows=rows,
+            result_payload={"plot_primitives": []},
+            visibility={"volume_panel": False, "macd_panel": False},
+            timeframe="month",
+            language="zh",
+            x_window=120,
+        )
+
+        ticktext = figure.layout.xaxis.ticktext
+        self.assertTrue(all(len(t) == 7 for t in ticktext))
+
+    def test_tick_labels_minute_timeframe_dedup_same_day(self):
+        """1m 周期同一天内 tick 标签应显示 HH:mm，不重复日期。"""
+        rows = [
+            {"date": f"2026-06-12 {h:02d}:{m:02d}:00", "open": 10.0, "close": 10.5, "high": 10.6, "low": 9.9, "volume": 100}
+            for h, m in [(9, 30), (10, 0), (10, 30), (11, 0), (11, 30), (13, 0), (13, 30)]
+        ]
+
+        figure = app._build_figure(
+            rows=rows,
+            result_payload={"plot_primitives": []},
+            visibility={"volume_panel": False, "macd_panel": False},
+            timeframe="30m",
+            language="zh",
+            x_window=120,
+        )
+
+        ticktext = figure.layout.xaxis.ticktext
+        self.assertTrue(len(ticktext) >= 2)
+        # 第一个 tick 应包含日期前缀 (MM-DD HH:mm)
+        self.assertRegex(ticktext[0], r"^\d{2}-\d{2} \d{2}:\d{2}$")
+        # 后续同日 tick 应只显示 HH:mm
+        for label in ticktext[1:]:
+            self.assertRegex(label, r"^\d{2}:\d{2}$", f"Expected HH:mm, got '{label}'")
+
+    def test_tick_labels_minute_timeframe_shows_date_at_day_boundary(self):
+        """分钟周期跨日时应在日期边界显示 MM-DD HH:mm。"""
+        rows = [
+            {"date": "2026-06-11 14:00:00", "open": 10.0, "close": 10.5, "high": 10.6, "low": 9.9, "volume": 100},
+            {"date": "2026-06-11 14:30:00", "open": 10.0, "close": 10.5, "high": 10.6, "low": 9.9, "volume": 100},
+            {"date": "2026-06-11 15:00:00", "open": 10.0, "close": 10.5, "high": 10.6, "low": 9.9, "volume": 100},
+            {"date": "2026-06-12 09:30:00", "open": 10.0, "close": 10.5, "high": 10.6, "low": 9.9, "volume": 100},
+            {"date": "2026-06-12 10:00:00", "open": 10.0, "close": 10.5, "high": 10.6, "low": 9.9, "volume": 100},
+            {"date": "2026-06-12 10:30:00", "open": 10.0, "close": 10.5, "high": 10.6, "low": 9.9, "volume": 100},
+            {"date": "2026-06-12 11:00:00", "open": 10.0, "close": 10.5, "high": 10.6, "low": 9.9, "volume": 100},
+        ]
+
+        figure = app._build_figure(
+            rows=rows,
+            result_payload={"plot_primitives": []},
+            visibility={"volume_panel": False, "macd_panel": False},
+            timeframe="30m",
+            language="zh",
+            x_window=120,
+        )
+
+        ticktext = figure.layout.xaxis.ticktext
+        # 跨日标签含空格 (MM-DD HH:mm)，同日标签只有 HH:mm
+        date_labels = [t for t in ticktext if " " in t]
+        self.assertTrue(len(date_labels) >= 2, f"Expected >=2 date boundary labels, got {ticktext}")
 
     def test_build_figure_adds_volume_and_macd_subpanes(self):
         rows = [
@@ -158,7 +284,7 @@ class ChartAxisTests(unittest.TestCase):
             visibility={"volume_panel": True, "macd_panel": True},
             timeframe="day",
             language="en",
-            x_window=3,
+            x_window=120,
         )
 
         self.assertEqual(len(figure.data), 5)
@@ -179,7 +305,7 @@ class ChartAxisTests(unittest.TestCase):
             visibility={"volume_panel": False, "macd_panel": False},
             timeframe="day",
             language="en",
-            x_window=2,
+            x_window=120,
         )
 
         self.assertEqual(len(figure.data), 1)
@@ -403,7 +529,7 @@ class ChartAxisTests(unittest.TestCase):
             visibility={"strokes": True, "volume_panel": False, "macd_panel": False},
             timeframe="day",
             language="en",
-            x_window=2,
+            x_window=120,
             show_legend=True,
             unified_hover=False,
         )
@@ -450,7 +576,7 @@ class ChartAxisTests(unittest.TestCase):
             visibility={"stroke_pivot_zones": True, "segment_pivot_zones": False, "volume_panel": False, "macd_panel": False},
             timeframe="day",
             language="en",
-            x_window=2,
+            x_window=120,
         )
         segment_only = app._build_figure(
             rows=rows,
@@ -458,7 +584,7 @@ class ChartAxisTests(unittest.TestCase):
             visibility={"stroke_pivot_zones": False, "segment_pivot_zones": True, "volume_panel": False, "macd_panel": False},
             timeframe="day",
             language="en",
-            x_window=2,
+            x_window=120,
         )
 
         self.assertEqual(len(stroke_only.layout.shapes), 1)
@@ -504,7 +630,7 @@ class ChartAxisTests(unittest.TestCase):
             visibility={"stroke_pivot_zones": True, "segment_pivot_zones": True, "volume_panel": False, "macd_panel": False},
             timeframe="day",
             language="zh",
-            x_window=2,
+            x_window=120,
         )
 
         annotation_texts = [ann.text for ann in figure.layout.annotations]

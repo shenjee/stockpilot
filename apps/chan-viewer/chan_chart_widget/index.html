@@ -74,13 +74,73 @@
     }
 
     let isInitialized = false;
-    let currentState = { xWindowIndex: 0, previousXWindowIndex: null, showAll: false, yZoom: 1.0, dragmode: "pan" };
+    // xWindowCount: 连续数值，当前可见 K 线根数
+    // previousXWindowCount: show_all 切换前的值，用于恢复
+    let currentState = { xWindowCount: 120, previousXWindowCount: null, showAll: false, yZoom: 1.0, dragmode: "pan" };
     let currentPayload = null;
     let currentChartKey = null;
     const chartDiv = document.getElementById("chan-plotly-chart");
     const container = document.getElementById("fullscreen-container");
 
     const renderCaption = (template, values) => template.replace(/\{(\w+)\}/g, (_, key) => values[key] ?? "");
+
+    // ---- 比例步进：每次约缩放 1/6 视野，下限 10（常量由后端 payload 下发）----
+    function zoomStep(current) {
+      return Math.max(currentPayload.zoomStepMin, Math.round(current / currentPayload.zoomStepDenominator));
+    }
+
+    function clampWindowCount(value, payload) {
+      return Math.max(payload.minSlots, Math.min(payload.maxSlots, value));
+    }
+
+    // ---- 动态 tick 标签：按当前可见范围生成 ----
+    const TARGET_TICK_COUNT = 7;
+
+    function formatTickLabel(timestamp, timeframe, prevDate) {
+      if (timeframe === "month") return timestamp.substring(0, 7);
+      const isMinute = ["1m", "5m", "30m", "60m"].includes(timeframe);
+      if (isMinute) {
+        const timePart = timestamp.substring(11, 16); // HH:mm
+        const datePart = timestamp.substring(0, 10);  // YYYY-MM-DD
+        if (prevDate && datePart === prevDate) {
+          return timePart;
+        }
+        // 首个 tick 或跨日边界：显示 MM-DD HH:mm
+        const mm = datePart.substring(5, 7);
+        const dd = datePart.substring(8, 10);
+        return `${mm}-${dd} ${timePart}`;
+      }
+      // 日线/周线：MM-DD
+      const dayPart = timestamp.substring(0, 10);
+      const mm = dayPart.substring(5, 7);
+      const dd = dayPart.substring(8, 10);
+      return `${mm}-${dd}`;
+    }
+
+    function buildTickLabels(rows, windowCount, timeframe) {
+      const rowCount = rows.length;
+      if (rowCount === 0) return { tickvals: [], ticktext: [] };
+
+      const visibleCount = Math.min(windowCount, rowCount);
+      const visibleStart = rowCount - visibleCount;
+      const visibleEnd = rowCount - 1;
+      const step = Math.max(1, Math.floor(visibleCount / TARGET_TICK_COUNT));
+
+      const tickvals = [];
+      const ticktext = [];
+      let prevDate = null;
+      for (let i = visibleStart; i <= visibleEnd; i += step) {
+        tickvals.push(i);
+        ticktext.push(formatTickLabel(rows[i].date, timeframe, prevDate));
+        prevDate = rows[i].date.substring(0, 10);
+      }
+      // 确保最后一个 tick 是最新数据点
+      if (tickvals[tickvals.length - 1] !== visibleEnd) {
+        tickvals.push(visibleEnd);
+        ticktext.push(formatTickLabel(rows[visibleEnd].date, timeframe, prevDate));
+      }
+      return { tickvals, ticktext };
+    }
 
     window.addEventListener("message", function(event) {
       if (event.data.type === "streamlit:render") {
@@ -90,15 +150,15 @@
 
         if (chartChanged) {
           currentChartKey = payload.chartKey;
-          currentState.xWindowIndex = Math.max(payload.xWindowSteps.indexOf(payload.defaultXWindow), 0);
-          currentState.previousXWindowIndex = null;
+          currentState.xWindowCount = payload.defaultSlots;
+          currentState.previousXWindowCount = null;
           currentState.showAll = false;
           currentState.yZoom = payload.defaultYZoom;
           currentState.dragmode = "pan";
         } else {
-          currentState.xWindowIndex = Math.min(currentState.xWindowIndex, Math.max(payload.xWindowSteps.length - 1, 0));
-          if (currentState.showAll && payload.rows.length <= payload.xWindowSteps[currentState.xWindowIndex]) {
-            currentState.previousXWindowIndex = null;
+          currentState.xWindowCount = clampWindowCount(currentState.xWindowCount, payload);
+          if (currentState.showAll && payload.rows.length <= currentState.xWindowCount) {
+            currentState.previousXWindowCount = null;
             currentState.showAll = false;
           }
           currentState.yZoom = Math.min(payload.maxYZoom, Math.max(payload.minYZoom, currentState.yZoom));
@@ -146,8 +206,9 @@
 
     function syncCaptions() {
       if (!currentPayload) return;
+      const displayCount = currentState.showAll ? currentPayload.rows.length : currentState.xWindowCount;
       document.getElementById("caption-x").textContent = renderCaption(currentPayload.text.xWindowCaption, {
-        count: currentState.showAll ? currentPayload.rows.length : currentPayload.xWindowSteps[currentState.xWindowIndex]
+        count: displayCount
       });
       document.getElementById("caption-y").textContent = renderCaption(currentPayload.text.yZoomCaption, {
         scale: currentState.yZoom.toFixed(2)
@@ -156,23 +217,19 @@
 
     function getAxisRanges() {
       const rows = currentPayload.rows;
-      const xValues = rows.map(r => r.date);
-      const windowCount = currentState.showAll ? rows.length : currentPayload.xWindowSteps[currentState.xWindowIndex];
-      const visibleRows = rows.slice(-windowCount);
+      const rowCount = rows.length;
+      const windowCount = currentState.showAll ? rowCount : currentState.xWindowCount;
 
+      // 统一 index-based 范围：数据 < windowCount 左对齐右侧留空；数据 >= windowCount 右对齐显示最新
       let xRange = null;
-      if (xValues.length) {
-        const visibleX = xValues.slice(-windowCount);
-        if (!currentPayload.useContinuousBarAxis) {
-          xRange = [visibleX[0], visibleX[visibleX.length - 1]];
-        } else {
-          const startIndex = Math.max(xValues.indexOf(visibleX[0]) - 0.5, -0.5);
-          const endIndex = xValues.indexOf(visibleX[visibleX.length - 1]) + 0.5;
-          xRange = [startIndex, endIndex];
-        }
+      if (rowCount > 0) {
+        const startIndex = Math.max(rowCount - windowCount, 0);
+        const endIndex = Math.max(windowCount - 1, rowCount - 1);
+        xRange = [startIndex - 0.5, endIndex + 0.5];
       }
 
       let yRange = null;
+      const visibleRows = rows.slice(-Math.min(windowCount, rowCount));
       if (visibleRows.length) {
         const lows = visibleRows.map(r => r.low);
         const highs = visibleRows.map(r => r.high);
@@ -188,14 +245,28 @@
         }
       }
 
-      return { xRange, yRange };
+      return { xRange, yRange, windowCount };
     }
 
     function applyRanges() {
-      const { xRange, yRange } = getAxisRanges();
+      const { xRange, yRange, windowCount } = getAxisRanges();
       const updates = {};
-      if (xRange) updates["xaxis.range"] = xRange;
+      if (xRange) {
+        updates["xaxis.range"] = xRange;
+        updates["xaxis2.range"] = xRange;
+        updates["xaxis3.range"] = xRange;
+      }
       if (yRange) updates["yaxis.range"] = yRange;
+
+      // 动态更新 tick 标签
+      const { tickvals, ticktext } = buildTickLabels(currentPayload.rows, windowCount, currentPayload.activeTimeframe);
+      updates["xaxis.tickvals"] = tickvals;
+      updates["xaxis.ticktext"] = ticktext;
+      updates["xaxis2.tickvals"] = tickvals;
+      updates["xaxis2.ticktext"] = ticktext;
+      updates["xaxis3.tickvals"] = tickvals;
+      updates["xaxis3.ticktext"] = ticktext;
+
       syncCaptions();
       Plotly.relayout(chartDiv, updates);
     }
@@ -220,7 +291,7 @@
         displayModeBar: false
       }).then(() => {
         applyRanges();
-        
+
         if (typeof chartDiv.removeAllListeners === 'function') {
           chartDiv.removeAllListeners("plotly_relayout");
         }
@@ -234,7 +305,7 @@
             }
           }
           if (eventData["xaxis.autorange"] || eventData["yaxis.autorange"]) {
-            currentState.xWindowIndex = Math.max(payload.xWindowSteps.indexOf(payload.defaultXWindow), 0);
+            currentState.xWindowCount = payload.defaultSlots;
             currentState.yZoom = payload.defaultYZoom;
             syncCaptions();
           }
@@ -259,9 +330,15 @@
         const axis = axisBtn.dataset.axis;
         const dir = axisBtn.dataset.dir;
         if (axis === "x") {
-          if (dir === "in" && currentState.xWindowIndex > 0) currentState.xWindowIndex--;
-          else if (dir === "out" && currentState.xWindowIndex < currentPayload.xWindowSteps.length - 1) currentState.xWindowIndex++;
-          currentState.previousXWindowIndex = null;
+          const step = zoomStep(currentState.xWindowCount);
+          if (dir === "in") {
+            // + 放大：显示更少根，单根变宽
+            currentState.xWindowCount = clampWindowCount(currentState.xWindowCount - step, currentPayload);
+          } else if (dir === "out") {
+            // - 缩小：显示更多根，单根变窄
+            currentState.xWindowCount = clampWindowCount(currentState.xWindowCount + step, currentPayload);
+          }
+          currentState.previousXWindowCount = null;
           currentState.showAll = false;
           document.querySelectorAll('[data-action="show_all"]').forEach(b => b.classList.remove('is-active'));
         } else if (axis === "y") {
@@ -281,21 +358,21 @@
           Plotly.relayout(chartDiv, { dragmode: "pan" });
         } else if (action === "show_all") {
           if (!currentState.showAll) {
-            currentState.previousXWindowIndex = currentState.xWindowIndex;
+            currentState.previousXWindowCount = currentState.xWindowCount;
             currentState.showAll = true;
             document.querySelectorAll('[data-action="show_all"]').forEach(b => b.classList.add('is-active'));
           } else {
-            if (currentState.previousXWindowIndex !== null) {
-              currentState.xWindowIndex = Math.min(currentState.previousXWindowIndex, Math.max(currentPayload.xWindowSteps.length - 1, 0));
+            if (currentState.previousXWindowCount !== null) {
+              currentState.xWindowCount = clampWindowCount(currentState.previousXWindowCount, currentPayload);
             }
-            currentState.previousXWindowIndex = null;
+            currentState.previousXWindowCount = null;
             currentState.showAll = false;
             document.querySelectorAll('[data-action="show_all"]').forEach(b => b.classList.remove('is-active'));
           }
           applyRanges();
         } else if (action === "reset") {
-          currentState.xWindowIndex = Math.max(currentPayload.xWindowSteps.indexOf(currentPayload.defaultXWindow), 0);
-          currentState.previousXWindowIndex = null;
+          currentState.xWindowCount = currentPayload.defaultSlots;
+          currentState.previousXWindowCount = null;
           currentState.showAll = false;
           currentState.yZoom = currentPayload.defaultYZoom;
           currentState.dragmode = "pan";

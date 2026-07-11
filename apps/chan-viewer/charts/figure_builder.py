@@ -6,14 +6,15 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from charts.axis_policy import (
-    build_daily_rangebreaks,
-    build_intraday_date_ticks,
     build_time_range_label,
-    build_x_axis_range,
     build_y_axis_range,
     is_minute_timeframe,
 )
 from charts.primitive_renderer import render_plot_primitives
+from charts.window_policy import (
+    build_tick_labels,
+    x_axis_range as _build_x_axis_range,
+)
 from ui_text import _t
 
 
@@ -29,10 +30,12 @@ def build_figure(
     unified_hover: bool = True,
 ) -> go.Figure:
     ordered_rows = sorted(rows, key=lambda item: str(item["date"]))
-    x_values = [item["date"] for item in ordered_rows]
-    visible_rows = ordered_rows[-x_window:] if x_window else ordered_rows
-    visible_x_values = [item["date"] for item in visible_rows]
-    use_continuous_bar_axis = is_minute_timeframe(timeframe)
+    row_count = len(ordered_rows)
+    slots = x_window if x_window is not None else 120
+    timestamps = [str(item["date"]) for item in ordered_rows]
+    x_indices = list(range(row_count))
+
+    use_minute_hover = is_minute_timeframe(timeframe)
     show_volume = visibility.get("volume_panel", True)
     show_macd = visibility.get("macd_panel", True)
     subplot_specs = [[{"secondary_y": False}]]
@@ -46,10 +49,11 @@ def build_figure(
         subplot_specs.append([{"secondary_y": False}])
         row_heights.append(0.24)
         subplot_titles.append(_t(language, "macd_name"))
-    row_count = len(subplot_specs)
+    row_count_subplots = len(subplot_specs)
     volume_row = 2 if show_volume else None
-    macd_row = row_count if show_macd else None
+    macd_row = row_count_subplots if show_macd else None
 
+    # customdata: [date_label, time_range, direction_icon, volume]
     customdata = []
     for item in ordered_rows:
         date_str = str(item["date"])
@@ -59,25 +63,28 @@ def build_figure(
         volume_value = float(item.get("volume", 0.0))
         customdata.append([day, time_range, direction_icon, volume_value])
 
-    hovertemplate = (
-        "<b>%{customdata[0]}</b><br>"
-        "%{customdata[1]}<br>"
-        "open: %{open}<br>"
-        "high: %{high}<br>"
-        "low: %{low}<br>"
-        "close: %{close} %{customdata[2]}<br>"
-        "volume: %{customdata[3]}<extra></extra>"
-    ) if use_continuous_bar_axis else (
-        "<b>%{x}</b><br>"
-        "open: %{open}<br>"
-        "high: %{high}<br>"
-        "low: %{low}<br>"
-        "close: %{close} %{customdata[2]}<br>"
-        "volume: %{customdata[3]}<extra></extra>"
-    )
+    if use_minute_hover:
+        hovertemplate = (
+            "<b>%{customdata[0]}</b><br>"
+            "%{customdata[1]}<br>"
+            "open: %{open}<br>"
+            "high: %{high}<br>"
+            "low: %{low}<br>"
+            "close: %{close} %{customdata[2]}<br>"
+            "volume: %{customdata[3]}<extra></extra>"
+        )
+    else:
+        hovertemplate = (
+            "<b>%{customdata[0]}</b><br>"
+            "open: %{open}<br>"
+            "high: %{high}<br>"
+            "low: %{low}<br>"
+            "close: %{close} %{customdata[2]}<br>"
+            "volume: %{customdata[3]}<extra></extra>"
+        )
 
     figure = make_subplots(
-        rows=row_count,
+        rows=row_count_subplots,
         cols=1,
         shared_xaxes=True,
         vertical_spacing=0.03,
@@ -86,7 +93,7 @@ def build_figure(
     )
     figure.add_trace(
         go.Candlestick(
-            x=x_values,
+            x=x_indices,
             open=[float(item["open"]) for item in ordered_rows],
             high=[float(item["high"]) for item in ordered_rows],
             low=[float(item["low"]) for item in ordered_rows],
@@ -99,6 +106,9 @@ def build_figure(
         col=1,
     )
 
+    # timestamp -> slot index 映射，供图元渲染使用
+    timestamp_to_index = {ts: i for i, ts in enumerate(timestamps)}
+
     render_plot_primitives(
         figure,
         result_payload,
@@ -107,17 +117,19 @@ def build_figure(
         row=1,
         col=1,
         show_legend=show_legend,
+        timestamp_to_index=timestamp_to_index,
     )
 
     if show_volume:
         volume_colors = [_volume_color(item) for item in ordered_rows]
         figure.add_trace(
             go.Bar(
-                x=x_values,
+                x=x_indices,
                 y=[float(item.get("volume", 0.0)) for item in ordered_rows],
                 marker={"color": volume_colors},
                 name=_t(language, "volume_name"),
-                hovertemplate="<b>%{x}</b><br>volume: %{y}<extra></extra>",
+                hovertemplate="<b>%{customdata}</b><br>volume: %{y}<extra></extra>",
+                customdata=timestamps,
             ),
             row=volume_row,
             col=1,
@@ -128,39 +140,46 @@ def build_figure(
         hist_colors = ["#DC2626" if value >= 0 else "#16A34A" for value in macd_series["hist"]]
         figure.add_trace(
             go.Bar(
-                x=x_values,
+                x=x_indices,
                 y=macd_series["hist"],
                 marker={"color": hist_colors},
                 name=_t(language, "macd_hist_name"),
-                hovertemplate="<b>%{x}</b><br>MACD Hist: %{y:.4f}<extra></extra>",
+                hovertemplate="<b>%{customdata}</b><br>MACD Hist: %{y:.4f}<extra></extra>",
+                customdata=timestamps,
             ),
             row=macd_row,
             col=1,
         )
         figure.add_trace(
             go.Scatter(
-                x=x_values,
+                x=x_indices,
                 y=macd_series["dif"],
                 mode="lines",
                 line={"color": "#2563EB", "width": 1.8},
                 name=_t(language, "macd_dif_name"),
-                hovertemplate="<b>%{x}</b><br>DIF: %{y:.4f}<extra></extra>",
+                hovertemplate="<b>%{customdata}</b><br>DIF: %{y:.4f}<extra></extra>",
+                customdata=timestamps,
             ),
             row=macd_row,
             col=1,
         )
         figure.add_trace(
             go.Scatter(
-                x=x_values,
+                x=x_indices,
                 y=macd_series["dea"],
                 mode="lines",
                 line={"color": "#F59E0B", "width": 1.8},
                 name=_t(language, "macd_dea_name"),
-                hovertemplate="<b>%{x}</b><br>DEA: %{y:.4f}<extra></extra>",
+                hovertemplate="<b>%{customdata}</b><br>DEA: %{y:.4f}<extra></extra>",
+                customdata=timestamps,
             ),
             row=macd_row,
             col=1,
         )
+
+    # 统一 linear 轴 + 自定义刻度标签
+    tick_positions, tick_labels = build_tick_labels(timestamps, row_count, slots, timeframe)
+    x_range = _build_x_axis_range(row_count, slots)
 
     figure.update_layout(
         margin={"l": 20, "r": 24, "t": 30, "b": 78},
@@ -180,28 +199,20 @@ def build_figure(
         },
     )
     figure.update_annotations(font={"size": 12})
-    if timeframe == "day":
-        rangebreaks = build_daily_rangebreaks(x_values)
-        if rangebreaks:
-            for current_row in range(1, row_count + 1):
-                figure.update_xaxes(rangebreaks=rangebreaks, row=current_row, col=1)
-    elif use_continuous_bar_axis:
-        tick_values, tick_text = build_intraday_date_ticks(x_values)
-        for current_row in range(1, row_count + 1):
-            figure.update_xaxes(
-                type="category",
-                categoryorder="array",
-                categoryarray=x_values,
-                tickmode="array",
-                tickvals=tick_values,
-                ticktext=tick_text,
-                row=current_row,
-                col=1,
-            )
-    if visible_x_values:
-        x_range = build_x_axis_range(x_values, visible_x_values, use_continuous_bar_axis)
-        for current_row in range(1, row_count + 1):
-            figure.update_xaxes(range=x_range, row=current_row, col=1)
+
+    for current_row in range(1, row_count_subplots + 1):
+        figure.update_xaxes(
+            type="linear",
+            tickmode="array",
+            tickvals=tick_positions,
+            ticktext=tick_labels,
+            range=x_range,
+            row=current_row,
+            col=1,
+        )
+
+    visible_start = max(0, row_count - slots)
+    visible_rows = ordered_rows[visible_start:]
     y_range = build_y_axis_range(visible_rows, y_zoom)
     if y_range:
         figure.update_yaxes(range=y_range, row=1, col=1)
