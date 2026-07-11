@@ -62,12 +62,20 @@ class KLineDataService:
         latest = self.store.latest_date(code, market, timeframe=timeframe)
         earliest = self.store.earliest_timestamp(code, market, timeframe=timeframe)
         local_count = self.store.count_since(code, start_date, market, timeframe=timeframe, end_date=query_end)
+        has_negative = self.store.has_negative_prices(
+            code,
+            start_date,
+            market=market,
+            timeframe=timeframe,
+            end_date=query_end,
+        )
         if (
             latest
             and earliest
             and latest >= required_latest
             and self._covers_start_date(earliest, start_date, timeframe)
             and local_count >= required_local_count
+            and not has_negative
         ):
             return MarketDataResult(success=True, data=None)
 

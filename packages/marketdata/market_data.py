@@ -430,6 +430,33 @@ class TencentStockDataProvider(MarketDataProvider):
                 )
             )
 
+        if autype == "qfq" and results:
+            price_values = [
+                value
+                for row in results
+                for value in (row["open"], row["close"], row["high"], row["low"])
+            ]
+            if price_values and max(price_values) < 0:
+                for row in results:
+                    row["open"] = abs(float(row["open"]))
+                    row["close"] = abs(float(row["close"]))
+                    row["high"] = abs(float(row["high"]))
+                    row["low"] = abs(float(row["low"]))
+                issues.append(
+                    cls._make_issue(
+                        level="warning",
+                        reason_code="qfq_negative_prices",
+                        message="tencent qfq kline returned negative prices; normalized to absolute values",
+                        context={
+                            "operation": "get_kline",
+                            "code": code,
+                            "market": market,
+                            "ktype": ktype,
+                            "security_type": security_type,
+                        },
+                    )
+                )
+
         success = not any(issue.level == "error" for issue in issues)
         if not success:
             cls._log_errors(issues)

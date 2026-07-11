@@ -80,6 +80,52 @@ class KLineDataServiceTests(unittest.TestCase):
             self.assertEqual(len(provider.calls), 0)
             self.assertEqual(len(result), 60)
 
+    def test_refetches_remote_rows_when_local_rows_have_negative_prices(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = KLineStore(Path(tmpdir) / "market_data.sqlite")
+            local_rows = [
+                {
+                    "date": f"2026-05-{day:02d}",
+                    "open": -10.0,
+                    "close": -10.5,
+                    "high": -10.6,
+                    "low": -9.9,
+                    "volume": 100 + day,
+                }
+                for day in range(1, 31)
+            ] + [
+                {
+                    "date": f"2026-06-{day:02d}",
+                    "open": -10.0,
+                    "close": -10.5,
+                    "high": -10.6,
+                    "low": -9.9,
+                    "volume": 200 + day,
+                }
+                for day in range(1, 31)
+            ]
+            store.upsert_many("600519", "sh", local_rows, source="local")
+
+            remote_rows = [
+                dict(row, open=abs(row["open"]), close=abs(row["close"]), high=abs(row["high"]), low=abs(row["low"]))
+                for row in local_rows
+            ]
+            provider = FakeProvider(rows=remote_rows)
+            service = KLineDataService(provider, store)
+
+            result = service.get_klines(
+                code="600519",
+                end_date="2026-06-30",
+                market="sh",
+                start_date="2026-05-01",
+                min_local_count=60,
+                limit=120,
+            )
+
+            self.assertEqual(len(provider.calls), 1)
+            self.assertTrue(result)
+            self.assertGreater(min(row["low"] for row in result), 0)
+
     def test_fetches_remote_rows_and_persists_then_reads_from_store(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             store = KLineStore(Path(tmpdir) / "market_data.sqlite")

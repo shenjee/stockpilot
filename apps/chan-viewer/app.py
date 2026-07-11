@@ -59,6 +59,7 @@ from ui_text import (  # noqa: E402
 
 DEFAULT_END = date.today()
 DEFAULT_START = DEFAULT_END - timedelta(days=240)
+MIN_STOCK_DATE = date(1990, 12, 19)
 TIMEFRAME_OPTIONS = ("1m", "5m", "30m", "60m", "day")
 DEFAULT_TIMEFRAME = "day"
 LAYER_KEYS = (
@@ -239,8 +240,18 @@ def main() -> None:
         symbol = str(selected_security["code"])
         market = str(selected_security["market"])
         security_type = str(selected_security["type"]) or None
-        start_date = st.date_input(_t(language, "start_date_label"), value=DEFAULT_START)
-        end_date = st.date_input(_t(language, "end_date_label"), value=DEFAULT_END)
+        start_date = st.date_input(
+            _t(language, "start_date_label"),
+            value=DEFAULT_START,
+            min_value=MIN_STOCK_DATE,
+            max_value=DEFAULT_END,
+        )
+        end_date = st.date_input(
+            _t(language, "end_date_label"),
+            value=DEFAULT_END,
+            min_value=MIN_STOCK_DATE,
+            max_value=DEFAULT_END,
+        )
         _default_max_bi = get_default_max_bi_num(st.session_state.chan_selected_timeframe)
         max_bi_num = st.number_input(_t(language, "max_bi_num_label"), min_value=10, max_value=1000, value=_default_max_bi, step=10)
         min_bars = st.number_input(_t(language, "min_bars_label"), min_value=10, max_value=500, value=60, step=10)

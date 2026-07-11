@@ -178,6 +178,35 @@ class TencentStockDataProviderTests(unittest.TestCase):
         self.assertIn("sh000001", url)
         self.assertNotIn("qfq", url)
 
+    def test_get_kline_qfq_negative_prices_are_normalized(self):
+        payload = {
+            "code": 0,
+            "data": {
+                "sz000858": {
+                    "qfqday": [
+                        ["2006-10-09", "-23.03", "-22.71", "-22.53", "-23.06", "519459.000"],
+                    ],
+                }
+            },
+        }
+        with patch.object(
+            TencentStockDataProvider, "_fetch_with_retry", return_value=json.dumps(payload)
+        ):
+            result = TencentStockDataProvider.get_kline_result(
+                code="000858",
+                market="sz",
+                start_date="2006-10-01",
+                end_date="2006-12-31",
+                ktype="day",
+                autype="qfq",
+            )
+        self.assertTrue(result.success)
+        self.assertEqual(len(result.data), 1)
+        self.assertEqual(result.data[0]["open"], 23.03)
+        self.assertEqual(result.data[0]["close"], 22.71)
+        self.assertEqual(result.data[0]["high"], 22.53)
+        self.assertEqual(result.data[0]["low"], 23.06)
+
     def test_realtime_result_request_failed(self):
         with patch.object(
             TencentStockDataProvider, "_fetch_with_retry", side_effect=RuntimeError("boom")

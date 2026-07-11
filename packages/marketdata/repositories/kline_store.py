@@ -139,6 +139,29 @@ class KLineStore:
                 ).fetchone()
         return int(row[0] or 0)
 
+    def has_negative_prices(
+        self,
+        code: str,
+        start_date: str,
+        market: str | None = None,
+        timeframe: str = "day",
+        end_date: str | None = None,
+    ) -> bool:
+        symbol = self.symbol(code, market)
+        query_end = end_date or "9999-12-31 23:59:59"
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT 1
+                FROM klines
+                WHERE symbol = ? AND timeframe = ? AND timestamp >= ? AND timestamp <= ?
+                  AND (open < 0 OR close < 0 OR high < 0 OR low < 0)
+                LIMIT 1
+                """,
+                (symbol, timeframe, start_date, query_end),
+            ).fetchone()
+        return bool(row)
+
     def upsert_many(self, code: str, market: str | None, klines: list, source: str = "unknown", timeframe: str = "day") -> None:
         if not klines:
             return
