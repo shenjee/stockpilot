@@ -227,7 +227,8 @@ def main() -> None:
         min_bars = st.number_input(_t(language, "min_bars_label"), min_value=10, max_value=500, value=60, step=10)
         strict_validation = st.checkbox(_t(language, "strict_validation_label"), value=True)
         st.markdown(_sidebar_section_title(_t(language, "layers_header")), unsafe_allow_html=True)
-        visibility = {layer: st.checkbox(_layer_label(layer, language), value=(layer != "segments")) for layer in LAYER_KEYS}
+        _default_off = {"segments", "fractals", "stroke_pivot_zones", "segment_pivot_zones"}
+        visibility = {layer: st.checkbox(_layer_label(layer, language), value=(layer not in _default_off)) for layer in LAYER_KEYS}
         st.markdown(_sidebar_section_title(_t(language, "display_header")), unsafe_allow_html=True)
         unified_hover = st.checkbox(_t(language, "crosshair_link_label"), value=True)
         run = st.button(_t(language, "run_button"), type="primary")
