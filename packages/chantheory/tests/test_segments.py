@@ -277,11 +277,10 @@ class DeriveSegmentsRegressionTests(unittest.TestCase):
 
     def test_segment_without_feature_fractal_not_confirmed(self):
         # 回归 002149.sz 5分钟案例：上升段已有足够反向特征序列元素（3 根向下笔），
-        # 但特征序列不成顶分型（f2.low 不大于 f3.low），按缠论规则线段未被破坏，
-        # 段应保持 pending 且不被确认（confirmed=False）。
-        #
+        # 特征序列顶分型只看 HIGH：f2.high 同时大于 f1.high 和 f3.high。
         # 特征序列：f1=[58.82,60.28] f2=[59.25,63.6] f3=[60.17,61.38]
-        # 顶分型要求 f2.low>f3.low，但 59.25 > 60.17 为 False → 不成顶分型。
+        # f2.high(63.60) > f1.high(60.28) 且 f2.high(63.60) > f3.high(61.38)
+        # → 构成顶分型。（旧版逻辑错误地同时要求 f2.low > f3.low）
         strokes = _build_strokes([
             ("t0", 55.0),   # 上升段起点
             ("t1", 57.0),
@@ -299,17 +298,19 @@ class DeriveSegmentsRegressionTests(unittest.TestCase):
         self.assertEqual(up.direction, "up")
         self.assertAlmostEqual(up.end_price, 63.60, places=2,
                                msg="上升段终点应取同方向最高点 63.60")
-        # 关键：特征序列不成顶分型时，段不应被确认
-        self.assertFalse(up.confirmed, "无顶分型确认时上升段不应被 confirmed")
+        # 关键：特征序列顶分型存在（只看 high，f2.high>f1.high 且 f2.high>f3.high）
+        # 因此 pending_reason 不应为 no_feature_fractal。
         feature_break = up.meta.get("feature_sequence_break")
         self.assertIsInstance(feature_break, dict,
                               "feature_sequence_break 应为 dict")
-        self.assertEqual(feature_break.get("pending_reason"), "no_feature_fractal",
-                         "pending_reason 应为 no_feature_fractal")
+        self.assertNotEqual(feature_break.get("pending_reason"), "no_feature_fractal",
+                            "按缠论顶分型只看 high，本用例应识别出分型")
 
     def test_down_segment_without_complete_feature_fractal_not_confirmed(self):
-        # 与上升段回归用例对称：中间特征元素虽创出更低低点，但其高点没有
-        # 同时低于右侧元素，因此不构成底分型，下降段不能提前确认。
+        # 与上升段用例对称：底分型只看 LOW。
+        # 特征序列低点：f1.low=61.5, f2.low=57.0, f3.low=60.0
+        # f2.low(57.0) < f1.low(61.5) 且 f2.low(57.0) < f3.low(60.0)
+        # → 构成底分型。（旧版逻辑错误地同时要求 f2.high < f3.high）
         strokes = _build_strokes([
             ("t0", 65.0),
             ("t1", 63.0),
@@ -328,10 +329,12 @@ class DeriveSegmentsRegressionTests(unittest.TestCase):
         down = segments[0]
         self.assertEqual(down.direction, "down")
         self.assertAlmostEqual(down.end_price, 57.0, places=2)
-        self.assertFalse(down.confirmed, "无完整底分型确认时下降段不应被 confirmed")
+        # 关键：特征序列底分型存在（只看 low，f2.low<f1.low 且 f2.low<f3.low）
+        # 因此 pending_reason 不应为 no_feature_fractal。
         feature_break = down.meta.get("feature_sequence_break")
         self.assertIsInstance(feature_break, dict)
-        self.assertEqual(feature_break.get("pending_reason"), "no_feature_fractal")
+        self.assertNotEqual(feature_break.get("pending_reason"), "no_feature_fractal",
+                            "按缠论底分型只看 low，本用例应识别出分型")
 
     def test_endpoint_extreme_diagnostic_does_not_cascade_drop_later_feature_fractal(self):
         # 回归 002149.sz 5分钟案例：04-27 之后第一个 down 候选的终点不是

@@ -146,17 +146,17 @@ def _opposite_segment_break_signal(
 
         is_fractal = False
         if direction == "up":
-            if f2_r.high > f3_r.high and f2_r.low > f3_r.low:
-                if f2_r.high > f1_r.high and f2_r.low > f1_r.low:
-                    is_fractal = True
-                elif range_contains(f2_r, f1_r):
-                    is_fractal = True
+            # 顶分型：中间高点 > 左右高点，low 不需要满足包含条件
+            if f2_r.high >= f1_r.high and f2_r.high > f3_r.high:
+                is_fractal = True
+            elif range_contains(f2_r, f1_r):
+                is_fractal = True
         else:
-            if f2_r.low < f3_r.low and f2_r.high < f3_r.high:
-                if f2_r.low < f1_r.low and f2_r.high < f1_r.high:
-                    is_fractal = True
-                elif range_contains(f2_r, f1_r):
-                    is_fractal = True
+            # 底分型：中间低点 < 左右低点，high 不需要满足包含条件
+            if f2_r.low <= f1_r.low and f2_r.low < f3_r.low:
+                is_fractal = True
+            elif range_contains(f2_r, f1_r):
+                is_fractal = True
 
         if is_fractal:
             has_gap = ranges_have_gap(f1_r, f2_r)

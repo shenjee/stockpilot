@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, Mapping, Sequence, Tuple
 
-from .config import ENGINE_NAME, PINNED_ENGINE_VERSION, get_default_parameters
+from .config import ENGINE_NAME, PINNED_ENGINE_VERSION, get_default_max_bi_num, get_default_parameters
 from .describe import build_summary
 from .engine import run_engine as _run_engine
 from .normalize import NormalizationError, normalize_ohlcv_rows, normalize_tracker_klines
@@ -166,6 +166,9 @@ def analyze_normalized(
     signals_config: Sequence[object] | Mapping[str, object] | None = None,
 ) -> AnalysisResult:
     merged_parameters = get_default_parameters()
+    # Use timeframe-appropriate max_bi_num unless explicitly overridden
+    if parameters is None or "max_bi_num" not in parameters:
+        merged_parameters["max_bi_num"] = get_default_max_bi_num(normalized.timeframe)
     if parameters:
         merged_parameters.update(parameters)
 
