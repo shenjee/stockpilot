@@ -307,6 +307,32 @@ class DeriveSegmentsRegressionTests(unittest.TestCase):
         self.assertEqual(feature_break.get("pending_reason"), "no_feature_fractal",
                          "pending_reason 应为 no_feature_fractal")
 
+    def test_down_segment_without_complete_feature_fractal_not_confirmed(self):
+        # 与上升段回归用例对称：中间特征元素虽创出更低低点，但其高点没有
+        # 同时低于右侧元素，因此不构成底分型，下降段不能提前确认。
+        strokes = _build_strokes([
+            ("t0", 65.0),
+            ("t1", 63.0),
+            ("t2", 64.0),
+            ("t3", 60.0),
+            ("t4", 61.5),
+            ("t5", 57.0),
+            ("t6", 61.0),
+            ("t7", 59.0),
+            ("t8", 60.0),
+        ])
+
+        segments = derive_segments(strokes)
+
+        self.assertTrue(segments, "应至少识别出一个段")
+        down = segments[0]
+        self.assertEqual(down.direction, "down")
+        self.assertAlmostEqual(down.end_price, 57.0, places=2)
+        self.assertFalse(down.confirmed, "无完整底分型确认时下降段不应被 confirmed")
+        feature_break = down.meta.get("feature_sequence_break")
+        self.assertIsInstance(feature_break, dict)
+        self.assertEqual(feature_break.get("pending_reason"), "no_feature_fractal")
+
     def test_endpoint_extreme_diagnostic_does_not_cascade_drop_later_feature_fractal(self):
         # 回归 002149.sz 5分钟案例：04-27 之后第一个 down 候选的终点不是
         # window 绝对低点，旧版 _enforce_segment_contract 会把它丢弃，随后
