@@ -10,6 +10,11 @@ def _is_feature_break_fractal(
     direction: str,
     ranges: Sequence[StrokeRange],
 ) -> bool:
+    """判断特征序列分型
+    注意：缠论中特征序列分型只比较极值点（高点或低点），不比较整个K线范围。
+    向上线段的顶分型：中间元素高点 >= 左元素高点 且 中间元素高点 > 右元素高点
+    向下线段的底分型：中间元素低点 <= 左元素低点 且 中间元素低点 < 右元素低点
+    """
     if len(ranges) < 3:
         return False
     left, middle, right = ranges[:3]
@@ -146,14 +151,17 @@ def _opposite_segment_break_signal(
 
         is_fractal = False
         if direction == "up":
-            if f2_r.high > f3_r.high and f2_r.low > f3_r.low:
-                if f2_r.high > f1_r.high and f2_r.low > f1_r.low:
+            # 向上线段的顶分型：只需要中间元素的高点 > 左右元素的高点
+            # 缠论中特征序列分型只比较极值点（高点/低点），不需要比较整个范围
+            if f2_r.high > f3_r.high:
+                if f2_r.high > f1_r.high:
                     is_fractal = True
                 elif range_contains(f2_r, f1_r):
                     is_fractal = True
         else:
-            if f2_r.low < f3_r.low and f2_r.high < f3_r.high:
-                if f2_r.low < f1_r.low and f2_r.high < f1_r.high:
+            # 向下线段的底分型：只需要中间元素的低点 < 左右元素的低点
+            if f2_r.low < f3_r.low:
+                if f2_r.low < f1_r.low:
                     is_fractal = True
                 elif range_contains(f2_r, f1_r):
                     is_fractal = True
