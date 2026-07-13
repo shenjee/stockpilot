@@ -144,6 +144,8 @@ P1 freezes the top-level schema and P2 fills the stable structure mapping.
 }
 ```
 
+The `max_bi_num` parameter defaults to 50 for day/week/month timeframes and 500 for minute timeframes (1m/5m/15m/30m/60m). Explicit parameters override these defaults.
+
 Multi-timeframe analysis uses a project-owned grouped container instead of leaking `czsc` trader objects:
 
 ```json

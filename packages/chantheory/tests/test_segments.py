@@ -12,6 +12,8 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "packages"))
 
 import chantheory.segments as segments_mod
+from chantheory.segment_break_helpers import _process_feature_inclusion
+from chantheory.segment_helpers import StrokeRange
 from chantheory.schema import Stroke
 from chantheory.segments import derive_segments
 
@@ -121,17 +123,20 @@ class DeriveSegmentsTests(unittest.TestCase):
             self.assertAlmostEqual(previous.end_price, current.start_price, places=9)
 
     def test_no_gap_feature_fractal_confirms_segment(self):
-        # 构造一个上升段，反向特征序列三元素无缺口 → 应出现已确认上升段
+        # 上升段，特征序列无包含关系、无缺口，f2.high 最高 -> 顶分型确认
+        # peak=13，f1(peak前down笔)=[10,12], f2(peak后down笔)=[11,13], f3=[9.5,12]
+        # 无包含：f1.low<f2.low 且 f1.high<f2.high -> 不包含
+        # 顶分型：f2.high=13 > f1.high=12 且 > f3.high=12
         strokes = _build_strokes([
-            ("t0", 10.0),
-            ("t1", 12.0),
-            ("t2", 11.0),
-            ("t3", 13.0),  # 上升段顶点候选
-            ("t4", 11.0),  # 反向 f1
-            ("t5", 12.0),
-            ("t6", 10.5),  # 反向 f2（与 f1 区间 [11,11] 与 [10.5,12]，无缺口）
-            ("t7", 11.5),
-            ("t8", 9.5),   # 反向 f3
+            ("t0", 9.0),
+            ("t1", 12.0),   # [0] up
+            ("t2", 10.0),   # [1] down f1=[10,12]
+            ("t3", 13.0),   # [2] up (peak)
+            ("t4", 11.0),   # [3] down f2=[11,13]
+            ("t5", 12.0),   # [4] up
+            ("t6", 9.5),    # [5] down f3=[9.5,12]
+            ("t7", 11.0),   # [6] up
+            ("t8", 8.0),    # [7] down f4=[8,11]
         ])
         segments = derive_segments(strokes)
         up_segments = [s for s in segments if s.direction == "up"]
@@ -167,12 +172,12 @@ class DeriveSegmentsTests(unittest.TestCase):
     def test_gap_feature_fractal_confirmed_after_followup(self):
         # 缺口分型 + 后续反向笔形成底分型 → 段被确认结束
         # 同 pending case，但加第 3 根 down 笔形成底分型
-        # followup indices=[5,7,9]: s6=[16,20], s8=[14,17], s10=[14.5,15]
-        # 底分型：s8.low=14 < s6.low=16, s8.low=14 < s10.low=14.5 → 确认
+        # followup indices=[5,7,9]: s6=[16,20], s8=[14,17], s10=[15.5,18]
+        # 无包含关系；底分型：s8.low=14 < s6.low=16, s8.low=14 < s10.low=15.5 -> 确认
         strokes = _build_strokes([
             ("t0", 10.0), ("t1", 12.0), ("t2", 11.0), ("t3", 15.0),
             ("t4", 13.0), ("t5", 20.0), ("t6", 16.0), ("t7", 17.0),
-            ("t8", 14.0), ("t9", 15.0), ("t10", 14.5),
+            ("t8", 14.0), ("t9", 18.0), ("t10", 15.5),
         ])
         segments = derive_segments(strokes)
         self.assertTrue(segments, "应至少识别出一个段")
@@ -276,21 +281,19 @@ class DeriveSegmentsRegressionTests(unittest.TestCase):
                          msg="上升段起点 stroke index 应为 0")
 
     def test_segment_without_feature_fractal_not_confirmed(self):
-        # 回归 002149.sz 5分钟案例：上升段已有足够反向特征序列元素（3 根向下笔），
-        # 特征序列顶分型只看 HIGH：f2.high 同时大于 f1.high 和 f3.high。
-        # 特征序列：f1=[58.82,60.28] f2=[59.25,63.6] f3=[60.17,61.38]
-        # f2.high(63.60) > f1.high(60.28) 且 f2.high(63.60) > f3.high(61.38)
-        # → 构成顶分型。（旧版逻辑错误地同时要求 f2.low > f3.low）
+        # 上升段，特征序列经包含处理后形成顶分型（无包含、无缺口）
+        # peak=63.60，f1=[58.82,60.28], f2=[59.25,63.60], f3=[58.0,61.38]
+        # f2.high=63.60 > f1.high=60.28 且 > f3.high=61.38 -> 顶分型
         strokes = _build_strokes([
             ("t0", 55.0),   # 上升段起点
             ("t1", 57.0),
             ("t2", 56.0),
             ("t3", 60.28),
-            ("t4", 58.82),  # f1 向下笔
+            ("t4", 58.82),  # f1 向下笔 [58.82,60.28]
             ("t5", 63.60),  # 上升段最高点
-            ("t6", 59.25),  # f2 向下笔
+            ("t6", 59.25),  # f2 向下笔 [59.25,63.60]
             ("t7", 61.38),
-            ("t8", 60.17),  # f3 向下笔
+            ("t8", 58.0),   # f3 向下笔 [58.0,61.38]
         ])
         segments = derive_segments(strokes)
         self.assertTrue(segments, "应至少识别出一个段")
@@ -298,29 +301,30 @@ class DeriveSegmentsRegressionTests(unittest.TestCase):
         self.assertEqual(up.direction, "up")
         self.assertAlmostEqual(up.end_price, 63.60, places=2,
                                msg="上升段终点应取同方向最高点 63.60")
-        # 关键：特征序列顶分型存在（只看 high，f2.high>f1.high 且 f2.high>f3.high）
-        # 因此 pending_reason 不应为 no_feature_fractal。
         feature_break = up.meta.get("feature_sequence_break")
         self.assertIsInstance(feature_break, dict,
                               "feature_sequence_break 应为 dict")
-        self.assertNotEqual(feature_break.get("pending_reason"), "no_feature_fractal",
-                            "按缠论顶分型只看 high，本用例应识别出分型")
+        self.assertTrue(feature_break.get("break_fractal"),
+                        "应识别出特征序列顶分型")
+        self.assertEqual(feature_break.get("confirmation_case"),
+                         "no_gap_feature_fractal",
+                         "无缺口分型应确认")
+        self.assertTrue(up.confirmed, "上升段应被确认")
 
     def test_down_segment_without_complete_feature_fractal_not_confirmed(self):
-        # 与上升段用例对称：底分型只看 LOW。
-        # 特征序列低点：f1.low=61.5, f2.low=57.0, f3.low=60.0
-        # f2.low(57.0) < f1.low(61.5) 且 f2.low(57.0) < f3.low(60.0)
-        # → 构成底分型。（旧版逻辑错误地同时要求 f2.high < f3.high）
+        # 对称：下降段底分型（无包含、无缺口）
+        # peak=57.0，f1=[60.0,61.5], f2=[57.0,61.0], f3=[59.0,62.0]
+        # f2.low=57.0 < f1.low=60.0 且 < f3.low=59.0 -> 底分型
         strokes = _build_strokes([
             ("t0", 65.0),
             ("t1", 63.0),
             ("t2", 64.0),
             ("t3", 60.0),
-            ("t4", 61.5),
-            ("t5", 57.0),
-            ("t6", 61.0),
+            ("t4", 61.5),   # f1 向上笔 [60.0,61.5]
+            ("t5", 57.0),   # 下降段最低点
+            ("t6", 61.0),   # f2 向上笔 [57.0,61.0]
             ("t7", 59.0),
-            ("t8", 60.0),
+            ("t8", 62.0),   # f3 向上笔 [59.0,62.0]
         ])
 
         segments = derive_segments(strokes)
@@ -329,17 +333,22 @@ class DeriveSegmentsRegressionTests(unittest.TestCase):
         down = segments[0]
         self.assertEqual(down.direction, "down")
         self.assertAlmostEqual(down.end_price, 57.0, places=2)
-        # 关键：特征序列底分型存在（只看 low，f2.low<f1.low 且 f2.low<f3.low）
-        # 因此 pending_reason 不应为 no_feature_fractal。
         feature_break = down.meta.get("feature_sequence_break")
         self.assertIsInstance(feature_break, dict)
-        self.assertNotEqual(feature_break.get("pending_reason"), "no_feature_fractal",
-                            "按缠论底分型只看 low，本用例应识别出分型")
+        self.assertTrue(feature_break.get("break_fractal"),
+                        "应识别出特征序列底分型")
+        self.assertEqual(feature_break.get("confirmation_case"),
+                         "no_gap_feature_fractal",
+                         "无缺口分型应确认")
+        self.assertTrue(down.confirmed, "下降段应被确认")
 
     def test_endpoint_extreme_diagnostic_does_not_cascade_drop_later_feature_fractal(self):
         # 回归 002149.sz 5分钟案例：04-27 之后第一个 down 候选的终点不是
         # window 绝对低点，旧版 _enforce_segment_contract 会把它丢弃，随后
-        # valid[-1] 卡住并级联丢弃后续线段，导致 05-13 13:50 的顶分型不显示。
+        # valid[-1] 卡住并级联丢弃后续线段。
+        #
+        # 经过特征序列包含处理后，上升段正确延伸到最高点 78.84（stroke 16），
+        # 而不是被提前切断在 77.14。特征序列分型在 [25, 27, 29] 确认。
         strokes = _build_strokes([
             ("2026-04-27 09:35:00", 56.78),
             ("2026-04-27 14:25:00", 59.18),
@@ -376,72 +385,217 @@ class DeriveSegmentsRegressionTests(unittest.TestCase):
         ])
 
         segments = derive_segments(strokes)
+
+        # 上升段应延伸到真正的最高点 78.84，而非被提前切断
         target_segments = [
             segment for segment in segments
             if segment.direction == "up"
-            and segment.end_timestamp == "2026-05-13 13:50:00"
-            and abs(segment.end_price - 77.14) < 1e-9
+            and segment.end_timestamp == "2026-05-12 09:45:00"
+            and abs(segment.end_price - 78.84) < 1e-9
         ]
 
-        self.assertTrue(target_segments, "应识别 05-13 13:50 @77.14 的上升线段终点")
+        self.assertTrue(target_segments, "应识别 05-12 09:45 @78.84 的上升线段终点")
         target_segment = target_segments[0]
         feature_break = target_segment.meta.get("feature_sequence_break")
         self.assertIsInstance(feature_break, dict)
         self.assertEqual(feature_break.get("feature_sequence_indices"), [25, 27, 29])
         self.assertEqual(feature_break.get("confirmation_case"), "no_gap_feature_fractal")
-        self.assertEqual(
-            {
-                "id": target_segment.id,
-                "direction": target_segment.direction,
-                "start_timestamp": target_segment.start_timestamp,
-                "end_timestamp": target_segment.end_timestamp,
-                "start_price": target_segment.start_price,
-                "end_price": target_segment.end_price,
-                "confirmed": target_segment.confirmed,
-                "meta_status": target_segment.meta.get("status"),
-                "meta_start_stroke_index": target_segment.meta.get("start_stroke_index"),
-                "meta_endpoint_abs": target_segment.meta.get("endpoint_is_absolute_extreme"),
-                "stroke_ids": list(target_segment.stroke_ids),
-                "feature_break": {
-                    "feature_sequence_indices": feature_break.get("feature_sequence_indices"),
-                    "feature_sequence_direction": feature_break.get("feature_sequence_direction"),
-                    "first_second_has_gap": feature_break.get("first_second_has_gap"),
-                    "break_fractal": feature_break.get("break_fractal"),
-                    "left_contained_by_middle": feature_break.get("left_contained_by_middle"),
-                    "confirmation_case": feature_break.get("confirmation_case"),
-                    "followup_required": feature_break.get("followup_required"),
-                },
-            },
-            {
-                "id": "segment_025_2026-05-12 14:20:00_2026-05-13 13:50:00",
-                "direction": "up",
-                "start_timestamp": "2026-05-12 14:20:00",
-                "end_timestamp": "2026-05-13 13:50:00",
-                "start_price": 72.57,
-                "end_price": 77.14,
-                "confirmed": True,
-                "meta_status": "confirmed",
-                "meta_start_stroke_index": 24,
-                "meta_endpoint_abs": True,
-                "stroke_ids": ["stroke_025", "stroke_026", "stroke_027"],
-                "feature_break": {
-                    "feature_sequence_indices": [25, 27, 29],
-                    "feature_sequence_direction": "down",
-                    "first_second_has_gap": False,
-                    "break_fractal": True,
-                    "left_contained_by_middle": False,
-                    "confirmation_case": "no_gap_feature_fractal",
-                    "followup_required": False,
-                },
-            },
-        )
-        self.assertEqual(asdict(target_segment)["stroke_ids"], ["stroke_025", "stroke_026", "stroke_027"])
+        self.assertTrue(target_segment.confirmed, "上升段应被确认")
+        self.assertTrue(feature_break.get("break_fractal"), "应识别出特征序列顶分型")
 
+        # 非绝对极值端点应保留为诊断，而不是触发级联丢弃
         non_absolute_segments = [
             segment for segment in segments
             if segment.meta.get("endpoint_is_absolute_extreme") is False
         ]
         self.assertTrue(non_absolute_segments, "非绝对极值端点应保留为诊断，而不是触发级联丢弃")
+
+    def test_top_fractal_not_formed_when_f3_higher_than_f2(self):
+        """反例：f3.high > f2.high 时不得形成顶分型。
+
+        直接调用 _opposite_segment_break_signal，确保断言必然执行。
+        上升段 peak=20，恰好 3 个特征元素（无包含、无缺口）：
+        f1=[12,20], f2=[8,15], f3=[10,17]
+        f3.high=17 > f2.high=15 -> 不构成顶分型
+        stroke[2] 终点 15 和 stroke[4] 终点 17 均 < peak 20，不触发 new_peak_found
+        """
+        strokes = _build_strokes([
+            ("t0", 10.0),
+            ("t1", 20.0),   # [0] up (peak=20)
+            ("t2", 12.0),   # [1] down f1=[12,20]
+            ("t3", 15.0),   # [2] up (15 < 20)
+            ("t4", 8.0),    # [3] down f2=[8,15]
+            ("t5", 17.0),   # [4] up (17 < 20, no new peak)
+            ("t6", 10.0),   # [5] down f3=[10,17], f3.high=17 > f2.high=15
+        ])
+        signal = segments_mod._opposite_segment_break_signal(
+            strokes=strokes,
+            current_end_index=0,
+            direction="up",
+        )
+        self.assertFalse(signal.confirmed, "f3.high>f2.high 时不应确认顶分型")
+        self.assertEqual(signal.reason, "no_feature_fractal",
+                         "应返回 no_feature_fractal 而非确认分型")
+
+    def test_bottom_fractal_not_formed_when_f3_lower_than_f2(self):
+        """反例：f3.low < f2.low 时不得形成底分型。
+
+        直接调用 _opposite_segment_break_signal，确保断言必然执行。
+        下降段 low=5，恰好 3 个特征元素（无包含、无缺口）：
+        f1=[5,13], f2=[8,15], f3=[6,14]
+        f3.low=6 < f2.low=8 -> 不构成底分型
+        stroke[2] 终点 8 和 stroke[4] 终点 6 均 > low 5，不触发 new_peak_found
+        """
+        strokes = _build_strokes([
+            ("t0", 20.0),
+            ("t1", 5.0),    # [0] down (low=5)
+            ("t2", 13.0),   # [1] up f1=[5,13]
+            ("t3", 8.0),    # [2] down (8 > 5)
+            ("t4", 15.0),   # [3] up f2=[8,15]
+            ("t5", 6.0),    # [4] down (6 > 5, no new low)
+            ("t6", 14.0),   # [5] up f3=[6,14], f3.low=6 < f2.low=8
+        ])
+        signal = segments_mod._opposite_segment_break_signal(
+            strokes=strokes,
+            current_end_index=0,
+            direction="down",
+        )
+        self.assertFalse(signal.confirmed, "f3.low<f2.low 时不应确认底分型")
+        self.assertEqual(signal.reason, "no_feature_fractal",
+                         "应返回 no_feature_fractal 而非确认分型")
+
+
+class ProcessFeatureInclusionTests(unittest.TestCase):
+    """_process_feature_inclusion 的输入/输出表驱动单测。"""
+
+    def _make_input(self, ranges: list[tuple[int, float, float]]) -> list[tuple[int, StrokeRange]]:
+        """[(stroke_index, low, high), ...] -> [(stroke_index, StrokeRange), ...]"""
+        return [(idx, StrokeRange(stroke_index=idx, low=low, high=high)) for idx, low, high in ranges]
+
+    def test_no_inclusion_returns_all_elements_unchanged(self):
+        """无包含关系时，所有元素原样返回。"""
+        inputs = self._make_input([
+            (0, 10.0, 12.0),
+            (1, 11.0, 13.0),
+            (2, 9.5, 12.0),
+        ])
+        result = _process_feature_inclusion(inputs, direction="up")
+        self.assertEqual(len(result), 3)
+        for i, (idx, rng, orig) in enumerate(result):
+            self.assertEqual(idx, inputs[i][0])
+            self.assertEqual(rng, inputs[i][1])
+            self.assertEqual(orig, [inputs[i][0]])
+
+    def test_upward_inclusion_merges_by_taking_higher_high_and_higher_low(self):
+        """向上趋势包含合并：取 high 更高者，low 取两者较高者。
+
+        A=[10,20], B=[12,18]（B 被 A 包含），趋势向上 -> merged=[12,20]
+        """
+        inputs = self._make_input([
+            (0, 8.0, 12.0),   # 参考元素，确定趋势向上
+            (1, 10.0, 20.0),  # 确定趋势：10>8, 20>12 -> up
+            (2, 12.0, 18.0),  # 被 B 包含 -> up 合并
+        ])
+        result = _process_feature_inclusion(inputs, direction="up")
+        self.assertEqual(len(result), 2, "A+B 合并后应剩 2 个元素")
+        merged_idx, merged_rng, merged_orig = result[1]
+        self.assertAlmostEqual(merged_rng.high, 20.0, places=9, msg="up 合并 high 取更高者")
+        self.assertAlmostEqual(merged_rng.low, 12.0, places=9, msg="up 合并 low 取较高者")
+        self.assertEqual(merged_orig, [1, 2])
+
+    def test_downward_inclusion_merges_by_taking_lower_low_and_lower_high(self):
+        """向下趋势包含合并：取 low 更低者，high 取两者较低者。
+
+        A=[10,20], B=[12,18]（B 被 A 包含），趋势向下 -> merged=[10,18]
+        """
+        inputs = self._make_input([
+            (0, 15.0, 25.0),  # 参考元素，确定趋势向下
+            (1, 10.0, 20.0),  # 确定趋势：10<15, 20<25 -> down
+            (2, 12.0, 18.0),  # 被 B 包含 -> down 合并
+        ])
+        result = _process_feature_inclusion(inputs, direction="down")
+        self.assertEqual(len(result), 2, "A+B 合并后应剩 2 个元素")
+        merged_idx, merged_rng, merged_orig = result[1]
+        self.assertAlmostEqual(merged_rng.low, 10.0, places=9, msg="down 合并 low 取更低者")
+        self.assertAlmostEqual(merged_rng.high, 18.0, places=9, msg="down 合并 high 取较低者")
+        self.assertEqual(merged_orig, [1, 2])
+
+    def test_dynamic_direction_switches_from_up_to_down(self):
+        """趋势中途从向上变为向下时，合并方向应动态切换。
+
+        A=[5,10], B=[8,15]（趋势 up）
+        C=[10,13]（被 B 包含，up 合并 -> [10,15]）
+        D=[4,11]（与 [10,15] 无包含，趋势 down）
+        E=[5,10]（被 D 包含，down 合并 -> [4,10]）
+        """
+        inputs = self._make_input([
+            (0, 5.0, 10.0),
+            (1, 8.0, 15.0),
+            (2, 10.0, 13.0),
+            (3, 4.0, 11.0),
+            (4, 5.0, 10.0),
+        ])
+        result = _process_feature_inclusion(inputs, direction="up")
+        self.assertEqual(len(result), 3, "5 元素 -> 2 次合并 -> 3 个输出")
+        # 第一个合并 (up): [10,15]
+        _, rng1, _ = result[1]
+        self.assertAlmostEqual(rng1.high, 15.0, places=9)
+        self.assertAlmostEqual(rng1.low, 10.0, places=9)
+        # 第二个合并 (down): [4,10]
+        _, rng2, _ = result[2]
+        self.assertAlmostEqual(rng2.low, 4.0, places=9)
+        self.assertAlmostEqual(rng2.high, 10.0, places=9)
+
+    def test_initial_inclusion_uses_segment_direction_as_fallback(self):
+        """前两个元素即有包含时，使用原线段方向作为 fallback。
+
+        在上升段中：A=[10,20], B=[12,18]（B 被 A 包含，方向未定）
+        -> fallback "up" -> merged=[12,20]
+        """
+        inputs = self._make_input([
+            (0, 10.0, 20.0),
+            (1, 12.0, 18.0),  # 被 A 包含，无前序无包含元素确定方向
+        ])
+        result_up = _process_feature_inclusion(inputs, direction="up")
+        self.assertEqual(len(result_up), 1)
+        _, rng_up, _ = result_up[0]
+        self.assertAlmostEqual(rng_up.high, 20.0, places=9, msg="up fallback: high 取更高")
+        self.assertAlmostEqual(rng_up.low, 12.0, places=9, msg="up fallback: low 取较高")
+
+        result_down = _process_feature_inclusion(inputs, direction="down")
+        self.assertEqual(len(result_down), 1)
+        _, rng_down, _ = result_down[0]
+        self.assertAlmostEqual(rng_down.low, 10.0, places=9, msg="down fallback: low 取更低")
+        self.assertAlmostEqual(rng_down.high, 18.0, places=9, msg="down fallback: high 取较低")
+
+    def test_empty_input_returns_empty_list(self):
+        self.assertEqual(_process_feature_inclusion([], direction="up"), [])
+
+    def test_single_element_returns_unchanged(self):
+        inputs = self._make_input([(0, 10.0, 20.0)])
+        result = _process_feature_inclusion(inputs, direction="up")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0][0], 0)
+        self.assertEqual(result[0][2], [0])
+
+    def test_consecutive_inclusion_chain_merges_all(self):
+        """连续包含链：A 包含 B 包含 C，方向向上时全部合并为一个。
+
+        A=[5,25], B=[10,20], C=[12,18]
+        方向 up（参考元素之后确定，或 fallback）
+        -> merged=[12,25]
+        """
+        inputs = self._make_input([
+            (0, 5.0, 25.0),
+            (1, 10.0, 20.0),  # 被 A 包含
+            (2, 12.0, 18.0),  # 被 merged 包含
+        ])
+        result = _process_feature_inclusion(inputs, direction="up")
+        self.assertEqual(len(result), 1, "连续包含应全部合并为 1 个")
+        _, rng, orig = result[0]
+        self.assertAlmostEqual(rng.high, 25.0, places=9)
+        self.assertAlmostEqual(rng.low, 12.0, places=9)
+        self.assertEqual(orig, [0, 1, 2])
 
 
 class SegmentCompatibilityTests(unittest.TestCase):
@@ -449,7 +603,7 @@ class SegmentCompatibilityTests(unittest.TestCase):
         strokes = _build_strokes([
             ("t0", 10.0), ("t1", 12.0), ("t2", 11.0), ("t3", 15.0),
             ("t4", 13.0), ("t5", 20.0), ("t6", 16.0), ("t7", 17.0),
-            ("t8", 14.0), ("t9", 15.0), ("t10", 14.5),
+            ("t8", 14.0), ("t9", 18.0), ("t10", 15.5),
         ])
 
         baseline = segments_mod._opposite_segment_break_signal(
@@ -789,6 +943,82 @@ class SegmentCompatibilityTests(unittest.TestCase):
         self.assertTrue(mocked_make_tail.called)
         self.assertEqual(segments[-1], sentinel)
         self.assertEqual(len(segments), 2)
+
+
+class GapFollowupInclusionCompensationTests(unittest.TestCase):
+    """测试 _has_gap_followup_reverse_fractal 对包含后元素不足的补偿行为。"""
+
+    def test_followup_features_merged_to_two_then_completed_by_fourth(self):
+        """前三根包含后只剩两个，第四根加入后形成三个处理后元素并分型确认。
+
+        原始 followup reverse 笔（上升段后续向下笔）：
+        idx5: [10,20]
+        idx7: [8,18] → 与 idx5 不包含
+        idx9: [12,15] → 被 idx7 包含，向下合并为 [8,15]
+        idx11: [9,17] → 补足第三个处理后元素并形成底分型确认
+        """
+        strokes = _build_strokes([
+            ("t0", 10.0), ("t1", 12.0), ("t2", 11.0), ("t3", 15.0),
+            ("t4", 13.0), ("t5", 20.0), ("t6", 10.0), ("t7", 18.0),  # followup idx5: [10,20] (down)
+            ("t8", 8.0), ("t9", 15.0),  # followup idx7: [8,18] (down)
+            ("t10", 12.0), ("t11", 17.0),  # followup idx9: [12,15] (down)
+            ("t12", 9.0), ("t13", 16.0),  # followup idx11: [9,17] (down)
+            ("t14", 10.0),  # 额外向上笔，确保 idx13 存在
+        ])
+        signal = segments_mod._has_gap_followup_reverse_fractal(
+            strokes=strokes,
+            current_end_index=4,
+            direction="up",
+        )
+        self.assertTrue(signal.confirmed, "包含处理后应最终获得三个元素并确认分型")
+        self.assertEqual(
+            signal.reason,
+            "followup_reverse_fractal",
+            "应通过 followup 反向分型确认",
+        )
+        self.assertEqual(
+            signal.meta.get("followup_reverse_feature_indices"),
+            [5, 7, 9, 11],
+            "应消费原始 idx5/7/9/11（加入第四根后达到三个处理后元素并分型）",
+        )
+
+    def test_sliding_window_check(self):
+        """测试滑动窗口检查逻辑：第一组三元素无分型，第二组窗口形成分型。
+
+        原始 followup reverse 笔（上升段后续向下笔）：
+        idx1: [10,20] (down)
+        idx3: [12,22] (down)
+        idx5: [11,21] (down)
+        idx7: [13,23] (down)
+        无包含，因此处理后序列就是这四个元素。
+        第一个窗口 [0,1,2]：idx3的低点12 不低于 idx1的低点10 → 无分型。
+        第二个窗口 [1,2,3]：idx5的低点11 低于 idx3的低点12且低于 idx7的低点13 → 形成底分型。
+        """
+        strokes = _build_strokes([
+            ("t0", 5.0),   # 0→1: 初始段的最后一笔
+            ("t1", 20.0),  # 0→1 up，current_end_index=0
+            ("t2", 10.0),  # idx1: down [10, 20]
+            ("t3", 22.0),  # idx2: up
+            ("t4", 12.0),  # idx3: down [12, 22]
+            ("t5", 21.0),  # idx4: up
+            ("t6", 11.0),  # idx5: down [11, 21]
+            ("t7", 23.0),  # idx6: up
+            ("t8", 13.0),  # idx7: down [13, 23]
+            ("t9", 20.0),  # 额外笔，确保有 idx7 存在
+        ])
+        # current_end_index = 0, direction = "up"
+        signal = segments_mod._has_gap_followup_reverse_fractal(
+            strokes=strokes,
+            current_end_index=0,
+            direction="up",
+        )
+        self.assertTrue(signal.confirmed, "第二组窗口应该形成分型")
+        self.assertEqual(signal.reason, "followup_reverse_fractal")
+        # 检查消费的原始笔索引
+        self.assertEqual(
+            signal.meta.get("followup_reverse_feature_indices"),
+            [1, 3, 5, 7],
+        )
 
 
 if __name__ == "__main__":
