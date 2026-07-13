@@ -76,8 +76,17 @@ def fetch_rows_for_timeframes(
     end_date: date,
     security_type: str | None = None,
 ) -> Dict[str, List[Dict[str, object]]]:
+    """获取多时间级别的K线数据，并自动对齐到共同的时间范围。
+    
+    腾讯财经API对不同级别K线保留的历史数据长度不同（如5分钟仅保留约6个月），
+    此函数会自动截取所有级别的交集范围，确保缠论多级别递归的基础数据对齐。
+    """
     rows_by_timeframe: Dict[str, List[Dict[str, object]]] = {}
     seen: set[str] = set()
+    issues_by_timeframe: Dict[str, List[object]] = {}
+
+    # 第一轮：获取所有数据并记录实际数据范围
+    timeframe_starts = {}
     for timeframe in timeframes:
         if timeframe in seen:
             continue
@@ -92,6 +101,38 @@ def fetch_rows_for_timeframes(
         )
         if rows:
             rows_by_timeframe[timeframe] = rows
+            # 记录该级别实际最早数据日期
+            first_date = rows[0]["date"]
+            # 处理分钟级别的时间戳格式
+            if len(first_date) > 10:
+                first_date = first_date[:10]
+            timeframe_starts[timeframe] = date.fromisoformat(first_date)
+
+    # 第二轮：对齐时间范围 - 所有级别都从最晚的起始日期开始（取交集）
+    if timeframe_starts:
+        common_start = max(timeframe_starts.values())
+        for timeframe in rows_by_timeframe:
+            rows = rows_by_timeframe[timeframe]
+            # 截取到共同的起始日期
+            filtered_rows = []
+            for row in rows:
+                row_date = row["date"]
+                if len(row_date) > 10:
+                    row_date = row_date[:10]
+                if date.fromisoformat(row_date) >= common_start:
+                    filtered_rows.append(row)
+            rows_by_timeframe[timeframe] = filtered_rows
+
+            # 如果起始日期被推后了，添加警告
+            if timeframe_starts[timeframe] < common_start:
+                if timeframe not in issues_by_timeframe:
+                    issues_by_timeframe[timeframe] = []
+                issues_by_timeframe[timeframe].append({
+                    "level": "warning",
+                    "reason_code": "timeframe_aligned",
+                    "message": f"为确保多级别数据对齐，{timeframe}数据已从 {common_start} 开始（原数据从 {timeframe_starts[timeframe]} 开始）",
+                })
+
     return rows_by_timeframe
 
 

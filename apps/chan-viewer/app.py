@@ -230,7 +230,7 @@ def main() -> None:
         _default_off = {"segments", "fractals", "stroke_pivot_zones", "segment_pivot_zones"}
         visibility = {layer: st.checkbox(_layer_label(layer, language), value=(layer not in _default_off)) for layer in LAYER_KEYS}
         st.markdown(_sidebar_section_title(_t(language, "display_header")), unsafe_allow_html=True)
-        unified_hover = st.checkbox(_t(language, "crosshair_link_label"), value=True)
+        unified_hover     = st.checkbox(_t(language, "crosshair_link_label"), value=True)
         run = st.button(_t(language, "run_button"), type="primary")
         st.selectbox(
             _t(language, "language_label"),
