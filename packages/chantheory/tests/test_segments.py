@@ -1046,33 +1046,39 @@ class GapFractalConfirmationTimingTests(unittest.TestCase):
 
     def test_primary_completion_idx_uses_max_f3_orig(self):
         """测试 primary_completion_idx 使用 max(f3_orig)：新高位于 f3_idx 与 max(f3_orig) 之间，应返回 new_peak_found。"""
-        # 构造一个无缺口路径的场景，其中特征序列经过包含合并：
-        # - 主段结束于 idx3
-        # - f1: idx4 (down, stroke index 4)
-        # - f2: idx6 (up, stroke index 6) - 与 f3 有包含关系
-        # - f3: idx8 (down, stroke index 8) - 包含 f2，合并后 f3_orig = [6, 8]
-        #   此时 processed_features 中第三个元素的 f3_idx = 6, max(f3_orig) = 8
-        # - 新高笔在 idx7（注意 idx7 是奇数，会被 first_new_peak_idx 检测到）
-        #   idx7 恰好位于 f3_idx=6 和 max(f3_orig)=8 之间！
-        strokes = _build_strokes([
-            ("t0", 10.0), ("t1", 12.0), ("t2", 11.0), ("t3", 18.0),
-            # 主段到 idx3 结束
-            ("t4", 14.0), ("t5", 11.0),  # f1: down, idx4-5 (stroke index 4)
-            ("t6", 15.0), ("t7", 19.0),  # f2: up, idx6-7 (stroke index 6) + 新高！idx7
-            ("t8", 16.0), ("t9", 9.0),   # f3: down, idx8-9 (stroke index 8) - 包含 f2
-        ])
+        def _stroke(idx: int, direction: str, start_price: float, end_price: float) -> Stroke:
+            return Stroke(
+                id=f"stroke_{idx + 1:03d}",
+                direction=direction,
+                start_fractal_id=f"fractal_{idx:03d}",
+                end_fractal_id=f"fractal_{idx + 1:03d}",
+                start_timestamp=f"t{idx}",
+                end_timestamp=f"t{idx + 1}",
+                start_price=float(start_price),
+                end_price=float(end_price),
+                confirmed=True,
+                meta={},
+            )
+
+        strokes = [
+            _stroke(0, "up", 0, 8),
+            _stroke(1, "down", 10, 0),   # f1 idx1 = [0, 10]
+            _stroke(2, "up", 0, 10),     # current_end_index = 2, direction = "up"
+            _stroke(3, "down", 20, 5),   # f2 idx3 = [5, 20]
+            _stroke(4, "up", 0, 10),     # 不应触发新高
+            _stroke(5, "down", 15, 2),   # f3 idx5 = [2, 15]
+            _stroke(6, "up", 0, 11),     # 新高 idx6，满足 5 < 6 < 7
+            _stroke(7, "down", 14, 3),   # idx7 = [3, 14] 被 idx5 包含 → f3_orig = [5, 7]
+        ]
         from chantheory.segments import _opposite_segment_break_signal
         signal = _opposite_segment_break_signal(
             strokes=strokes,
-            current_end_index=3,  # 主段结束于 idx3
+            current_end_index=2,
             direction="up",
         )
-        # 关键验证：因为新高 idx7 位于 f3_idx=6 和 max(f3_orig)=8 之间，
-        # 只有当代码正确使用 max(f3_orig)=8 作为 confirmation_completion_idx 时，
-        # 才会返回 new_peak_found（因为 7 < 8）
         self.assertFalse(signal.confirmed)
         self.assertEqual(signal.reason, "new_peak_found")
-        self.assertEqual(signal.meta.get("new_peak_index"), 7)
+        self.assertEqual(signal.meta.get("new_peak_index"), 6)
 
     def test_f3_orig_with_multiple_indices_uses_max_as_completion(self):
         """f3_orig 包含多个原始索引，新高在它们之前，应返回 new_peak_found。"""
