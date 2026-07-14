@@ -41,7 +41,13 @@ from presenters.signal_tables import (  # noqa: E402
     _format_signal_timeline_event,
 )
 from services.analysis_service import run_analysis  # noqa: E402
-from services.market_service import fetch_rows, fetch_stock_name, probe_market_suggestions, search_securities  # noqa: E402
+from services.market_service import (  # noqa: E402
+    fetch_rows,
+    fetch_rows_for_timeframes_result,
+    fetch_stock_name,
+    probe_market_suggestions,
+    search_securities,
+)
 from services.signal_payloads import (  # noqa: E402
     _build_current_bar_signal_payload,
     _build_debug_payload,
@@ -85,6 +91,7 @@ MIN_Y_ZOOM = 0.45
 MAX_Y_ZOOM = 3.0
 
 _fetch_rows = fetch_rows
+_fetch_rows_for_timeframes_result = fetch_rows_for_timeframes_result
 _probe_market_suggestions = probe_market_suggestions
 _search_securities = search_securities
 _build_figure = build_figure
@@ -181,6 +188,8 @@ def main() -> None:
         st.session_state.language = "zh"
     if "chan_selected_timeframe" not in st.session_state:
         st.session_state.chan_selected_timeframe = DEFAULT_TIMEFRAME
+    if "chan_alignment_timeframes" not in st.session_state:
+        st.session_state.chan_alignment_timeframes = []
     language = str(st.session_state.language)
 
     st.set_page_config(page_title=_t("zh", "page_title"), layout="wide")
@@ -222,6 +231,12 @@ def main() -> None:
             min_value=MIN_STOCK_DATE,
             max_value=DEFAULT_END,
         )
+        enable_alignment = st.checkbox(_t(language, "enable_alignment_label"), value=False)
+        alignment_timeframes = st.multiselect(
+            _t(language, "alignment_timeframes_label"),
+            list(TIMEFRAME_OPTIONS),
+            key="chan_alignment_timeframes",
+        )
         _default_max_bi = get_default_max_bi_num(st.session_state.chan_selected_timeframe)
         max_bi_num = st.number_input(_t(language, "max_bi_num_label"), min_value=10, max_value=1000, value=_default_max_bi, step=10)
         min_bars = st.number_input(_t(language, "min_bars_label"), min_value=10, max_value=500, value=60, step=10)
@@ -230,7 +245,7 @@ def main() -> None:
         _default_off = {"segments", "fractals", "stroke_pivot_zones", "segment_pivot_zones"}
         visibility = {layer: st.checkbox(_layer_label(layer, language), value=(layer not in _default_off)) for layer in LAYER_KEYS}
         st.markdown(_sidebar_section_title(_t(language, "display_header")), unsafe_allow_html=True)
-        unified_hover = st.checkbox(_t(language, "crosshair_link_label"), value=True)
+        unified_hover     = st.checkbox(_t(language, "crosshair_link_label"), value=True)
         run = st.button(_t(language, "run_button"), type="primary")
         st.selectbox(
             _t(language, "language_label"),
@@ -240,6 +255,7 @@ def main() -> None:
         )
 
     timeframe = st.session_state.chan_selected_timeframe
+    normalized_alignment_timeframes = sorted({str(tf) for tf in alignment_timeframes if tf and tf != timeframe})
     analysis_inputs = {
         "symbol": symbol.strip(),
         "market": market,
@@ -250,6 +266,8 @@ def main() -> None:
         "max_bi_num": int(max_bi_num),
         "min_bars": int(min_bars),
         "strict_validation": bool(strict_validation),
+        "enable_alignment": bool(enable_alignment),
+        "alignment_timeframes": normalized_alignment_timeframes,
     }
     cached_inputs = st.session_state.get("chan_chart_inputs")
     should_analyze = bool(run) or (
@@ -260,20 +278,38 @@ def main() -> None:
     )
 
     if should_analyze:
-        rows = _fetch_rows(
-            symbol=symbol.strip(),
-            market=market,
-            timeframe=timeframe,
-            start_date=start_date,
-            end_date=end_date,
-            security_type=security_type,
-        )
+        issues_by_timeframe = {}
+        selected_timeframes = [timeframe]
+        if enable_alignment:
+            selected_timeframes.extend(normalized_alignment_timeframes)
+        if enable_alignment and len(selected_timeframes) > 1:
+            aligned = _fetch_rows_for_timeframes_result(
+                symbol=symbol.strip(),
+                market=market,
+                timeframes=selected_timeframes,
+                start_date=start_date,
+                end_date=end_date,
+                security_type=security_type,
+            )
+            rows = aligned.rows_by_timeframe.get(timeframe, [])
+            issues_by_timeframe = dict(aligned.issues_by_timeframe)
+        else:
+            rows = _fetch_rows(
+                symbol=symbol.strip(),
+                market=market,
+                timeframe=timeframe,
+                start_date=start_date,
+                end_date=end_date,
+                security_type=security_type,
+            )
+        st.session_state.chan_chart_issues_by_timeframe = issues_by_timeframe
         if not rows:
             st.session_state.pop("chan_chart_rows", None)
             st.session_state.pop("chan_chart_result", None)
             st.session_state.pop("chan_chart_timeframe", None)
             st.session_state.pop("chan_chart_inputs", None)
             st.session_state.pop("chan_chart_stock_name", None)
+            st.session_state.pop("chan_chart_issues_by_timeframe", None)
             st.markdown(_page_title(_t(language, "page_title")), unsafe_allow_html=True)
             suggestions = _probe_market_suggestions(
                 symbol=symbol.strip(),
@@ -412,10 +448,23 @@ def main() -> None:
             st.write(f"- {line}")
 
     with tab_warn:
+        issues_by_timeframe = st.session_state.get("chan_chart_issues_by_timeframe", {}) or {}
+        has_alignment_issues = any((issues or []) for issues in issues_by_timeframe.values())
+        for tf, issues in issues_by_timeframe.items():
+            for issue in issues or []:
+                level = str(issue.get("level", "")).upper()
+                reason_code = str(issue.get("reason_code", ""))
+                message = str(issue.get("message", ""))
+                if level and reason_code:
+                    st.write(f"- [{tf}] [{level}] {reason_code}: {message}")
+                elif reason_code:
+                    st.write(f"- [{tf}] {reason_code}: {message}")
+                else:
+                    st.write(f"- [{tf}] {message}")
         if result.warnings:
             for item in result.warnings:
                 st.write(f"- [{_format_severity(item.severity, language)}] {item.warning_code}: {_format_warning_message(item, language)}")
-        else:
+        elif not has_alignment_issues:
             st.write(_t(language, "no_warnings"))
 
     with tab_timeline:

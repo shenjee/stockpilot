@@ -18,6 +18,7 @@ from chantheory.adapters import (
     _map_strokes,
     _normalize_signals_config,
     analyze_multi_timeframe_tracker_klines,
+    analyze_normalized,
     analyze_tracker_klines,
 )
 from chantheory.engine import load_czsc
@@ -42,6 +43,90 @@ class GetDefaultMaxBiNumTests(unittest.TestCase):
 
     def test_none_timeframe_keeps_standard_default(self):
         self.assertEqual(get_default_max_bi_num(None), 50)
+
+
+class AnalyzeNormalizedMaxBiNumTests(unittest.TestCase):
+    """验证 analyze_normalized 对不同级别使用正确的 max_bi_num。
+
+    通过 mock _run_engine 验证参数确实传递给了引擎，而非仅检查结果字典。
+    """
+
+    def _make_minimal_normalized(self, timeframe: str):
+        from chantheory.schema import NormalizationResult, NormalizedBar
+        bars = []
+        # 使用合法的连续日期，避免引擎解析失败
+        from datetime import date, timedelta
+        base = date(2025, 1, 1)
+        for i in range(100):
+            d = base + timedelta(days=i)
+            bars.append(NormalizedBar(
+                symbol="TEST",
+                timeframe=timeframe,
+                timestamp=d.isoformat(),
+                open=10.0 + i * 0.1,
+                high=11.0 + i * 0.1,
+                low=9.5 + i * 0.1,
+                close=10.5 + i * 0.1,
+                volume=1000,
+                amount=0,
+                source="test",
+                bar_index=i,
+            ))
+        return NormalizationResult(
+            symbol="TEST",
+            timeframe=timeframe,
+            source="test",
+            bars=bars,
+            input_fields=("date", "open", "close", "high", "low", "volume"),
+            gaps=[],
+            warnings=[],
+        )
+
+    def _make_mock_analyzer(self):
+        return SimpleNamespace(
+            fx_list=[],
+            ubi_fxs=[],
+            finished_bis=[],
+            bi_list=[],
+            last_bi_extend=False,
+        )
+
+    def test_minute_timeframe_uses_500(self):
+        normalized = self._make_minimal_normalized("5m")
+        with patch("chantheory.adapters._run_engine") as mock_run:
+            mock_run.return_value = (self._make_mock_analyzer(), [])
+            result = analyze_normalized(normalized)
+            # 验证参数确实传递给了引擎
+            call_kwargs = mock_run.call_args.kwargs
+            self.assertEqual(call_kwargs["parameters"]["max_bi_num"], 500,
+                             "5m 级别应向引擎传递 max_bi_num=500")
+            # 验证引擎探针成功
+            self.assertEqual(result.meta["engine_probe"]["status"], "ok",
+                             "mock 引擎应正常执行，不应降级")
+            # 验证结果参数字典一致
+            self.assertEqual(result.parameters["max_bi_num"], 500)
+
+    def test_day_timeframe_uses_50(self):
+        normalized = self._make_minimal_normalized("day")
+        with patch("chantheory.adapters._run_engine") as mock_run:
+            mock_run.return_value = (self._make_mock_analyzer(), [])
+            result = analyze_normalized(normalized)
+            call_kwargs = mock_run.call_args.kwargs
+            self.assertEqual(call_kwargs["parameters"]["max_bi_num"], 50,
+                             "day 级别应向引擎传递 max_bi_num=50")
+            self.assertEqual(result.meta["engine_probe"]["status"], "ok")
+            self.assertEqual(result.parameters["max_bi_num"], 50)
+
+    def test_explicit_parameter_overrides_default(self):
+        normalized = self._make_minimal_normalized("5m")
+        with patch("chantheory.adapters._run_engine") as mock_run:
+            mock_run.return_value = (self._make_mock_analyzer(), [])
+            result = analyze_normalized(normalized, parameters={"max_bi_num": 200})
+            call_kwargs = mock_run.call_args.kwargs
+            self.assertEqual(call_kwargs["parameters"]["max_bi_num"], 200,
+                             "显式参数应覆盖默认值")
+            self.assertEqual(result.meta["engine_probe"]["status"], "ok")
+            self.assertEqual(result.parameters["max_bi_num"], 200)
 
 
 def _stroke(

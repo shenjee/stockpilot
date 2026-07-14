@@ -1,4 +1,11 @@
-"""Shared market data providers for StockPilot."""
+"""Shared market data providers for StockPilot.
+
+腾讯财经API数据限制（2026年7月验证）：
+- 5分钟K线: 仅保留最近约6个月数据
+- 30分钟K线: 仅保留最近约8个月数据
+- 日线K线: 保留最近约2年数据
+- 更早的历史数据已被腾讯API删除，无法获取
+"""
 
 import json
 import logging
