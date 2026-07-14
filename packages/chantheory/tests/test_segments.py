@@ -1044,6 +1044,26 @@ class GapFractalConfirmationTimingTests(unittest.TestCase):
         self.assertEqual(signal.reason, "new_peak_found")
         self.assertEqual(signal.meta.get("new_peak_index"), 8)
 
+    def test_primary_completion_idx_uses_max_f3_orig(self):
+        """测试 primary_completion_idx 使用 max(f3_orig)：新高位于 f3_idx 与 max(f3_orig) 之间，应返回 new_peak_found。"""
+        # 构造 strokes，使得特征序列经过包含合并后，f3_orig 包含多个索引
+        # 新高位于 primary_completion_idx 之前，应返回 new_peak_found
+        strokes = _build_strokes([
+            ("t0", 10.0), ("t1", 12.0), ("t2", 11.0), ("t3", 15.0),
+            ("t4", 13.0), ("t5", 20.0), ("t6", 16.0), ("t7", 19.0), 
+            ("t8", 17.0), ("t9", 21.0),  # idx 8:down, idx 9:up 新高
+            ("t10", 18.0), ("t11", 19.0), ("t12", 17.0), 
+        ])
+        from chantheory.segments import _opposite_segment_break_signal
+        signal = _opposite_segment_break_signal(
+            strokes=strokes,
+            current_end_index=4,
+            direction="up",
+        )
+        self.assertFalse(signal.confirmed)
+        self.assertEqual(signal.reason, "new_peak_found")
+        self.assertEqual(signal.meta.get("new_peak_index"), 8)
+
     def test_f3_orig_with_multiple_indices_uses_max_as_completion(self):
         """f3_orig 包含多个原始索引，新高在它们之前，应返回 new_peak_found。"""
         # 使用包含关系的特征序列，让 f3_orig 包含多个索引

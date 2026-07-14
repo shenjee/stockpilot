@@ -104,6 +104,41 @@ class MarketServiceTests(unittest.TestCase):
         self.assertEqual(list(rows_by_timeframe.keys()), ["day", "month"])
         self.assertEqual([call["timeframe"] for call in fake_service.calls], ["day", "week", "month"])
 
+    def test_fetch_rows_for_timeframes_result_returns_issues(self):
+        fake_service = FakeKLineDataService()
+
+        def fake_get_klines(**kwargs):
+            fake_service.calls.append(kwargs)
+            if kwargs["timeframe"] == "5m":
+                return [
+                    {"date": "2026-01-05 09:35:00", "open": 10, "close": 11, "high": 11.2, "low": 9.8, "volume": 100},
+                    {"date": "2026-07-20 15:00:00", "open": 10, "close": 11, "high": 11.2, "low": 9.8, "volume": 100},
+                ]
+            if kwargs["timeframe"] == "30m":
+                return [
+                    {"date": "2025-10-21 10:00:00", "open": 10, "close": 11, "high": 11.2, "low": 9.8, "volume": 100},
+                    {"date": "2026-07-14 10:30:00", "open": 10, "close": 11, "high": 11.2, "low": 9.8, "volume": 100},
+                ]
+            return []
+
+        fake_service.get_klines = fake_get_klines
+        with patch.object(market_service, "_get_kline_data_service", return_value=fake_service):
+            result = market_service.fetch_rows_for_timeframes_result(
+                symbol="000001",
+                market="sz",
+                timeframes=["5m", "30m"],
+                start_date=date(2026, 1, 1),
+                end_date=date(2026, 6, 30),
+            )
+
+        self.assertEqual(set(result.rows_by_timeframe.keys()), {"5m", "30m"})
+        self.assertIn("5m", result.issues_by_timeframe)
+        self.assertIn("30m", result.issues_by_timeframe)
+        self.assertEqual(len(result.issues_by_timeframe["5m"]), 1)
+        self.assertEqual(len(result.issues_by_timeframe["30m"]), 1)
+        self.assertIn("timeframe_aligned", result.issues_by_timeframe["5m"][0]["reason_code"])
+        self.assertIn("timeframe_aligned", result.issues_by_timeframe["30m"][0]["reason_code"])
+
     def test_fetch_stock_name_returns_name_from_realtime(self):
         with patch.object(
             market_service.TencentStockDataProvider,

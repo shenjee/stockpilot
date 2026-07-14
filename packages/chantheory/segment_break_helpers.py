@@ -336,12 +336,6 @@ def _opposite_segment_break_signal(
                 {"new_peak_index": first_new_peak_idx},
             )
         return first_fractal_signal
-    if first_new_peak_idx is not None:
-        return feature_break_signal_factory(
-            False,
-            "new_peak_found",
-            {"new_peak_index": first_new_peak_idx},
-        )
     if first_fractal_signal is not None:
         return first_fractal_signal
 
