@@ -131,6 +131,10 @@ def _has_gap_followup_reverse_fractal(
                     ranges=window_ranges,
                 )
                 if confirmed:
+                    # 获取窗口第三个元素的所有原始索引，取最大值作为完成位置
+                    window = processed_features[window_start : window_start + 3]
+                    right_orig_indices = window[2][2]
+                    completion_idx = max(right_orig_indices)
                     return feature_break_signal_factory(
                         confirmed,
                         "followup_reverse_fractal",
@@ -138,6 +142,7 @@ def _has_gap_followup_reverse_fractal(
                             "followup_reverse_feature_indices": consumed_indices,
                             "followup_reverse_fractal": confirmed,
                             "followup_reverse_inclusion_applied": len(processed_features) < len(raw_features),
+                            "followup_reverse_completion_idx": completion_idx,
                         },
                     )
         
@@ -238,7 +243,7 @@ def _opposite_segment_break_signal(
             first_new_peak_idx = last_idx
 
     first_fractal_signal = None
-    first_fractal_completion_idx = None
+    confirmation_completion_idx = None
 
     for index in range(len(processed_features) - 2):
         f1_idx, f1_r, f1_orig = processed_features[index]
@@ -270,8 +275,9 @@ def _opposite_segment_break_signal(
                 "break_fractal": True,
                 "left_contained_by_middle": range_contains(f2_r, f1_r),
             }
-            first_fractal_completion_idx = f3_idx
+            primary_completion_idx = max(f3_orig)
             if not has_gap:
+                confirmation_completion_idx = primary_completion_idx
                 first_fractal_signal = feature_break_signal_factory(
                     True,
                     "no_gap_feature_fractal",
@@ -288,6 +294,7 @@ def _opposite_segment_break_signal(
                     direction=direction,
                 )
                 if followup.confirmed:
+                    confirmation_completion_idx = followup.meta.get("followup_reverse_completion_idx")
                     first_fractal_signal = feature_break_signal_factory(
                         True,
                         "gap_feature_fractal_with_followup_reverse_fractal",
@@ -299,6 +306,8 @@ def _opposite_segment_break_signal(
                         },
                     )
                 else:
+                    # 缺口分型仍在等待，没有最终确认完成位置
+                    confirmation_completion_idx = None
                     first_fractal_signal = feature_break_signal_factory(
                         False,
                         "gap_feature_fractal_waiting_for_followup_reverse_fractal",
@@ -312,8 +321,15 @@ def _opposite_segment_break_signal(
                     )
             break
 
-    if first_new_peak_idx is not None and first_fractal_completion_idx is not None:
-        if first_new_peak_idx < first_fractal_completion_idx:
+    if first_new_peak_idx is not None:
+        if confirmation_completion_idx is None:
+            # 缺口分型仍在等待确认，期间出现新高，必须延伸
+            return feature_break_signal_factory(
+                False,
+                "new_peak_found",
+                {"new_peak_index": first_new_peak_idx},
+            )
+        if first_new_peak_idx < confirmation_completion_idx:
             return feature_break_signal_factory(
                 False,
                 "new_peak_found",

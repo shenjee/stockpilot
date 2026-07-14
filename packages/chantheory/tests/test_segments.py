@@ -1021,5 +1021,49 @@ class GapFollowupInclusionCompensationTests(unittest.TestCase):
         )
 
 
+class GapFractalConfirmationTimingTests(unittest.TestCase):
+    """测试缺口分型确认时序的回归测试。"""
+
+    def test_new_peak_before_followup_confirmation_returns_extension(self):
+        """主分型在 idx5，新高在 idx8，后续确认在 idx10 → 应返回 new_peak_found(8)。"""
+        # 基于 test_gap_feature_fractal_confirmed_after_followup，在 followup 前插入新高
+        strokes = _build_strokes([
+            ("t0", 10.0), ("t1", 12.0), ("t2", 11.0), ("t3", 15.0),
+            ("t4", 13.0), ("t5", 20.0), ("t6", 16.0), ("t7", 17.0),
+            ("t8", 14.0),  # 这是 followup 的开始，先停下来
+            ("t9", 101.0),  # 新高峰的笔 idx8 (end index)
+            ("t10", 18.0), ("t11", 15.5),  # 继续 followup 完成分型
+        ])
+        from chantheory.segments import _opposite_segment_break_signal
+        signal = _opposite_segment_break_signal(
+            strokes=strokes,
+            current_end_index=4,
+            direction="up",
+        )
+        self.assertFalse(signal.confirmed)
+        self.assertEqual(signal.reason, "new_peak_found")
+        self.assertEqual(signal.meta.get("new_peak_index"), 8)
+
+    def test_f3_orig_with_multiple_indices_uses_max_as_completion(self):
+        """f3_orig 包含多个原始索引，新高在它们之前，应返回 new_peak_found。"""
+        # 使用包含关系的特征序列，让 f3_orig 包含多个索引
+        strokes = _build_strokes([
+            ("t0", 10.0), ("t1", 12.0), ("t2", 11.0), ("t3", 15.0),
+            ("t4", 13.0), ("t5", 20.0), ("t6", 16.0), ("t7", 19.0),  # f1
+            ("t8", 15.0),  # 向下笔，补充后 f2 (包含关系
+            ("t9", 101.0),  # 新高！
+            ("t10", 14.0), ("t11", 17.0), ("t12", 15.5),  # f3
+        ])
+        from chantheory.segments import _opposite_segment_break_signal
+        signal = _opposite_segment_break_signal(
+            strokes=strokes,
+            current_end_index=4,
+            direction="up",
+        )
+        self.assertFalse(signal.confirmed)
+        self.assertEqual(signal.reason, "new_peak_found")
+        self.assertEqual(signal.meta.get("new_peak_index"), 8)
+
+
 if __name__ == "__main__":
     unittest.main()
