@@ -90,6 +90,10 @@ Y_ZOOM_STEP = 1.2
 MIN_Y_ZOOM = 0.45
 MAX_Y_ZOOM = 3.0
 
+# 价格显示精度：ETF 三位小数，股票/指数两位
+def _price_precision(security_type: str | None) -> int:
+    return 3 if security_type == "etf" else 2
+
 _fetch_rows = fetch_rows
 _fetch_rows_for_timeframes_result = fetch_rows_for_timeframes_result
 _probe_market_suggestions = probe_market_suggestions
@@ -395,6 +399,7 @@ def main() -> None:
         "yZoomStep": Y_ZOOM_STEP,
         "minYZoom": MIN_Y_ZOOM,
         "maxYZoom": MAX_Y_ZOOM,
+        "pricePrecision": _price_precision(security_type),
         "text": {
             "xAxisLabel": _t(language, "x_axis_label"),
             "yAxisLabel": _t(language, "y_axis_label"),

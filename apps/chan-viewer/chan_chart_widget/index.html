@@ -25,6 +25,9 @@
     .chan-overlay { position: absolute; z-index: 20; display: flex; align-items: center; gap: 10px; pointer-events: none; }
     .chan-overlay--top { top: 12px; left: 16px; right: 16px; justify-content: flex-start; }
 
+    .chan-hline { position: absolute; z-index: 15; pointer-events: none; display: none; height: 0; border-top: 1px dashed #2563EB; opacity: 0.75; }
+    .chan-price-label { position: absolute; z-index: 16; pointer-events: none; display: none; background: #2563EB; color: #ffffff; font-size: 11px; font-weight: 700; padding: 1px 4px; border-radius: 3px; white-space: nowrap; line-height: 1.4; }
+
     .chan-bottom-bar {
       display: flex; justify-content: space-between; align-items: center;
       padding: 8px 16px; background: #ffffff;
@@ -74,6 +77,8 @@
       <div class="chan-overlay chan-overlay--top" id="overlay-top"></div>
       <button class="chan-help-button" id="help-button" title="">?</button>
       <div class="chan-help-modal" id="help-modal" style="display:none;"></div>
+      <div class="chan-hline" id="chan-hline"></div>
+      <div class="chan-price-label" id="chan-price-label"></div>
     </div>
     <div class="chan-bottom-bar">
       <div class="chan-bottom-bar__left" id="overlay-bottom"></div>
@@ -100,6 +105,8 @@
     let currentChartKey = null;
     const chartDiv = document.getElementById("chan-plotly-chart");
     const container = document.getElementById("fullscreen-container");
+    const hlineEl = document.getElementById("chan-hline");
+    const priceLabelEl = document.getElementById("chan-price-label");
 
     const renderCaption = (template, values) => template.replace(/\{(\w+)\}/g, (_, key) => values[key] ?? "");
 
@@ -352,11 +359,15 @@
       }
 
       const layout = payload.figure.layout;
-      layout.margin = { l: 20, r: 20, t: 60, b: 40 };
+      layout.margin = { l: 48, r: 6, t: 60, b: 40 };
       if (layout.xaxis) {
         layout.xaxis.automargin = true;
       }
       layout.dragmode = currentState.dragmode;
+
+      // 隐藏价格指示器，避免重绘期间残留
+      hlineEl.style.display = 'none';
+      priceLabelEl.style.display = 'none';
 
       Plotly.newPlot(chartDiv, payload.figure.data, layout, {
         responsive: true,
@@ -498,6 +509,74 @@
           Plotly.Plots.resize(chartDiv);
         }
       }, 50);
+    });
+
+    // --- 价格指示器：主K线区水平虚线 + Y轴顶部固定价格标签 ---
+    let priceIndicatorRaf = null;
+
+    function getMainPlotBounds() {
+      const fl = chartDiv._fullLayout;
+      if (!fl || !fl.yaxis || !fl.xaxis) return null;
+      const ya = fl.yaxis;
+      const xa = fl.xaxis;
+      if (typeof ya._offset !== 'number' || typeof ya._length !== 'number' ||
+          typeof xa._offset !== 'number' || typeof xa._length !== 'number') return null;
+      if (!ya.range || !isFinite(ya.range[0]) || !isFinite(ya.range[1]) || ya._length <= 0) return null;
+      return {
+        left: xa._offset,
+        width: xa._length,
+        top: ya._offset,
+        height: ya._length,
+        bottom: ya._offset + ya._length,
+        right: xa._offset + xa._length,
+        yMin: ya.range[0],
+        yMax: ya.range[1]
+      };
+    }
+
+    function updatePriceIndicator(clientX, clientY, isPointerDown) {
+      if (priceIndicatorRaf) cancelAnimationFrame(priceIndicatorRaf);
+      priceIndicatorRaf = requestAnimationFrame(() => {
+        priceIndicatorRaf = null;
+        const rect = chartDiv.getBoundingClientRect();
+        const px = clientX - rect.left;
+        const py = clientY - rect.top;
+        const b = getMainPlotBounds();
+        if (!b || isPointerDown) {
+          hlineEl.style.display = 'none';
+          priceLabelEl.style.display = 'none';
+          return;
+        }
+        if (px >= b.left && px <= b.right && py >= b.top && py <= b.bottom) {
+          const fraction = (b.bottom - py) / b.height;
+          const price = b.yMin + fraction * (b.yMax - b.yMin);
+          hlineEl.style.display = 'block';
+          hlineEl.style.left = b.left + 'px';
+          hlineEl.style.width = b.width + 'px';
+          hlineEl.style.top = py + 'px';
+          priceLabelEl.style.display = 'block';
+          priceLabelEl.style.left = (b.left - 3) + 'px';
+          priceLabelEl.style.transform = 'translateX(-100%)';
+          // 标签跟随鼠标 Y 坐标，在主图上下边缘钳制避免裁切
+          const labelH = priceLabelEl.offsetHeight || 16;
+          const clampedY = Math.max(b.top, Math.min(py - labelH / 2, b.bottom - labelH));
+          priceLabelEl.style.top = clampedY + 'px';
+          priceLabelEl.textContent = price.toFixed(currentPayload.pricePrecision || 2);
+        } else {
+          hlineEl.style.display = 'none';
+          priceLabelEl.style.display = 'none';
+        }
+      });
+    }
+
+    chartDiv.addEventListener('pointermove', (e) => {
+      updatePriceIndicator(e.clientX, e.clientY, e.buttons > 0);
+    });
+    chartDiv.addEventListener('pointerleave', () => {
+      if (priceIndicatorRaf) cancelAnimationFrame(priceIndicatorRaf);
+      priceIndicatorRaf = null;
+      hlineEl.style.display = 'none';
+      priceLabelEl.style.display = 'none';
     });
 
     sendMessageToStreamlitClient("streamlit:componentReady", {apiVersion: 1});
