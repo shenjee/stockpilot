@@ -84,7 +84,7 @@ def fetch_rows_for_timeframes_result(
     security_type: str | None = None,
 ) -> MultiTimeframeRowsResult:
     """获取多时间级别的K线数据，并自动对齐到共同的时间范围。
-    
+
     腾讯财经API对不同级别K线保留的历史数据长度不同（如5分钟仅保留约6个月），
     此函数会自动截取所有级别的交集范围，确保缠论多级别递归的基础数据对齐。
     """
@@ -107,18 +107,23 @@ def fetch_rows_for_timeframes_result(
             end_date=end_date,
             security_type=security_type,
         )
-        if rows:
-            rows_by_timeframe[timeframe] = rows
-            # 记录该级别实际最早数据日期
-            first_date = rows[0]["date"]
-            last_date = rows[-1]["date"]
-            # 处理分钟级别的时间戳格式
-            if len(first_date) > 10:
-                first_date = first_date[:10]
-            if len(last_date) > 10:
-                last_date = last_date[:10]
-            timeframe_starts[timeframe] = date.fromisoformat(first_date)
-            timeframe_ends[timeframe] = date.fromisoformat(last_date)
+        if not rows:
+            issues_by_timeframe.setdefault(timeframe, []).append({
+                "level": "warning",
+                "reason_code": "timeframe_no_data",
+                "message": f"{timeframe}在所选区间 {start_date} ~ {end_date} 无数据，无法参与多周期对齐",
+            })
+            continue
+
+        rows_by_timeframe[timeframe] = rows
+        first_date = rows[0]["date"]
+        last_date = rows[-1]["date"]
+        if len(first_date) > 10:
+            first_date = first_date[:10]
+        if len(last_date) > 10:
+            last_date = last_date[:10]
+        timeframe_starts[timeframe] = date.fromisoformat(first_date)
+        timeframe_ends[timeframe] = date.fromisoformat(last_date)
 
     # 第二轮：对齐时间范围 - 所有级别都从最晚的起始日期开始（取交集）
     common_start = None
@@ -126,7 +131,20 @@ def fetch_rows_for_timeframes_result(
     if timeframe_starts:
         common_start = max(timeframe_starts.values())
         common_end = min(timeframe_ends.values())
+        if common_start > common_end:
+            for timeframe in timeframe_starts:
+                issues_by_timeframe.setdefault(timeframe, []).append({
+                    "level": "warning",
+                    "reason_code": "timeframe_no_common_range",
+                    "message": f"多周期数据无共同区间：{timeframe}实际范围 {timeframe_starts[timeframe]} ~ {timeframe_ends[timeframe]} 与其他周期无交集（common_start={common_start}, common_end={common_end}），本次未执行对齐截取",
+                })
+            return MultiTimeframeRowsResult(
+                rows_by_timeframe=rows_by_timeframe,
+                issues_by_timeframe=issues_by_timeframe,
+            )
         for timeframe in rows_by_timeframe:
+            if timeframe not in timeframe_starts:
+                continue
             rows = rows_by_timeframe[timeframe]
             # 截取到共同的起始和结束日期
             filtered_rows = []

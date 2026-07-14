@@ -255,6 +255,7 @@ def main() -> None:
         )
 
     timeframe = st.session_state.chan_selected_timeframe
+    normalized_alignment_timeframes = sorted({str(tf) for tf in alignment_timeframes if tf and tf != timeframe})
     analysis_inputs = {
         "symbol": symbol.strip(),
         "market": market,
@@ -265,6 +266,8 @@ def main() -> None:
         "max_bi_num": int(max_bi_num),
         "min_bars": int(min_bars),
         "strict_validation": bool(strict_validation),
+        "enable_alignment": bool(enable_alignment),
+        "alignment_timeframes": normalized_alignment_timeframes,
     }
     cached_inputs = st.session_state.get("chan_chart_inputs")
     should_analyze = bool(run) or (
@@ -278,7 +281,7 @@ def main() -> None:
         issues_by_timeframe = {}
         selected_timeframes = [timeframe]
         if enable_alignment:
-            selected_timeframes.extend([tf for tf in alignment_timeframes if tf != timeframe])
+            selected_timeframes.extend(normalized_alignment_timeframes)
         if enable_alignment and len(selected_timeframes) > 1:
             aligned = _fetch_rows_for_timeframes_result(
                 symbol=symbol.strip(),
@@ -446,6 +449,7 @@ def main() -> None:
 
     with tab_warn:
         issues_by_timeframe = st.session_state.get("chan_chart_issues_by_timeframe", {}) or {}
+        has_alignment_issues = any((issues or []) for issues in issues_by_timeframe.values())
         for tf, issues in issues_by_timeframe.items():
             for issue in issues or []:
                 level = str(issue.get("level", "")).upper()
@@ -460,7 +464,7 @@ def main() -> None:
         if result.warnings:
             for item in result.warnings:
                 st.write(f"- [{_format_severity(item.severity, language)}] {item.warning_code}: {_format_warning_message(item, language)}")
-        else:
+        elif not has_alignment_issues:
             st.write(_t(language, "no_warnings"))
 
     with tab_timeline:

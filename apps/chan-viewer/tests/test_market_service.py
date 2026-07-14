@@ -139,6 +139,57 @@ class MarketServiceTests(unittest.TestCase):
         self.assertIn("timeframe_aligned", result.issues_by_timeframe["5m"][0]["reason_code"])
         self.assertIn("timeframe_aligned", result.issues_by_timeframe["30m"][0]["reason_code"])
 
+    def test_fetch_rows_for_timeframes_result_emits_timeframe_no_data_issue(self):
+        fake_service = FakeKLineDataService()
+
+        def fake_get_klines(**kwargs):
+            fake_service.calls.append(kwargs)
+            if kwargs["timeframe"] == "week":
+                return []
+            return [{"date": "2026-06-12", "open": 10, "close": 11, "high": 11.2, "low": 9.8, "volume": 100}]
+
+        fake_service.get_klines = fake_get_klines
+        with patch.object(market_service, "_get_kline_data_service", return_value=fake_service):
+            result = market_service.fetch_rows_for_timeframes_result(
+                symbol="000001",
+                market="sz",
+                timeframes=["day", "week"],
+                start_date=date(2026, 6, 1),
+                end_date=date(2026, 6, 12),
+            )
+
+        self.assertEqual(set(result.rows_by_timeframe.keys()), {"day"})
+        self.assertIn("week", result.issues_by_timeframe)
+        self.assertEqual(len(result.issues_by_timeframe["week"]), 1)
+        self.assertEqual(result.issues_by_timeframe["week"][0]["reason_code"], "timeframe_no_data")
+
+    def test_fetch_rows_for_timeframes_result_emits_timeframe_no_common_range_issue(self):
+        fake_service = FakeKLineDataService()
+
+        def fake_get_klines(**kwargs):
+            fake_service.calls.append(kwargs)
+            if kwargs["timeframe"] == "day":
+                return [{"date": "2026-01-05", "open": 10, "close": 11, "high": 11.2, "low": 9.8, "volume": 100}]
+            if kwargs["timeframe"] == "week":
+                return [{"date": "2026-02-01", "open": 10, "close": 11, "high": 11.2, "low": 9.8, "volume": 100}]
+            return []
+
+        fake_service.get_klines = fake_get_klines
+        with patch.object(market_service, "_get_kline_data_service", return_value=fake_service):
+            result = market_service.fetch_rows_for_timeframes_result(
+                symbol="000001",
+                market="sz",
+                timeframes=["day", "week"],
+                start_date=date(2026, 1, 1),
+                end_date=date(2026, 2, 10),
+            )
+
+        self.assertEqual(set(result.rows_by_timeframe.keys()), {"day", "week"})
+        self.assertIn("day", result.issues_by_timeframe)
+        self.assertIn("week", result.issues_by_timeframe)
+        self.assertEqual(result.issues_by_timeframe["day"][0]["reason_code"], "timeframe_no_common_range")
+        self.assertEqual(result.issues_by_timeframe["week"][0]["reason_code"], "timeframe_no_common_range")
+
     def test_fetch_stock_name_returns_name_from_realtime(self):
         with patch.object(
             market_service.TencentStockDataProvider,

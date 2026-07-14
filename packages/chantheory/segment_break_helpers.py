@@ -118,11 +118,11 @@ def _has_gap_followup_reverse_fractal(
 
         # 每次添加新元素后都进行包含处理
         processed_features = _process_feature_inclusion(raw_features, opposite_direction)
-        
+
         if len(processed_features) >= 3:
             ever_had_three_processed = True
             processed_ranges = [item[1] for item in processed_features]
-            
+
             # 对所有滑动窗口进行检查，寻找第一个有效分型
             for window_start in range(len(processed_features) - 2):
                 window_ranges = processed_ranges[window_start : window_start + 3]
@@ -145,7 +145,7 @@ def _has_gap_followup_reverse_fractal(
                             "followup_reverse_completion_idx": completion_idx,
                         },
                     )
-        
+
         idx += 2
 
     # 数据耗尽后判断返回值
