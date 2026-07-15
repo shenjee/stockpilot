@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT / "packages"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from charts.axis_policy import (  # noqa: E402
+    build_time_range_label,
     build_y_axis_range,
     is_minute_timeframe,
 )
@@ -108,6 +109,23 @@ _run_analysis = run_analysis
 
 def _ordered_rows(rows: Iterable[Dict[str, object]]) -> List[Dict[str, object]]:
     return sorted((dict(item) for item in rows), key=lambda item: str(item["date"]))
+
+
+def _enrich_rows_for_tooltip(
+    rows: Iterable[Dict[str, object]], timeframe: str
+) -> List[Dict[str, object]]:
+    """为前端角落 tooltip 预计算每根 K 线的时间区间标签。
+
+    前端按"激活 K 线"自绘固定角落 tooltip（issue #21），需要每根 bar 的
+    时间区间；这里复用 axis_policy 的 build_time_range_label 作为唯一来源，
+    避免在前端重复 30m/60m 起止映射表。返回新列表，不修改入参行。
+    """
+    enriched: List[Dict[str, object]] = []
+    for item in rows:
+        row = dict(item)
+        row["time_range"] = build_time_range_label(timeframe, str(item["date"]))
+        enriched.append(row)
+    return enriched
 
 
 # ---------------------------------------------------------------------------
@@ -249,7 +267,7 @@ def main() -> None:
         _default_off = {"segments", "fractals", "stroke_pivot_zones", "segment_pivot_zones"}
         visibility = {layer: st.checkbox(_layer_label(layer, language), value=(layer not in _default_off)) for layer in LAYER_KEYS}
         st.markdown(_sidebar_section_title(_t(language, "display_header")), unsafe_allow_html=True)
-        unified_hover     = st.checkbox(_t(language, "crosshair_link_label"), value=True)
+        show_candle_tip  = st.checkbox(_t(language, "show_candle_tip_label"), value=True)
         run = st.button(_t(language, "run_button"), type="primary")
         st.selectbox(
             _t(language, "language_label"),
@@ -373,12 +391,11 @@ def main() -> None:
         language=language,
         x_window=_x_window,
         y_zoom=1.0,
-        unified_hover=unified_hover,
     )
 
     payload = {
         "figure": json.loads(figure.to_json()),
-        "rows": chart_rows,
+        "rows": _enrich_rows_for_tooltip(chart_rows, timeframe),
         "chartKey": _build_chart_key(
             symbol=symbol.strip(),
             market=market,
@@ -400,6 +417,8 @@ def main() -> None:
         "minYZoom": MIN_Y_ZOOM,
         "maxYZoom": MAX_Y_ZOOM,
         "pricePrecision": _price_precision(security_type),
+        # "显示 K 线数据提示" 开关：ON=显示固定角落 tooltip+垂直联动线；OFF=全部隐藏（issue #21）
+        "showCandleTip": bool(show_candle_tip),
         "text": {
             "xAxisLabel": _t(language, "x_axis_label"),
             "yAxisLabel": _t(language, "y_axis_label"),

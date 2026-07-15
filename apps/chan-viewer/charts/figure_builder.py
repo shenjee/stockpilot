@@ -26,7 +26,6 @@ def build_figure(
     language: str,
     x_window: int | None = None,
     y_zoom: float = 1.0,
-    unified_hover: bool = True,
 ) -> go.Figure:
     ordered_rows = sorted(rows, key=lambda item: str(item["date"]))
     row_count = len(ordered_rows)
@@ -186,7 +185,9 @@ def build_figure(
     figure.update_layout(
         margin={"l": 20, "r": 24, "t": 30, "b": 78},
         dragmode="pan",
-        hovermode="x unified" if unified_hover else "closest",
+        # 原生 hover 关闭：tooltip 由前端按"激活 K 线"自绘并固定在角落，
+        # 避免跟随光标的原生 hoverlabel 遮挡结构（issue #21）。
+        hovermode=False,
         xaxis_rangeslider_visible=False,
         showlegend=False,
         template="plotly_white",
