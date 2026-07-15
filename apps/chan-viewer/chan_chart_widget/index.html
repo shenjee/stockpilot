@@ -659,7 +659,7 @@
       if (candleTipRaf) cancelAnimationFrame(candleTipRaf);
       candleTipRaf = requestAnimationFrame(() => {
         candleTipRaf = null;
-        if (!currentPayload || !currentPayload.linkedCrosshair || isPointerDown) {
+        if (!currentPayload || !currentPayload.showCandleTip || isPointerDown) {
           hideCandleTooltip();
           return;
         }

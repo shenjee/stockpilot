@@ -267,7 +267,7 @@ def main() -> None:
         _default_off = {"segments", "fractals", "stroke_pivot_zones", "segment_pivot_zones"}
         visibility = {layer: st.checkbox(_layer_label(layer, language), value=(layer not in _default_off)) for layer in LAYER_KEYS}
         st.markdown(_sidebar_section_title(_t(language, "display_header")), unsafe_allow_html=True)
-        unified_hover     = st.checkbox(_t(language, "show_candle_tip_label"), value=True)
+        show_candle_tip  = st.checkbox(_t(language, "show_candle_tip_label"), value=True)
         run = st.button(_t(language, "run_button"), type="primary")
         st.selectbox(
             _t(language, "language_label"),
@@ -417,8 +417,8 @@ def main() -> None:
         "minYZoom": MIN_Y_ZOOM,
         "maxYZoom": MAX_Y_ZOOM,
         "pricePrecision": _price_precision(security_type),
-        # "联动十字光标" 开关：ON=显示固定角落 tooltip+垂直联动线；OFF=全部隐藏（issue #21）
-        "linkedCrosshair": bool(unified_hover),
+        # "显示 K 线数据提示" 开关：ON=显示固定角落 tooltip+垂直联动线；OFF=全部隐藏（issue #21）
+        "showCandleTip": bool(show_candle_tip),
         "text": {
             "xAxisLabel": _t(language, "x_axis_label"),
             "yAxisLabel": _t(language, "y_axis_label"),
