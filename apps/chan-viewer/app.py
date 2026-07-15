@@ -71,7 +71,7 @@ from ui_text import (  # noqa: E402
 
 
 DEFAULT_END = date.today()
-DEFAULT_START = DEFAULT_END - timedelta(days=240)
+DEFAULT_START = DEFAULT_END - timedelta(days=90)
 MIN_STOCK_DATE = date(1990, 12, 19)
 TIMEFRAME_OPTIONS = ("1m", "5m", "30m", "day", "week", "month")
 DEFAULT_TIMEFRAME = "day"
