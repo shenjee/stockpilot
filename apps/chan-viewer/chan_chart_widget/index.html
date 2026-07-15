@@ -31,15 +31,14 @@
     /* 垂直联动线：跟随"激活 K 线"，跨全部子图 */
     .chan-vline { position: absolute; z-index: 15; pointer-events: none; display: none; width: 0; border-left: 1px dashed #2563EB; opacity: 0.75; }
 
-    /* 固定角落 tooltip：不跟随光标，按激活 K 线所在半区固定左上/右上（issue #21） */
+    /* 固定角落 tooltip：不跟随光标，按激活 K 线所在半区固定左上/右上（issue #21）。
+       定位坐标由 JS 依据主 K 线 PlotView 实际边界动态计算，不在 CSS 写死。 */
     .chan-candle-tip { position: absolute; z-index: 21; pointer-events: none; display: none; background: rgba(255, 255, 255, 0.96); border: 1px solid rgba(148, 163, 184, 0.4); border-radius: 8px; padding: 6px 10px; font-size: 11px; line-height: 1.5; color: #0f172a; box-shadow: 0 4px 12px rgba(15, 23, 42, 0.12); backdrop-filter: blur(8px); min-width: 132px; }
     .chan-candle-tip__date { font-weight: 700; color: #0f172a; margin-bottom: 2px; }
     .chan-candle-tip__range { color: #64748b; margin-bottom: 3px; }
     .chan-candle-tip__row { display: flex; justify-content: space-between; gap: 14px; }
     .chan-candle-tip__key { color: #64748b; }
     .chan-candle-tip__val { font-variant-numeric: tabular-nums; font-weight: 600; color: #0f172a; }
-    .chan-candle-tip--left { top: 52px; left: 16px; }
-    .chan-candle-tip--right { top: 52px; right: 16px; }
 
     .chan-bottom-bar {
       display: flex; justify-content: space-between; align-items: center;
@@ -688,9 +687,19 @@
           vlineEl.style.display = 'none';
         }
         candleTipEl.innerHTML = formatCandleTipHTML(row);
+        // 定位到主 K 线 PlotView 实际角落（含 Y 轴/标题动态边距），与 PlotView 边缘保持 16px 间距
+        const tipMargin = 16;
         const onRightHalf = active.screenX > active.midpoint;
-        candleTipEl.classList.toggle('chan-candle-tip--left', onRightHalf);
-        candleTipEl.classList.toggle('chan-candle-tip--right', !onRightHalf);
+        candleTipEl.style.top = (b.top + tipMargin) + 'px';
+        if (onRightHalf) {
+          // 激活 K 线在右半侧 -> tooltip 固定在 PlotView 左上角
+          candleTipEl.style.left = (b.left + tipMargin) + 'px';
+          candleTipEl.style.right = 'auto';
+        } else {
+          // 激活 K 线在左半侧 -> tooltip 固定在 PlotView 右上角
+          candleTipEl.style.left = 'auto';
+          candleTipEl.style.right = (chartDiv.clientWidth - b.right + tipMargin) + 'px';
+        }
         candleTipEl.style.display = 'block';
       });
     }
