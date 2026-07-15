@@ -498,7 +498,8 @@ class ChartAxisTests(unittest.TestCase):
         self.assertEqual(event_rows[0]["Event"], "switched")
         self.assertEqual(event_rows[0]["Change"], "neutral -> bullish")
 
-    def test_build_figure_respects_hover_and_overlay_traces(self):
+    def test_build_figure_disables_native_hover_and_renders_overlay_traces(self):
+        """原生 hover 始终关闭（issue #21）：tooltip 由前端按激活 K 线自绘固定角落。"""
         rows = [
             {"date": "2026-06-10", "open": 10.0, "close": 10.5, "high": 10.6, "low": 9.9, "volume": 100},
             {"date": "2026-06-11", "open": 10.5, "close": 10.2, "high": 10.7, "low": 10.0, "volume": 140},
@@ -530,12 +531,31 @@ class ChartAxisTests(unittest.TestCase):
             timeframe="day",
             language="en",
             x_window=120,
-            unified_hover=False,
         )
 
         self.assertFalse(figure.layout.showlegend)
-        self.assertEqual(figure.layout.hovermode, "closest")
+        # 原生 hover 关闭：不再有跟随光标的 hoverlabel
+        self.assertFalse(figure.layout.hovermode)
         self.assertEqual(figure.data[1].name, "Show Strokes")
+
+    def test_enrich_rows_for_tooltip_adds_time_range(self):
+        """_enrich_rows_for_tooltip 复用 build_time_range_label，且不修改入参行。"""
+        day_rows = [{"date": "2026-06-12", "open": 10.0, "close": 10.5, "high": 10.6, "low": 9.9, "volume": 100}]
+        minute_rows = [{"date": "2026-06-12 10:00:00", "open": 10.5, "close": 10.2, "high": 10.7, "low": 10.0, "volume": 140}]
+
+        day_enriched = app._enrich_rows_for_tooltip(day_rows, "day")
+        minute_enriched = app._enrich_rows_for_tooltip(minute_rows, "30m")
+
+        # 日线无时间区间
+        self.assertEqual(day_enriched[0]["time_range"], "")
+        # 30m 起止区间
+        self.assertEqual(minute_enriched[0]["time_range"], "09:30 - 10:00")
+        # 保留原始字段
+        self.assertEqual(minute_enriched[0]["open"], 10.5)
+        self.assertEqual(minute_enriched[0]["volume"], 140)
+        # 不修改入参行
+        self.assertNotIn("time_range", day_rows[0])
+        self.assertNotIn("time_range", minute_rows[0])
 
     def test_build_figure_filters_pivot_zones_by_level(self):
         rows = [

@@ -28,6 +28,19 @@
     .chan-hline { position: absolute; z-index: 15; pointer-events: none; display: none; height: 0; border-top: 1px dashed #2563EB; opacity: 0.75; }
     .chan-price-label { position: absolute; z-index: 16; pointer-events: none; display: none; background: #2563EB; color: #ffffff; font-size: 11px; font-weight: 700; padding: 1px 4px; border-radius: 3px; white-space: nowrap; line-height: 1.4; }
 
+    /* 垂直联动线：跟随"激活 K 线"，跨全部子图 */
+    .chan-vline { position: absolute; z-index: 15; pointer-events: none; display: none; width: 0; border-left: 1px dashed #2563EB; opacity: 0.75; }
+
+    /* 固定角落 tooltip：不跟随光标，按激活 K 线所在半区固定左上/右上（issue #21） */
+    .chan-candle-tip { position: absolute; z-index: 21; pointer-events: none; display: none; background: rgba(255, 255, 255, 0.96); border: 1px solid rgba(148, 163, 184, 0.4); border-radius: 8px; padding: 6px 10px; font-size: 11px; line-height: 1.5; color: #0f172a; box-shadow: 0 4px 12px rgba(15, 23, 42, 0.12); backdrop-filter: blur(8px); min-width: 132px; }
+    .chan-candle-tip__date { font-weight: 700; color: #0f172a; margin-bottom: 2px; }
+    .chan-candle-tip__range { color: #64748b; margin-bottom: 3px; }
+    .chan-candle-tip__row { display: flex; justify-content: space-between; gap: 14px; }
+    .chan-candle-tip__key { color: #64748b; }
+    .chan-candle-tip__val { font-variant-numeric: tabular-nums; font-weight: 600; color: #0f172a; }
+    .chan-candle-tip--left { top: 52px; left: 16px; }
+    .chan-candle-tip--right { top: 52px; right: 16px; }
+
     .chan-bottom-bar {
       display: flex; justify-content: space-between; align-items: center;
       padding: 8px 16px; background: #ffffff;
@@ -79,6 +92,8 @@
       <div class="chan-help-modal" id="help-modal" style="display:none;"></div>
       <div class="chan-hline" id="chan-hline"></div>
       <div class="chan-price-label" id="chan-price-label"></div>
+      <div class="chan-vline" id="chan-vline"></div>
+      <div class="chan-candle-tip" id="chan-candle-tip"></div>
     </div>
     <div class="chan-bottom-bar">
       <div class="chan-bottom-bar__left" id="overlay-bottom"></div>
@@ -107,6 +122,8 @@
     const container = document.getElementById("fullscreen-container");
     const hlineEl = document.getElementById("chan-hline");
     const priceLabelEl = document.getElementById("chan-price-label");
+    const vlineEl = document.getElementById("chan-vline");
+    const candleTipEl = document.getElementById("chan-candle-tip");
 
     const renderCaption = (template, values) => template.replace(/\{(\w+)\}/g, (_, key) => values[key] ?? "");
 
@@ -365,9 +382,11 @@
       }
       layout.dragmode = currentState.dragmode;
 
-      // 隐藏价格指示器，避免重绘期间残留
+      // 隐藏价格指示器与角落 tooltip，避免重绘期间残留
       hlineEl.style.display = 'none';
       priceLabelEl.style.display = 'none';
+      vlineEl.style.display = 'none';
+      candleTipEl.style.display = 'none';
 
       Plotly.newPlot(chartDiv, payload.figure.data, layout, {
         responsive: true,
@@ -569,14 +588,125 @@
       });
     }
 
+    // --- 固定角落 tooltip + 垂直联动线（issue #21）---
+    // 不使用 Plotly 原生 hoverlabel；按"激活 K 线"自绘并固定在左上/右上角。
+    let candleTipRaf = null;
+
+    // 跨全部子图的垂直范围，用于垂直联动线纵向贯穿。
+    function getPlotVerticalExtent() {
+      const fl = chartDiv._fullLayout;
+      if (!fl) return null;
+      const axes = [fl.yaxis, fl.yaxis2, fl.yaxis3].filter(
+        (a) => a && typeof a._offset === 'number' && typeof a._length === 'number' && a._length > 0
+      );
+      if (!axes.length) return null;
+      let top = Infinity, bottom = -Infinity;
+      for (const a of axes) {
+        top = Math.min(top, a._offset);
+        bottom = Math.max(bottom, a._offset + a._length);
+      }
+      if (!isFinite(top) || !isFinite(bottom) || bottom <= top) return null;
+      return { top, bottom };
+    }
+
+    // 根据当前实际 xaxis.range（非默认窗口）计算激活 K 线及其屏幕坐标。
+    function getActiveBar(clientX) {
+      const fl = chartDiv._fullLayout;
+      if (!fl || !fl.xaxis) return null;
+      const xa = fl.xaxis;
+      if (typeof xa._offset !== 'number' || typeof xa._length !== 'number' || xa._length <= 0) return null;
+      if (!xa.range || !isFinite(xa.range[0]) || !isFinite(xa.range[1]) || xa.range[1] === xa.range[0]) return null;
+      const rows = currentPayload.rows;
+      if (!rows || !rows.length) return null;
+      const rect = chartDiv.getBoundingClientRect();
+      const px = clientX - rect.left;
+      const cx = Math.max(xa._offset, Math.min(px, xa._offset + xa._length));
+      const fraction = (cx - xa._offset) / xa._length;
+      const dataX = xa.range[0] + fraction * (xa.range[1] - xa.range[0]);
+      const index = Math.max(0, Math.min(rows.length - 1, Math.round(dataX)));
+      const screenX = xa._offset + ((index - xa.range[0]) / (xa.range[1] - xa.range[0])) * xa._length;
+      const midpoint = xa._offset + xa._length / 2;
+      return { index, screenX, midpoint };
+    }
+
+    function formatCandleTipHTML(row) {
+      const precision = currentPayload.pricePrecision || 2;
+      const date = escapeHTML(String(row.date).slice(0, 10));
+      const timeRange = escapeHTML(String(row.time_range || ""));
+      const dir = parseFloat(row.close) >= parseFloat(row.open) ? "▲" : "▼";
+      const open = parseFloat(row.open).toFixed(precision);
+      const high = parseFloat(row.high).toFixed(precision);
+      const low = parseFloat(row.low).toFixed(precision);
+      const close = parseFloat(row.close).toFixed(precision);
+      const vol = Number(row.volume).toLocaleString();
+      const rangeHTML = timeRange ? `<div class="chan-candle-tip__range">${timeRange}</div>` : "";
+      return `
+        <div class="chan-candle-tip__date">${date}</div>
+        ${rangeHTML}
+        <div class="chan-candle-tip__row"><span class="chan-candle-tip__key">open</span><span class="chan-candle-tip__val">${open}</span></div>
+        <div class="chan-candle-tip__row"><span class="chan-candle-tip__key">high</span><span class="chan-candle-tip__val">${high}</span></div>
+        <div class="chan-candle-tip__row"><span class="chan-candle-tip__key">low</span><span class="chan-candle-tip__val">${low}</span></div>
+        <div class="chan-candle-tip__row"><span class="chan-candle-tip__key">close</span><span class="chan-candle-tip__val">${close} ${dir}</span></div>
+        <div class="chan-candle-tip__row"><span class="chan-candle-tip__key">volume</span><span class="chan-candle-tip__val">${vol}</span></div>
+      `;
+    }
+
+    function hideCandleTooltip() {
+      vlineEl.style.display = 'none';
+      candleTipEl.style.display = 'none';
+    }
+
+    function updateCandleTooltip(clientX, clientY, isPointerDown) {
+      if (candleTipRaf) cancelAnimationFrame(candleTipRaf);
+      candleTipRaf = requestAnimationFrame(() => {
+        candleTipRaf = null;
+        if (!currentPayload || !currentPayload.linkedCrosshair || isPointerDown) {
+          hideCandleTooltip();
+          return;
+        }
+        const b = getMainPlotBounds();
+        if (!b) { hideCandleTooltip(); return; }
+        const rect = chartDiv.getBoundingClientRect();
+        const px = clientX - rect.left;
+        const py = clientY - rect.top;
+        // 仅在主 K 线区显示；离开主图或拖动时隐藏
+        if (!(px >= b.left && px <= b.right && py >= b.top && py <= b.bottom)) {
+          hideCandleTooltip();
+          return;
+        }
+        const active = getActiveBar(clientX);
+        if (!active) { hideCandleTooltip(); return; }
+        const row = currentPayload.rows[active.index];
+        if (!row) { hideCandleTooltip(); return; }
+        const extent = getPlotVerticalExtent();
+        if (extent) {
+          vlineEl.style.display = 'block';
+          vlineEl.style.left = active.screenX + 'px';
+          vlineEl.style.top = extent.top + 'px';
+          vlineEl.style.height = (extent.bottom - extent.top) + 'px';
+        } else {
+          vlineEl.style.display = 'none';
+        }
+        candleTipEl.innerHTML = formatCandleTipHTML(row);
+        const onRightHalf = active.screenX > active.midpoint;
+        candleTipEl.classList.toggle('chan-candle-tip--left', onRightHalf);
+        candleTipEl.classList.toggle('chan-candle-tip--right', !onRightHalf);
+        candleTipEl.style.display = 'block';
+      });
+    }
+
     chartDiv.addEventListener('pointermove', (e) => {
       updatePriceIndicator(e.clientX, e.clientY, e.buttons > 0);
+      updateCandleTooltip(e.clientX, e.clientY, e.buttons > 0);
     });
     chartDiv.addEventListener('pointerleave', () => {
       if (priceIndicatorRaf) cancelAnimationFrame(priceIndicatorRaf);
       priceIndicatorRaf = null;
       hlineEl.style.display = 'none';
       priceLabelEl.style.display = 'none';
+      if (candleTipRaf) cancelAnimationFrame(candleTipRaf);
+      candleTipRaf = null;
+      hideCandleTooltip();
     });
 
     sendMessageToStreamlitClient("streamlit:componentReady", {apiVersion: 1});
