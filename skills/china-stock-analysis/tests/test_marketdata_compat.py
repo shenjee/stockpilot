@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import os
 import shutil
 import sys
@@ -185,6 +186,247 @@ class MarketdataCompatibilityTests(unittest.TestCase):
                 self.assertEqual(day_result.errors()[0].reason_code, "unexpected_response_shape")
                 self.assertFalse(minute_result.success)
                 self.assertEqual(minute_result.errors()[0].reason_code, "unexpected_response_shape")
+            finally:
+                os.chdir(original_cwd)
+                sys.path = saved_sys_path
+                for name in list(sys.modules):
+                    if name == "_standalone_marketdata" or name.startswith("_standalone_marketdata."):
+                        sys.modules.pop(name, None)
+                sys.modules.update(saved_modules)
+
+    def test_standalone_hk_realtime_prefixed_input_is_normalized(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            standalone_root = Path(tmpdir) / "china-stock-analysis"
+            standalone_scripts = standalone_root / "scripts"
+            shutil.copytree(SCRIPTS_DIR, standalone_scripts)
+
+            saved_sys_path = list(sys.path)
+            saved_modules = {
+                name: module
+                for name, module in sys.modules.items()
+                if name == "marketdata"
+                or name.startswith("marketdata.")
+                or name == "_standalone_marketdata"
+                or name.startswith("_standalone_marketdata.")
+            }
+            original_cwd = Path.cwd()
+            try:
+                os.chdir(tmpdir)
+                sys.path = [str(standalone_scripts)] + [
+                    path
+                    for path in sys.path
+                    if path
+                    not in {"", str(ROOT), str(ROOT / "packages"), str(SCRIPTS_DIR), str(original_cwd)}
+                ]
+                for name in list(saved_modules):
+                    sys.modules.pop(name, None)
+
+                from _standalone_marketdata.market_data import TencentStockDataProvider as StandaloneTencent
+
+                payload = 'v_hk00175="100~吉利汽车~00175~19.390~18.400~18.640~57727595.0~0~0";'
+                with patch.object(StandaloneTencent, "_fetch_with_retry", return_value=payload) as fetch:
+                    result = StandaloneTencent.realtime_result("hk0175")
+
+                self.assertTrue(result.success)
+                self.assertIn("hk00175", fetch.call_args.args[0])
+                self.assertNotIn("hk0175", fetch.call_args.args[0])
+            finally:
+                os.chdir(original_cwd)
+                sys.path = saved_sys_path
+                for name in list(sys.modules):
+                    if name == "_standalone_marketdata" or name.startswith("_standalone_marketdata."):
+                        sys.modules.pop(name, None)
+                sys.modules.update(saved_modules)
+
+    def test_standalone_hk_kline_and_minute_use_normalized_codes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            standalone_root = Path(tmpdir) / "china-stock-analysis"
+            standalone_scripts = standalone_root / "scripts"
+            shutil.copytree(SCRIPTS_DIR, standalone_scripts)
+
+            saved_sys_path = list(sys.path)
+            saved_modules = {
+                name: module
+                for name, module in sys.modules.items()
+                if name == "marketdata"
+                or name.startswith("marketdata.")
+                or name == "_standalone_marketdata"
+                or name.startswith("_standalone_marketdata.")
+            }
+            original_cwd = Path.cwd()
+            try:
+                os.chdir(tmpdir)
+                sys.path = [str(standalone_scripts)] + [
+                    path
+                    for path in sys.path
+                    if path
+                    not in {"", str(ROOT), str(ROOT / "packages"), str(SCRIPTS_DIR), str(original_cwd)}
+                ]
+                for name in list(saved_modules):
+                    sys.modules.pop(name, None)
+
+                from _standalone_marketdata.market_data import TencentStockDataProvider as StandaloneTencent
+
+                kline_payload = {
+                    "code": 0,
+                    "data": {
+                        "hk00175": {
+                            "day": [
+                                ["2026-07-16", "18.500", "18.260", "18.760", "18.240", "87042911.000"],
+                            ],
+                        }
+                    },
+                }
+                with patch.object(
+                    StandaloneTencent, "_fetch_with_retry", return_value=json.dumps(kline_payload)
+                ) as fetch:
+                    result = StandaloneTencent.get_kline_result(
+                        code="0175",
+                        market="hk",
+                        start_date="2026-07-16",
+                        end_date="2026-07-16",
+                        ktype="day",
+                        autype="qfq",
+                    )
+                self.assertTrue(result.success)
+                self.assertEqual(len(result.data), 1)
+                self.assertTrue(any(issue.reason_code == "adjustment_unavailable" for issue in result.warnings()))
+                self.assertIn("hk00175", fetch.call_args.args[0])
+
+                minute_payload = {
+                    "code": 0,
+                    "data": {
+                        "hk03896": {
+                            "m1": [
+                                ["202607161500", "5.10", "5.20", "5.25", "5.05", "1000.00"],
+                            ],
+                        }
+                    },
+                }
+                with patch.object(
+                    StandaloneTencent, "_fetch_with_retry", return_value=json.dumps(minute_payload)
+                ) as fetch:
+                    minute_result = StandaloneTencent.get_minute_kline_result(
+                        code="3896",
+                        market="hk",
+                        start_date="2026-07-16",
+                        end_date="2026-07-16",
+                        ktype="1m",
+                    )
+                self.assertTrue(minute_result.success)
+                self.assertEqual(len(minute_result.data), 1)
+                self.assertEqual(minute_result.data[0]["close"], 5.20)
+                self.assertIn("hk03896", fetch.call_args.args[0])
+            finally:
+                os.chdir(original_cwd)
+                sys.path = saved_sys_path
+                for name in list(sys.modules):
+                    if name == "_standalone_marketdata" or name.startswith("_standalone_marketdata."):
+                        sys.modules.pop(name, None)
+                sys.modules.update(saved_modules)
+
+    def test_standalone_securities_store_can_search_hk_records(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            standalone_root = Path(tmpdir) / "china-stock-analysis"
+            standalone_scripts = standalone_root / "scripts"
+            shutil.copytree(SCRIPTS_DIR, standalone_scripts)
+
+            saved_sys_path = list(sys.path)
+            saved_modules = {
+                name: module
+                for name, module in sys.modules.items()
+                if name == "marketdata"
+                or name.startswith("marketdata.")
+                or name == "_standalone_marketdata"
+                or name.startswith("_standalone_marketdata.")
+            }
+            original_cwd = Path.cwd()
+            try:
+                os.chdir(tmpdir)
+                sys.path = [str(standalone_scripts)] + [
+                    path
+                    for path in sys.path
+                    if path
+                    not in {"", str(ROOT), str(ROOT / "packages"), str(SCRIPTS_DIR), str(original_cwd)}
+                ]
+                for name in list(saved_modules):
+                    sys.modules.pop(name, None)
+
+                from _standalone_marketdata.repositories.securities_store import SecuritiesStore as StandaloneStore
+
+                with tempfile.TemporaryDirectory() as db_tmpdir:
+                    store = StandaloneStore(Path(db_tmpdir) / "market_data.sqlite")
+                    code_hits = store.search("00700")
+                    name_hits = store.search("腾讯控股")
+
+                self.assertTrue(any(item["market"] == "hk" and item["code"] == "00700" for item in code_hits))
+                self.assertTrue(any(item["market"] == "hk" and item["name"] == "腾讯控股" for item in name_hits))
+            finally:
+                os.chdir(original_cwd)
+                sys.path = saved_sys_path
+                for name in list(sys.modules):
+                    if name == "_standalone_marketdata" or name.startswith("_standalone_marketdata."):
+                        sys.modules.pop(name, None)
+                sys.modules.update(saved_modules)
+
+    def test_standalone_securities_store_syncs_bundled_json_into_populated_db(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            standalone_root = Path(tmpdir) / "china-stock-analysis"
+            standalone_scripts = standalone_root / "scripts"
+            shutil.copytree(SCRIPTS_DIR, standalone_scripts)
+
+            saved_sys_path = list(sys.path)
+            saved_modules = {
+                name: module
+                for name, module in sys.modules.items()
+                if name == "marketdata"
+                or name.startswith("marketdata.")
+                or name == "_standalone_marketdata"
+                or name.startswith("_standalone_marketdata.")
+            }
+            original_cwd = Path.cwd()
+            try:
+                os.chdir(tmpdir)
+                sys.path = [str(standalone_scripts)] + [
+                    path
+                    for path in sys.path
+                    if path
+                    not in {"", str(ROOT), str(ROOT / "packages"), str(SCRIPTS_DIR), str(original_cwd)}
+                ]
+                for name in list(saved_modules):
+                    sys.modules.pop(name, None)
+
+                from _standalone_marketdata.repositories.securities_store import SecuritiesStore as StandaloneStore
+
+                with tempfile.TemporaryDirectory() as db_tmpdir:
+                    db_path = Path(db_tmpdir) / "market_data.sqlite"
+                    legacy_json = Path(db_tmpdir) / "legacy_securities_master.json"
+                    legacy_json.write_text(
+                        json.dumps(
+                            [
+                                {
+                                    "code": "600519",
+                                    "market": "sh",
+                                    "type": "stock",
+                                    "name": "贵州茅台",
+                                    "pinyin": "GZMT",
+                                }
+                            ],
+                            ensure_ascii=False,
+                        ),
+                        encoding="utf-8",
+                    )
+
+                    legacy_store = StandaloneStore(db_path, json_path=legacy_json)
+                    self.assertIsNotNone(legacy_store.get("600519", "sh"))
+                    self.assertIsNone(legacy_store.get("00700", "hk"))
+
+                    upgraded_store = StandaloneStore(db_path)
+                    self.assertIsNotNone(upgraded_store.get("600519", "sh"))
+                    hk_hit = upgraded_store.get("00700", "hk")
+                    self.assertIsNotNone(hk_hit)
+                    self.assertEqual(hk_hit["name"], "腾讯控股")
+                    self.assertTrue(any(item["market"] == "hk" for item in upgraded_store.search("腾讯控股")))
             finally:
                 os.chdir(original_cwd)
                 sys.path = saved_sys_path
