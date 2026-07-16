@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "packages"))
 
-from marketdata.market_data import TencentStockDataProvider, get_market_prefix
+from marketdata.market_data import TencentStockDataProvider, get_market_prefix, normalize_hk_code
 from marketdata.provider_result import MarketDataResult
 
 
@@ -35,6 +35,29 @@ class GetMarketPrefixTests(unittest.TestCase):
         self.assertEqual(get_market_prefix("830799"), "bj")
         self.assertEqual(get_market_prefix("430047"), "bj")
         self.assertEqual(get_market_prefix("920819"), "bj")
+
+    def test_hk_requires_explicit_market(self):
+        # 港股不做代码推断，必须显式传入 market="hk"
+        self.assertEqual(get_market_prefix("0175", market="hk"), "hk")
+        self.assertEqual(get_market_prefix("3896", market="hk"), "hk")
+        self.assertEqual(get_market_prefix("00700", market="hk"), "hk")
+
+
+class NormalizeHkCodeTests(unittest.TestCase):
+    def test_pads_short_numeric_codes_to_5_digits(self):
+        # 4 位 -> 5 位补零
+        self.assertEqual(normalize_hk_code("0175"), "00175")
+        self.assertEqual(normalize_hk_code("3896"), "03896")
+
+    def test_keeps_5_digit_codes_unchanged(self):
+        self.assertEqual(normalize_hk_code("00700"), "00700")
+        self.assertEqual(normalize_hk_code("00175"), "00175")
+
+    def test_keeps_longer_or_non_numeric_codes_unchanged(self):
+        # 6 位及以上或非数字原样返回，交由上游处理
+        self.assertEqual(normalize_hk_code("600519"), "600519")
+        self.assertEqual(normalize_hk_code("0700.HK"), "0700.HK")
+        self.assertEqual(normalize_hk_code(""), "")
 
 
 class TencentStockDataProviderTests(unittest.TestCase):
@@ -216,6 +239,183 @@ class TencentStockDataProviderTests(unittest.TestCase):
         self.assertEqual(result.data, [])
         self.assertTrue(result.errors())
         self.assertEqual(result.errors()[0].reason_code, "request_failed")
+
+    def test_realtime_hk_normalizes_code_in_url(self):
+        payload = (
+            'v_hk00175="100~吉利汽车~00175~19.390~18.400~18.640~57727595.0~0~0~'
+            '19.390~0~0~0~0~0~0~0~0~0~19.390~0~0~0~0~0~0~0~0~0~57727595.0~'
+            '2026/07/16 16:08:43~0.990~5.38~19.680~18.640~19.390~57727595.0~'
+            '1114393993.750~0~11.21~~0~0~5.65~2091.2364~2091.2364~GEELY AUTO~2.58~'
+            '25.120~14.460~1.69~-58.97~0~0~0~0~0~12.03~1.94~0.54~1000~11.44~6.95~'
+            'GP~15.97~5.36~11.95~-0.97~-19.94~10785128597.00~10785128597.00~11.08~0.500~19";'
+        )
+        with patch.object(
+            TencentStockDataProvider, "_fetch_with_retry", return_value=payload
+        ) as fetch:
+            result = TencentStockDataProvider.realtime_result("0175", markets=["hk"])
+        self.assertTrue(result.success)
+        url = fetch.call_args.args[0]
+        # 4 位 0175 必须补零成 5 位 hk00175
+        self.assertIn("hk00175", url)
+        self.assertNotIn("hk0175,", url)
+        self.assertEqual(result.data["name"], "吉利汽车")
+        self.assertAlmostEqual(result.data["price"], 19.39)
+
+    def test_realtime_hk_tuple_form_normalizes_code(self):
+        payload = 'v_hk03896="100~金山云~03896~5.500~5.200~5.280~129018484.0~0~0";'
+        with patch.object(
+            TencentStockDataProvider, "_fetch_with_retry", return_value=payload
+        ) as fetch:
+            result = TencentStockDataProvider.realtime_result([("3896", "hk")])
+        url = fetch.call_args.args[0]
+        self.assertIn("hk03896", url)
+        self.assertTrue(result.success)
+
+    def test_realtime_hk_prefixed_input_normalizes_code(self):
+        payload = 'v_hk00175="100~吉利汽车~00175~19.390~18.400~18.640~57727595.0~0~0";'
+        with patch.object(
+            TencentStockDataProvider, "_fetch_with_retry", return_value=payload
+        ) as fetch:
+            result = TencentStockDataProvider.realtime_result("hk0175")
+        url = fetch.call_args.args[0]
+        self.assertIn("hk00175", url)
+        self.assertNotIn("hk0175", url)
+        self.assertTrue(result.success)
+
+    def test_get_kline_hk_normalizes_code_in_url_and_payload(self):
+        # 4 位港股代码 0175 应补零为 hk00175，用于 URL 和响应 payload 查找
+        payload = {
+            "code": 0,
+            "data": {
+                "hk00175": {
+                    "qfqday": [
+                        ["2026-07-16", "18.500", "18.260", "18.760", "18.240", "87042911.000"],
+                    ],
+                }
+            },
+        }
+        with patch.object(
+            TencentStockDataProvider, "_fetch_with_retry", return_value=json.dumps(payload)
+        ) as fetch:
+            rows = TencentStockDataProvider.get_kline(
+                code="0175",
+                market="hk",
+                start_date="2026-07-01",
+                end_date="2026-07-16",
+                ktype="day",
+            )
+        url = fetch.call_args.args[0]
+        self.assertIn("hk00175", url)
+        self.assertNotIn("hk0175,", url)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["close"], 18.26)
+
+    def test_get_kline_hk_5_digit_code_works_unchanged(self):
+        payload = {
+            "code": 0,
+            "data": {
+                "hk03896": {
+                    "day": [
+                        ["2026-07-16", "8.010", "7.600", "8.200", "7.560", "290029392.000"],
+                    ],
+                }
+            },
+        }
+        with patch.object(
+            TencentStockDataProvider, "_fetch_with_retry", return_value=json.dumps(payload)
+        ) as fetch:
+            rows = TencentStockDataProvider.get_kline(
+                code="03896",
+                market="hk",
+                start_date="2026-07-16",
+                end_date="2026-07-16",
+                ktype="day",
+                autype="",
+            )
+        url = fetch.call_args.args[0]
+        self.assertIn("hk03896", url)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["close"], 7.60)
+
+    def test_get_kline_hk_qfq_falls_back_to_base_day_key(self):
+        # 港股响应不论 autype 均返回 "day" 键，qfqday 缺失时应回退到 day
+        payload = {
+            "code": 0,
+            "data": {
+                "hk00175": {
+                    "day": [
+                        ["2026-07-16", "18.500", "18.260", "18.760", "18.240", "87042911.000"],
+                    ],
+                }
+            },
+        }
+        with patch.object(
+            TencentStockDataProvider, "_fetch_with_retry", return_value=json.dumps(payload)
+        ):
+            rows = TencentStockDataProvider.get_kline(
+                code="0175",
+                market="hk",
+                start_date="2026-07-16",
+                end_date="2026-07-16",
+                ktype="day",
+                autype="qfq",
+            )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["close"], 18.26)
+
+    def test_get_kline_result_hk_qfq_fallback_emits_warning(self):
+        payload = {
+            "code": 0,
+            "data": {
+                "hk00175": {
+                    "day": [
+                        ["2026-07-16", "18.500", "18.260", "18.760", "18.240", "87042911.000"],
+                    ],
+                }
+            },
+        }
+        with patch.object(
+            TencentStockDataProvider, "_fetch_with_retry", return_value=json.dumps(payload)
+        ):
+            result = TencentStockDataProvider.get_kline_result(
+                code="0175",
+                market="hk",
+                start_date="2026-07-16",
+                end_date="2026-07-16",
+                ktype="day",
+                autype="qfq",
+            )
+        self.assertTrue(result.success)
+        self.assertEqual(len(result.data), 1)
+        self.assertTrue(any(issue.reason_code == "adjustment_unavailable" for issue in result.warnings()))
+
+    def test_get_kline_result_a_share_qfq_does_not_fall_back_to_day(self):
+        payload = {
+            "code": 0,
+            "data": {
+                "sh600519": {
+                    "day": [
+                        ["2026-06-11", "100.00", "101.00", "102.00", "99.00", "100"],
+                    ],
+                    "qfqday": [],
+                }
+            },
+        }
+        with patch.object(
+            TencentStockDataProvider, "_fetch_with_retry", return_value=json.dumps(payload)
+        ):
+            result = TencentStockDataProvider.get_kline_result(
+                code="600519",
+                market="sh",
+                start_date="2026-06-11",
+                end_date="2026-06-11",
+                ktype="day",
+                autype="qfq",
+            )
+        self.assertTrue(result.success)
+        self.assertEqual(result.data, [])
+        self.assertFalse(any(issue.reason_code == "adjustment_unavailable" for issue in result.warnings()))
+        self.assertEqual(result.warnings()[0].reason_code, "no_data")
 
     def test_get_kline_result_nonzero_code_is_error(self):
         payload = {"code": 1, "msg": "bad"}

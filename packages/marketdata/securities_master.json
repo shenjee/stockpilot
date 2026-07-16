@@ -10906,6 +10906,13 @@
     "pinyin": "DSDC"
   },
   {
+    "code": "00005",
+    "market": "hk",
+    "type": "stock",
+    "name": "汇丰控股",
+    "pinyin": "HFKG"
+  },
+  {
     "code": "000050",
     "market": "sz",
     "type": "stock",
@@ -11107,6 +11114,13 @@
     "type": "stock",
     "name": "申万宏源",
     "pinyin": "SWHY"
+  },
+  {
+    "code": "00020",
+    "market": "hk",
+    "type": "stock",
+    "name": "商汤",
+    "pinyin": "ST"
   },
   {
     "code": "000301",
@@ -14357,6 +14371,13 @@
     "pinyin": "ZSDL"
   },
   {
+    "code": "00175",
+    "market": "hk",
+    "type": "stock",
+    "name": "吉利汽车",
+    "pinyin": "JLQC"
+  },
+  {
     "code": "001872",
     "market": "sz",
     "type": "stock",
@@ -17099,6 +17120,13 @@
     "type": "stock",
     "name": "雅克科技",
     "pinyin": "YKKJ"
+  },
+  {
+    "code": "00241",
+    "market": "hk",
+    "type": "stock",
+    "name": "阿里健康",
+    "pinyin": "ALJK"
   },
   {
     "code": "002410",
@@ -21131,6 +21159,223 @@
     "type": "stock",
     "name": "中国广核",
     "pinyin": "ZGGH"
+  },
+  {
+    "code": "00386",
+    "market": "hk",
+    "type": "stock",
+    "name": "中国石化",
+    "pinyin": "ZGSH"
+  },
+  {
+    "code": "00388",
+    "market": "hk",
+    "type": "stock",
+    "name": "香港交易所",
+    "pinyin": "XGJYS"
+  },
+  {
+    "code": "00700",
+    "market": "hk",
+    "type": "stock",
+    "name": "腾讯控股",
+    "pinyin": "TXKG"
+  },
+  {
+    "code": "00883",
+    "market": "hk",
+    "type": "stock",
+    "name": "中海油",
+    "pinyin": "ZHY"
+  },
+  {
+    "code": "00939",
+    "market": "hk",
+    "type": "stock",
+    "name": "建设银行",
+    "pinyin": "JSYH"
+  },
+  {
+    "code": "00941",
+    "market": "hk",
+    "type": "stock",
+    "name": "中国移动",
+    "pinyin": "ZGYD"
+  },
+  {
+    "code": "01024",
+    "market": "hk",
+    "type": "stock",
+    "name": "快手",
+    "pinyin": "KS"
+  },
+  {
+    "code": "01088",
+    "market": "hk",
+    "type": "stock",
+    "name": "中国神华",
+    "pinyin": "ZGSH2"
+  },
+  {
+    "code": "01288",
+    "market": "hk",
+    "type": "stock",
+    "name": "农业银行",
+    "pinyin": "NYYH"
+  },
+  {
+    "code": "01299",
+    "market": "hk",
+    "type": "stock",
+    "name": "友邦保险",
+    "pinyin": "YBBX"
+  },
+  {
+    "code": "01398",
+    "market": "hk",
+    "type": "stock",
+    "name": "工商银行",
+    "pinyin": "GSYH"
+  },
+  {
+    "code": "01810",
+    "market": "hk",
+    "type": "stock",
+    "name": "小米集团",
+    "pinyin": "XMJT"
+  },
+  {
+    "code": "01833",
+    "market": "hk",
+    "type": "stock",
+    "name": "平安好医生",
+    "pinyin": "PAHYS"
+  },
+  {
+    "code": "02196",
+    "market": "hk",
+    "type": "stock",
+    "name": "复星医药",
+    "pinyin": "FXYY"
+  },
+  {
+    "code": "02238",
+    "market": "hk",
+    "type": "stock",
+    "name": "理想汽车",
+    "pinyin": "LXQC"
+  },
+  {
+    "code": "02318",
+    "market": "hk",
+    "type": "stock",
+    "name": "中国平安",
+    "pinyin": "ZGPA"
+  },
+  {
+    "code": "02382",
+    "market": "hk",
+    "type": "stock",
+    "name": "舜宇光学科技",
+    "pinyin": "SYGXKJ"
+  },
+  {
+    "code": "02601",
+    "market": "hk",
+    "type": "stock",
+    "name": "中国太保",
+    "pinyin": "ZGTB"
+  },
+  {
+    "code": "02628",
+    "market": "hk",
+    "type": "stock",
+    "name": "中国人寿",
+    "pinyin": "ZGRS"
+  },
+  {
+    "code": "03690",
+    "market": "hk",
+    "type": "stock",
+    "name": "美团",
+    "pinyin": "MT"
+  },
+  {
+    "code": "03896",
+    "market": "hk",
+    "type": "stock",
+    "name": "金山云",
+    "pinyin": "JSY"
+  },
+  {
+    "code": "03968",
+    "market": "hk",
+    "type": "stock",
+    "name": "招商银行",
+    "pinyin": "ZSYH"
+  },
+  {
+    "code": "06060",
+    "market": "hk",
+    "type": "stock",
+    "name": "众安在线",
+    "pinyin": "ZAZX"
+  },
+  {
+    "code": "06618",
+    "market": "hk",
+    "type": "stock",
+    "name": "京东健康",
+    "pinyin": "JDJK"
+  },
+  {
+    "code": "06862",
+    "market": "hk",
+    "type": "stock",
+    "name": "海底捞",
+    "pinyin": "HDL"
+  },
+  {
+    "code": "09618",
+    "market": "hk",
+    "type": "stock",
+    "name": "京东集团",
+    "pinyin": "JDJT"
+  },
+  {
+    "code": "09633",
+    "market": "hk",
+    "type": "stock",
+    "name": "农夫山泉",
+    "pinyin": "NFSQ"
+  },
+  {
+    "code": "09866",
+    "market": "hk",
+    "type": "stock",
+    "name": "蔚来",
+    "pinyin": "WL"
+  },
+  {
+    "code": "09869",
+    "market": "hk",
+    "type": "stock",
+    "name": "小鹏汽车",
+    "pinyin": "XPQC"
+  },
+  {
+    "code": "09888",
+    "market": "hk",
+    "type": "stock",
+    "name": "百度集团",
+    "pinyin": "BDJT"
+  },
+  {
+    "code": "09988",
+    "market": "hk",
+    "type": "stock",
+    "name": "阿里巴巴",
+    "pinyin": "ALBB"
   },
   {
     "code": "300001",

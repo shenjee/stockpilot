@@ -109,18 +109,23 @@ class SecuritiesStoreTests(unittest.TestCase):
             self.assertTrue(store.search("000001"))
             self.assertEqual(err.getvalue(), "")
 
-    def test_ensure_loaded_skips_when_populated(self):
+    def test_ensure_loaded_syncs_when_populated(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             json_path = Path(tmpdir) / "securities_master.json"
             _write_json(json_path, _fixture_records())
             store = SecuritiesStore(Path(tmpdir) / "market_data.sqlite", json_path=json_path)
-            # 用一个内容不同的 JSON 再构造，应跳过导入（表非空）
-            other = [{"code": "300750", "market": "sz", "type": "stock", "name": "宁德时代", "pinyin": "NDSD"}]
+            # 用一个内容不同的 JSON 再构造，应通过 upsert 同步新增记录（表已非空）
+            other = _fixture_records() + [
+                {"code": "00700", "market": "hk", "type": "stock", "name": "腾讯控股", "pinyin": "TXKG"}
+            ]
             other_path = Path(tmpdir) / "other.json"
             _write_json(other_path, other)
             store2 = SecuritiesStore(Path(tmpdir) / "market_data.sqlite", json_path=other_path)
-            self.assertIsNone(store2.get("300750", "sz"))  # 未被导入
+            got = store2.get("00700", "hk")
+            self.assertIsNotNone(got)
+            self.assertEqual(got["name"], "腾讯控股")
             self.assertTrue(store2.search("PAYH"))  # 旧数据仍在
+            self.assertTrue(any(item["market"] == "hk" for item in store2.search("腾讯")))
 
     def test_get_by_code_and_market(self):
         with tempfile.TemporaryDirectory() as tmpdir:

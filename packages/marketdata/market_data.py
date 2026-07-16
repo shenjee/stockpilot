@@ -42,6 +42,8 @@ def get_market_prefix(code: str, market: str = None) -> str:
     - 0 / 3 / 1 -> sz（深市股票 0/3 开头、深市 ETF 159xxx 与分级 150xxx）
     - 4 / 8 / 9 -> bj（北交所股票 8/4 开头，以及 920xxx 新股以 9 开头）
 
+    港股需调用方显式传入 market="hk"，本函数不做代码推断。
+
     其余兜底 sh，保持向后兼容。注意：指数代码（如 000001 上证指数）首字符是 0，
     会被推断成 sz，因此指数必须由调用方显式传入 market，不能依赖本函数。
     """
@@ -54,6 +56,20 @@ def get_market_prefix(code: str, market: str = None) -> str:
     if code.startswith(("8", "4", "9")):
         return "bj"
     return "sh"
+
+
+def normalize_hk_code(code: str) -> str:
+    """将港股代码补零到 5 位数字。
+
+    腾讯财经 API 要求港股代码为 5 位数字（如 "00175"、"03896"）。
+    用户常以 4 位形式输入（如 "0175"、"3896"），需要补前导零到 5 位。
+
+    已经是 5 位数字的代码原样返回。非纯数字或超过 5 位的代码原样返回，
+    交由调用方/上游 API 处理。
+    """
+    if code.isdigit() and len(code) < 5:
+        return code.zfill(5)
+    return code
 
 
 class MarketDataProvider:
@@ -135,6 +151,16 @@ class TencentStockDataProvider(MarketDataProvider):
     def _get_prefix(code: str, market: str = None) -> str:
         return get_market_prefix(code, market)
 
+    @staticmethod
+    def _normalize_code(code: str, market: str = None) -> str:
+        """归一化证券代码。
+
+        港股代码补零到 5 位数字，其余市场原样返回。
+        """
+        if market == "hk":
+            return normalize_hk_code(code)
+        return code
+
     @classmethod
     def _fetch_with_retry(cls, url: str, decode: str = "gbk") -> str:
         req = urllib.request.Request(url, headers={
@@ -166,12 +192,20 @@ class TencentStockDataProvider(MarketDataProvider):
         for i, code_item in enumerate(codes):
             if isinstance(code_item, tuple):
                 code, market = code_item
-                code_str_parts.append(f"{market}{code}")
+                norm = cls._normalize_code(code, market)
+                code_str_parts.append(f"{cls._get_prefix(norm, market)}{norm}")
+            elif code_item.startswith("hk"):
+                # hk 前缀需拆分后补零：hk0175 -> hk00175
+                prefix = "hk"
+                raw = code_item[2:]
+                norm = cls._normalize_code(raw, "hk")
+                code_str_parts.append(f"{prefix}{norm}")
             elif code_item.startswith(("sh", "sz", "bj")):
                 code_str_parts.append(code_item)
             else:
                 market = markets[i] if markets else None
-                code_str_parts.append(f"{cls._get_prefix(code_item, market)}{code_item}")
+                norm = cls._normalize_code(code_item, market)
+                code_str_parts.append(f"{cls._get_prefix(norm, market)}{norm}")
 
         url = f"https://qt.gtimg.cn/q={','.join(code_str_parts)}"
 
@@ -214,7 +248,7 @@ class TencentStockDataProvider(MarketDataProvider):
                         "open": float(parts[5]),
                         "high": float(parts[33]),
                         "low": float(parts[34]),
-                        "volume": int(parts[6]),
+                        "volume": int(float(parts[6])),
                         "amount": float(parts[37]) if len(parts) > 37 else 0,
                         "change": round(change, 2),
                         "change_pct": round(change_pct, 2),
@@ -281,8 +315,9 @@ class TencentStockDataProvider(MarketDataProvider):
         if security_type == "index":
             autype = ""
 
-        prefix = cls._get_prefix(code, market)
-        url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={prefix}{code},{ktype},{start_date},{end_date},500,{autype}"
+        norm = cls._normalize_code(code, market)
+        prefix = cls._get_prefix(norm, market)
+        url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={prefix}{norm},{ktype},{start_date},{end_date},500,{autype}"
 
         try:
             data = json.loads(cls._fetch_with_retry(url, decode="utf-8"))
@@ -344,6 +379,7 @@ class TencentStockDataProvider(MarketDataProvider):
             return MarketDataResult(success=False, data=[], issues=issues)
 
         key = f"{autype}day" if ktype == "day" else f"{autype}{ktype}"
+        base_key = "day" if ktype == "day" else ktype
         payload = data.get("data", {})
         if not isinstance(payload, dict):
             issues = [
@@ -357,7 +393,7 @@ class TencentStockDataProvider(MarketDataProvider):
             cls._log_errors(issues)
             return MarketDataResult(success=False, data=[], issues=issues)
 
-        symbol_payload = payload.get(f"{prefix}{code}", {})
+        symbol_payload = payload.get(f"{prefix}{norm}", {})
         if not isinstance(symbol_payload, dict):
             issues = [
                 cls._make_issue(
@@ -371,6 +407,11 @@ class TencentStockDataProvider(MarketDataProvider):
             return MarketDataResult(success=False, data=[], issues=issues)
 
         klines = symbol_payload.get(key, [])
+        fallback_to_base = False
+        # 港股不论 autype 均返回 base_key（如 "day"），在 autype 键缺失时回退
+        if not klines and autype and base_key != key and market == "hk":
+            klines = symbol_payload.get(base_key, [])
+            fallback_to_base = True
         if not isinstance(klines, list):
             issues = [
                 cls._make_issue(
@@ -419,6 +460,22 @@ class TencentStockDataProvider(MarketDataProvider):
                 continue
 
         issues: list[ProviderIssue] = []
+        if fallback_to_base:
+            issues.append(
+                cls._make_issue(
+                    level="warning",
+                    reason_code="adjustment_unavailable",
+                    message="tencent qfq kline key not found, using base day series",
+                    context={
+                        "operation": "get_kline",
+                        "code": code,
+                        "market": market,
+                        "ktype": ktype,
+                        "requested_key": key,
+                        "fallback_key": base_key,
+                    },
+                )
+            )
         if parse_failures:
             issues.append(
                 cls._make_issue(
@@ -503,7 +560,8 @@ class TencentStockDataProvider(MarketDataProvider):
             ]
             return MarketDataResult(success=True, data=[], issues=issues)
 
-        prefix = cls._get_prefix(code, market)
+        norm = cls._normalize_code(code, market)
+        prefix = cls._get_prefix(norm, market)
         start_day = cls._parse_date(start_date)
         end_day = cls._parse_date(end_date)
 
@@ -513,7 +571,7 @@ class TencentStockDataProvider(MarketDataProvider):
         parse_failures = 0
         first_page = True
         for _ in range(cls.MINUTE_KLINE_MAX_PAGES):
-            url = f"https://ifzq.gtimg.cn/appstock/app/kline/mkline?param={prefix}{code},{tx_ktype},{ref},{cls.MINUTE_KLINE_PAGE_SIZE}"
+            url = f"https://ifzq.gtimg.cn/appstock/app/kline/mkline?param={prefix}{norm},{tx_ktype},{ref},{cls.MINUTE_KLINE_PAGE_SIZE}"
             try:
                 data = json.loads(cls._fetch_with_retry(url, decode="utf-8"))
             except Exception as exc:
@@ -586,7 +644,7 @@ class TencentStockDataProvider(MarketDataProvider):
                     )
                 )
                 break
-            symbol_payload = payload.get(f"{prefix}{code}", {})
+            symbol_payload = payload.get(f"{prefix}{norm}", {})
             if not isinstance(symbol_payload, dict):
                 issues.append(
                     cls._make_issue(
