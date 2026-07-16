@@ -411,8 +411,15 @@
             currentState.xWindowCount = payload.defaultSlots;
             currentState.yZoom = payload.defaultYZoom;
             syncCaptions();
+            // 恢复显式窗口范围：双击等触发的 autorange 会让 xaxis.range 变 null，
+            // 破坏按"激活 K 线"定位的 tooltip。applyRanges 发出的是 range/tick 事件，
+            // 不会再次进入 autorange 分支，无递归（issue #21）。
+            applyRanges();
           }
         });
+
+        // 重绘完成：若指针仍在主图区则按最新边界恢复 tooltip，避免切换周期后 tooltip 消失（issue #21）
+        refreshCandleTooltip();
       });
     }
 
@@ -590,6 +597,11 @@
     // --- 固定角落 tooltip + 垂直联动线（issue #21）---
     // 不使用 Plotly 原生 hoverlabel；按"激活 K 线"自绘并固定在左上/右上角。
     let candleTipRaf = null;
+    // 跟踪最近指针位置/是否在主图区，用于重绘完成后恢复 tooltip
+    // （切换周期/Streamlit 重渲染会 newPlot 并隐藏 tooltip，若指针未移动则不会自动恢复，issue #21）
+    let lastPointerClientX = null;
+    let lastPointerClientY = null;
+    let pointerOverPlot = false;
 
     // 跨全部子图的垂直范围，用于垂直联动线纵向贯穿。
     function getPlotVerticalExtent() {
@@ -614,16 +626,27 @@
       if (!fl || !fl.xaxis) return null;
       const xa = fl.xaxis;
       if (typeof xa._offset !== 'number' || typeof xa._length !== 'number' || xa._length <= 0) return null;
-      if (!xa.range || !isFinite(xa.range[0]) || !isFinite(xa.range[1]) || xa.range[1] === xa.range[0]) return null;
       const rows = currentPayload.rows;
       if (!rows || !rows.length) return null;
       const rect = chartDiv.getBoundingClientRect();
       const px = clientX - rect.left;
       const cx = Math.max(xa._offset, Math.min(px, xa._offset + xa._length));
-      const fraction = (cx - xa._offset) / xa._length;
-      const dataX = xa.range[0] + fraction * (xa.range[1] - xa.range[0]);
+      // 优先用 Plotly 轴的 p2d/d2p：对 autorange 与显式 range 都正确，
+      // 避免 double-click 等触发 autorange 后 xa.range 为 null 导致 tooltip 永久失效（issue #21）。
+      const hasAxisFns = typeof xa.p2d === 'function' && typeof xa.d2p === 'function';
+      const rangeOk = xa.range && isFinite(xa.range[0]) && isFinite(xa.range[1]) && xa.range[1] !== xa.range[0];
+      if (!hasAxisFns && !rangeOk) return null;
+      let dataX;
+      if (hasAxisFns) {
+        dataX = xa.p2d(cx);
+      } else {
+        const fraction = (cx - xa._offset) / xa._length;
+        dataX = xa.range[0] + fraction * (xa.range[1] - xa.range[0]);
+      }
       const index = Math.max(0, Math.min(rows.length - 1, Math.round(dataX)));
-      const screenX = xa._offset + ((index - xa.range[0]) / (xa.range[1] - xa.range[0])) * xa._length;
+      const screenX = hasAxisFns
+        ? xa.d2p(index)
+        : xa._offset + ((index - xa.range[0]) / (xa.range[1] - xa.range[0])) * xa._length;
       const midpoint = xa._offset + xa._length / 2;
       return { index, screenX, midpoint };
     }
@@ -653,6 +676,15 @@
     function hideCandleTooltip() {
       vlineEl.style.display = 'none';
       candleTipEl.style.display = 'none';
+    }
+
+    // 重绘完成后调用：若指针仍在主图区，按最新 PlotView 边界恢复 tooltip；否则隐藏。
+    function refreshCandleTooltip() {
+      if (pointerOverPlot && lastPointerClientX != null && currentPayload) {
+        updateCandleTooltip(lastPointerClientX, lastPointerClientY, false);
+      } else {
+        hideCandleTooltip();
+      }
     }
 
     function updateCandleTooltip(clientX, clientY, isPointerDown) {
@@ -705,10 +737,14 @@
     }
 
     chartDiv.addEventListener('pointermove', (e) => {
+      lastPointerClientX = e.clientX;
+      lastPointerClientY = e.clientY;
+      pointerOverPlot = true;
       updatePriceIndicator(e.clientX, e.clientY, e.buttons > 0);
       updateCandleTooltip(e.clientX, e.clientY, e.buttons > 0);
     });
     chartDiv.addEventListener('pointerleave', () => {
+      pointerOverPlot = false;
       if (priceIndicatorRaf) cancelAnimationFrame(priceIndicatorRaf);
       priceIndicatorRaf = null;
       hlineEl.style.display = 'none';
