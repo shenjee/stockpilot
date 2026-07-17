@@ -638,14 +638,20 @@
       if (!hasAxisFns && !rangeOk) return null;
       let dataX;
       if (hasAxisFns) {
-        dataX = xa.p2d(cx);
+        // Plotly axis conversion functions use pixels relative to the axis
+        // origin, while pointer coordinates here are relative to chartDiv.
+        // Passing the absolute chart pixel advances the active index by
+        // roughly xa._offset / barWidth and makes the final bars unreachable.
+        dataX = xa.p2d(cx - xa._offset);
       } else {
         const fraction = (cx - xa._offset) / xa._length;
         dataX = xa.range[0] + fraction * (xa.range[1] - xa.range[0]);
       }
       const index = Math.max(0, Math.min(rows.length - 1, Math.round(dataX)));
       const screenX = hasAxisFns
-        ? xa.d2p(index)
+        // d2p returns an axis-relative pixel; convert it back to chartDiv
+        // coordinates before positioning the overlay line.
+        ? xa._offset + xa.d2p(index)
         : xa._offset + ((index - xa.range[0]) / (xa.range[1] - xa.range[0])) * xa._length;
       const midpoint = xa._offset + xa._length / 2;
       return { index, screenX, midpoint };
