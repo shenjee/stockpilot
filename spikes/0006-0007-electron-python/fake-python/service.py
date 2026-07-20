@@ -67,6 +67,163 @@ def _log(event: str, **fields) -> None:
     _emit("SPIKE_LOG", {"event": event, **fields})
 
 
+def _sse_chunk(obj: dict) -> bytes:
+    """Serialize an event as an SSE `data:` frame (one JSON object per frame)."""
+    payload = json.dumps(obj, separators=(",", ":"))
+    return f"data: {payload}\n\n".encode("utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Transport state (Phase B)
+# ---------------------------------------------------------------------------
+
+
+class _Subscriber:
+    """A single event-stream consumer (one WS or one SSE response)."""
+
+    def __init__(self, session_id: str, generation: int, buffer_max: int) -> None:
+        self.session_id = session_id
+        self.generation = generation
+        self._queue: asyncio.Queue = asyncio.Queue(maxsize=buffer_max)
+        self._closed = False
+
+    async def push(self, event: dict) -> bool:
+        if self._closed:
+            return False
+        try:
+            self._queue.put_nowait(event)
+            return True
+        except asyncio.QueueFull:
+            # Bounded buffer exceeded for THIS subscriber. The slow-consumer
+            # policy is: drop the OLDEST pending event to keep the live tail,
+            # and flag the subscriber as overflowed so the client can detect
+            # a gap and re-baseline from a snapshot.
+            try:
+                self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            try:
+                self._queue.put_nowait(event)
+                return True
+            except asyncio.QueueFull:
+                return False
+
+    async def stream(self):
+        while not self._closed:
+            event = await self._queue.get()
+            if event is None:
+                break
+            yield event
+
+    def close(self) -> None:
+        self._closed = True
+        try:
+            self._queue.put_nowait(None)
+        except asyncio.QueueFull:
+            pass
+
+
+class _SessionState:
+    def __init__(self, session_id: str, generation: int, buffer_max: int) -> None:
+        self.session_id = session_id
+        self.generation = generation
+        self.revision = 0
+        self.retired = False
+        self.subscribers: list[_Subscriber] = []
+        self.buffer_max = buffer_max
+        # A small deterministic "workbench" fixture so snapshots have content.
+        self.fixture = {"bars": [{"i": i, "c": round(i * 0.5, 2)} for i in range(8)]}
+
+    def snapshot(self) -> dict:
+        import copy
+        return {
+            "session_id": self.session_id,
+            "generation": self.generation,
+            "revision": self.revision,
+            "fixture": copy.deepcopy(self.fixture),
+        }
+
+
+class TransportState:
+    """Owns sessions, revisions, generations, and bounded event delivery.
+
+    Contract elements required by ADR 0007:
+      - service_generation isolates events across Python restarts;
+      - immutable session_id (created at gen N, retired explicitly);
+      - monotonically increasing revision within a session;
+      - request correlation ids;
+      - full-snapshot operation to (re)establish the baseline;
+      - bounded per-subscriber buffer with an explicit overflow policy.
+    """
+
+    def __init__(self, generation: int, event_buffer_max: int = 16) -> None:
+        self.generation = generation
+        self.event_buffer_max = event_buffer_max
+        self._sessions: dict[str, _SessionState] = {}
+        self._request_counter = 0
+
+    def next_request_id(self) -> str:
+        self._request_counter += 1
+        return f"r{self._request_counter}"
+
+    def create_session(self) -> str:
+        sid = f"s-{self.generation}-{len(self._sessions)}"
+        self._sessions[sid] = _SessionState(sid, self.generation, self.event_buffer_max)
+        return sid
+
+    def retire_session(self, sid: str | None) -> bool:
+        s = self._sessions.get(sid) if sid else None
+        if s is None or s.retired:
+            return False
+        s.retired = True
+        for sub in list(s.subscribers):
+            sub.close()
+        s.subscribers.clear()
+        return True
+
+    def snapshot_for(self, sid: str | None) -> dict | None:
+        s = self._sessions.get(sid) if sid else None
+        return s.snapshot() if s and not s.retired else None
+
+    def revision_for(self, sid: str | None) -> int | None:
+        s = self._sessions.get(sid) if sid else None
+        return s.revision if s and not s.retired else None
+
+    def subscribe(self, sid: str | None) -> _Subscriber | None:
+        s = self._sessions.get(sid) if sid else None
+        if s is None or s.retired:
+            return None
+        sub = _Subscriber(sid, self.generation, self.event_buffer_max)
+        s.subscribers.append(sub)
+        return sub
+
+    def unsubscribe(self, sub: _Subscriber) -> None:
+        s = self._sessions.get(sub.session_id)
+        if s and sub in s.subscribers:
+            s.subscribers.remove(sub)
+        sub.close()
+
+    def emit(self, sid: str | None, event: dict) -> int | None:
+        """Push an incremental event to a session's subscribers.
+
+        Returns the new revision, or None if the session is unknown/retired.
+        """
+        s = self._sessions.get(sid) if sid else None
+        if s is None or s.retired:
+            return None
+        s.revision += 1
+        envelope = {
+            "type": event.get("type", "event"),
+            "session_id": sid,
+            "generation": self.generation,
+            "revision": s.revision,
+            "payload": event,
+        }
+        for sub in list(s.subscribers):
+            asyncio.ensure_future(sub.push(envelope))
+        return s.revision
+
+
 # ---------------------------------------------------------------------------
 # Fake service
 # ---------------------------------------------------------------------------
@@ -82,6 +239,13 @@ class FakeService:
         self.crash_delay_ms = int(os.environ.get("SPIKE_CRASH_DELAY_MS", "0"))
         self.ignore_shutdown = os.environ.get("SPIKE_IGNORE_SHUTDOWN", "") == "1"
         self.slow_work_ms = int(os.environ.get("SPIKE_SLOW_WORK_MS", "0"))
+        # Transport (Phase B) config.
+        self.event_buffer_max = int(os.environ.get("SPIKE_EVENT_BUFFER_MAX", "16"))
+        self.slow_consumer_delay_ms = int(os.environ.get("SPIKE_SLOW_CONSUMER_DELAY_MS", "0"))
+        self.transport = TransportState(
+            generation=self.generation,
+            event_buffer_max=self.event_buffer_max,
+        )
         port = int(os.environ.get("SPIKE_PORT", "0"))
         self.requested_port = port
         self.port: int | None = None
@@ -126,6 +290,15 @@ class FakeService:
         app.router.add_post("/shutdown", self._shutdown)
         app.router.add_post("/api/crash", self._crash_on_demand)
         app.router.add_post("/api/slow-work", self._slow_work)
+        # Phase B transport: request/response + two event transports to compare.
+        app.router.add_post("/api/request", self._api_request)
+        app.router.add_post("/api/session/create", self._session_create)
+        app.router.add_post("/api/session/retire", self._session_retire)
+        app.router.add_get("/api/snapshot", self._api_snapshot)
+        app.router.add_get("/ws", self._ws_events)        # HTTP + WebSocket
+        app.router.add_get("/events", self._sse_events)    # HTTP + SSE
+        # Test-only knobs to push fixture events / simulate slow consumer.
+        app.router.add_post("/api/emit", self._api_emit)
         return app
 
     async def _slow_work(self, request: web.Request) -> web.Response:
@@ -143,6 +316,166 @@ class FakeService:
         return web.json_response(
             {"ok": True, "generation": self.generation, "work": body}
         )
+
+    # -- Phase B transport ---------------------------------------------------
+
+    async def _api_request(self, request: web.Request) -> web.Response:
+        body = {}
+        if request.can_read_body:
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+        op = body.get("op")
+        if op is None:
+            return web.json_response(
+                {"error": "missing_op", "generation": self.generation}, status=400
+            )
+        # Echo back with a request correlation id and current generation.
+        return web.json_response({
+            "ok": True,
+            "op": op,
+            "request_id": self.transport.next_request_id(),
+            "generation": self.generation,
+            "echo": body,
+        })
+
+    async def _session_create(self, request: web.Request) -> web.Response:
+        body = {}
+        if request.can_read_body:
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+        sid = self.transport.create_session()
+        return web.json_response({
+            "session_id": sid,
+            "generation": self.generation,
+            "revision": self.transport.revision_for(sid),
+            "snapshot": self.transport.snapshot_for(sid),
+        })
+
+    async def _session_retire(self, request: web.Request) -> web.Response:
+        body = {}
+        if request.can_read_body:
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+        sid = body.get("session_id")
+        retired = self.transport.retire_session(sid)
+        return web.json_response({
+            "retired": retired,
+            "session_id": sid,
+            "generation": self.generation,
+        })
+
+    async def _api_snapshot(self, request: web.Request) -> web.Response:
+        sid = request.query.get("session_id")
+        snap = self.transport.snapshot_for(sid)
+        if snap is None:
+            return web.json_response(
+                {"error": "unknown_session", "generation": self.generation}, status=404
+            )
+        return web.json_response({
+            "session_id": sid,
+            "generation": self.generation,
+            "revision": self.transport.revision_for(sid),
+            "snapshot": snap,
+        })
+
+    async def _api_emit(self, request: web.Request) -> web.Response:
+        """Test-only knob: push a fixture event into a session's stream."""
+        body = {}
+        if request.can_read_body:
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+        sid = body.get("session_id")
+        event = body.get("event", {"type": "tick"})
+        pushed = self.transport.emit(sid, event)
+        if pushed is None:
+            return web.json_response(
+                {"error": "unknown_or_retired_session", "generation": self.generation},
+                status=404,
+            )
+        return web.json_response({"pushed": pushed, "generation": self.generation})
+
+    async def _ws_events(self, request: web.Request) -> web.WebSocketResponse:
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        sid = request.query.get("session_id")
+        subscriber = self.transport.subscribe(sid)
+        if subscriber is None:
+            await ws.send_json({
+                "type": "error",
+                "error": "unknown_or_retired_session",
+                "generation": self.generation,
+            })
+            await ws.close()
+            return ws
+        # Send the snapshot baseline first (reconnect re-baselining).
+        await ws.send_json({
+            "type": "snapshot",
+            "session_id": sid,
+            "generation": self.generation,
+            "revision": self.transport.revision_for(sid),
+            "snapshot": self.transport.snapshot_for(sid),
+        })
+        try:
+            async for event in subscriber.stream():
+                # Slow-consumer simulation: the server holds the event briefly
+                # before sending (does NOT drop). Bounded buffer is enforced
+                # inside TransportState before it ever reaches here.
+                if self.slow_consumer_delay_ms > 0:
+                    await asyncio.sleep(self.slow_consumer_delay_ms / 1000.0)
+                await ws.send_json(event)
+        except Exception as exc:  # pragma: no cover - defensive
+            _log("ws_send_error", error=str(exc))
+        finally:
+            self.transport.unsubscribe(subscriber)
+        return ws
+
+    async def _sse_events(self, request: web.Request) -> web.StreamResponse:
+        sid = request.query.get("session_id")
+        subscriber = self.transport.subscribe(sid)
+        resp = web.StreamResponse(
+            status=200,
+            headers={
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+        await resp.prepare(request)
+        if subscriber is None:
+            await resp.write(_sse_chunk({
+                "type": "error",
+                "error": "unknown_or_retired_session",
+                "generation": self.generation,
+            }))
+            await resp.write_eof()
+            return resp
+        # Snapshot baseline first.
+        await resp.write(_sse_chunk({
+            "type": "snapshot",
+            "session_id": sid,
+            "generation": self.generation,
+            "revision": self.transport.revision_for(sid),
+            "snapshot": self.transport.snapshot_for(sid),
+        }))
+        try:
+            async for event in subscriber.stream():
+                if self.slow_consumer_delay_ms > 0:
+                    await asyncio.sleep(self.slow_consumer_delay_ms / 1000.0)
+                await resp.write(_sse_chunk(event))
+        except Exception as exc:  # pragma: no cover - defensive
+            _log("sse_send_error", error=str(exc))
+        finally:
+            self.transport.unsubscribe(subscriber)
+        return resp
 
     async def _healthz(self, request: web.Request) -> web.Response:
         return web.json_response(
