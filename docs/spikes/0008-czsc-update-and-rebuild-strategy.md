@@ -4,6 +4,7 @@
 
 - Validation date: 2026-07-21 (Asia/Shanghai)
 - Issue: [StockPilot #27](https://github.com/shenjee/stockpilot/issues/27)
+- Draft PR: [#29](https://github.com/shenjee/stockpilot/pull/29)
 - Related decision: `docs/adr/0008-czsc-update-and-rebuild-strategy.md` (`Proposed`, unchanged)
 - Related Epic: [#28](https://github.com/shenjee/stockpilot/issues/28)
 - Baseline commit: `b37ec9d20c3569daa04dff1f62f5d209a577cfd9`
