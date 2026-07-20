@@ -42,10 +42,17 @@ def _plain(value: Any) -> Any:
 
 def semantic_payload(result: Any, normalized: Any | None = None) -> dict[str, Any]:
     raw = _plain(result)
+    if not isinstance(raw, Mapping):
+        raise TypeError(f"analysis payload must be a mapping, got {type(raw).__name__}")
     missing = [field for field in REQUIRED_RESULT_FIELDS if field not in raw]
     if missing:
         raise ValueError(f"analysis payload misses required semantic fields: {missing}")
-    payload = {field: raw[field] for field in REQUIRED_RESULT_FIELDS}
+    unexpected = sorted(set(raw) - set(REQUIRED_RESULT_FIELDS))
+    if unexpected:
+        raise ValueError(f"analysis payload has unexpected semantic fields: {unexpected}")
+    # Compare the complete result mapping. The explicit field-set checks above
+    # make schema growth fail closed instead of silently weakening the oracle.
+    payload = dict(raw)
     if normalized is not None:
         payload["normalized"] = {
             "symbol": normalized.symbol,

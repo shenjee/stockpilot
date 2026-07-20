@@ -76,6 +76,13 @@ class ComparatorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "misses required"):
             semantic_payload({"symbol": "x"})
 
+    def test_rejects_unexpected_result_fields(self):
+        _, result = full_rebuild(load_fixture()["bars"][:3], signals_config=[])
+        payload = result.to_dict()
+        payload["future_schema_field"] = {"must_not_be_ignored": True}
+        with self.assertRaisesRegex(ValueError, "unexpected semantic fields.*future_schema_field"):
+            semantic_payload(payload)
+
 
 class RebuildAndIncrementalTests(unittest.TestCase):
     @classmethod
@@ -221,6 +228,12 @@ class BenchmarkSmokeTests(unittest.TestCase):
             "peak_python_allocated_memory_bytes_548",
         ):
             self.assertIn(key, measurements)
+        for key in ("one_bar_full_rebuild", "forward_incremental_project_result"):
+            measurement = measurements[key]
+            self.assertEqual(measurement["sweeps"], 1)
+            self.assertEqual(measurement["prefixes_per_sweep"], 3)
+            self.assertEqual(len(measurement["rounds"][0]["samples"]), 3)
+            self.assertEqual(sorted(measurement["by_prefix"]), ["1", "24", "48"])
 
 
 if __name__ == "__main__":

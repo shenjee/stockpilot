@@ -25,7 +25,7 @@ which python
 python spikes/0008-czsc-update-and-rebuild-strategy/generate_fixture.py --check
 python -m unittest packages.chantheory.tests.test_czsc_5m_spike
 python spikes/0008-czsc-update-and-rebuild-strategy/benchmark.py \
-  --output spikes/0008-czsc-update-and-rebuild-strategy/benchmark_results.json
+  --output spikes/0008-czsc-update-and-rebuild-strategy/benchmark_results.json --quiet
 python -m unittest discover -s packages/chantheory/tests -p 'test_*.py'
 ```
 
@@ -35,4 +35,4 @@ The 2026-07-21 run could not use `~/.venvs/czsc` because its Homebrew Python fra
 
 The safe incremental experiment owns the raw analyzer entirely inside this Spike and only returns `AnalysisResult`. It clones raw bars before signal replay because CZSC signal functions write caches onto `RawBar`; sharing those bars creates a reproducible prefix-2 semantic mismatch. This isolation is evidence about a possible future adapter, not code to copy into T+0 runtime.
 
-The measured full rebuild meets the MVP interaction scenario and is no slower than the safe incremental path once complete signal replay and project mapping are included. Recommendation: use full project-level rebuild for MVP and retain it as the oracle.
+Five complete 48-prefix sweeps show no material end-to-end advantage for the safe incremental path once signal replay and project mapping are included. Independent review runs were roughly 3.5 times slower than the recorded author run, so this Spike recommends full rebuild as the MVP direction but does **not** recommend accepting ADR 0008 until the benchmark is rerun in the repaired project environment and the measured latency is reviewed against the product interaction budget.

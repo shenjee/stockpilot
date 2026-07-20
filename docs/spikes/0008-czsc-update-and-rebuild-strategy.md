@@ -10,9 +10,11 @@
 - Baseline commit: `b37ec9d20c3569daa04dff1f62f5d209a577cfd9`
 - Evidence implementation commit: `54c607fcad796722d463e963da5cc474e5af8faa`
 - Prototype classification: **Reference only**
-- Recommendation: **Accept full rebuild** for MVP
+- Recommended direction: **full rebuild for MVP**
+- ADR status: **Proposed** (unchanged)
+- Acceptance pending: benchmark rerun in the repaired `~/.venvs/czsc` project environment and product-latency review
 
-The full project-level rebuild is deterministic, safely supports backward seek, and has acceptable measured latency on the target-class Apple Silicon machine. A safe incremental experiment is semantically equivalent across every target-day prefix, but it provides no end-to-end latency advantage and requires explicit isolation from signal cache mutation. The added mutable-state complexity is therefore unjustified for MVP.
+The full project-level rebuild is deterministic and safely supports backward seek. A safe incremental experiment is semantically equivalent across every target-day prefix, but it provides no material end-to-end latency advantage and requires explicit isolation from signal cache mutation. This supports full rebuild as the likely MVP direction. It does not yet support accepting the ADR: independent review runs reproduced the direction but measured roughly 160–200 ms rather than the author run's roughly 40–100 ms, and the required project environment remains unavailable.
 
 ## Test environment
 
@@ -25,6 +27,7 @@ The full project-level rebuild is deterministic, safely supports backward seek, 
 | CZSC | 0.10.12 |
 | Clock | `time.perf_counter_ns` |
 | Memory tool | `tracemalloc` peak Python allocations |
+| Author rerun load average | 3.055 / 4.688 / 5.866 at environment capture |
 
 The required `~/.venvs/czsc` environment was checked first. Its interpreter was Python 3.14.5, but NumPy import failed because the Homebrew Python framework failed macOS code-signature verification (`library load denied by system policy`; `codesign --verify --deep --strict` also failed). A system-wide Homebrew reinstall was deliberately not performed. Instead, the experiment used an isolated Python 3.13.14 runtime with the same `czsc==0.10.12`. Results establish behavior for the pinned engine on arm64 but should be rerun on the repaired project Python before release qualification.
 
@@ -58,7 +61,7 @@ The semantic comparator includes normalized symbol/timeframe/source, every norma
 - plot primitives;
 - all `meta`, including engine probe, mapping counts, signal configuration/counts, and deterministic engine assumptions.
 
-No field is excluded. Exact values, list order, types, and keys are compared. The comparator reports the smallest JSON-style path, values, and difference reason.
+No field is excluded. Exact values, list order, types, and keys are compared. The comparator asserts that the complete `to_dict()` key set exactly matches the known `AnalysisResult` schema; missing or newly added fields fail closed until the oracle is deliberately updated. The comparator reports the smallest JSON-style path, values, and difference reason.
 
 ### Incremental experiment
 
@@ -90,27 +93,53 @@ The fake generation executor gives Live and Replay distinct pipeline objects and
 
 Imports are excluded. “Cold” is the first analysis call after module import and includes lazy first-use initialization; warm runs follow one explicit unmeasured rebuild. All end-to-end rows include normalization, signal replay, project mapping, plot primitives, summaries, warnings, and `AnalysisResult` assembly.
 
+The revised benchmark executes five complete 48-prefix sweeps for both full and incremental paths. It stores all 480 raw prefix measurements, per-round summaries, load average, round duration, and fixed-prefix summaries in `benchmark_results.json`. The aggregate prefix statistics intentionally mix input sizes; fixed 501-, 524-, and 548-bar statistics isolate input length and contain five repeated samples each.
+
+Author rerun on the isolated environment:
+
 | Scenario | Samples | Median | p95 | Max |
 | --- | ---: | ---: | ---: | ---: |
-| Cold 500-bar full rebuild | 1 | 1010.255 ms | 1010.255 ms | 1010.255 ms |
-| Warm/repeated 500-bar full rebuild | 11 | 44.220 ms | 85.646 ms | 85.646 ms |
-| Full rebuild after each target-day closed bar | 48 | 47.411 ms | 77.911 ms | 83.048 ms |
-| Safe forward incremental + complete project result | 48 | 45.702 ms | 82.657 ms | 86.726 ms |
-| Backward seek rebuild to prefix 16 | 9 | 47.054 ms | 48.596 ms | 48.596 ms |
+| Cold 500-bar full rebuild | 1 | 894.868 ms | 894.868 ms | 894.868 ms |
+| Warm/repeated 500-bar full rebuild | 11 | 42.040 ms | 69.456 ms | 69.456 ms |
+| Five full-rebuild prefix sweeps | 240 | 45.116 ms | 69.162 ms | 98.952 ms |
+| Five safe-incremental prefix sweeps | 240 | 42.622 ms | 71.211 ms | 73.780 ms |
+| Backward seek rebuild to prefix 16 | 9 | 43.355 ms | 69.585 ms | 69.585 ms |
 
-The product needs an initial 500-bar loading calculation, an update after each five-minute close, and an interactive backward seek. The first lazy call is about one second and occurs inside an already explicit loading state. Subsequent update and seek medians are about 45–47 ms, with observed tails below 100 ms. Incremental does not improve tail latency and improves the median by only 1.709 ms in this run, well below the complexity cost.
+Fixed-size repeated results from those sweeps:
 
-Single-run stage instrumentation at 548 bars:
+| Path and size | Samples | Median | p95/max with n=5 |
+| --- | ---: | ---: | ---: |
+| Full, 501 bars | 5 | 41.362 ms | 43.240 ms |
+| Full, 524 bars | 5 | 44.236 ms | 46.187 ms |
+| Full, 548 bars | 5 | 46.896 ms | 69.993 ms |
+| Incremental, 501 bars | 5 | 39.227 ms | 39.362 ms |
+| Incremental, 524 bars | 5 | 42.507 ms | 72.380 ms |
+| Incremental, 548 bars | 5 | 44.508 ms | 44.930 ms |
 
-| Stage | Time | Share of 51.580 ms total |
+Independent reviewer reruns used the same Python 3.13.14, CZSC 0.10.12, and fixture but produced materially slower stable results:
+
+| Scenario | Author 5-sweep rerun | Review run 1 | Review run 2 |
+| --- | ---: | ---: | ---: |
+| Warm 500 median | 42.040 ms | 167.630 ms | 156.176 ms |
+| Full prefix median | 45.116 ms | 164.748 ms | 164.073 ms |
+| Full prefix p95 | 69.162 ms | 188.631 ms | 195.387 ms |
+| Incremental prefix median | 42.622 ms | 167.135 ms | 162.228 ms |
+| Incremental prefix p95 | 71.211 ms | 196.773 ms | 197.471 ms |
+| Backward seek median | 43.355 ms | 161.873 ms | 164.641 ms |
+
+The author and reviewer runs agree on the decision-relevant comparison: safe incremental has no material end-to-end advantage. They do **not** agree on absolute latency. Therefore the earlier statement that observed tails were below 100 ms is withdrawn. The product suitability of approximately 160–200 ms must be evaluated after a controlled rerun in the repaired project environment; no acceptance claim or universal latency bound is made here.
+
+Single-run author stage instrumentation at 548 bars:
+
+| Stage | Time | Share of 47.389 ms total |
 | --- | ---: | ---: |
-| Raw CZSC constructor | 4.317 ms | 8.4% |
-| Signal replay | 34.362 ms | 66.6% |
-| Structure mapping (including candidates) | 1.307 ms | 2.5% |
-| Plot primitive generation | 0.086 ms | 0.2% |
-| Normalization/orchestration/remaining assembly | 11.507 ms | 22.3% |
+| Raw CZSC constructor | 4.049 ms | 8.5% |
+| Signal replay | 31.484 ms | 66.4% |
+| Structure mapping (including candidates) | 0.950 ms | 2.0% |
+| Plot primitive generation | 0.064 ms | 0.1% |
+| Normalization/orchestration/remaining assembly | 10.842 ms | 22.9% |
 
-Peak 548-bar Python allocation was **4,727,675 bytes (4.51 MiB)**. This is a reproducible `tracemalloc` proxy and excludes some native-library allocations; process RSS was not isolated from imported CZSC dependencies and is therefore not claimed.
+Peak 548-bar Python allocation was **4,667,815 bytes (4.45 MiB)**. This is a reproducible `tracemalloc` proxy and excludes some native-library allocations; process RSS was not isolated from imported CZSC dependencies and is therefore not claimed.
 
 ## Test commands and results
 
@@ -122,7 +151,7 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=packages \
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=packages \
   /private/tmp/stockpilot-czsc-runtime/venv/bin/python -B \
   spikes/0008-czsc-update-and-rebuild-strategy/benchmark.py \
-  --output spikes/0008-czsc-update-and-rebuild-strategy/benchmark_results.json
+  --output spikes/0008-czsc-update-and-rebuild-strategy/benchmark_results.json --quiet
 
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=packages \
   /private/tmp/stockpilot-czsc-runtime/venv/bin/python -B \
@@ -131,8 +160,8 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=packages \
 
 Results:
 
-- focused ADR 0008 acceptance: **14 tests passed in 50.918 s**;
-- complete `packages/chantheory` regression: **94 tests passed in 49.693 s**;
+- focused ADR 0008 acceptance: **15 tests passed in 47.416 s**;
+- complete `packages/chantheory` regression: **95 tests passed in 46.452 s**;
 - fixture regeneration check: canonical SHA-256 matched;
 - full benchmark: completed and wrote `benchmark_results.json`.
 
@@ -146,7 +175,7 @@ Verified:
 - dynamic unclosed-bar exclusion;
 - T2 → T1 rebuild with no future data and T1 → T2 equivalence;
 - stale and retired Replay publication isolation plus separate Live/Replay mutable pipeline identities;
-- cold/warm/update/incremental/seek latency, stage contribution, and Python allocation proxy.
+- five complete full/incremental prefix sweeps with raw round data, fixed-size repeats, cold/warm/seek latency, stage contribution, and Python allocation proxy.
 
 Not verified:
 
@@ -160,11 +189,11 @@ Not verified:
 
 The synthetic fixture is deterministic and structurally active but not a claim about real-market price distribution. Timestamp semantics are explicitly end-time and naive local exchange time because the public normalized schema currently stores naive strings. The incremental experiment uses a test-only patch point to reuse existing project mapping; extracting it would require a reviewed `packages/chantheory` API and long-term engine compatibility tests.
 
-**Recommendation: Accept full rebuild for MVP.** Keep it for initial load, each closed 5-minute update, reconnect/recovery, and every Replay backward seek. Publish complete CZSC snapshots and isolate stale tasks with session generations. Do not accept hybrid now: equivalent safe incremental operation exists, but it has no demonstrated end-to-end performance benefit and adds RawBar cache ownership, mutable analyzer lifetime, cancellation, and compatibility risk.
+**Recommended direction: full rebuild for MVP; ADR remains Proposed.** Full rebuild should remain the correctness oracle and the likely implementation for initial load, closed-bar updates, reconnect/recovery, and Replay backward seek. A hybrid is not justified by any of the three runs: safe incremental has no material end-to-end advantage and adds RawBar cache ownership, mutable analyzer lifetime, cancellation, and compatibility risk. Formal acceptance is pending a controlled benchmark in the repaired `~/.venvs/czsc` environment and an explicit product review of the resulting latency, including the reviewer's observed 160–200 ms range.
 
 Before formal development:
 
-1. repair and rerun the suite in the documented `~/.venvs/czsc` Python 3.14.5 environment;
+1. repair and rerun the full five-sweep benchmark and test suite in the documented `~/.venvs/czsc` Python 3.14.5 environment;
 2. define the production computation executor, Live priority, per-instance serialization, generation checks, shutdown, and failure recovery;
 3. freeze closed-bar timestamp/timezone and provider revision semantics;
 4. add a small real-market anonymized 5-minute fixture if licensing permits;
