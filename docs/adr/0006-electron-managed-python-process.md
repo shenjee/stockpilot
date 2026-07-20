@@ -3,7 +3,7 @@
 - Status: Proposed
 - Date: 2026-07-20
 - Owners: T+0 Assistant desktop runtime
-- Evidence target: `docs/spikes/t0assistant/python-process-validation.md`
+- Evidence target: `docs/spikes/0006-electron-managed-python-process.md`
 
 ## Context
 
