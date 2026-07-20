@@ -12,9 +12,10 @@ import {
   LineData,
   CrosshairMode,
   Time,
+  SeriesMarker,
 } from 'lightweight-charts';
-import { ChartGroupState, createInitialState, followLatest, setManualRange, calculateVisibleCount } from '../models/chart-group-state';
-import { BarData, calculateMACD, calculateVOLMA, calculateBOLL } from '../fixtures/ohlcv-fixture';
+import { ChartGroupState, createInitialState, followLatest, setManualRange, calculateVisibleCount, appendData, truncateAtTime } from '../models/chart-group-state';
+import { BarData, calculateMACD, calculateVOLMA, calculateBOLL, parseMarketTime, ZhongShu } from '../fixtures/ohlcv-fixture';
 
 export interface ChartGroupConfig {
   container: HTMLElement;
@@ -23,6 +24,9 @@ export interface ChartGroupConfig {
   macdHeight?: number;
   barSlotWidth?: number;
 }
+
+// 副图布局模式（注意：这是单图组内副图的高度/可见性切换，不是工作台布局）
+export type LayoutMode = 'full' | 'compact' | 'expanded' | 'hide-sub';
 
 export class FiveMinuteChartGroup {
   private priceChart: IChartApi;
@@ -39,11 +43,35 @@ export class FiveMinuteChartGroup {
   private bollMiddleSeries: ISeriesApi<'Line'>;
   private bollLowerSeries: ISeriesApi<'Line'>;
 
+  // CZSC overlay 系列
+  private buyPointSeries: ISeriesApi<'Line'>;
+  private sellPointSeries: ISeriesApi<'Line'>;
+  private biLineSeries: ISeriesApi<'Line'>;
+  private zhongShuUpperSeries: ISeriesApi<'Line'>;
+  private zhongShuLowerSeries: ISeriesApi<'Line'>;
+
+  // 离散买卖点 markers（Lightweight Charts 4.x 使用 series.setMarkers）
+  // 不再单独持有 markers 实例，直接调用 priceSeries.setMarkers
+
+  // 当前 overlay 数据（用于 truncate 时同步裁剪）
+  private currentBuyPoints: Array<{ time: string; price: number }> = [];
+  private currentSellPoints: Array<{ time: string; price: number }> = [];
+  private currentBiLines: Array<{ start: { time: string; price: number }; end: { time: string; price: number } }> = [];
+  private currentZhongShu: ZhongShu[] = [];
+
   private state: ChartGroupState;
   private allBars: BarData[];
 
   private container: HTMLElement;
   private resizeObserver: ResizeObserver;
+
+  private isSyncing: boolean = false;
+
+  // 布局状态
+  private layoutMode: LayoutMode = 'full';
+
+  // 状态变化回调
+  private onStateChange?: (state: ChartGroupState) => void;
 
   constructor(config: ChartGroupConfig, bars: BarData[]) {
     this.container = config.container;
@@ -62,8 +90,12 @@ export class FiveMinuteChartGroup {
     const macdDiv = document.createElement('div');
 
     priceDiv.style.flex = '1';
+    priceDiv.id = 'price-chart-container';
     volDiv.style.height = `${config.volHeight || 100}px`;
+    volDiv.id = 'vol-chart-container';
     macdDiv.style.height = `${config.macdHeight || 100}px`;
+    macdDiv.style.marginBottom = '4px';
+    macdDiv.id = 'macd-chart-container';
 
     this.container.appendChild(priceDiv);
     this.container.appendChild(volDiv);
@@ -176,6 +208,48 @@ export class FiveMinuteChartGroup {
       priceLineVisible: false,
     });
 
+    // CZSC overlay 系列
+    this.buyPointSeries = this.priceChart.addLineSeries({
+      color: '#22c55e',
+      lineWidth: 2,
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+
+    this.sellPointSeries = this.priceChart.addLineSeries({
+      color: '#ef4444',
+      lineWidth: 2,
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+
+    this.biLineSeries = this.priceChart.addLineSeries({
+      color: '#f59e0b',
+      lineWidth: 2,
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+
+    // 中枢上下沿（用半透明水平线段表示中枢区间）
+    this.zhongShuUpperSeries = this.priceChart.addLineSeries({
+      color: '#06b6d4',
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      lineStyle: 0,
+    });
+
+    this.zhongShuLowerSeries = this.priceChart.addLineSeries({
+      color: '#06b6d4',
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      lineStyle: 0,
+    });
+
+    // 离散买卖点 markers 初始为空
+    this.priceSeries.setMarkers([]);
+
     // 设置数据
     this.setData(bars);
 
@@ -260,9 +334,9 @@ export class FiveMinuteChartGroup {
   }
 
   private formatTime(timeStr: string): Time {
-    // "2026-07-18 09:35:00" -> convert to business day / timestamp
-    const date = new Date(timeStr);
-    return Math.floor(date.getTime() / 1000) as Time;
+    // 用 Date.UTC 构造时间戳，让 Lightweight Charts 显示直接对应市场时间（09:35 显示为 09:35）
+    // 避免本地时区偏移导致显示成 01:35 等错误时间
+    return parseMarketTime(timeStr) as Time;
   }
 
   private setupCrosshairSync() {
@@ -292,18 +366,56 @@ export class FiveMinuteChartGroup {
   }
 
   private setupVisibleRangeSync() {
-    const syncHandler = () => {
-      const range = this.priceChart.timeScale().getVisibleRange();
+    const syncHandler = (sourceChart: IChartApi) => {
+      if (this.isSyncing) return;
+
+      const range = sourceChart.timeScale().getVisibleRange();
       if (!range) return;
 
-      // 转换为逻辑索引范围更新状态
-      // 注意：实际实现需要 time -> logical index 的反向映射
-      // 这里简化处理，只同步时间范围
-      this.volChart.timeScale().setVisibleRange(range);
-      this.macdChart.timeScale().setVisibleRange(range);
+      this.isSyncing = true;
+      try {
+        // 同步到其他两张图
+        const charts = [this.priceChart, this.volChart, this.macdChart];
+        charts.forEach(chart => {
+          if (chart !== sourceChart) {
+            chart.timeScale().setVisibleRange(range);
+          }
+        });
+
+        // 转换时间范围到逻辑索引，更新状态
+        const fromTime = range.from as number;
+        const toTime = range.to as number;
+
+        // 查找对应的开始和结束索引
+        let startIndex = 0;
+        let endIndex = this.state.logicalToTime.length;
+
+        for (let i = 0; i < this.state.logicalToTime.length; i++) {
+          const barTime = Math.floor(new Date(this.state.logicalToTime[i]).getTime() / 1000);
+          if (barTime >= fromTime && startIndex === 0) {
+            startIndex = i;
+          }
+          if (barTime <= toTime) {
+            endIndex = i + 1;
+          }
+        }
+
+        // 更新状态并触发手动模式
+        const prevState = this.state;
+        this.state = setManualRange(this.state, startIndex, endIndex);
+
+        if (prevState.followState !== this.state.followState || this.onStateChange) {
+          this.notifyStateChange();
+        }
+      } finally {
+        this.isSyncing = false;
+      }
     };
 
-    this.priceChart.timeScale().subscribeVisibleLogicalRangeChange(syncHandler);
+    // 监听三张图的可见范围变化
+    this.priceChart.timeScale().subscribeVisibleLogicalRangeChange(() => syncHandler(this.priceChart));
+    this.volChart.timeScale().subscribeVisibleLogicalRangeChange(() => syncHandler(this.volChart));
+    this.macdChart.timeScale().subscribeVisibleLogicalRangeChange(() => syncHandler(this.macdChart));
   }
 
   private handleResize() {
@@ -328,20 +440,38 @@ export class FiveMinuteChartGroup {
   }
 
   private updateVisibleRange() {
-    const range = {
-      from: this.formatTime(this.state.logicalToTime[this.state.visibleStart]),
-      to: this.formatTime(this.state.logicalToTime[this.state.visibleEnd - 1]),
-    };
+    if (this.isSyncing) return;
 
-    this.priceChart.timeScale().setVisibleRange(range);
-    this.volChart.timeScale().setVisibleRange(range);
-    this.macdChart.timeScale().setVisibleRange(range);
+    this.isSyncing = true;
+    try {
+      const fromTime = this.formatTime(this.state.logicalToTime[this.state.visibleStart]);
+      const toTime = this.formatTime(this.state.logicalToTime[Math.min(this.state.visibleEnd, this.state.logicalToTime.length) - 1]);
+
+      const range = { from: fromTime, to: toTime };
+
+      this.priceChart.timeScale().setVisibleRange(range);
+      this.volChart.timeScale().setVisibleRange(range);
+      this.macdChart.timeScale().setVisibleRange(range);
+    } finally {
+      this.isSyncing = false;
+    }
+  }
+
+  private notifyStateChange() {
+    if (this.onStateChange) {
+      this.onStateChange(this.state);
+    }
   }
 
   // 手动设置可见范围（用户拖动后）
   public setManualVisibleRange(startIndex: number, endIndex: number) {
+    const prevState = this.state;
     this.state = setManualRange(this.state, startIndex, endIndex);
     this.updateVisibleRange();
+
+    if (prevState.followState !== this.state.followState || this.onStateChange) {
+      this.notifyStateChange();
+    }
   }
 
   // 切换到跟随最新
@@ -349,11 +479,197 @@ export class FiveMinuteChartGroup {
     const count = visibleCount || this.state.visibleEnd - this.state.visibleStart;
     this.state = followLatest(this.state, count);
     this.updateVisibleRange();
+    this.notifyStateChange();
+  }
+
+  // 增量更新数据
+  public appendData(newBars: BarData[]) {
+    this.allBars = [...this.allBars, ...newBars];
+    this.state = appendData(this.state, newBars.map(b => b.time));
+    this.setData(this.allBars);
+    this.updateVisibleRange();
+    // 重新应用 overlay（新数据到来后，之前因时间点不存在被过滤的 overlay 可能需要恢复）
+    this.applyBuyMarkers();
+    this.applySellMarkers();
+    this.applyBiLines();
+    this.applyZhongShu();
+    this.notifyStateChange();
+  }
+
+  // 回放截断
+  public truncateAtTime(maxTime: string) {
+    // 找到截断点
+    const maxIndex = this.allBars.findIndex(b => b.time > maxTime);
+    const effectiveEnd = maxIndex === -1 ? this.allBars.length : maxIndex;
+
+    this.allBars = this.allBars.slice(0, effectiveEnd);
+    this.state = truncateAtTime(this.state, maxTime);
+    this.setData(this.allBars);
+    this.updateVisibleRange();
+    // 重新应用 overlay：truncate 后 T 之后的数据被丢弃，overlay 也必须同步裁剪
+    // 不能让回放窗口出现未来时间点上的 CZSC 买卖点、笔或中枢
+    this.applyBuyMarkers();
+    this.applySellMarkers();
+    this.applyBiLines();
+    this.applyZhongShu();
+    this.notifyStateChange();
+  }
+
+  // 设置布局模式
+  public setLayoutMode(mode: LayoutMode) {
+    this.layoutMode = mode;
+    const divs = this.container.children as HTMLCollectionOf<HTMLElement>;
+    const volDiv = divs[1];
+    const macdDiv = divs[2];
+
+    switch (mode) {
+      case 'full':
+        volDiv.style.display = 'block';
+        macdDiv.style.display = 'block';
+        volDiv.style.height = '100px';
+        macdDiv.style.height = '100px';
+        break;
+      case 'compact':
+        volDiv.style.display = 'block';
+        macdDiv.style.display = 'block';
+        volDiv.style.height = '80px';
+        macdDiv.style.height = '80px';
+        break;
+      case 'expanded':
+        volDiv.style.display = 'block';
+        macdDiv.style.display = 'block';
+        volDiv.style.height = '120px';
+        macdDiv.style.height = '120px';
+        break;
+      case 'hide-sub':
+        volDiv.style.display = 'none';
+        macdDiv.style.display = 'none';
+        break;
+    }
+
+    // 触发 resize 更新图表尺寸
+    this.handleResize();
+  }
+
+  // 设置 CZSC 买点（离散 markers）
+  public setCZSCBuyPoints(points: Array<{ time: string; price: number }>) {
+    this.currentBuyPoints = points;
+    this.applyBuyMarkers();
+  }
+
+  // 设置 CZSC 卖点（离散 markers）
+  public setCZSCSellPoints(points: Array<{ time: string; price: number }>) {
+    this.currentSellPoints = points;
+    this.applySellMarkers();
+  }
+
+  private applyBuyMarkers() {
+    // 只保留当前 allBars 中存在的时间点
+    const validTimes = new Set(this.allBars.map(b => b.time));
+    const buyMarkers: SeriesMarker<Time>[] = this.currentBuyPoints
+      .filter(p => validTimes.has(p.time))
+      .map(p => ({
+        time: this.formatTime(p.time),
+        position: 'belowBar',
+        color: '#22c55e',
+        shape: 'arrowUp',
+        text: 'B',
+      }));
+    // 合并买卖点到同一个 markers 数组（Lightweight Charts 4.x 一个 series 只能有一组 markers）
+    const sellMarkers: SeriesMarker<Time>[] = this.currentSellPoints
+      .filter(p => validTimes.has(p.time))
+      .map(p => ({
+        time: this.formatTime(p.time),
+        position: 'aboveBar',
+        color: '#ef4444',
+        shape: 'arrowDown',
+        text: 'S',
+      }));
+    // 按时间排序合并
+    const allMarkers = [...buyMarkers, ...sellMarkers].sort((a, b) => (a.time as number) - (b.time as number));
+    this.priceSeries.setMarkers(allMarkers);
+  }
+
+  private applySellMarkers() {
+    // 4.x 中买卖点共享同一组 markers，在 applyBuyMarkers 中统一处理
+    this.applyBuyMarkers();
+  }
+
+  // 设置笔线段
+  public setBiLines(lines: Array<{ start: { time: string; price: number }; end: { time: string; price: number } }>) {
+    this.currentBiLines = lines;
+    this.applyBiLines();
+  }
+
+  private applyBiLines() {
+    const validTimes = new Set(this.allBars.map(b => b.time));
+    const data: LineData<Time>[] = [];
+    this.currentBiLines.forEach(line => {
+      // 只保留起止点都在当前数据中的线段
+      if (validTimes.has(line.start.time) && validTimes.has(line.end.time)) {
+        data.push({ time: this.formatTime(line.start.time), value: line.start.price });
+        data.push({ time: this.formatTime(line.end.time), value: line.end.price });
+      }
+    });
+    this.biLineSeries.setData(data);
+  }
+
+  // 设置中枢（zone overlay）
+  public setZhongShu(zhongShu: ZhongShu[]) {
+    this.currentZhongShu = zhongShu;
+    this.applyZhongShu();
+  }
+
+  private applyZhongShu() {
+    const upperData: LineData<Time>[] = [];
+    const lowerData: LineData<Time>[] = [];
+    const barCount = this.allBars.length;
+
+    this.currentZhongShu.forEach(zs => {
+      // 只保留完全在当前数据范围内的中枢
+      if (zs.endIndex < barCount) {
+        const startTime = this.formatTime(this.allBars[zs.startIndex].time);
+        const endTime = this.formatTime(this.allBars[zs.endIndex].time);
+        upperData.push({ time: startTime, value: zs.high });
+        upperData.push({ time: endTime, value: zs.high });
+        lowerData.push({ time: startTime, value: zs.low });
+        lowerData.push({ time: endTime, value: zs.low });
+      }
+    });
+
+    this.zhongShuUpperSeries.setData(upperData);
+    this.zhongShuLowerSeries.setData(lowerData);
+  }
+
+  // 显示/隐藏 BOLL
+  public setBOLLVisible(visible: boolean) {
+    this.bollUpperSeries.applyOptions({ visible });
+    this.bollMiddleSeries.applyOptions({ visible });
+    this.bollLowerSeries.applyOptions({ visible });
+  }
+
+  // 显示/隐藏 CZSC overlay
+  public setCZSCVisible(visible: boolean) {
+    this.buyPointSeries.applyOptions({ visible });
+    this.sellPointSeries.applyOptions({ visible });
+    this.biLineSeries.applyOptions({ visible });
+    this.zhongShuUpperSeries.applyOptions({ visible });
+    this.zhongShuLowerSeries.applyOptions({ visible });
   }
 
   // 获取当前状态
   public getState(): ChartGroupState {
     return this.state;
+  }
+
+  // 获取当前布局模式
+  public getLayoutMode(): LayoutMode {
+    return this.layoutMode;
+  }
+
+  // 设置状态变化回调
+  public setOnStateChange(callback: (state: ChartGroupState) => void) {
+    this.onStateChange = callback;
   }
 
   // 清理

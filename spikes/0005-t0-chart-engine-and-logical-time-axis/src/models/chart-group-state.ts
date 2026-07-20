@@ -63,7 +63,8 @@ export function setManualRange(state: ChartGroupState, start: number, end: numbe
   const clampedEnd = Math.min(state.logicalToTime.length, end);
 
   // 如果用户已经拖动到最新边缘，恢复跟随
-  const isAtLatestEdge = clampedEnd >= state.logicalToTime.length - 1;
+  // visibleEnd 是排他右端，等于 length 时表示包含最后一根
+  const isAtLatestEdge = clampedEnd >= state.logicalToTime.length;
 
   return {
     ...state,
@@ -108,7 +109,8 @@ export function timeToLogicalIndex(state: ChartGroupState, time: string): number
 
 // 检查是否在最新边缘
 export function isAtLatestEdge(state: ChartGroupState): boolean {
-  return state.visibleEnd >= state.logicalToTime.length - 1;
+  // visibleEnd 是排他右端，等于 length 时表示包含最后一根
+  return state.visibleEnd >= state.logicalToTime.length;
 }
 
 // 回放截断：丢弃 T 之后的数据

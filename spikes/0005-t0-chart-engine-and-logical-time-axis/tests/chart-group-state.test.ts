@@ -7,6 +7,7 @@ import {
   getVisibleTimes,
   truncateAtTime,
   calculateVisibleCount,
+  isAtLatestEdge,
   ChartGroupState,
 } from '../src/models/chart-group-state';
 
@@ -29,7 +30,9 @@ describe('ChartGroupState', () => {
     it('should start in following mode with latest bars visible', () => {
       const state = createInitialState(testTimes);
       expect(state.followState).toBe('following');
+      // visibleEnd 是排他右端，等于 length 时表示包含最后一根
       expect(state.visibleEnd).toBe(100);
+      expect(isAtLatestEdge(state)).toBe(true);
     });
   });
 
@@ -46,6 +49,7 @@ describe('ChartGroupState', () => {
       const state = createInitialState(testTimes);
       const result = followLatest(state, 50);
       expect(result.visibleStart).toBe(50);
+      // visibleEnd 等于 length，表示包含最后一根
       expect(result.visibleEnd).toBe(100);
       expect(result.followState).toBe('following');
     });
@@ -67,11 +71,17 @@ describe('ChartGroupState', () => {
       expect(state.followState).toBe('manual');
     });
 
-    it('should stay in following mode when at latest edge', () => {
+    it('should stay in following mode only when visibleEnd equals length', () => {
       let state = createInitialState(testTimes);
-      // Drag to latest edge (end - 1)
+      // visibleEnd = 99 表示最后一根（索引 99）尚未进入范围
       state = setManualRange(state, 50, 99);
+      expect(state.followState).toBe('manual');
+      expect(isAtLatestEdge(state)).toBe(false);
+
+      // visibleEnd = 100 表示最后一根（索引 99）已进入范围
+      state = setManualRange(state, 50, 100);
       expect(state.followState).toBe('following');
+      expect(isAtLatestEdge(state)).toBe(true);
     });
 
     it('should clamp out of bounds', () => {
@@ -79,6 +89,7 @@ describe('ChartGroupState', () => {
       const result = setManualRange(state, -10, 200);
       expect(result.visibleStart).toBe(0);
       expect(result.visibleEnd).toBe(100);
+      expect(result.followState).toBe('following');
     });
   });
 
@@ -152,8 +163,8 @@ describe('ChartGroupState', () => {
       state = setManualRange(state, 0, 50);
       expect(state.followState).toBe('manual');
 
-      // Drag back to latest edge (end - 1)
-      state = setManualRange(state, 50, 99);
+      // Drag back to latest edge (visibleEnd = length)
+      state = setManualRange(state, 50, 100);
       expect(state.followState).toBe('following');
     });
   });
@@ -170,6 +181,33 @@ describe('ChartGroupState', () => {
       expect(state.visibleStart).toBe(10);
       expect(state.visibleEnd).toBe(30);
       expect(state.followState).toBe('manual');
+    });
+  });
+
+  describe('latest-edge boundary cases', () => {
+    it('should not be at latest edge when visibleEnd is length - 1', () => {
+      const state = createInitialState(testTimes);
+      const manualState = setManualRange(state, 0, 99);
+      expect(isAtLatestEdge(manualState)).toBe(false);
+      expect(manualState.followState).toBe('manual');
+    });
+
+    it('should be at latest edge when visibleEnd equals length', () => {
+      const state = createInitialState(testTimes);
+      const manualState = setManualRange(state, 0, 100);
+      expect(isAtLatestEdge(manualState)).toBe(true);
+      expect(manualState.followState).toBe('following');
+    });
+
+    it('should handle empty data', () => {
+      const state = createInitialState([], 10);
+      expect(isAtLatestEdge(state)).toBe(true);
+    });
+
+    it('should handle single data point', () => {
+      const state = createInitialState([testTimes[0]], 10);
+      expect(state.visibleEnd).toBe(1);
+      expect(isAtLatestEdge(state)).toBe(true);
     });
   });
 });
