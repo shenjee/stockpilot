@@ -5,16 +5,16 @@
 - Validation date: 2026-07-21 (Asia/Shanghai)
 - Issue: [StockPilot #27](https://github.com/shenjee/stockpilot/issues/27)
 - Draft PR: [#29](https://github.com/shenjee/stockpilot/pull/29)
-- Related decision: `docs/adr/0008-czsc-update-and-rebuild-strategy.md` (`Proposed`, unchanged)
+- Related decision: `docs/adr/0008-czsc-update-and-rebuild-strategy.md` (`Accepted` on 2026-07-21)
 - Related Epic: [#28](https://github.com/shenjee/stockpilot/issues/28)
 - Baseline commit: `b37ec9d20c3569daa04dff1f62f5d209a577cfd9`
 - Evidence implementation commit: `54c607fcad796722d463e963da5cc474e5af8faa`
 - Prototype classification: **Reference only**
-- Recommended direction: **full rebuild for MVP**
-- ADR status: **Proposed** (unchanged)
-- Acceptance pending: benchmark rerun in the repaired `~/.venvs/czsc` project environment and product-latency review
+- Decision: **full project-level rebuild for MVP**
+- ADR status: **Accepted**
+- Incremental adapter: **not implemented for MVP**
 
-The full project-level rebuild is deterministic and safely supports backward seek. A safe incremental experiment is semantically equivalent across every target-day prefix, but it provides no material end-to-end latency advantage and requires explicit isolation from signal cache mutation. This supports full rebuild as the likely MVP direction. It does not yet support accepting the ADR: independent review runs reproduced the direction but measured roughly 160–200 ms rather than the author run's roughly 40–100 ms, and the required project environment remains unavailable.
+The full project-level rebuild is deterministic and safely supports backward seek. A safe incremental experiment is semantically equivalent across every target-day prefix, but it provides no material end-to-end latency advantage and requires explicit isolation from signal cache mutation. Independent review measured full-rebuild p95 at approximately 188–195 ms, which the decision owner accepts for an MVP that updates CZSC once per official five-minute close. The required project environment remains unavailable, but its repair and rerun is an accepted pre-release follow-up rather than an ADR acceptance prerequisite.
 
 ## Test environment
 
@@ -127,7 +127,7 @@ Independent reviewer reruns used the same Python 3.13.14, CZSC 0.10.12, and fixt
 | Incremental prefix p95 | 71.211 ms | 196.773 ms | 197.471 ms |
 | Backward seek median | 43.355 ms | 161.873 ms | 164.641 ms |
 
-The author and reviewer runs agree on the decision-relevant comparison: safe incremental has no material end-to-end advantage. They do **not** agree on absolute latency. Therefore the earlier statement that observed tails were below 100 ms is withdrawn. The product suitability of approximately 160–200 ms must be evaluated after a controlled rerun in the repaired project environment; no acceptance claim or universal latency bound is made here.
+The author and reviewer runs agree on the decision-relevant comparison: safe incremental has no material end-to-end advantage. They do **not** agree on absolute latency, so the earlier statement that observed tails were below 100 ms remains withdrawn and no universal latency bound is claimed. The decision owner accepts the reviewer-observed approximately 160–200 ms range for the MVP five-minute update cadence.
 
 Single-run author stage instrumentation at 548 bars:
 
@@ -189,11 +189,11 @@ Not verified:
 
 The synthetic fixture is deterministic and structurally active but not a claim about real-market price distribution. Timestamp semantics are explicitly end-time and naive local exchange time because the public normalized schema currently stores naive strings. The incremental experiment uses a test-only patch point to reuse existing project mapping; extracting it would require a reviewed `packages/chantheory` API and long-term engine compatibility tests.
 
-**Recommended direction: full rebuild for MVP; ADR remains Proposed.** Full rebuild should remain the correctness oracle and the likely implementation for initial load, closed-bar updates, reconnect/recovery, and Replay backward seek. A hybrid is not justified by any of the three runs: safe incremental has no material end-to-end advantage and adds RawBar cache ownership, mutable analyzer lifetime, cancellation, and compatibility risk. Formal acceptance is pending a controlled benchmark in the repaired `~/.venvs/czsc` environment and an explicit product review of the resulting latency, including the reviewer's observed 160–200 ms range.
+**Decision: full rebuild for MVP; ADR 0008 is Accepted.** Full rebuild is the implementation and correctness oracle for initial load, each official closed 5-minute update, disconnect recovery, stock switch, analysis recovery, and Replay backward seek. A hybrid is not justified by any of the three runs: safe incremental has no material end-to-end advantage and adds RawBar cache ownership, mutable analyzer lifetime, cancellation, and compatibility risk. The MVP does not implement an incremental adapter.
 
 Before formal development:
 
-1. repair and rerun the full five-sweep benchmark and test suite in the documented `~/.venvs/czsc` Python 3.14.5 environment;
+1. before release, repair and rerun the full five-sweep benchmark and test suite in the documented `~/.venvs/czsc` Python 3.14.5 environment; this is not an ADR acceptance prerequisite;
 2. define the production computation executor, Live priority, per-instance serialization, generation checks, shutdown, and failure recovery;
 3. freeze closed-bar timestamp/timezone and provider revision semantics;
 4. add a small real-market anonymized 5-minute fixture if licensing permits;
