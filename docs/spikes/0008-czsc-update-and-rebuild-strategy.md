@@ -7,7 +7,7 @@
 - Related decision: `docs/adr/0008-czsc-update-and-rebuild-strategy.md` (`Proposed`, unchanged)
 - Related Epic: [#28](https://github.com/shenjee/stockpilot/issues/28)
 - Baseline commit: `b37ec9d20c3569daa04dff1f62f5d209a577cfd9`
-- Evidence implementation commit: to be recorded after the first evidence commit
+- Evidence implementation commit: `54c607fcad796722d463e963da5cc474e5af8faa`
 - Prototype classification: **Reference only**
 - Recommendation: **Accept full rebuild** for MVP
 
