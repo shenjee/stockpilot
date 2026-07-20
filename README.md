@@ -157,6 +157,8 @@ into the repo.
 
 ## Related Docs
 
+- Architecture decisions: [docs/adr/README.md](docs/adr/README.md)
+- T+0 Assistant: [docs/t0assistant/t0_assistant_prd.md](docs/t0assistant/t0_assistant_prd.md)
 - Chan Theory: [docs/chan_theory_v0.1.md](docs/chan_theory_v0.1.md)
 - Chan Theory product notes: [docs/product_design.md](docs/product_design.md)
 - Fundamental Screener MVP: [docs/fundamental_screener_mvp.md](docs/fundamental_screener_mvp.md)
