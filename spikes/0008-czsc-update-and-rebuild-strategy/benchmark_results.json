@@ -1,0 +1,66 @@
+{
+  "environment": {
+    "clock": "time.perf_counter_ns",
+    "cpu": "Apple M3 Pro",
+    "czsc": "0.10.12",
+    "import_included": false,
+    "machine": "arm64",
+    "os": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+    "python": "3.13.14",
+    "python_executable": "/private/tmp/stockpilot-czsc-runtime/venv/bin/python",
+    "warmup_runs": 1
+  },
+  "fixture": {
+    "sha256": "3d01a0b19633ca42ab49df72903a3b4ea93b9ddc9d59eff24db1d5a51ef4e79f",
+    "target_bars": 48,
+    "timestamp_semantics": "bar_end",
+    "warm_bars": 500
+  },
+  "measurements": {
+    "backward_seek_rebuild_t1_16": {
+      "max_ms": 48.596,
+      "median_ms": 47.054,
+      "p95_ms": 48.596,
+      "samples": 9
+    },
+    "cold_500_full_rebuild": {
+      "max_ms": 1010.255,
+      "median_ms": 1010.255,
+      "p95_ms": 1010.255,
+      "samples": 1
+    },
+    "forward_incremental_project_result": {
+      "max_ms": 86.726,
+      "median_ms": 45.702,
+      "p95_ms": 82.657,
+      "samples": 48
+    },
+    "one_bar_full_rebuild": {
+      "max_ms": 83.048,
+      "median_ms": 47.411,
+      "p95_ms": 77.911,
+      "samples": 48
+    },
+    "peak_python_allocated_memory_bytes_548": 4727675,
+    "stage_profile_548": {
+      "analysis_result_total": 51.58,
+      "engine_constructor": 4.317,
+      "normalization_and_orchestration": 11.507,
+      "plot_primitives": 0.086,
+      "signal_replay": 34.362,
+      "structure_mapping": 1.307
+    },
+    "warm_500_full_rebuild": {
+      "max_ms": 85.646,
+      "median_ms": 44.22,
+      "p95_ms": 85.646,
+      "samples": 11
+    }
+  },
+  "notes": [
+    "Cold means the first analysis call after module import; interpreter and import time are excluded.",
+    "Warm measurements follow one explicit unmeasured rebuild.",
+    "Incremental timing includes CZSC.update plus complete project mapping, signal replay, plot primitives, and AnalysisResult assembly.",
+    "Memory is tracemalloc peak Python allocation, a reproducible proxy that excludes some native allocations."
+  ]
+}
