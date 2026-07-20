@@ -1,0 +1,18 @@
+{
+  "name": "stockpilot-spike-0006-0007-electron-python",
+  "version": "0.0.0-spike",
+  "private": true,
+  "description": "Spike for ADR 0006 (Electron-managed Python process lifecycle) and ADR 0007 (local Python transport). Evidence code, not production.",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test \"tests/lifecycle/**/*.js\" \"tests/transport/**/*.js\" \"tests/isolation/**/*.js\"",
+    "test:lifecycle": "node --test \"tests/lifecycle/**/*.js\"",
+    "test:transport": "node --test \"tests/transport/**/*.js\" \"tests/isolation/**/*.js\"",
+    "bench": "node tests/benchmark/transport-bench.js",
+    "smoke": "node tests/helpers/smoke.js",
+    "fake-python": "python3 fake-python/service.py"
+  }
+}
