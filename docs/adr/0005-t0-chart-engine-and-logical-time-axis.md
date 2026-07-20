@@ -3,7 +3,7 @@
 - Status: Proposed
 - Date: 2026-07-20
 - Owners: T+0 Assistant frontend
-- Evidence target: `docs/spikes/t0assistant/chart-validation.md`
+- Evidence target: `docs/spikes/0005-t0-chart-engine-and-logical-time-axis.md`
 
 ## Context
 

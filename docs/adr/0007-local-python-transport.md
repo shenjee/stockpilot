@@ -4,7 +4,7 @@
 - Date: 2026-07-20
 - Owners: T+0 Assistant desktop runtime and backend API
 - Depends on: ADR 0006 process boundary
-- Evidence target: `docs/spikes/t0assistant/local-transport-validation.md`
+- Evidence target: `docs/spikes/0007-local-python-transport.md`
 
 ## Context
 

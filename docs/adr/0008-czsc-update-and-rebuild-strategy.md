@@ -3,7 +3,7 @@
 - Status: Proposed
 - Date: 2026-07-20
 - Owners: `packages/chantheory` and T+0 runtime
-- Evidence target: `docs/spikes/t0assistant/czsc-rebuild-validation.md`
+- Evidence target: `docs/spikes/0008-czsc-update-and-rebuild-strategy.md`
 
 ## Context
 
