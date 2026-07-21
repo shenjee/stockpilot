@@ -3,7 +3,7 @@
 - **ADR**: [`docs/adr/0006-electron-managed-python-process.md`](../adr/0006-electron-managed-python-process.md) (status: `Proposed`)
 - **Issue**: [#26](https://github.com/shenjee/stockpilot/issues/26)
 - **Phase**: A - Process lifecycle
-- **Prototype**: [`spikes/0006-0007-electron-python/`](../spikes/0006-0007-electron-python/)
+- **Prototype**: [`spikes/0006-0007-electron-python/`](../../spikes/0006-0007-electron-python/)
 - **Date**: 2026-07-20
 - **Executor**: Claude
 - **Revision**: 2 (addresses review feedback: shutdown cancels pending restart; ADR 0006 recommendation is now Continue investigation because real packaging is decision-blocking.)

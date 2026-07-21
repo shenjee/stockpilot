@@ -3,7 +3,7 @@
 - **ADR**: [`docs/adr/0007-local-python-transport.md`](../adr/0007-local-python-transport.md) (status: `Proposed`)
 - **Issue**: [#26](https://github.com/shenjee/stockpilot/issues/26)
 - **Phase**: B - Local transport
-- **Prototype**: [`spikes/0006-0007-electron-python/`](../spikes/0006-0007-electron-python/)
+- **Prototype**: [`spikes/0006-0007-electron-python/`](../../spikes/0006-0007-electron-python/)
 - **Date**: 2026-07-20
 - **Executor**: Claude
 - **Depends on**: [Spike 0006](./0006-electron-managed-python-process.md) (process boundary)
