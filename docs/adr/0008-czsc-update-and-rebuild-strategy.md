@@ -62,11 +62,11 @@ periodically or diagnostically compare against a full rebuild.
 
 Serialize mutable engine or pipeline state and resume from it. This may accelerate
 seek, but creates compatibility and corruption risks. The architecture baseline
-does not require persisted derived state for MVP.
+does not require persisted derived state for the current product.
 
 ## Decision
 
-The MVP uses **full project-level rebuild** for every official closed 5-minute
+The current product uses **full project-level rebuild** for every official closed 5-minute
 bar. The runtime passes the complete available closed-bar prefix through the
 stable `packages/chantheory` API and publishes the resulting complete project
 schema snapshot.
@@ -76,7 +76,7 @@ backward seek use the same full-rebuild path. Replay backward seek discards the
 old derived state and rebuilds from the pre-open warm input through the selected
 closed-bar prefix.
 
-The MVP does not implement an incremental adapter and does not persist mutable
+The current implementation does not use an incremental adapter and does not persist mutable
 CZSC engine state or promise checkpoint compatibility. Dynamic unclosed 5-minute
 bars remain display-only and never enter CZSC analysis.
 
@@ -97,7 +97,7 @@ must not import, inspect, or mutate raw `czsc` engine objects.
   with signal replay diverges at the second target-day prefix because signal
   functions mutate bar caches.
 - Independent reviewer measurements put full-rebuild p95 at approximately
-  188–195 ms. This meets the accepted MVP scenario of one CZSC update per official
+  188–195 ms. This meets the accepted product scenario of one CZSC update per official
   five-minute close and does not justify incremental state complexity.
 
 Reproducible details, raw benchmark rounds, fixture identity, comparator rules,
@@ -118,11 +118,11 @@ in `docs/spikes/0008-czsc-update-and-rebuild-strategy.md` and Draft PR #29.
 
 Repair `~/.venvs/czsc` and run the five-sweep performance regression before
 release. This regression is a release-quality follow-up, not a prerequisite for
-accepting this ADR or beginning the full-rebuild MVP implementation.
+accepting this ADR or beginning the full-rebuild implementation.
 
 ## Consequences
 
-With full rebuild accepted for MVP:
+With full rebuild accepted for the current product:
 
 - implementation and recovery semantics remain simple and deterministic;
 - complete CZSC snapshots can be atomically replaced by React;

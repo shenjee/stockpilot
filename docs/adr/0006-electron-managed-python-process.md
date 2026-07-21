@@ -1,6 +1,6 @@
 # ADR 0006: Let Electron Manage One Python Service Process Per App Instance
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-07-20
 - Owners: T+0 Assistant desktop runtime
 - Evidence target: `docs/spikes/0006-electron-managed-python-process.md`
@@ -14,8 +14,8 @@ crashing Electron, and be recoverable without pretending that memory-only Replay
 state survived.
 
 The architecture baseline assigns Python lifecycle ownership to Electron main,
-but process startup, readiness, restart, shutdown, logging, and packaged-runtime
-behavior have not yet been proven in a minimal application.
+but process startup, readiness, restart, shutdown, and logging have not yet been
+proven in a minimal application.
 
 This ADR decides the process ownership and lifecycle model. ADR 0007 separately
 decides the local request/event transport so that transport can evolve without
@@ -29,8 +29,6 @@ changing process ownership.
   streams.
 - No orphan Python process after normal application shutdown.
 - Explicit behavior when Python fails during startup or crashes at runtime.
-- Support for development and packaged desktop execution on the target macOS
-  devices.
 - Testability with a fake Python service before the production backend exists.
 
 ## Options
@@ -45,7 +43,8 @@ shutdown. Live and Replay Sessions remain inside that Python process.
 
 Electron connects to a Python service managed outside the application lifecycle.
 This could share resources among desktop apps, but adds installation, version
-coordination, discovery, and stale-daemon problems that the MVP does not require.
+coordination, discovery, and stale-daemon problems that the current product does
+not require.
 
 ### Run Python Per Request Or Per Session
 
@@ -56,12 +55,12 @@ cache coordination, startup latency, cancellation, and resource limits harder.
 ### Embed Python In The Electron Process
 
 Load an embedded interpreter through a native integration. This reduces the
-number of operating-system processes but increases packaging complexity and
+number of operating-system processes but increases integration complexity and
 weakens the desired failure boundary.
 
-## Current Direction
+## Decision
 
-Prefer **one Electron-main-managed Python child process per application
+Use **one Electron-main-managed Python child process per application
 instance**. Electron main owns:
 
 - executable resolution and child startup;
@@ -81,8 +80,7 @@ reported as lost and are not silently reconstructed.
 
 ## Validation Required
 
-The Electron/Python Spike must provide a minimal packaged-or-package-equivalent
-prototype and evidence for:
+The Electron/Python Spike must provide a minimal prototype and evidence for:
 
 1. cold start, readiness timeout, startup failure, and clear renderer status;
 2. normal app quit with no remaining child process;
@@ -94,22 +92,22 @@ prototype and evidence for:
 8. preservation of persisted Live inputs and explicit loss of memory-only Replay
    state;
 9. stdout/stderr capture without interpreting either stream as business data;
-10. executable and resource discovery in both development and packaged layouts;
+10. executable and resource discovery without hard-coded machine-specific paths;
 11. focused automated tests using a fake service for lifecycle state transitions.
 
 The report must record process identifiers before and after restart, measured
-startup/shutdown timings, tested failure injection, relevant macOS packaging or
-signing constraints, and any assumptions not yet tested on both target machines.
+startup/shutdown timings, tested failure injection, and any assumptions not yet
+tested on both target machines.
 
 ## Decision Outcome
 
-Pending. Accept only after the prototype demonstrates deterministic ownership,
-bounded recovery, and clean shutdown. Packaging uncertainty that can prevent the
-app from launching is decision-blocking, not a detail to defer silently.
+Accepted. The prototype at revision
+`0eaa9ffe6385531553b7de2b2c2f89745f06d6c7` demonstrated deterministic
+ownership, bounded restart and retry behavior, generation changes, explicit
+loss of memory-only Replay state, and clean graceful or forced shutdown without
+an orphan Python process. Application distribution remains outside this ADR.
 
 ## Consequences
-
-If the current direction is accepted:
 
 - Electron main becomes responsible for a small but critical lifecycle state
   machine;
@@ -117,8 +115,7 @@ If the current direction is accepted:
 - multiple App instances create multiple Python processes, while shared SQLite
   correctness must not depend on a single process;
 - Replay state is intentionally disposable across Python crashes;
-- Python runtime packaging becomes a release concern that needs its own later ADR
-  once the Spike establishes viable choices.
+- application distribution remains outside this process-lifecycle decision.
 
 ## Related Documents
 

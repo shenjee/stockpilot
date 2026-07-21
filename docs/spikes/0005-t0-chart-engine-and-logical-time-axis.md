@@ -1,7 +1,7 @@
 # T+0 图表引擎验证报告
 
 > Spike 分支: `spike/t0-chart-trae`
-> 关联架构决策: ADR 0005
+> 关联架构决策: ADR 0005（Accepted）
 > 关联 Issue: StockPilot #25
 > 验证日期: 2026-07-21
 > 验证者: Trae
@@ -262,4 +262,4 @@ dist/assets/index-adgXV7xU.js  193.23 kB │ gzip: 59.10 kB │ map: 505.00 kB
 | 测试代码 | ✅ 位于 `spikes/0005-t0-chart-engine-and-logical-time-axis/tests/` |
 | 性能原始数据 | ❌ 未生成（需在真实浏览器环境测量） |
 | 截图对比 | ❌ 未生成 |
-| Draft PR | ❌ 未创建 |
+| PR | ✅ [#31](https://github.com/shenjee/stockpilot/pull/31) |

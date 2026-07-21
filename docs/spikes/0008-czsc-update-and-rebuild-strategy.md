@@ -10,11 +10,11 @@
 - Baseline commit: `b37ec9d20c3569daa04dff1f62f5d209a577cfd9`
 - Evidence implementation commit: `54c607fcad796722d463e963da5cc474e5af8faa`
 - Prototype classification: **Reference only**
-- Decision: **full project-level rebuild for MVP**
+- Decision: **full project-level rebuild for the current product**
 - ADR status: **Accepted**
-- Incremental adapter: **not implemented for MVP**
+- Incremental adapter: **not used by the current implementation**
 
-The full project-level rebuild is deterministic and safely supports backward seek. A safe incremental experiment is semantically equivalent across every target-day prefix, but it provides no material end-to-end latency advantage and requires explicit isolation from signal cache mutation. Independent review measured full-rebuild p95 at approximately 188–195 ms, which the decision owner accepts for an MVP that updates CZSC once per official five-minute close. The required project environment remains unavailable, but its repair and rerun is an accepted pre-release follow-up rather than an ADR acceptance prerequisite.
+The full project-level rebuild is deterministic and safely supports backward seek. A safe incremental experiment is semantically equivalent across every target-day prefix, but it provides no material end-to-end latency advantage and requires explicit isolation from signal cache mutation. Independent review measured full-rebuild p95 at approximately 188–195 ms, which the decision owner accepts for the product cadence of one CZSC update per official five-minute close. The required project environment remains unavailable, but its repair and rerun is an accepted pre-release follow-up rather than an ADR acceptance prerequisite.
 
 ## Test environment
 
@@ -127,7 +127,7 @@ Independent reviewer reruns used the same Python 3.13.14, CZSC 0.10.12, and fixt
 | Incremental prefix p95 | 71.211 ms | 196.773 ms | 197.471 ms |
 | Backward seek median | 43.355 ms | 161.873 ms | 164.641 ms |
 
-The author and reviewer runs agree on the decision-relevant comparison: safe incremental has no material end-to-end advantage. They do **not** agree on absolute latency, so the earlier statement that observed tails were below 100 ms remains withdrawn and no universal latency bound is claimed. The decision owner accepts the reviewer-observed approximately 160–200 ms range for the MVP five-minute update cadence.
+The author and reviewer runs agree on the decision-relevant comparison: safe incremental has no material end-to-end advantage. They do **not** agree on absolute latency, so the earlier statement that observed tails were below 100 ms remains withdrawn and no universal latency bound is claimed. The decision owner accepts the reviewer-observed approximately 160–200 ms range for the product's five-minute update cadence.
 
 Single-run author stage instrumentation at 548 bars:
 
@@ -189,7 +189,7 @@ Not verified:
 
 The synthetic fixture is deterministic and structurally active but not a claim about real-market price distribution. Timestamp semantics are explicitly end-time and naive local exchange time because the public normalized schema currently stores naive strings. The incremental experiment uses a test-only patch point to reuse existing project mapping; extracting it would require a reviewed `packages/chantheory` API and long-term engine compatibility tests.
 
-**Decision: full rebuild for MVP; ADR 0008 is Accepted.** Full rebuild is the implementation and correctness oracle for initial load, each official closed 5-minute update, disconnect recovery, stock switch, analysis recovery, and Replay backward seek. A hybrid is not justified by any of the three runs: safe incremental has no material end-to-end advantage and adds RawBar cache ownership, mutable analyzer lifetime, cancellation, and compatibility risk. The MVP does not implement an incremental adapter.
+**Decision: full rebuild for the current product; ADR 0008 is Accepted.** Full rebuild is the implementation and correctness oracle for initial load, each official closed 5-minute update, disconnect recovery, stock switch, analysis recovery, and Replay backward seek. A hybrid is not justified by any of the three runs: safe incremental has no material end-to-end advantage and adds RawBar cache ownership, mutable analyzer lifetime, cancellation, and compatibility risk. The current implementation does not use an incremental adapter.
 
 Before formal development:
 

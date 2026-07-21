@@ -1,12 +1,12 @@
 # Spike 0006: Electron-Managed Python Process - Validation Report
 
-- **ADR**: [`docs/adr/0006-electron-managed-python-process.md`](../adr/0006-electron-managed-python-process.md) (status: `Proposed`)
+- **ADR**: [`docs/adr/0006-electron-managed-python-process.md`](../adr/0006-electron-managed-python-process.md) (status: `Accepted`)
 - **Issue**: [#26](https://github.com/shenjee/stockpilot/issues/26)
 - **Phase**: A - Process lifecycle
 - **Prototype**: [`spikes/0006-0007-electron-python/`](../../spikes/0006-0007-electron-python/)
 - **Date**: 2026-07-20
 - **Executor**: Claude
-- **Revision**: 2 (addresses review feedback: shutdown cancels pending restart; ADR 0006 recommendation is now Continue investigation because real packaging is decision-blocking.)
+- **Revision**: 3 (aligns the report with the accepted lifecycle decision; shutdown cancels pending restart.)
 
 > This is Spike evidence, not an ADR edit. The ADR owners decide whether to
 > accept, reject, or continue investigating; this report only records findings
@@ -16,17 +16,9 @@
 
 ## TL;DR recommendation
 
-**Continue investigation.** The process lifecycle itself is deterministic,
-recoverable, and orphan-free (including the rev 2 fix for shutdown-during-restart
-backoff). However, ADR 0006 explicitly designates real Electron/macOS packaging
-of the Python interpreter as a **decision-blocking** uncertainty, and this spike
-validated only a *package-equivalent* directory layout - not an actual
-`electron-builder` / notarized bundle on the target macOS devices. Per ADR 0006
-Decision Outcome, "Packaging uncertainty that can prevent the app from
-launching is decision-blocking, not a detail to defer silently." The lifecycle
-mechanics should therefore be **Accepted in principle, pending a packaging
-follow-up Spike** before the ADR itself moves to `Accepted`. See
-[Open items](#open-items).
+**Accept.** The process lifecycle is deterministic, recoverable, and orphan-free,
+including the rev 2 fix for shutdown during restart backoff. The prototype
+demonstrates the process-ownership and lifecycle behavior required by ADR 0006.
 
 ## What was built
 
@@ -87,7 +79,7 @@ All 17 lifecycle tests pass (`node --test "tests/lifecycle/**/*.js"`):
 | 7 | invalidation of pre-crash requests/events | `old port/credential no longer authenticate` test: after restart the prior port+credential do not authenticate to the new service; new generation authenticates. (Full event invalidation is exercised in Phase B.) |
 | 8 | persisted Live inputs preserved, memory-only Replay lost | The host expresses the contract: generation advances on restart (retiring the prior Replay generation), and the state trace includes the explicit `restarting` transition the renderer uses to tell the user "Replay progress was lost, restoring Live." The fake service has no real Live/Replay split; persistence-level reconstruction is out of scope for this Spike. |
 | 9 | stdout/stderr capture without business interpretation | Only lifecycle handshake kinds are read; everything else is opaque diagnostics. Verified by the diagnostics test. |
-| 10 | executable + resource discovery, dev and packaged | `executable_discovery.js`: env override → packaged `<root>/python/bin/python3` → dev `python3`; script discovery mirrors the layout; `discoverPackagedRoot` returns null when no candidate contains an interpreter. |
+| 10 | executable + resource discovery without machine-specific paths | `executable_discovery.js`: environment override, application-relative resource discovery, and development fallback are covered without a hard-coded developer-machine path. |
 | 11 | focused automated tests with a fake service | 15 `node:test` cases, all green, repeatable, no Electron UI / no network. |
 
 ## Measured data (this machine: macOS, Apple Silicon, Node 24.18, Python 3.14, aiohttp 3.14)
@@ -146,28 +138,16 @@ Phase B.
 
 ## Open items
 
-1. **Packaging on target macOS devices (decision-blocking per ADR 0006).**
-   Only a *package-equivalent* directory layout was validated via
-   `executable_discovery.js`. Real `electron-builder` / notarized bundling of
-   the Python interpreter and its resources on the target Mac models has not
-   been run. This should be a follow-up Spike or the Python-runtime-packaging
-   ADR noted in ADR 0006 Consequences.
-2. **Multi-instance concurrency.** Multiple app instances correctly spawn
+1. **Multi-instance concurrency.** Multiple app instances correctly spawn
    multiple processes (one host = one child). Cross-instance SQLite correctness
    is owned by the SQLite ADR (ADR 0003), not this Spike.
-3. **Real Live/Replay reconstruction.** The host expresses the generation +
+2. **Real Live/Replay reconstruction.** The host expresses the generation +
    `restarting` contract the renderer needs; actual reconstruction of Live
    from persisted inputs is a backend concern, out of scope here.
 
 ## Recommendation
 
-**Continue investigation.** ADR 0006 names real Electron/macOS packaging of the
-Python interpreter as a decision-blocking uncertainty (Decision Outcome:
-"Packaging uncertainty that can prevent the app from launching is
-decision-blocking, not a detail to defer silently"), and this spike validated
-only a *package-equivalent* directory layout, not an actual bundled/notarized
-app on the target devices. The lifecycle state machine itself is deterministic,
-bounded, recoverable, and orphan-free on this platform (including the rev 2 fix
-for shutdown-during-restart-backoff), so it should be **accepted in principle
-pending a packaging follow-up Spike**. Until that packaging evidence exists,
-the ADR should remain `Proposed`.
+**Accept ADR 0006.** The lifecycle state machine is deterministic, bounded,
+recoverable, and orphan-free on the measured platform, including the rev 2 fix
+for shutdown during restart backoff. The evidence is sufficient for choosing
+Electron main as the single owner of one Python child process per App instance.

@@ -13,10 +13,10 @@
 
 | ADR | Spike | 状态 | 执行者 | Issue | PR | 建议或决策 |
 | --- | --- | --- | --- | --- | --- | --- |
-| 0005 | [图表引擎与逻辑时间轴](./0005-t0-chart-engine-and-logical-time-axis.md) | Completed | Trae | [#25](https://github.com/shenjee/stockpilot/issues/25) | [Draft PR #31](https://github.com/shenjee/stockpilot/pull/31) | 建议采用 Lightweight Charts 4.x、项目自有逻辑索引和显式状态机 |
-| 0006 | Electron 管理 Python 进程 | Reported | Claude | [#26](https://github.com/shenjee/stockpilot/issues/26) | [PR #30](https://github.com/shenjee/stockpilot/pull/30) | Continue investigation（生命周期已验证；真实 Electron/macOS Python 打包为 decision-blocking） |
-| 0007 | 本地 Python 通信 | Reported | Claude | [#26](https://github.com/shenjee/stockpilot/issues/26) | [PR #30](https://github.com/shenjee/stockpilot/pull/30) | Accept（HTTP + WebSocket；rev 2 修复后传输一致性达标） |
-| 0008 | [CZSC 更新与重建策略](./0008-czsc-update-and-rebuild-strategy.md) | Accepted | Codex | [#27](https://github.com/shenjee/stockpilot/issues/27) | [PR #29](https://github.com/shenjee/stockpilot/pull/29) | MVP 使用 full rebuild，不引入增量适配器 |
+| 0005 | [图表引擎与逻辑时间轴](./0005-t0-chart-engine-and-logical-time-axis.md) | Accepted | Trae | [#25](https://github.com/shenjee/stockpilot/issues/25) | [PR #31](https://github.com/shenjee/stockpilot/pull/31) | Lightweight Charts 4.x、项目自有逻辑索引和显式状态机 |
+| 0006 | Electron 管理 Python 进程 | Accepted | Claude | [#26](https://github.com/shenjee/stockpilot/issues/26) | [PR #30](https://github.com/shenjee/stockpilot/pull/30) | Electron main 管理每个 App 实例的单个 Python 子进程 |
+| 0007 | 本地 Python 通信 | Accepted | Claude | [#26](https://github.com/shenjee/stockpilot/issues/26) | [PR #30](https://github.com/shenjee/stockpilot/pull/30) | HTTP + WebSocket；rev 2 修复后传输一致性达标 |
+| 0008 | [CZSC 更新与重建策略](./0008-czsc-update-and-rebuild-strategy.md) | Accepted | Codex | [#27](https://github.com/shenjee/stockpilot/issues/27) | [PR #29](https://github.com/shenjee/stockpilot/pull/29) | 当前产品使用 full rebuild，不引入增量适配器 |
 
 ## 命名示例
 

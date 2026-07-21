@@ -1,6 +1,6 @@
 # ADR 0005: Select The T+0 Chart Engine And Logical Time-Axis Approach
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-07-20
 - Owners: T+0 Assistant frontend
 - Evidence target: `docs/spikes/0005-t0-chart-engine-and-logical-time-axis.md`
@@ -69,11 +69,10 @@ Expected advantages are broad plotting capability. Risks include desktop bundle
 weight, React update cost, and less direct control over the required synchronized
 follow/manual state model.
 
-## Current Direction
+## Decision
 
-Prefer **Lightweight Charts with project-owned logical indices and an explicit
-chart-group state machine**, subject to the validation below. This is a working
-hypothesis, not an accepted decision.
+Use **Lightweight Charts 4.x with project-owned logical indices and an explicit
+chart-group state machine**.
 
 Regardless of library choice, the project owns these abstractions:
 
@@ -115,15 +114,18 @@ cannot resolve a material uncertainty.
 
 ## Decision Outcome
 
-Pending. Move this ADR to `Accepted` only after the evidence report identifies a
-library and shows that all correctness criteria pass. Record any accepted
-limitations and link the exact prototype revision. If no candidate passes, keep
-this ADR `Proposed` and create a follow-up task rather than weakening the product
-requirements silently.
+Accepted. The prototype at revision
+`0cf3972d32c74ba4e246d6172640f4345d4f6334` passed the logical-axis,
+cross-chart synchronization, follow/manual state, layout restoration, Replay
+truncation, and CZSC-overlay correctness checks. The evidence report also
+compares ECharts and Plotly and records the production bundle observation.
+
+Target-device FPS, CPU, memory, and end-to-end update latency remain formal
+implementation acceptance checks for the production chart module. They do not
+block selecting the chart engine because the 500-bar prototype demonstrated the
+required interaction model without a correctness-level failure.
 
 ## Consequences
-
-If the current direction is accepted:
 
 - React code will depend on a project-owned chart adapter, not raw chart objects
   outside the chart module;

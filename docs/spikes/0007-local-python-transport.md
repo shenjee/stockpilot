@@ -1,17 +1,26 @@
 # Spike 0007: Local Python Transport - Validation Report
 
-- **ADR**: [`docs/adr/0007-local-python-transport.md`](../adr/0007-local-python-transport.md) (status: `Proposed`)
+- **ADR**: [`docs/adr/0007-local-python-transport.md`](../adr/0007-local-python-transport.md) (status: `Accepted`)
 - **Issue**: [#26](https://github.com/shenjee/stockpilot/issues/26)
 - **Phase**: B - Local transport
 - **Prototype**: [`spikes/0006-0007-electron-python/`](../../spikes/0006-0007-electron-python/)
 - **Date**: 2026-07-20
+- **Updated**: 2026-07-21
 - **Executor**: Claude
 - **Depends on**: [Spike 0006](./0006-electron-managed-python-process.md) (process boundary)
-- **Revision**: 2 (addresses review feedback: explicit gap + re-baseline, generation guard on all envelope kinds, real-disconnect reconnect test, request cancellation, CPU measurement)
+- **Revision**: 3 (records the product-protocol follow-up: client-side revision
+  discontinuity replaces the prototype-only `gap` marker)
 
 > Spike evidence, not an ADR edit. Recommendation only; the ADR owners decide
 > accept/reject/investigate and back-fill evidence + status in one reviewable
 > change (ADR README rule 5).
+
+> **Product protocol follow-up:** Revision 2 of this prototype emitted an explicit
+> `gap` marker when its server-side subscriber queue discarded an unsent event.
+> That remains a true description of the prototype and its tests, but it is not
+> part of the T+0 product protocol. The product client detects
+> `revision > current_revision + 1` and re-fetches a full snapshot; reconnect also
+> starts from a full snapshot. The server does not infer which events React applied.
 
 ## TL;DR recommendation
 
@@ -52,7 +61,7 @@ Python service:
 | monotonic `revision` | server bumps per emit; client drops `revision <= last`. |
 | request correlation | `/api/request` returns `request_id`; client never synthesizes one. |
 | full snapshot | sent on every connect/reconnect before incremental events; `/api/snapshot` available for explicit re-baseline. |
-| bounded buffer | per-subscriber `asyncio.Queue(maxsize=N)`; overflow policy = drop oldest, keep live tail (tested). |
+| bounded buffer | per-subscriber `asyncio.Queue(maxsize=N)`; overflow policy = drop oldest, keep live tail (tested). The prototype also emits a marker, while the product protocol relies only on client-side revision discontinuity. |
 | stdout/stderr | diagnostics only; never transport. (Carried over from Phase A.) |
 
 ## Acceptance evidence
@@ -84,8 +93,8 @@ The 6 new regression tests added in revision 2 (per transport):
 | 3 | request timeout + cancellation | `request timeout` test: hung request aborts within budget (~0.4 s); **`request cancellation`** test (rev 2): `cancel()` aborts the transport's own in-flight HTTP request (via a tracked `AbortController` set) and the promise rejects with `AbortError` within ~1 s, not the server's 3 s; `cancellation` test: `close()` aborts the in-flight event stream AND any in-flight HTTP requests, and fires `onDisconnect`. |
 | 4 | ordered delivery + duplicate/stale revision handling | `ordered delivery` test: revisions arrive `1,2,3,4` in order; `duplicate / stale revisions` test: out-of-order/old revisions dropped. |
 | 5 | connection loss + reconnect + full-snapshot re-baseline | `reconnect` tests: the server `/api/kick` drops the SAME transport's live connection (a real disconnect, not a fresh transport); the client detects `onDisconnect`, runs its bounded reconnect, fires `onReconnect`, and re-baselines from a fresh snapshot. A second test kills the Python service and asserts the client stops after `maxReconnectAttempts` and surfaces exhaustion (no infinite loop). |
-| 6 | reject old `service_generation` / retired session | `old service_generation` test: incremental envelope with `generation != current` dropped; **`old-generation snapshot is rejected`** test (rev 2 regression): a stale-generation snapshot is dropped and does NOT reset the revision baseline, and a stale-generation error is dropped with no spurious `onError`. `retired session` test: emit/snapshot/subscribe after retire -> `404`/error envelope. The generation guard runs FIRST in `_applyEnvelope`, covering snapshot, gap, error, and incremental. |
-| 7 | slow consumer exceeds bounded buffer | `slow consumer` test (server `SPIKE_SLOW_CONSUMER_DELAY_MS=60`, `SPIKE_EVENT_BUFFER_MAX=4`, 12 events): overflow is **detected** (explicit `gap` marker from the server, plus client-side `revision > last+1` detection as a backstop), the client **stops applying incrementals**, **re-fetches a full snapshot** to re-baseline, and the final baseline revision equals the last emitted revision (live tail reached). The test asserts the gap fired, the snapshot was re-fetched, and final state is consistent - not merely that the last event eventually arrived. |
+| 6 | reject old `service_generation` / retired session | `old service_generation` test: incremental envelope with `generation != current` dropped; **`old-generation snapshot is rejected`** test (rev 2 regression): a stale-generation snapshot is dropped and does NOT reset the revision baseline, and a stale-generation error is dropped with no spurious `onError`. `retired session` test: emit/snapshot/subscribe after retire -> `404`/error envelope. The prototype generation guard runs first for every prototype envelope kind. |
+| 7 | slow consumer exceeds bounded buffer | `slow consumer` test (server `SPIKE_SLOW_CONSUMER_DELAY_MS=60`, `SPIKE_EVENT_BUFFER_MAX=4`, 12 events): the revision 2 prototype detects overflow through both its explicit marker and client-side `revision > last+1`, then stops applying incrementals and re-fetches a full snapshot. The product protocol retains the client-side revision check and full-snapshot recovery, not the marker. |
 | 8 | payload sizes, serialization time, event latency, CPU, memory | see [Measured data](#measured-data). |
 | 9 | clean shutdown with request / event stream in flight | `shutdown in flight` test: host `shutdown()` while a stream is open completes < 5 s with no orphan; transport `close()` terminates the stream. |
 | 10 | automated contract tests without Electron UI / network | 33 `node:test` cases, no Electron, no external network (loopback only). |
@@ -103,13 +112,13 @@ The 6 new regression tests added in revision 2 (per transport):
   ADR 0007 Consequences ("reconnect always restores state from a full snapshot
   instead of replaying undocumented in-memory deltas").
 - **Across a bounded-buffer overflow (slow consumer)**: ordering is **not**
-  continuous. The server emits an explicit `gap` marker when it drops an event;
-  the client also detects `revision > last+1` as a backstop. On either signal,
-  the client **stops applying incrementals** and **re-baselines from a full
-  snapshot** (a new `/api/snapshot` fetch), then resumes. Dropped revisions are
+  continuous. The revision 2 prototype emitted an explicit marker when it
+  dropped an event and also detected `revision > last+1`. The product protocol
+  adopts only the client-side revision check: the client stops applying events,
+  re-baselines from a full snapshot, and then resumes. Dropped revisions are
   never silently applied as if contiguous.
 - **Across a Python restart (new generation)**: all prior events are
-  invalidated. The client drops **any** envelope (snapshot, gap, error,
+  invalidated. The client drops **any** product envelope (snapshot, error,
   incremental) whose `generation` does not match the current host generation; a
   new session + snapshot is required. A stale-generation snapshot cannot reset
   the revision baseline (rev 2 regression test).
@@ -153,7 +162,7 @@ The 6 new regression tests added in revision 2 (per transport):
   (32.7% of wall time); SSE RSS +12.8 MB, CPU ~293 ms (25.4% of wall time). The
   WS RSS number is inflated by being measured first (V8 warm-up); both are small
   in absolute terms and both stay bounded (the per-subscriber buffer is enforced
-  and overflow is reported via a `gap` marker, not absorbed). CPU is dominated
+  and the prototype reports overflow via its prototype-only marker). CPU is dominated
   by `JSON.stringify`/parse and `fetch` overhead, not framing.
 
 ## HTTP + WebSocket vs HTTP + SSE - comparison
@@ -210,14 +219,15 @@ never the raw envelope (`generation`, `Authorization` stripped).
 
 **Accept** ADR 0007's current direction (HTTP + WebSocket), with HTTP + SSE
 documented as a viable simpler alternative. Rev 2 addressed the review feedback
-that blocked the original recommendation: slow-consumer overflow now emits an
-explicit `gap` marker and the client re-baselines from a full snapshot (loss is
-detected and repaired, not silent); the generation guard now covers snapshot,
-gap, and error envelopes (a stale-generation snapshot can no longer reset the
-baseline); the reconnect test now exercises a real server-side disconnect on the
-same transport (not a fresh transport); and `cancel()`/`close()` now abort the
-transport's own in-flight HTTP requests. The preferred choice satisfies every
-failure, isolation, ordering, and bounded-resource criterion with measured
-sub-3 ms loopback latency, CPU and memory observations, and clean shutdown
-behavior. Transport mechanics are isolated below the logical contract, so the
-choice can be revisited later without touching React.
+that blocked the original recommendation: the prototype detected slow-consumer
+overflow through both an explicit marker and client-side revision discontinuity,
+then re-baselined from a full snapshot. The product protocol retains only the
+client-side revision check and full-snapshot recovery. The generation guard
+covers every product envelope kind; the reconnect test exercises a real
+server-side disconnect on the same transport (not a fresh transport); and
+`cancel()`/`close()` abort the transport's own in-flight HTTP requests. The
+preferred choice satisfies every failure, isolation, ordering, and
+bounded-resource criterion with measured sub-3 ms loopback latency, CPU and
+memory observations, and clean shutdown behavior. Transport mechanics are
+isolated below the logical contract, so the choice can be revisited later
+without touching React.

@@ -1,7 +1,8 @@
 # ADR 0007: Select The Local Request And Event Transport To Python
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-07-20
+- Updated: 2026-07-21
 - Owners: T+0 Assistant desktop runtime and backend API
 - Depends on: ADR 0006 process boundary
 - Evidence target: `docs/spikes/0007-local-python-transport.md`
@@ -66,12 +67,11 @@ HTTP. This improves local exposure boundaries but adds path lifecycle and
 cross-platform considerations without removing the need for authentication and
 event semantics.
 
-## Current Direction
+## Decision
 
-Prefer **HTTP for request/response plus WebSocket for ordered events**, bound to
+Use **HTTP for request/response plus WebSocket for ordered events**, bound to
 an ephemeral `127.0.0.1` port and protected by a high-entropy per-launch
-credential known only to Electron main and Python. This remains a hypothesis
-until measured against HTTP + SSE.
+credential known only to Electron main and Python.
 
 Transport details must remain below stable logical contracts. The contract must
 include at least:
@@ -114,18 +114,32 @@ TCP ordering while ignoring application revisions, reconnects, and restarts.
 
 ## Decision Outcome
 
-Pending. Accept only when one transport passes the failure, isolation, ordering,
-and bounded-resource criteria. The ADR should then record the selected libraries,
-measured payload envelope, and any limits that the interface contract must expose.
+Accepted. The prototype at revision
+`0eaa9ffe6385531553b7de2b2c2f89745f06d6c7` compared HTTP + WebSocket with
+HTTP + SSE and passed the failure, isolation, ordering, reconnect,
+bounded-buffer, cancellation, and clean-shutdown criteria for both transports.
+HTTP + WebSocket is selected because the bidirectional channel better fits
+Replay seek and cancellation while measured latency remained below 3 ms p95 on
+loopback. The representative 500-bar snapshot was about 36.8 KB and serialized
+in about 171 microseconds on the measured environment.
+
+The logical contract must expose generation, Session identity, monotonic
+revision, structured errors, and full-snapshot re-baselining. Individual
+business requests are not retried automatically. The product protocol does not
+define a server-originated `gap` event because the server has no acknowledgement
+of which events React has applied. Electron detects
+`revision > current_revision + 1` on the client side and re-fetches a full
+snapshot; reconnect also starts from a full snapshot.
 
 ## Consequences
-
-If the current direction is accepted:
 
 - Electron main hosts an HTTP client and one managed WebSocket connection;
 - Python hosts a loopback-only local API and event endpoint;
 - reconnect always restores state from a full snapshot instead of replaying
   undocumented in-memory deltas;
+- bounded-buffer overflow may discard unsent events, but it does not add a
+  product event type; the next revision discontinuity triggers full-snapshot
+  recovery on the client;
 - revisions and generations remain required even though transport is local;
 - logical API/event schemas can be developed after this ADR without exposing
   transport mechanics to React components.
