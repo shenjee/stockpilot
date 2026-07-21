@@ -1,0 +1,10 @@
+node_modules/
+*.log
+__pycache__/
+*.pyc
+.venv/
+spike-venv/
+runtime/
+dist/
+out/
+.DS_Store
