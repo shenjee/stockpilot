@@ -1,11 +1,12 @@
 # Spike 0006: Electron-Managed Python Process - Validation Report
 
-- **ADR**: [`docs/adr/0006-electron-managed-python-process.md`](../../adr/0006-electron-managed-python-process.md) (status: `Proposed`)
+- **ADR**: [`docs/adr/0006-electron-managed-python-process.md`](../adr/0006-electron-managed-python-process.md) (status: `Proposed`)
 - **Issue**: [#26](https://github.com/shenjee/stockpilot/issues/26)
 - **Phase**: A - Process lifecycle
-- **Prototype**: [`spikes/0006-0007-electron-python/`](../../spikes/0006-0007-electron-python/)
+- **Prototype**: [`spikes/0006-0007-electron-python/`](../spikes/0006-0007-electron-python/)
 - **Date**: 2026-07-20
 - **Executor**: Claude
+- **Revision**: 2 (addresses review feedback: shutdown cancels pending restart; ADR 0006 recommendation is now Continue investigation because real packaging is decision-blocking.)
 
 > This is Spike evidence, not an ADR edit. The ADR owners decide whether to
 > accept, reject, or continue investigating; this report only records findings
@@ -15,12 +16,17 @@
 
 ## TL;DR recommendation
 
-**Accept** the current direction (one Electron-main-managed Python child
-process per app instance), **conditional on** one open item: real Electron
-packaging of the Python interpreter has not been exercised end-to-end on the
-target macOS devices (only a *package-equivalent* directory layout was
-validated). The process lifecycle itself is deterministic, recoverable, and
-leaves no orphans. See [Open items](#open-items).
+**Continue investigation.** The process lifecycle itself is deterministic,
+recoverable, and orphan-free (including the rev 2 fix for shutdown-during-restart
+backoff). However, ADR 0006 explicitly designates real Electron/macOS packaging
+of the Python interpreter as a **decision-blocking** uncertainty, and this spike
+validated only a *package-equivalent* directory layout - not an actual
+`electron-builder` / notarized bundle on the target macOS devices. Per ADR 0006
+Decision Outcome, "Packaging uncertainty that can prevent the app from
+launching is decision-blocking, not a detail to defer silently." The lifecycle
+mechanics should therefore be **Accepted in principle, pending a packaging
+follow-up Spike** before the ADR itself moves to `Accepted`. See
+[Open items](#open-items).
 
 ## What was built
 
@@ -46,7 +52,7 @@ uses stdout/stderr. Tested in
 
 ## Acceptance evidence
 
-All 15 lifecycle tests pass (`node --test "tests/lifecycle/**/*.js"`):
+All 17 lifecycle tests pass (`node --test "tests/lifecycle/**/*.js"`):
 
 ```text
 ✔ cold start reaches READY ...
@@ -64,6 +70,8 @@ All 15 lifecycle tests pass (`node --test "tests/lifecycle/**/*.js"`):
 ✔ discoverPackagedRoot ...
 ✔ after a crash+restart, the old port/credential no longer authenticate
 ✔ a crash loses memory-only Replay state explicitly ...
+✔ shutdown during restart backoff cancels the pending restart and leaves no orphan (rev 2)
+✔ forceKill during restart backoff cancels the pending restart and leaves no orphan (rev 2)
 ```
 
 ### ADR 0006 Validation Required, item by item
@@ -71,7 +79,7 @@ All 15 lifecycle tests pass (`node --test "tests/lifecycle/**/*.js"`):
 | # | Requirement | Evidence |
 | --- | --- | --- |
 | 1 | cold start, readiness timeout, startup failure, clear renderer status | `test-lifecycle.js`: cold-start reaches READY with deterministic status; readiness timeout → `FAILED(readiness_timeout)` + child killed; startup failure → `FAILED(startup_fail_mode|exit_before_ready)`. Status projection (`state`, `generation`, `port`, `pid`, `credential`, `restartCount`) is the only thing a renderer sees. |
-| 2 | normal app quit with no remaining child process | idle graceful shutdown: `orphan_after_shutdown=false`; `pgrep` cross-check finds no added python process. |
+| 2 | normal app quit with no remaining child process | idle graceful shutdown: `orphan_after_shutdown=false`; `pgrep` cross-check finds no added python process. **Rev 2 regression**: `shutdown during restart backoff` and `forceKill during restart backoff` prove that calling shutdown while a restart timer is pending cancels it - generation does not advance, no child is spawned, no orphan survives past the backoff window (the original code had a race that respawned Python after `shutdown()` returned). |
 | 3 | Python crash without Electron main/renderer termination | `crash-after-ready` mode: host object stays usable, state `ready→restarting→ready`, renderer-visible state only changes via the status projection. |
 | 4 | bounded automatic restart with new generation | `restart` measurement: generation `1→2`, pid `80311→80312`, port rotated, `generation_advanced=true`. Bounded by `maxRestarts` (default 3). |
 | 5 | restart exhaustion + user-visible retry | `restart exhaustion` test: after `maxRestarts` attempts state is `FAILED(restart_exhausted)`; calling `start()` again (the user-retry path) succeeds with a newer generation. No infinite loop. |
@@ -153,6 +161,13 @@ Phase B.
 
 ## Recommendation
 
-**Accept** ADR 0006's current direction, conditional on resolving open item 1
-(real Python runtime packaging) in a follow-up. The lifecycle state machine is
-deterministic, bounded, recoverable, and orphan-free on this platform.
+**Continue investigation.** ADR 0006 names real Electron/macOS packaging of the
+Python interpreter as a decision-blocking uncertainty (Decision Outcome:
+"Packaging uncertainty that can prevent the app from launching is
+decision-blocking, not a detail to defer silently"), and this spike validated
+only a *package-equivalent* directory layout, not an actual bundled/notarized
+app on the target devices. The lifecycle state machine itself is deterministic,
+bounded, recoverable, and orphan-free on this platform (including the rev 2 fix
+for shutdown-during-restart-backoff), so it should be **accepted in principle
+pending a packaging follow-up Spike**. Until that packaging evidence exists,
+the ADR should remain `Proposed`.

@@ -126,6 +126,72 @@ test('runtime crash keeps the host alive and triggers a bounded restart with a n
 });
 
 // ---------------------------------------------------------------------------
+// Regression (blocker 1): shutdown during restart backoff must NOT spawn a
+// new child after shutdown returns. No orphan, no generation advance.
+// ---------------------------------------------------------------------------
+
+test('shutdown during restart backoff cancels the pending restart and leaves no orphan', async () => {
+  // Long backoff so we can call shutdown while the host is mid-backoff.
+  const host = new PythonService(
+    hostOpts(
+      { SPIKE_MODE: 'crash-after-ready', SPIKE_CRASH_DELAY_MS: 60 },
+      { maxRestarts: 5, restartBackoffMs: 1200, restartBackoffMaxMs: 1200 },
+    ),
+  );
+  // Snapshot existing fake-python pids BEFORE this host spawns anything, so the
+  // global check is robust to other test files that may run concurrently.
+  const pidsBefore = new Set(pidsMatching(SCRIPT_TAG).filter((p) => p !== process.pid));
+  await host.start();
+  const genAtReady = host.generation;
+  const pidAtReady = host.pid;
+  assert.ok(pidAtReady, 'ready child exists');
+  // Wait for the crash to land and move us into RESTARTING backoff.
+  await waitFor(() => host.state === STATES.RESTARTING, { timeoutMs: 2000 });
+  assert.equal(host.child, null, 'no live child during backoff');
+
+  // Shutdown now, while a restart is pending.
+  await host.shutdown();
+  assert.equal(host.state, STATES.STOPPED);
+  assert.equal(host.pid, null);
+
+  // Wait well past the 1200ms backoff window. A buggy host would have spawned
+  // a new child here (generation advancing, a live pid, an orphan process).
+  await sleep(1600);
+  assert.equal(host.generation, genAtReady, 'generation must NOT advance after shutdown');
+  assert.equal(host.pid, null, 'no child pid after shutdown');
+  assert.equal(host.state, STATES.STOPPED, 'still STOPPED past the backoff window');
+  // This host's own crashed child is gone (race-free).
+  assert.equal(isAlive(pidAtReady), false, 'the crashed child must be reaped');
+
+  // Cross-check: this host introduced no new orphan python process. Compared
+  // as a set delta (tolerates pre-existing / concurrent-test processes).
+  const pidsAfter = new Set(pidsMatching(SCRIPT_TAG).filter((p) => p !== process.pid));
+  const introduced = [...pidsAfter].filter((p) => !pidsBefore.has(p));
+  assert.equal(introduced.length, 0, `orphan python introduced by this host: ${introduced.join(',')}`);
+});
+
+// Also cover forceKill during backoff.
+test('forceKill during restart backoff cancels the pending restart and leaves no orphan', async () => {
+  const host = new PythonService(
+    hostOpts(
+      { SPIKE_MODE: 'crash-after-ready', SPIKE_CRASH_DELAY_MS: 60 },
+      { maxRestarts: 5, restartBackoffMs: 1000, restartBackoffMaxMs: 1000 },
+    ),
+  );
+  const pidsBefore = new Set(pidsMatching(SCRIPT_TAG).filter((p) => p !== process.pid));
+  await host.start();
+  const genAtReady = host.generation;
+  const pidAtReady = host.pid;
+  await waitFor(() => host.state === STATES.RESTARTING, { timeoutMs: 2000 });
+  await host.forceKill();
+  await sleep(1400);
+  assert.equal(host.generation, genAtReady, 'generation must NOT advance after forceKill');
+  assert.equal(host.pid, null);
+  assert.equal(isAlive(pidAtReady), false, 'the crashed child must be reaped');
+  const pidsAfter = new Set(pidsMatching(SCRIPT_TAG).filter((p) => p !== process.pid));
+  const introduced = [...pidsAfter].filter((p) => !pidsBefore.has(p));
+  assert.equal(introduced.length, 0, `orphan python introduced by this host: ${introduced.join(',')}`);
+});
 // Acceptance: restart exhaustion -> stop loop + user-visible retry path (0006 #5)
 // ---------------------------------------------------------------------------
 

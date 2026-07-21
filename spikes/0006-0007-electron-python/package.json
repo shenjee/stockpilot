@@ -8,11 +8,12 @@
     "node": ">=22"
   },
   "scripts": {
-    "test": "node --test \"tests/lifecycle/**/*.js\" \"tests/transport/**/*.js\" \"tests/isolation/**/*.js\"",
-    "test:lifecycle": "node --test \"tests/lifecycle/**/*.js\"",
-    "test:transport": "node --test \"tests/transport/**/*.js\" \"tests/isolation/**/*.js\"",
+    "test": "node --test --test-concurrency=1 \"tests/lifecycle/**/*.js\" \"tests/transport/**/*.js\" \"tests/isolation/**/*.js\"",
+    "test:lifecycle": "node --test --test-concurrency=1 \"tests/lifecycle/**/*.js\"",
+    "test:transport": "node --test --test-concurrency=1 \"tests/transport/**/*.js\" \"tests/isolation/**/*.js\"",
     "bench": "node tests/benchmark/transport-bench.js",
     "smoke": "node tests/helpers/smoke.js",
     "fake-python": "python3 fake-python/service.py"
-  }
+  },
+  "_testConcurrencyNote": "Tests spawn real OS python child processes and assert on process tables; serializing (--test-concurrency=1) keeps orphan/generation assertions race-free across suites."
 }

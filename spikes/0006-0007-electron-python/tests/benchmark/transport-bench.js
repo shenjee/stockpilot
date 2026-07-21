@@ -150,11 +150,27 @@ async function measureMemoryDelta(cfg, kind) {
   const sid = created.session_id;
   await t.connect(sid);
   // emit a burst to exercise buffering
-  for (let i = 0; i < 200; i++) await t.emit(sid, { type: 'tick', i });
+  const burstN = 500;
+  const cpuBefore = process.cpuUsage();
+  const wallBefore = process.hrtime.bigint();
+  for (let i = 0; i < burstN; i++) await t.emit(sid, { type: 'tick', i });
   await sleep(300);
+  const cpuAfter = process.cpuUsage(cpuBefore);
+  const wallMs = msNs(wallBefore, process.hrtime.bigint());
   const after = process.memoryUsage().rss;
   await t.close();
-  return { kind, rss_before_mb: round(before / 1e6, 2), rss_after_mb: round(after / 1e6, 2), delta_mb: round((after - before) / 1e6, 2) };
+  return {
+    kind,
+    burst_events: burstN,
+    rss_before_mb: round(before / 1e6, 2),
+    rss_after_mb: round(after / 1e6, 2),
+    delta_mb: round((after - before) / 1e6, 2),
+    cpu_user_ms: round(cpuAfter.user / 1000, 3),
+    cpu_system_ms: round(cpuAfter.system / 1000, 3),
+    cpu_total_ms: round((cpuAfter.user + cpuAfter.system) / 1000, 3),
+    wall_ms: round(wallMs, 2),
+    cpu_pct_of_wall: round(((cpuAfter.user + cpuAfter.system) / 1000 / wallMs) * 100, 2),
+  };
 }
 
 async function main() {

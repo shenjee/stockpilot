@@ -131,17 +131,23 @@ class PythonServiceHost {
 
   /**
    * Graceful shutdown: POST /shutdown, wait for exit; force-kill on timeout.
-   * Safe to call when idle or with active work. Resolves once the child is gone.
+   * Safe to call when idle, mid-startup, or in restart backoff. Cancels any
+   * pending restart timer so no new child is spawned after this returns.
+   * Resolves once the child is gone (or was never / no longer present).
    */
   async shutdown() {
     this._shuttingDown = true;
+    this._clearCrashTimer();
     return this._stop({ graceful: true });
   }
 
   /**
    * Force-kill immediately (used on graceful-timeout, or externally).
+   * Also cancels any pending restart timer.
    */
   async forceKill() {
+    this._shuttingDown = true;
+    this._clearCrashTimer();
     return this._stop({ graceful: false });
   }
 
@@ -211,6 +217,13 @@ class PythonServiceHost {
    */
   _spawnFresh() {
     return new Promise((resolve, reject) => {
+      // Never spawn a child after shutdown has begun (covers the race where a
+      // restart timer fired just as shutdown was called).
+      if (this._shuttingDown) {
+        this._setState(STATES.STOPPED, { reason: 'shutdown_before_spawn' });
+        resolve(this._status());
+        return;
+      }
       this.generation += 1;
       const credential = randomBytes(32).toString('hex');
       this.credential = credential;
@@ -366,6 +379,13 @@ class PythonServiceHost {
     }
   }
 
+  _clearCrashTimer() {
+    if (this._crashTimer) {
+      clearTimeout(this._crashTimer);
+      this._crashTimer = null;
+    }
+  }
+
   /**
    * Handle child exit AFTER it was already READY.
    * If we are shutting down -> finish the stop.
@@ -414,6 +434,13 @@ class PythonServiceHost {
 
     this._crashTimer = setTimeout(() => {
       this._crashTimer = null;
+      // A shutdown that arrived during backoff cancels this timer; this guard
+      // also covers the case where the timer already fired but shutdown raced
+      // ahead. Never spawn a child after shutdown has begun.
+      if (this._shuttingDown) {
+        this._setState(STATES.STOPPED, { reason: 'shutdown_during_backoff' });
+        return;
+      }
       // Restart is fire-and-forget from the FSM's perspective; callers that
       // need to know readiness observe onStateChange.
       this._spawnFresh().catch(() => {

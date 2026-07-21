@@ -1,12 +1,13 @@
 # Spike 0007: Local Python Transport - Validation Report
 
-- **ADR**: [`docs/adr/0007-local-python-transport.md`](../../adr/0007-local-python-transport.md) (status: `Proposed`)
+- **ADR**: [`docs/adr/0007-local-python-transport.md`](../adr/0007-local-python-transport.md) (status: `Proposed`)
 - **Issue**: [#26](https://github.com/shenjee/stockpilot/issues/26)
 - **Phase**: B - Local transport
-- **Prototype**: [`spikes/0006-0007-electron-python/`](../../spikes/0006-0007-electron-python/)
+- **Prototype**: [`spikes/0006-0007-electron-python/`](../spikes/0006-0007-electron-python/)
 - **Date**: 2026-07-20
 - **Executor**: Claude
 - **Depends on**: [Spike 0006](./0006-electron-managed-python-process.md) (process boundary)
+- **Revision**: 2 (addresses review feedback: explicit gap + re-baseline, generation guard on all envelope kinds, real-disconnect reconnect test, request cancellation, CPU measurement)
 
 > Spike evidence, not an ADR edit. Recommendation only; the ADR owners decide
 > accept/reject/investigate and back-fill evidence + status in one reviewable
@@ -56,12 +57,23 @@ Python service:
 
 ## Acceptance evidence
 
-All 28 transport-contract tests (14 each for WS and SSE) + 5 isolation tests
+All 34 transport-contract tests (17 each for WS and SSE) + 5 isolation tests
 pass (`node --test "tests/transport/**/*.js" "tests/isolation/**/*.js"`):
 
 ```text
-ℹ tests 33  ℹ pass 33  ℹ fail 0
+ℹ tests 39  ℹ pass 39  ℹ fail 0
 ```
+
+The 6 new regression tests added in revision 2 (per transport):
+
+- `reconnect: a real dropped connection re-establishes a full-snapshot baseline`
+  (server `/api/kick` drops the live connection; same transport reconnects)
+- `reconnect: bounded retry gives up after maxReconnectAttempts` (server killed)
+- `old-generation snapshot is rejected and does not reset the baseline`
+- `slow consumer: overflow is detected, snapshot re-fetched, final state consistent`
+- `request cancellation: cancel() aborts an in-flight HTTP request`
+- (the existing `cancellation: close() aborts an in-flight stream cleanly` now also
+  aborts any in-flight HTTP request via `cancel()`)
 
 ### ADR 0007 Validation Required, item by item (applies to BOTH transports)
 
@@ -69,11 +81,11 @@ pass (`node --test "tests/transport/**/*.js" "tests/isolation/**/*.js"`):
 | --- | --- | --- |
 | 1 | ephemeral port + temp credential, not exposed to Renderer | host binds ephemeral `127.0.0.1` port; credential is 32-byte hex per launch; isolation tests prove the renderer API string contains none of `http://`, `127.0.0.1`, `Bearer`, `credential`, `ws://`, `/events`, `/ws`, `port`. |
 | 2 | reject unauthenticated + non-loopback | `401` without credential, `403` with wrong credential; Python binds `127.0.0.1` only (`web.TCPSite(runner, "127.0.0.1", port)`). |
-| 3 | request timeout + cancellation | `request timeout` test: hung request aborts within budget (~0.4 s); `cancellation` test: `close()` aborts an in-flight stream and fires `onDisconnect`. |
+| 3 | request timeout + cancellation | `request timeout` test: hung request aborts within budget (~0.4 s); **`request cancellation`** test (rev 2): `cancel()` aborts the transport's own in-flight HTTP request (via a tracked `AbortController` set) and the promise rejects with `AbortError` within ~1 s, not the server's 3 s; `cancellation` test: `close()` aborts the in-flight event stream AND any in-flight HTTP requests, and fires `onDisconnect`. |
 | 4 | ordered delivery + duplicate/stale revision handling | `ordered delivery` test: revisions arrive `1,2,3,4` in order; `duplicate / stale revisions` test: out-of-order/old revisions dropped. |
-| 5 | connection loss + reconnect + full-snapshot re-baseline | `reconnect re-baselines` test: a fresh transport to the same session receives a fresh snapshot baseline on connect. |
-| 6 | reject old `service_generation` / retired session | `old service_generation` test: envelope with `generation != current` dropped; `retired session` test: emit/snapshot/subscribe after retire -> `404`/error envelope. |
-| 7 | slow consumer exceeds bounded buffer | `slow consumer` test (server `SPIKE_SLOW_CONSUMER_DELAY_MS=80`, `SPIKE_EVENT_BUFFER_MAX=4`, 12 events): client receives `< 12` events but the **latest revision (12) is kept** (live tail), head dropped. |
+| 5 | connection loss + reconnect + full-snapshot re-baseline | `reconnect` tests: the server `/api/kick` drops the SAME transport's live connection (a real disconnect, not a fresh transport); the client detects `onDisconnect`, runs its bounded reconnect, fires `onReconnect`, and re-baselines from a fresh snapshot. A second test kills the Python service and asserts the client stops after `maxReconnectAttempts` and surfaces exhaustion (no infinite loop). |
+| 6 | reject old `service_generation` / retired session | `old service_generation` test: incremental envelope with `generation != current` dropped; **`old-generation snapshot is rejected`** test (rev 2 regression): a stale-generation snapshot is dropped and does NOT reset the revision baseline, and a stale-generation error is dropped with no spurious `onError`. `retired session` test: emit/snapshot/subscribe after retire -> `404`/error envelope. The generation guard runs FIRST in `_applyEnvelope`, covering snapshot, gap, error, and incremental. |
+| 7 | slow consumer exceeds bounded buffer | `slow consumer` test (server `SPIKE_SLOW_CONSUMER_DELAY_MS=60`, `SPIKE_EVENT_BUFFER_MAX=4`, 12 events): overflow is **detected** (explicit `gap` marker from the server, plus client-side `revision > last+1` detection as a backstop), the client **stops applying incrementals**, **re-fetches a full snapshot** to re-baseline, and the final baseline revision equals the last emitted revision (live tail reached). The test asserts the gap fired, the snapshot was re-fetched, and final state is consistent - not merely that the last event eventually arrived. |
 | 8 | payload sizes, serialization time, event latency, CPU, memory | see [Measured data](#measured-data). |
 | 9 | clean shutdown with request / event stream in flight | `shutdown in flight` test: host `shutdown()` while a stream is open completes < 5 s with no orphan; transport `close()` terminates the stream. |
 | 10 | automated contract tests without Electron UI / network | 33 `node:test` cases, no Electron, no external network (loopback only). |
@@ -90,13 +102,23 @@ pass (`node --test "tests/transport/**/*.js" "tests/isolation/**/*.js"`):
   counter is reset to the snapshot's revision. This is the explicit choice from
   ADR 0007 Consequences ("reconnect always restores state from a full snapshot
   instead of replaying undocumented in-memory deltas").
+- **Across a bounded-buffer overflow (slow consumer)**: ordering is **not**
+  continuous. The server emits an explicit `gap` marker when it drops an event;
+  the client also detects `revision > last+1` as a backstop. On either signal,
+  the client **stops applying incrementals** and **re-baselines from a full
+  snapshot** (a new `/api/snapshot` fetch), then resumes. Dropped revisions are
+  never silently applied as if contiguous.
 - **Across a Python restart (new generation)**: all prior events are
-  invalidated. The client drops any envelope whose `generation` does not match
-  the current host generation; a new session + snapshot is required.
+  invalidated. The client drops **any** envelope (snapshot, gap, error,
+  incremental) whose `generation` does not match the current host generation; a
+  new session + snapshot is required. A stale-generation snapshot cannot reset
+  the revision baseline (rev 2 regression test).
 - **Retry ownership**: the transport owns reconnect retries (bounded,
-  exponential backoff, capped at `maxReconnectAttempts`); it does **not** retry
-  individual business requests - those surface as errors to the caller
-  (Electron main / renderer) per the error-boundary design.
+  exponential backoff, capped at `maxReconnectAttempts`, surfaces
+  `reconnect_attempts_exhausted`); it does **not** retry individual business
+  requests - those surface as errors to the caller (Electron main / renderer)
+  per the error-boundary design. `cancel()` / `close()` abort the transport's
+  own in-flight HTTP requests via a tracked `AbortController` set.
 
 ## Measured data (this machine: macOS, Apple Silicon, Node 24.18, Python 3.14, aiohttp 3.14)
 
@@ -108,28 +130,31 @@ pass (`node --test "tests/transport/**/*.js" "tests/isolation/**/*.js"`):
     "incremental_event_bytes": 155,
     "large_snapshot_bars": 500
   },
-  "serialization": { "n": 200, "total_ms": 33.874, "avg_us": 169.37 },
+  "serialization": { "n": 200, "total_ms": 34.245, "avg_us": 171.23 },
   "latency": {
-    "ws":  { "n": 50, "received": 50, "avg_ms": 2.053, "p50_ms": 1.937, "p95_ms": 2.946, "max_ms": 3.529 },
-    "sse": { "n": 50, "received": 50, "avg_ms": 1.880, "p50_ms": 1.897, "p95_ms": 2.247, "max_ms": 2.285 }
+    "ws":  { "n": 50, "received": 50, "avg_ms": 2.008, "p50_ms": 1.909, "p95_ms": 2.751, "max_ms": 3.206 },
+    "sse": { "n": 50, "received": 50, "avg_ms": 1.868, "p50_ms": 1.917, "p95_ms": 2.266, "max_ms": 2.471 }
   },
-  "memory": {
-    "ws":  { "rss_delta_mb": 14.22 },
-    "sse": { "rss_delta_mb": 3.57 }
+  "burst_500_events": {
+    "ws":  { "rss_delta_mb": 27.64, "cpu_total_ms": 365.05, "wall_ms": 1116.22, "cpu_pct_of_wall": 32.7 },
+    "sse": { "rss_delta_mb": 12.81, "cpu_total_ms": 293.33, "wall_ms": 1154.06, "cpu_pct_of_wall": 25.42 }
   }
 }
 ```
 
 - **Payload envelope**: a representative 500-bar 5 m workbench snapshot is
   ~36.8 KB; an incremental bar event is ~155 B. Well within local-transport
-  budgets; serialization of the 500-bar snapshot averages ~169 µs.
-- **Event latency**: WS avg 2.05 ms (p95 2.95 ms); SSE avg 1.88 ms (p95 2.25 ms).
+  budgets; serialization of the 500-bar snapshot averages ~171 µs.
+- **Event latency**: WS avg 2.01 ms (p95 2.75 ms); SSE avg 1.87 ms (p95 2.27 ms).
   Both are sub-3 ms on loopback. SSE is marginally faster and tighter here,
   but the difference is below any user-perceptible threshold and dominated by
   Python event-loop scheduling, not framing.
-- **Memory**: WS RSS +14.2 MB, SSE +3.6 MB around a 200-event burst. The WS
-  number is inflated by being measured first (V8 warm-up); both are small in
-  absolute terms. No unbounded growth was observed (bounded buffer enforced).
+- **CPU + memory (500-event burst)**: WS RSS +27.6 MB, CPU ~365 ms total
+  (32.7% of wall time); SSE RSS +12.8 MB, CPU ~293 ms (25.4% of wall time). The
+  WS RSS number is inflated by being measured first (V8 warm-up); both are small
+  in absolute terms and both stay bounded (the per-subscriber buffer is enforced
+  and overflow is reported via a `gap` marker, not absorbed). CPU is dominated
+  by `JSON.stringify`/parse and `fetch` overhead, not framing.
 
 ## HTTP + WebSocket vs HTTP + SSE - comparison
 
@@ -184,8 +209,15 @@ never the raw envelope (`generation`, `Authorization` stripped).
 ## Recommendation
 
 **Accept** ADR 0007's current direction (HTTP + WebSocket), with HTTP + SSE
-documented as a viable simpler alternative. The preferred choice satisfies
-every failure, isolation, ordering, and bounded-resource criterion with
-measured sub-3 ms loopback latency and clean shutdown behavior. Transport
-mechanics are isolated below the logical contract, so the choice can be
-revisited later without touching React.
+documented as a viable simpler alternative. Rev 2 addressed the review feedback
+that blocked the original recommendation: slow-consumer overflow now emits an
+explicit `gap` marker and the client re-baselines from a full snapshot (loss is
+detected and repaired, not silent); the generation guard now covers snapshot,
+gap, and error envelopes (a stale-generation snapshot can no longer reset the
+baseline); the reconnect test now exercises a real server-side disconnect on the
+same transport (not a fresh transport); and `cancel()`/`close()` now abort the
+transport's own in-flight HTTP requests. The preferred choice satisfies every
+failure, isolation, ordering, and bounded-resource criterion with measured
+sub-3 ms loopback latency, CPU and memory observations, and clean shutdown
+behavior. Transport mechanics are isolated below the logical contract, so the
+choice can be revisited later without touching React.

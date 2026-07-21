@@ -125,6 +125,53 @@ for (const KIND of TRANSPORTS) {
     });
   });
 
+  test(`[${KIND}] old-generation snapshot is rejected and does not reset the baseline`, async () => {
+    // Regression (blocker 3): a stale-generation snapshot must NOT be accepted
+    // and must NOT reset the revision baseline. Applies to snapshot, gap, and
+    // error envelopes alike.
+    await withHost({}, async (cfg) => {
+      const t = createTransport(KIND, cfg);
+      const created = await t.createSession();
+      const sid = created.session_id;
+      const snapshots = [];
+      t.on({ onSnapshot: (s) => snapshots.push(s) });
+      await t.connect(sid);
+      assert.equal(snapshots.length, 1, 'initial snapshot accepted');
+      const baselineRev = snapshots[0].revision;
+
+      // Stale-generation snapshot: must be dropped, baseline untouched.
+      const staleGen = cfg.generation - 1;
+      const acceptedSnap = t._applyEnvelope({
+        type: 'snapshot',
+        session_id: sid,
+        generation: staleGen,
+        revision: 99,
+        snapshot: { poisoned: true },
+      });
+      assert.equal(acceptedSnap, false, 'old-generation snapshot must be rejected');
+      assert.equal(snapshots.length, 1, 'no new snapshot must be emitted');
+      assert.equal(
+        t._lastRevisionBySession.get(sid),
+        baselineRev,
+        'baseline revision must NOT be reset by a stale snapshot',
+      );
+
+      // Stale-generation error must also be dropped (no spurious onError).
+      let errored = false;
+      t.on({ onError: () => { errored = true; } });
+      const acceptedErr = t._applyEnvelope({
+        type: 'error',
+        session_id: sid,
+        generation: staleGen,
+        error: 'stale',
+      });
+      assert.equal(acceptedErr, false, 'old-generation error must be rejected');
+      assert.equal(errored, false, 'no onError for a stale-generation error');
+
+      await t.close();
+    });
+  });
+
   test(`[${KIND}] retired session rejects new events and subscribers`, async () => {
     await withHost({}, async (cfg) => {
       const t = createTransport(KIND, cfg);
@@ -148,55 +195,118 @@ for (const KIND of TRANSPORTS) {
     });
   });
 
-  test(`[${KIND}] reconnect re-baselines from a full snapshot`, async () => {
+  test(`[${KIND}] reconnect: a real dropped connection re-establishes a full-snapshot baseline`, async () => {
+    // Same transport throughout. The server drops the live connection via
+    // /api/kick; the client must detect the drop, run its bounded reconnect,
+    // and re-baseline from a fresh snapshot.
     await withHost({}, async (cfg) => {
-      const t = createTransport(KIND, cfg, { reconnectInitialDelayMs: 50, reconnectMaxDelayMs: 100 });
+      const t = createTransport(KIND, cfg, {
+        reconnectInitialDelayMs: 40,
+        reconnectMaxDelayMs: 120,
+        maxReconnectAttempts: 5,
+      });
       const created = await t.createSession();
       const sid = created.session_id;
       const snapshots = [];
-      t.on({ onSnapshot: (s) => snapshots.push(s) });
+      const reconnects = [];
+      const disconnects = [];
+      t.on({
+        onSnapshot: (s) => snapshots.push(s),
+        onReconnect: () => reconnects.push(Date.now()),
+        onDisconnect: () => disconnects.push(Date.now()),
+      });
       await t.connect(sid);
-      assert.equal(snapshots.length, 1, 'initial snapshot');
-      // Force a client-side reconnect: a fresh transport to the SAME session
-      // (simulates a dropped connection re-establishing). Attach the listener
-      // BEFORE connect so the baseline snapshot is captured.
-      const t2 = createTransport(KIND, cfg, { reconnectInitialDelayMs: 50, reconnectMaxDelayMs: 100 });
-      const snaps2 = [];
-      t2.on({ onSnapshot: (s) => snaps2.push(s) });
-      await t2.connect(sid);
-      await sleep(150);
-      assert.equal(snaps2.length, 1, 'reconnect must re-establish a snapshot baseline');
-      await t2.close();
+      assert.equal(snapshots.length, 1, 'initial baseline snapshot');
+      // Drop the server-side connection WITHOUT retiring the session.
+      await t.kick(sid);
+      // Wait for the bounded reconnect to fire and deliver a fresh snapshot.
+      const deadline = Date.now() + 4000;
+      while (snapshots.length < 2 && Date.now() < deadline) await sleep(30);
+      assert.ok(disconnects.length >= 1, 'client must observe the dropped connection');
+      assert.ok(reconnects.length >= 1, 'client must run its automatic reconnect');
+      assert.equal(snapshots.length, 2, 'reconnect must re-establish a fresh snapshot baseline');
+      // Both snapshots are for the same session/generation.
+      assert.equal(snapshots[1].session_id, sid);
+      assert.equal(snapshots[1].generation, cfg.generation);
       await t.close();
     });
   });
 
-  test(`[${KIND}] slow consumer: bounded buffer overflow is explicit, live tail kept`, async () => {
-    // server writes slowly; emit many events faster than the consumer drains.
+  test(`[${KIND}] reconnect: bounded retry gives up after maxReconnectAttempts`, async () => {
+    // Kill the Python service so every reconnect attempt fails; the client
+    // must stop after the configured bound and surface exhaustion, not loop.
+    await withHost({}, async (cfg) => {
+      const t = createTransport(KIND, cfg, {
+        reconnectInitialDelayMs: 20,
+        reconnectMaxDelayMs: 40,
+        maxReconnectAttempts: 2,
+      });
+      const created = await t.createSession();
+      const sid = created.session_id;
+      let exhausted = false;
+      t.on({ onError: (e) => { if (String(e.message).includes('exhausted')) exhausted = true; } });
+      await t.connect(sid);
+      await t.kick(sid);
+      await cfg.host.shutdown(); // server gone -> reconnects fail
+      const deadline = Date.now() + 4000;
+      while (!exhausted && Date.now() < deadline) await sleep(50);
+      assert.equal(exhausted, true, 'must stop reconnecting after maxReconnectAttempts');
+      await t.close();
+    });
+  });
+
+  test(`[${KIND}] slow consumer: overflow is detected, snapshot re-fetched, final state consistent`, async () => {
+    // Server writes slowly with a tiny bounded buffer; emit many events
+    // faster than the consumer drains so the buffer overflows. The client
+    // MUST detect the loss (gap marker or revision gap), stop applying
+    // incrementals, re-baseline from a full snapshot, and end consistent.
     await withHost(
-      { SPIKE_SLOW_CONSUMER_DELAY_MS: 80, SPIKE_EVENT_BUFFER_MAX: 4 },
+      { SPIKE_SLOW_CONSUMER_DELAY_MS: 60, SPIKE_EVENT_BUFFER_MAX: 4 },
       async (cfg) => {
-        const t = createTransport(KIND, cfg);
+        const t = createTransport(KIND, cfg, { requestTimeoutMs: 5000 });
         const created = await t.createSession();
         const sid = created.session_id;
-        const received = [];
-        t.on({ onEvent: (e) => received.push(e) });
+        const events = [];
+        const snapshots = [];
+        const gaps = [];
+        t.on({
+          onEvent: (e) => events.push(e),
+          onSnapshot: (s) => snapshots.push(s),
+          onGap: (g) => gaps.push(g),
+        });
         await t.connect(sid);
-        // Emit 12 events while the server drains at 80ms each.
-        for (let i = 1; i <= 12; i++) await t.emit(sid, { type: 'tick', i });
-        // Wait long enough that the slow consumer has drained what it can.
-        await sleep(2500);
-        // The client must NOT have received all 12 (buffer bounded at 4). It
-        // should have received the live tail, not the head.
-        assert.ok(
-          received.length < 12,
-          `slow consumer should be bounded, got ${received.length}`,
-        );
-        assert.ok(received.length >= 1, 'should keep at least the live tail');
-        // The LAST received revision should be the highest seen (live tail kept).
-        const revs = received.map((e) => e.revision);
-        const maxRecv = Math.max(...revs);
-        assert.equal(maxRecv, 12, 'live tail (latest revision) must be kept');
+        assert.equal(snapshots.length, 1, 'initial baseline');
+        const N = 12;
+        for (let i = 1; i <= N; i++) await t.emit(sid, { type: 'tick', i });
+        // Wait for the slow consumer to drain and the re-baseline to complete.
+        const deadline = Date.now() + 4000;
+        while (snapshots.length < 2 && Date.now() < deadline) await sleep(30);
+        await sleep(200); // let any trailing incrementals settle
+
+        // 1. Loss was detected (explicit gap marker from server, or client-side
+        //    revision-gap detection). At least one gap signal must have fired.
+        assert.ok(gaps.length >= 1, 'overflow must be detected as a gap');
+
+        // 2. A full snapshot was re-fetched to re-baseline.
+        assert.ok(snapshots.length >= 2, 'a re-baseline snapshot must be fetched');
+        const baseline = snapshots[snapshots.length - 1];
+
+        // 3. Final state is consistent: the baseline revision equals the last
+        //    emitted revision (N), proving the live tail was reached, and no
+        //    incremental with a gap was applied as if it were contiguous.
+        assert.equal(baseline.revision, N, 're-baseline must reach the live tail (rev N)');
+        // No applied incremental may have a revision that skips. Since the
+        // client drops incrementals while gapped and re-baselines, the applied
+        // events (if any) must be contiguous from the baseline backward or
+        // none at all (all subsumed by the snapshot). Either is acceptable;
+        // what is NOT acceptable is accepting rev N as a contiguous +1 from
+        // a much lower revision.
+        const applied = events.map((e) => e.revision);
+        if (applied.length > 1) {
+          for (let i = 1; i < applied.length; i++) {
+            assert.equal(applied[i], applied[i - 1] + 1, `applied revisions must be contiguous, got ${applied.join(',')}`);
+          }
+        }
         await t.close();
       },
     );
@@ -220,6 +330,30 @@ for (const KIND of TRANSPORTS) {
       clearTimeout(timer);
       const elapsed = Date.now() - start;
       assert.ok(elapsed < 1500, `timeout should fire promptly, took ${elapsed}ms`);
+    });
+  });
+
+  test(`[${KIND}] request cancellation: cancel() aborts an in-flight HTTP request`, async () => {
+    // Regression (blocker 5): cancel() must abort this transport's own
+    // in-flight HTTP requests, not just close the event stream. We use the
+    // slow-work endpoint (3s) and cancel mid-flight; the request must reject
+    // quickly via abort, not wait for the server.
+    await withHost({ SPIKE_SLOW_WORK_MS: 3000 }, async (cfg) => {
+      const t = createTransport(KIND, cfg, { requestTimeoutMs: 10000 });
+      const start = Date.now();
+      // Fire a slow request through the transport's _request path (same path
+      // the domain methods use) but with a long timeout so the abort is the
+      // only thing that can end it quickly.
+      const inflight = t._request('/api/slow-work', { method: 'POST', body: {} }).catch(
+        (err) => err && err.name === 'AbortError' ? 'aborted' : Promise.reject(err),
+      );
+      await sleep(50); // let the request land server-side
+      t.cancel();
+      const result = await inflight;
+      const elapsed = Date.now() - start;
+      assert.equal(result, 'aborted', 'in-flight request must abort on cancel()');
+      assert.ok(elapsed < 1000, `cancel should abort promptly, took ${elapsed}ms`);
+      await t.close();
     });
   });
 

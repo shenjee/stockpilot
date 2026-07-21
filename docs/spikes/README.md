@@ -19,8 +19,8 @@
 | ADR | Spike 状态 | 执行者 | Issue | PR | 结论 |
 | --- | --- | --- | --- | --- | --- |
 | [0005](../adr/0005-t0-chart-engine-and-logical-time-axis.md) | In Progress | Trae | [#25](https://github.com/shenjee/stockpilot/issues/25) | - | Pending |
-| [0006](../adr/0006-electron-managed-python-process.md) | Reported | Claude | [#26](https://github.com/shenjee/stockpilot/issues/26) | [#30](https://github.com/shenjee/stockpilot/pull/30) | Accept (conditional) |
-| [0007](../adr/0007-local-python-transport.md) | Reported | Claude | [#26](https://github.com/shenjee/stockpilot/issues/26) | [#30](https://github.com/shenjee/stockpilot/pull/30) | Accept |
+| [0006](../adr/0006-electron-managed-python-process.md) | Reported | Claude | [#26](https://github.com/shenjee/stockpilot/issues/26) | [#30](https://github.com/shenjee/stockpilot/pull/30) | Continue investigation (lifecycle OK; real packaging is decision-blocking) |
+| [0007](../adr/0007-local-python-transport.md) | Reported | Claude | [#26](https://github.com/shenjee/stockpilot/issues/26) | [#30](https://github.com/shenjee/stockpilot/pull/30) | Accept (after rev 2 review fixes) |
 | [0008](../adr/0008-czsc-update-and-rebuild-strategy.md) | Planned | Codex | [#27](https://github.com/shenjee/stockpilot/issues/27) | - | Pending |
 
 ## 状态约定

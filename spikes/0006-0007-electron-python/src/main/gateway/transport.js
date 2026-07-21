@@ -73,16 +73,50 @@ class BaseTransport {
   }
 
   /**
-   * Apply an inbound event envelope. Enforces revision + generation semantics.
-   * Returns true if the event was accepted (new revision), false if dropped.
+   * Apply an inbound event envelope. Enforces generation + revision semantics.
+   *
+   * Generation guard applies to ALL envelope kinds (snapshot, gap, error,
+   * incremental): an envelope from a stale service_generation is dropped and
+   * never resets the revision baseline. (ADR 0007 blocker fix.)
+   *
+   * Gap handling: an explicit `gap` marker, or an incremental whose
+   * `revision > last + 1`, means events were lost (bounded-buffer overflow on
+   * the server, or a dropped frame). The transport stops applying
+   * incrementals and re-baselines from a full snapshot before resuming.
+   *
+   * Returns true if the event was accepted, false if dropped.
    */
   _applyEnvelope(env) {
     if (!env || typeof env !== 'object') return false;
+
+    // Generation guard FIRST, for every envelope kind.
+    if (env.generation !== undefined && env.generation !== this.generation) {
+      // Stale generation: drop. The Electron main should have torn this stream
+      // down and built a new transport with the new generation; this guard is
+      // the defensive backstop so a stale snapshot can never reset the baseline.
+      return false;
+    }
+
     if (env.type === 'snapshot') {
+      // A fresh (re)baseline. Clears any pending gap state.
+      this._gapped = false;
       this._lastRevisionBySession.set(env.session_id, env.revision);
       this._emit('onSnapshot', env);
+      // If a connect() is waiting on a baseline, resolve it.
+      if (this._connectResolver) {
+        const r = this._connectResolver;
+        this._connectResolver = null;
+        r({ connected: true, snapshot: env });
+      }
       return true;
     }
+
+    if (env.type === 'gap') {
+      // Explicit overflow/loss marker from the server. Trigger re-baseline.
+      this._onGap(env.session_id, env);
+      return false;
+    }
+
     if (env.type === 'error') {
       this._emit('onError', Object.assign(new Error(env.error || 'transport_error'), { envelope: env }));
       // If a connect() is waiting on a baseline, an error frame resolves it
@@ -93,15 +127,23 @@ class BaseTransport {
         r({ connected: true, snapshot: null, error: env });
       }
       return false;
-    }    // Incremental event.
-    if (env.generation !== undefined && env.generation !== this.generation) {
-      // Stale generation: drop. Caller should have already torn this stream
-      // down; this is a defensive guard.
-      return false;
     }
+
+    // Incremental event.
     const last = this._lastRevisionBySession.get(env.session_id);
     if (last !== undefined && env.revision <= last) {
       // Duplicate or stale revision: drop (out-of-order / replayed).
+      return false;
+    }
+    if (last !== undefined && env.revision > last + 1) {
+      // Gap detected: revisions last+1 .. env.revision-1 were lost. Do not
+      // apply this incremental; re-baseline from a full snapshot.
+      this._onGap(env.session_id, env);
+      return false;
+    }
+    // While a re-baseline is in flight, drop incrementals (the snapshot will
+    // establish the authoritative state).
+    if (this._gapped) {
       return false;
     }
     this._lastRevisionBySession.set(env.session_id, env.revision);
@@ -109,8 +151,46 @@ class BaseTransport {
     return true;
   }
 
+  /**
+   * Handle a detected gap: mark the session gapped, notify the listener, and
+   * kick off an async full-snapshot re-baseline. Incremental events for this
+   * session are dropped until the snapshot arrives.
+   */
+  _onGap(sessionId, env) {
+    this._gapped = true;
+    this._emit('onGap', { session_id: sessionId, generation: this.generation, envelope: env });
+    this._rebaseline(sessionId).catch((err) => {
+      this._emit('onError', Object.assign(new Error('rebaseline_failed'), { cause: err }));
+    });
+  }
+
+  async _rebaseline(sessionId) {
+    if (!sessionId) return;
+    // Coalesce concurrent re-baseline attempts.
+    this._rebasingSessions = this._rebasingSessions || new Set();
+    if (this._rebasingSessions.has(sessionId)) return;
+    this._rebasingSessions.add(sessionId);
+    try {
+      const snap = await this.getSnapshot(sessionId);
+      if (!snap) return;
+      // Apply as a snapshot envelope. If the server generation moved on, the
+      // generation guard drops it and we surface via onError upstream.
+      this._applyEnvelope({
+        type: 'snapshot',
+        session_id: snap.session_id,
+        generation: snap.generation,
+        revision: snap.revision,
+        snapshot: snap.snapshot,
+      });
+    } finally {
+      this._rebasingSessions.delete(sessionId);
+    }
+  }
+
   async _request(path, { method = 'POST', body, timeoutMs } = {}) {
     const ctrl = new AbortController();
+    this._inflight = this._inflight || new Set();
+    this._inflight.add(ctrl);
     const timer = setTimeout(() => ctrl.abort(), timeoutMs || this.opts.requestTimeoutMs);
     try {
       const res = await fetch(`${this.baseURL}${path}`, {
@@ -132,6 +212,7 @@ class BaseTransport {
       return { status: res.status, json, text };
     } finally {
       clearTimeout(timer);
+      this._inflight.delete(ctrl);
     }
   }
 
@@ -168,6 +249,13 @@ class BaseTransport {
     return r.json;
   }
 
+  /** Test-only: drop a session's live connection to exercise reconnect. */
+  async kick(sessionId) {
+    const r = await this._request('/api/kick', { method: 'POST', body: { session_id: sessionId } });
+    this._assertOk(r);
+    return r.json;
+  }
+
   _assertOk(r) {
     if (r.status >= 400) {
       const msg = (r.json && r.json.error) || r.text || `http ${r.status}`;
@@ -180,6 +268,18 @@ class BaseTransport {
 
   cancel() {
     this._cancelled = true;
+    // Abort every in-flight HTTP request this transport has outstanding, so a
+    // caller that cancels (or closes) does not keep waiting on a slow request.
+    if (this._inflight) {
+      for (const ctrl of this._inflight) {
+        try {
+          ctrl.abort();
+        } catch {
+          /* ignore */
+        }
+      }
+      this._inflight.clear();
+    }
   }
 }
 
@@ -214,6 +314,8 @@ class HttpWsTransport extends BaseTransport {
       });
       this._ws = ws;
       let resolved = false;
+      // _applyEnvelope owns connect resolution: it calls _connectResolver on
+      // snapshot (with the snapshot) and on error (with null+error).
       this._connectResolver = (val) => { if (!resolved) { resolved = true; resolve(val); } };
       ws.addEventListener('open', () => {
         this._reconnectDelay = this.opts.reconnectInitialDelayMs;
@@ -226,15 +328,11 @@ class HttpWsTransport extends BaseTransport {
           return;
         }
         this._applyEnvelope(env);
-        if (!resolved && env.type === 'snapshot') {
-          this._connectResolver = null;
-          resolve({ connected: true, snapshot: env });
-          resolved = true;
-        }
       });
       ws.addEventListener('error', () => {
         if (!resolved) {
           resolved = true;
+          this._connectResolver = null;
           reject(new Error('ws open failed'));
         } else {
           this._emit('onError', new Error('ws error'));
@@ -244,6 +342,7 @@ class HttpWsTransport extends BaseTransport {
         this._emit('onDisconnect', { reason: 'closed' });
         if (!resolved) {
           resolved = true;
+          this._connectResolver = null;
           reject(new Error('ws closed before snapshot'));
         }
         if (!this._stopped && !this._cancelled) {
@@ -275,6 +374,7 @@ class HttpWsTransport extends BaseTransport {
 
   async close() {
     this._stopped = true;
+    this.cancel(); // abort any in-flight HTTP requests
     const ws = this._ws;
     this._ws = null;
     if (ws) {
@@ -337,7 +437,8 @@ class HttpSseTransport extends BaseTransport {
           const decoder = new TextDecoder();
           let buf = '';
           let resolved = false;
-          // Allow error envelopes (e.g. retired session) to resolve connect().
+          // _applyEnvelope owns connect resolution (snapshot -> resolve with
+          // snapshot; error -> resolve with null+error).
           this._connectResolver = (val) => {
             if (!resolved) {
               resolved = true;
@@ -356,11 +457,6 @@ class HttpSseTransport extends BaseTransport {
                 continue;
               }
               this._applyEnvelope(env);
-              if (!resolved && env.type === 'snapshot') {
-                this._connectResolver = null;
-                resolved = true;
-                resolve({ connected: true, snapshot: env });
-              }
             }
           };
           try {
@@ -415,6 +511,7 @@ class HttpSseTransport extends BaseTransport {
 
   async close() {
     this._stopped = true;
+    this.cancel(); // abort any in-flight HTTP requests
     if (this._ctrl) {
       try {
         this._ctrl.abort();

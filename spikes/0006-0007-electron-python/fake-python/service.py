@@ -94,16 +94,29 @@ class _Subscriber:
             self._queue.put_nowait(event)
             return True
         except asyncio.QueueFull:
-            # Bounded buffer exceeded for THIS subscriber. The slow-consumer
-            # policy is: drop the OLDEST pending event to keep the live tail,
-            # and flag the subscriber as overflowed so the client can detect
-            # a gap and re-baseline from a snapshot.
+            # Bounded buffer exceeded for THIS subscriber. Deliver an EXPLICIT
+            # gap marker so the client does not have to infer loss: drop the
+            # OLDEST pending event to make room, then enqueue the gap marker.
+            # The triggering event itself is NOT enqueued here - the client,
+            # on receiving the gap (or detecting revision > last+1 as a
+            # backstop), stops applying incrementals and re-baselines from a
+            # full snapshot, which carries the authoritative latest revision.
+            # If a second overflow happens before the client drains, the gap
+            # marker (now at the head) is itself dropped and a fresh one
+            # enqueued, so the client always sees the most recent gap.
             try:
                 self._queue.get_nowait()
             except asyncio.QueueEmpty:
                 pass
+            gap = {
+                "type": "gap",
+                "session_id": self.session_id,
+                "generation": self.generation,
+                "revision": event.get("revision"),
+                "reason": "bounded_buffer_overflow",
+            }
             try:
-                self._queue.put_nowait(event)
+                self._queue.put_nowait(gap)
                 return True
             except asyncio.QueueFull:
                 return False
@@ -203,6 +216,20 @@ class TransportState:
             s.subscribers.remove(sub)
         sub.close()
 
+    def kick(self, sid: str | None) -> int:
+        """Close every live subscriber for a session WITHOUT retiring the
+        session. Simulates a connection drop so the client must reconnect.
+        Returns the number of subscribers kicked.
+        """
+        s = self._sessions.get(sid) if sid else None
+        if s is None or s.retired:
+            return 0
+        n = len(s.subscribers)
+        for sub in list(s.subscribers):
+            sub.close()
+        s.subscribers.clear()
+        return n
+
     def emit(self, sid: str | None, event: dict) -> int | None:
         """Push an incremental event to a session's subscribers.
 
@@ -299,6 +326,7 @@ class FakeService:
         app.router.add_get("/events", self._sse_events)    # HTTP + SSE
         # Test-only knobs to push fixture events / simulate slow consumer.
         app.router.add_post("/api/emit", self._api_emit)
+        app.router.add_post("/api/kick", self._api_kick)  # drop a subscriber's conn
         return app
 
     async def _slow_work(self, request: web.Request) -> web.Response:
@@ -401,6 +429,25 @@ class FakeService:
                 status=404,
             )
         return web.json_response({"pushed": pushed, "generation": self.generation})
+
+    async def _api_kick(self, request: web.Request) -> web.Response:
+        """Test-only knob: close all live subscribers for a session WITHOUT
+        retiring the session. Simulates a connection drop so the client's
+        automatic reconnect path can be exercised.
+        """
+        body = {}
+        if request.can_read_body:
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+        sid = body.get("session_id")
+        kicked = self.transport.kick(sid)
+        return web.json_response({
+            "kicked": kicked,
+            "session_id": sid,
+            "generation": self.generation,
+        })
 
     async def _ws_events(self, request: web.Request) -> web.WebSocketResponse:
         ws = web.WebSocketResponse()

@@ -1,0 +1,11 @@
+# Fake Python service dependencies for the Electron/Python spike (ADR 0006 / 0007).
+# Pinned for reproducibility. This is NOT a production backend dependency set.
+# Resolved on Python 3.14, macOS arm64.
+aiohttp==3.14.1
+aiohappyeyeballs==2.7.1
+aiosignal==1.4.0
+attrs==26.1.0
+frozenlist==1.8.0
+multidict==6.7.1
+propcache==0.5.2
+yarl==1.24.5
