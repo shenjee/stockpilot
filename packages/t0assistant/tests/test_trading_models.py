@@ -93,6 +93,16 @@ class TradeValueTests(unittest.TestCase):
             },
         )
 
+    def test_record_rejects_blank_trade_id(self) -> None:
+        trade = TradeDraft.from_mapping(self._payload())
+
+        for trade_id in ("", "   "):
+            with self.subTest(trade_id=trade_id), self.assertRaises(
+                TradeValidationError
+            ) as ctx:
+                TradeRecord(trade_id, trade)
+            self.assertEqual(ctx.exception.field, "trade_id")
+
     def test_optional_fee_and_fee_plan_remain_null(self) -> None:
         payload = self._payload()
         payload["fee"] = None
@@ -113,6 +123,14 @@ class TradeValueTests(unittest.TestCase):
                 quantity=0,
             )
         self.assertEqual(ctx.exception.field, "quantity")
+
+    def test_mapping_rejects_invalid_executed_at(self) -> None:
+        payload = self._payload()
+        payload["executed_at"] = "2026-07-22 25:03"
+
+        with self.assertRaises(TradeValidationError) as ctx:
+            TradeDraft.from_mapping(payload)
+        self.assertEqual(ctx.exception.field, "executed_at")
 
     def test_invalid_domain_fields_are_rejected(self) -> None:
         invalid_values = {
