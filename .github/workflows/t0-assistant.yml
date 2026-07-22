@@ -1,0 +1,94 @@
+name: T0 Assistant
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/t0-assistant.yml"
+      - "apps/t0-assistant/**"
+      - "packages/marketdata/**"
+      - "pyproject.toml"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/t0-assistant.yml"
+      - "apps/t0-assistant/**"
+      - "packages/marketdata/**"
+      - "pyproject.toml"
+
+permissions:
+  contents: read
+
+jobs:
+  python-smoke:
+    name: Python smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install project
+        run: python -m pip install -e .
+      - name: Run marketdata tests
+        run: python -m unittest discover -s packages/marketdata/tests -p 'test_*.py'
+      - name: Run backend lifecycle smoke
+        run: python -m unittest discover -s apps/t0-assistant/tests -p 'test_fake_service.py'
+
+  renderer-smoke:
+    name: Renderer smoke
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/t0-assistant
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/t0-assistant/package-lock.json
+      - run: npm ci
+      - run: npm run smoke:renderer
+
+  electron-smoke:
+    name: Electron smoke
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/t0-assistant
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/t0-assistant/package-lock.json
+      - run: npm ci
+      - run: npm run smoke:electron
+
+  contract-smoke:
+    name: Contract smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/t0-assistant/package-lock.json
+      - run: npm ci
+        working-directory: apps/t0-assistant
+      - name: Install contract validator
+        run: python -m pip install 'jsonschema>=4.23'
+      - name: Run Python contract tests
+        run: python -m unittest apps/t0-assistant/tests/test_contracts.py
+      - name: Run Node contract tests
+        run: npm run test:contracts
+        working-directory: apps/t0-assistant

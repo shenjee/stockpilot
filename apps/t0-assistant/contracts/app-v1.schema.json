@@ -1,0 +1,326 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://stockpilot.local/contracts/t0-app-v1.schema.json",
+  "title": "StockPilot T+0 Live, trade and preference contract v1",
+  "description": "Application commands and ordered events for Live, trades and preferences. Replay remains owned by t0-replay-v1 and is referenced, not redefined.",
+  "type": "object",
+  "$defs": {
+    "replay_set_speed_request": {
+      "$ref": "https://stockpilot.local/contracts/t0-replay-v1.schema.json#/$defs/set_replay_speed_request"
+    },
+    "replay_event_envelope": {
+      "$ref": "https://stockpilot.local/contracts/t0-replay-v1.schema.json#/$defs/event_envelope"
+    },
+    "replay_workbench_snapshot": {
+      "$ref": "https://stockpilot.local/contracts/t0-replay-v1.schema.json#/$defs/workbench_snapshot"
+    },
+    "empty_payload": {
+      "type": "object",
+      "additionalProperties": false
+    },
+    "security_selection_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["symbol"],
+      "properties": {
+        "symbol": {"type": "string", "pattern": "^(sh|sz)\\.[0-9]{6}$"}
+      }
+    },
+    "trade_scope": {
+      "enum": ["real", "simulated"]
+    },
+    "trade_draft": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trade_scope", "symbol", "side", "executed_at", "price", "quantity", "fee", "note", "fee_plan_id"],
+      "properties": {
+        "trade_scope": {"$ref": "#/$defs/trade_scope"},
+        "symbol": {"type": "string", "pattern": "^(sh|sz)\\.[0-9]{6}$"},
+        "side": {"enum": ["buy", "sell"]},
+        "executed_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$"},
+        "price": {"type": "number", "exclusiveMinimum": 0},
+        "quantity": {"type": "integer", "minimum": 1},
+        "fee": {"type": ["number", "null"], "minimum": 0},
+        "note": {"type": "string"},
+        "fee_plan_id": {"type": ["string", "null"], "minLength": 1}
+      }
+    },
+    "trade_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trade_id", "bucket_start", "trade_scope", "symbol", "side", "executed_at", "price", "quantity", "fee", "note", "fee_plan_id"],
+      "properties": {
+        "trade_id": {"type": "string", "minLength": 1},
+        "bucket_start": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$"},
+        "trade_scope": {"$ref": "#/$defs/trade_scope"},
+        "symbol": {"type": "string", "pattern": "^(sh|sz)\\.[0-9]{6}$"},
+        "side": {"enum": ["buy", "sell"]},
+        "executed_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$"},
+        "price": {"type": "number", "exclusiveMinimum": 0},
+        "quantity": {"type": "integer", "minimum": 1},
+        "fee": {"type": ["number", "null"], "minimum": 0},
+        "note": {"type": "string"},
+        "fee_plan_id": {"type": ["string", "null"], "minLength": 1}
+      }
+    },
+    "real_trade_record": {
+      "allOf": [
+        {"$ref": "#/$defs/trade_record"},
+        {"properties": {"trade_scope": {"const": "real"}}}
+      ]
+    },
+    "simulated_trade_record": {
+      "allOf": [
+        {"$ref": "#/$defs/trade_record"},
+        {"properties": {"trade_scope": {"const": "simulated"}}}
+      ]
+    },
+    "list_trades_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trade_scope", "symbol", "trade_date"],
+      "properties": {
+        "trade_scope": {"$ref": "#/$defs/trade_scope"},
+        "symbol": {"type": "string", "pattern": "^(sh|sz)\\.[0-9]{6}$"},
+        "trade_date": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"}
+      }
+    },
+    "create_trade_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trade"],
+      "properties": {"trade": {"$ref": "#/$defs/trade_draft"}}
+    },
+    "update_trade_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trade_id", "trade"],
+      "properties": {
+        "trade_id": {"type": "string", "minLength": 1},
+        "trade": {"$ref": "#/$defs/trade_draft"}
+      }
+    },
+    "delete_trade_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trade_id", "trade_scope"],
+      "properties": {
+        "trade_id": {"type": "string", "minLength": 1},
+        "trade_scope": {"$ref": "#/$defs/trade_scope"}
+      }
+    },
+    "layout_preference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["chart_split", "show_intraday"],
+      "properties": {
+        "chart_split": {"enum": ["64_36", "50_50"]},
+        "show_intraday": {"type": "boolean"}
+      }
+    },
+    "layer_preference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ma5", "ma10", "ma20", "ma30", "ma60", "strokes", "pivot_zones"],
+      "properties": {
+        "ma5": {"type": "boolean"},
+        "ma10": {"type": "boolean"},
+        "ma20": {"type": "boolean"},
+        "ma30": {"type": "boolean"},
+        "ma60": {"type": "boolean"},
+        "strokes": {"type": "boolean"},
+        "pivot_zones": {"type": "boolean"}
+      }
+    },
+    "preference_values": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["last_symbol", "layout", "layers"],
+      "properties": {
+        "last_symbol": {
+          "oneOf": [
+            {"type": "string", "pattern": "^(sh|sz)\\.[0-9]{6}$"},
+            {"type": "null"}
+          ]
+        },
+        "layout": {"$ref": "#/$defs/layout_preference"},
+        "layers": {"$ref": "#/$defs/layer_preference"}
+      }
+    },
+    "save_preferences_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["preferences"],
+      "properties": {"preferences": {"$ref": "#/$defs/preference_values"}}
+    },
+    "command_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "request_id", "command", "session_id", "payload"],
+      "properties": {
+        "schema_version": {"const": "t0_app_v1"},
+        "request_id": {"type": "string", "minLength": 1},
+        "command": {
+          "enum": [
+            "select_security",
+            "get_live_snapshot",
+            "retry_live",
+            "list_trades",
+            "create_trade",
+            "update_trade",
+            "delete_trade",
+            "get_preferences",
+            "save_preferences"
+          ]
+        },
+        "session_id": {"type": ["string", "null"], "minLength": 1},
+        "payload": {"type": "object"}
+      },
+      "allOf": [
+        {"if": {"properties": {"command": {"const": "select_security"}}}, "then": {"properties": {"payload": {"$ref": "#/$defs/security_selection_payload"}}}},
+        {"if": {"properties": {"command": {"enum": ["get_live_snapshot", "retry_live"]}}}, "then": {"properties": {"session_id": {"type": "string"}, "payload": {"$ref": "#/$defs/empty_payload"}}}},
+        {"if": {"properties": {"command": {"const": "list_trades"}}}, "then": {"properties": {"payload": {"$ref": "#/$defs/list_trades_payload"}}}},
+        {"if": {"properties": {"command": {"const": "create_trade"}}}, "then": {"properties": {"payload": {"$ref": "#/$defs/create_trade_payload"}}}},
+        {"if": {"properties": {"command": {"const": "update_trade"}}}, "then": {"properties": {"payload": {"$ref": "#/$defs/update_trade_payload"}}}},
+        {"if": {"properties": {"command": {"const": "delete_trade"}}}, "then": {"properties": {"payload": {"$ref": "#/$defs/delete_trade_payload"}}}},
+        {"if": {"properties": {"command": {"const": "get_preferences"}}}, "then": {"properties": {"payload": {"$ref": "#/$defs/empty_payload"}}}},
+        {"if": {"properties": {"command": {"const": "save_preferences"}}}, "then": {"properties": {"payload": {"$ref": "#/$defs/save_preferences_payload"}}}}
+      ]
+    },
+    "application_error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["error_code", "category", "severity", "retryable", "affected_capability", "message", "request_id", "details"],
+      "properties": {
+        "error_code": {"type": "string", "minLength": 1},
+        "category": {"enum": ["validation", "data", "calculation", "session", "persistence", "service"]},
+        "severity": {"const": "error"},
+        "retryable": {"type": "boolean"},
+        "affected_capability": {"enum": ["symbol_selection", "live", "intraday_chart", "five_minute_chart", "chan_analysis", "trades", "preferences", "service"]},
+        "message": {"type": "string", "minLength": 1},
+        "request_id": {"type": "string", "minLength": 1},
+        "operation_id": {"type": "string", "minLength": 1},
+        "details": {"type": "object"}
+      }
+    },
+    "command_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "request_id", "accepted", "operation_id", "data", "error"],
+      "properties": {
+        "schema_version": {"const": "t0_app_v1"},
+        "request_id": {"type": "string", "minLength": 1},
+        "accepted": {"type": "boolean"},
+        "operation_id": {"type": ["string", "null"], "minLength": 1},
+        "data": {"type": ["object", "null"]},
+        "error": {
+          "oneOf": [
+            {"$ref": "#/$defs/application_error"},
+            {"type": "null"}
+          ]
+        }
+      },
+      "allOf": [
+        {"if": {"properties": {"accepted": {"const": true}}}, "then": {"properties": {"error": {"type": "null"}}}},
+        {"if": {"properties": {"accepted": {"const": false}}}, "then": {"properties": {"operation_id": {"type": "null"}, "data": {"type": "null"}, "error": {"$ref": "#/$defs/application_error"}}}}
+      ]
+    },
+    "live_session_status_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "reason"],
+      "properties": {
+        "state": {"enum": ["created", "loading", "ready", "failed", "retired"]},
+        "reason": {"enum": ["session_created", "load_started", "load_completed", "user_command", "operation_failed", "session_retired"]}
+      }
+    },
+    "market_update_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target", "bars", "quote"],
+      "properties": {
+        "target": {"enum": ["quote", "bars_1m", "bars_5m", "daily_bars"]},
+        "bars": {"type": "array", "items": {"$ref": "https://stockpilot.local/contracts/t0-logic-v1.schema.json#/$defs/bar"}},
+        "quote": {
+          "oneOf": [
+            {"$ref": "https://stockpilot.local/contracts/t0-logic-v1.schema.json#/$defs/quote"},
+            {"type": "null"}
+          ]
+        }
+      },
+      "allOf": [
+        {"if": {"properties": {"target": {"const": "quote"}}}, "then": {"properties": {"bars": {"maxItems": 0}, "quote": {"$ref": "https://stockpilot.local/contracts/t0-logic-v1.schema.json#/$defs/quote"}}}},
+        {"if": {"properties": {"target": {"enum": ["bars_1m", "bars_5m", "daily_bars"]}}}, "then": {"properties": {"quote": {"type": "null"}}}}
+      ]
+    },
+    "real_trades_changed_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trade_revision", "trades"],
+      "properties": {
+        "trade_revision": {"type": "integer", "minimum": 0},
+        "trades": {"type": "array", "items": {"$ref": "#/$defs/real_trade_record"}}
+      }
+    },
+    "simulated_trades_changed_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trade_revision", "trades"],
+      "properties": {
+        "trade_revision": {"type": "integer", "minimum": 0},
+        "trades": {"type": "array", "items": {"$ref": "#/$defs/simulated_trade_record"}}
+      }
+    },
+    "preferences_changed_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["preference_revision", "preferences"],
+      "properties": {
+        "preference_revision": {"type": "integer", "minimum": 0},
+        "preferences": {"$ref": "#/$defs/preference_values"}
+      }
+    },
+    "service_status_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "message"],
+      "properties": {
+        "state": {"enum": ["connected", "restarting", "disconnected"]},
+        "message": {"type": "string", "minLength": 1}
+      }
+    },
+    "event_envelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "service_generation", "session_id", "revision", "event_type", "payload"],
+      "properties": {
+        "schema_version": {"const": "t0_app_v1"},
+        "service_generation": {"type": "integer", "minimum": 1},
+        "session_id": {"type": ["string", "null"], "minLength": 1},
+        "revision": {"type": "integer", "minimum": 0},
+        "event_type": {"enum": ["live_session_status", "workbench_snapshot", "market_update", "indicators_updated", "chan_analysis_replaced", "trades_changed", "preferences_changed", "service_status", "operation_failed"]},
+        "operation_id": {"type": "string", "minLength": 1},
+        "payload": {"type": "object"}
+      },
+      "allOf": [
+        {"if": {"properties": {"event_type": {"const": "live_session_status"}}}, "then": {"properties": {"session_id": {"type": "string"}, "payload": {"$ref": "#/$defs/live_session_status_payload"}}}},
+        {"if": {"properties": {"event_type": {"const": "workbench_snapshot"}}}, "then": {"properties": {"session_id": {"type": "string"}, "payload": {"$ref": "https://stockpilot.local/contracts/t0-logic-v1.schema.json#/$defs/workbench_snapshot"}}}},
+        {"if": {"properties": {"event_type": {"const": "market_update"}}}, "then": {"properties": {"session_id": {"type": "string"}, "payload": {"$ref": "#/$defs/market_update_payload"}}}},
+        {"if": {"properties": {"event_type": {"const": "indicators_updated"}}}, "then": {"properties": {"session_id": {"type": "string"}, "payload": {"$ref": "https://stockpilot.local/contracts/t0-logic-v1.schema.json#/$defs/indicators"}}}},
+        {"if": {"properties": {"event_type": {"const": "chan_analysis_replaced"}}}, "then": {"properties": {"session_id": {"type": "string"}, "payload": {"$ref": "https://stockpilot.local/contracts/t0-logic-v1.schema.json#/$defs/chan_analysis"}}}},
+        {
+          "if": {"properties": {"event_type": {"const": "trades_changed"}}},
+          "then": {
+            "oneOf": [
+              {"properties": {"session_id": {"type": "null"}, "payload": {"$ref": "#/$defs/real_trades_changed_payload"}}},
+              {"properties": {"session_id": {"type": "string"}, "payload": {"$ref": "#/$defs/simulated_trades_changed_payload"}}}
+            ]
+          }
+        },
+        {"if": {"properties": {"event_type": {"const": "preferences_changed"}}}, "then": {"properties": {"session_id": {"type": "null"}, "payload": {"$ref": "#/$defs/preferences_changed_payload"}}}},
+        {"if": {"properties": {"event_type": {"const": "service_status"}}}, "then": {"properties": {"session_id": {"type": "null"}, "payload": {"$ref": "#/$defs/service_status_payload"}}}},
+        {"if": {"properties": {"event_type": {"const": "operation_failed"}}}, "then": {"required": ["operation_id"], "properties": {"payload": {"$ref": "#/$defs/application_error"}}}}
+      ]
+    }
+  }
+}

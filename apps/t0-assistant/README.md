@@ -71,8 +71,18 @@ cd apps/t0-assistant
 npm run smoke
 ```
 
-The smoke suite is offline with respect to market services. Electron GUI launch
-is a manual smoke because headless CI coverage belongs to T0-005.
+The smoke suite is offline with respect to market services. CI reports four
+independent tracks so failures are attributable without reading unrelated logs:
+
+```text
+Python smoke     marketdata plus the loopback fake backend
+Renderer smoke   TypeScript checking plus the production Vite build
+Electron smoke   Python service host lifecycle and bounded shutdown
+Contract smoke   Python JSON Schema validation plus Node fixture consumption
+```
+
+Electron GUI launch remains a manual smoke; the automated Electron track tests
+the headless process-host lifecycle without opening a window.
 
 ## W0 boundary
 
