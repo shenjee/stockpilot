@@ -10,7 +10,10 @@
     "typecheck": "tsc -p renderer/tsconfig.json",
     "start": "npm run build && electron .",
     "test": "node --test tests/*.test.mjs",
-    "smoke": "npm run typecheck && npm run build && npm test"
+    "test:contracts": "node --test tests/replay-contract.test.mjs",
+    "smoke:renderer": "npm run typecheck && npm run build",
+    "smoke:electron": "node --test tests/python-service-host.test.mjs",
+    "smoke": "npm run smoke:renderer && npm run smoke:electron && npm run test:contracts"
   },
   "dependencies": {
     "react": "19.2.8",

@@ -26,6 +26,7 @@ akshare = [
   "pypinyin>=0.54",
 ]
 dev = [
+  "jsonschema>=4.23",
   "streamlit>=1.36",
   "plotly>=5.22",
   "pandas>=2.2",
