@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://stockpilot.local/contracts/t0-replay-v1.schema.json",
+  "title": "StockPilot T+0 Replay v1.0 contract",
+  "type": "object",
+  "$defs": {
+    "request_identity": {
+      "type": "object",
+      "required": ["schema_version", "request_id", "session_id"],
+      "properties": {
+        "schema_version": {"const": "t0_replay_v1"},
+        "request_id": {"type": "string", "minLength": 1},
+        "session_id": {"type": "string", "minLength": 1}
+      }
+    },
+    "set_replay_speed_request": {
+      "allOf": [
+        {"$ref": "#/$defs/request_identity"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schema_version", "request_id", "session_id", "playback_speed"],
+          "properties": {
+            "schema_version": {"const": "t0_replay_v1"},
+            "request_id": {"type": "string", "minLength": 1},
+            "session_id": {"type": "string", "minLength": 1},
+            "playback_speed": {"type": "integer", "enum": [1, 2, 5, 10]}
+          }
+        }
+      ]
+    },
+    "replay_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["granularity", "current_time", "next_bar_time", "start_time", "end_time", "playing", "playback_speed", "step_seconds"],
+      "properties": {
+        "granularity": {"enum": ["one_minute", "five_minute"]},
+        "current_time": {"type": "string", "minLength": 19},
+        "next_bar_time": {"type": ["string", "null"], "minLength": 19},
+        "start_time": {"type": "string", "minLength": 19},
+        "end_time": {"type": "string", "minLength": 19},
+        "playing": {"type": "boolean"},
+        "playback_speed": {"type": "integer", "enum": [1, 2, 5, 10]},
+        "step_seconds": {"type": "integer", "enum": [60, 300]}
+      }
+    },
+    "workbench_snapshot": {
+      "allOf": [
+        {"$ref": "https://stockpilot.local/contracts/t0-logic-v1.schema.json#/$defs/workbench_snapshot"},
+        {
+          "type": "object",
+          "required": ["replay"],
+          "properties": {"replay": {"$ref": "#/$defs/replay_state"}}
+        }
+      ]
+    },
+    "session_status_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state"],
+      "properties": {
+        "state": {"enum": ["loading", "ready", "playing", "paused", "failed", "retired"]},
+        "reason": {"enum": ["session_created", "load_started", "load_completed", "user_command", "step_completed", "seek_completed", "playback_speed_changed", "operation_failed"]},
+        "playback_speed": {"type": "integer", "enum": [1, 2, 5, 10]}
+      }
+    },
+    "event_envelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "service_generation", "session_id", "revision", "event_type", "payload"],
+      "properties": {
+        "schema_version": {"const": "t0_replay_v1"},
+        "service_generation": {"type": "integer", "minimum": 1},
+        "session_id": {"type": "string", "minLength": 1},
+        "revision": {"type": "integer", "minimum": 0},
+        "event_type": {"enum": ["session_status", "workbench_snapshot", "operation_failed"]},
+        "operation_id": {"type": "string", "minLength": 1},
+        "payload": {"type": "object"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"event_type": {"const": "session_status"}}},
+          "then": {"properties": {"payload": {"$ref": "#/$defs/session_status_payload"}}}
+        },
+        {
+          "if": {"properties": {"event_type": {"const": "workbench_snapshot"}}},
+          "then": {"properties": {"payload": {"$ref": "#/$defs/workbench_snapshot"}}}
+        }
+      ]
+    }
+  }
+}

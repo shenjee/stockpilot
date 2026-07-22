@@ -1,0 +1,21 @@
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+  color: #e8edf5;
+  background: #0c111b;
+  font-synthesis: none;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 1080px; min-height: 700px; }
+.shell { min-height: 100vh; padding: 18px; }
+.toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+.brand { font-size: 20px; font-weight: 700; }
+.mode { color: #91a0b7; }
+.workspace { display: grid; grid-template-columns: minmax(0, 64fr) minmax(0, 36fr) 280px; gap: 12px; min-height: calc(100vh - 76px); }
+.panel { border: 1px solid #263248; border-radius: 10px; background: #111827; padding: 18px; }
+.panel h1, .panel h2 { margin-top: 0; font-size: 15px; }
+.panel p { color: #8f9db2; line-height: 1.6; }
+.sidebar { min-width: 280px; }
+.status { display: inline-block; border-radius: 999px; padding: 4px 10px; background: #2b3548; text-transform: uppercase; font-size: 12px; }
+.status-ready { color: #6ee7b7; border: 1px solid #116149; }
+.status-failed { color: #fda4af; border: 1px solid #881337; }

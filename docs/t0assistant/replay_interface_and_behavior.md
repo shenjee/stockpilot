@@ -5,8 +5,8 @@
 | 项目 | 内容 |
 | --- | --- |
 | 状态 | 历史行情回放开发基线 |
-| 版本 | v0.9 |
-| 更新日期 | 2026-07-21 |
+| 版本 | v1.0 |
+| 更新日期 | 2026-07-22 |
 | 范围 | 单只股票、单个交易日、只读 Replay |
 | 上位需求 | [`t0_assistant_prd.md`](./t0_assistant_prd.md) |
 | 架构 | [`architecture.md`](./architecture.md) |
@@ -81,6 +81,7 @@ main/preload 和 React 可以独立实现并用同一组确定性 fixture 验收
 | `select_symbol` | `request_id`, `symbol` | 标准证券身份 |
 | `begin_replay` | `request_id`, `symbol`, `trade_date` | `session_id`, `operation_id` |
 | `set_replay_playback` | `request_id`, `session_id`, `playing` | 接受确认 |
+| `set_replay_speed` | `request_id`, `session_id`, `playback_speed` | 接受确认 |
 | `step_replay` | `request_id`, `session_id` | `operation_id` |
 | `seek_replay` | `request_id`, `session_id`, `target_time` | `operation_id` |
 | `end_replay` | `request_id`, `session_id` | 退休确认 |
@@ -95,6 +96,7 @@ main/preload 和 React 可以独立实现并用同一组确定性 fixture 验收
 | `trade_date` | string | `begin_replay` 必填 | 要回放的交易日，格式为 `YYYY-MM-DD`。 |
 | `session_id` | string | 除选股和开始回放外必填 | 要操作的回放编号。 |
 | `playing` | boolean | `set_replay_playback` 必填 | `true` 表示开始或继续播放，`false` 表示暂停。 |
+| `playback_speed` | integer | `set_replay_speed` 必填 | 播放速率，只允许 `1`、`2`、`5` 或 `10`。 |
 | `target_time` | string | `seek_replay` 必填 | 要定位到的上海市场时间，格式为 `YYYY-MM-DD HH:MM:SS`。 |
 
 安全桥只允许订阅 `on_service_status`、`on_replay_event` 和
@@ -225,7 +227,8 @@ main/preload 和 React 可以独立实现并用同一组确定性 fixture 验收
 ```json
 {
   "state": "playing",
-  "reason": "user_command"
+  "reason": "user_command",
+  "playback_speed": 1
 }
 ```
 
@@ -235,6 +238,7 @@ main/preload 和 React 可以独立实现并用同一组确定性 fixture 验收
 | --- | --- | --- | --- |
 | `state` | string | 是 | 回放当前状态：`loading`、`ready`、`playing`、`paused`、`failed` 或 `retired`。 |
 | `reason` | string | 否 | 进入当前状态的机器可读原因，不承载面向用户的错误说明。 |
+| `playback_speed` | integer | 否 | 当前权威播放速率；速率变更事件必须携带。 |
 
 `reason` 允许以下值：
 
@@ -242,6 +246,7 @@ main/preload 和 React 可以独立实现并用同一组确定性 fixture 验收
 - `load_started`、`load_completed`：加载开始或完成；
 - `user_command`：用户播放、暂停或结束；
 - `step_completed`、`seek_completed`：游标操作完成；
+- `playback_speed_changed`：播放速率已变更；
 - `operation_failed`：后台操作失败。
 
 不适用时省略 `reason`，不得发送未登记的自由文本值；用户可读说明进入错误或 warning
@@ -281,6 +286,7 @@ main/preload 和 React 可以独立实现并用同一组确定性 fixture 验收
     "start_time": "2026-07-01 09:30:00",
     "end_time": "2026-07-01 15:00:00",
     "playing": false,
+    "playback_speed": 1,
     "step_seconds": 60
   },
   "market": {
@@ -370,6 +376,7 @@ main/preload 和 React 可以独立实现并用同一组确定性 fixture 验收
 | `replay.start_time` | string | 是 | 当日第一个可回放的游标边界。 |
 | `replay.end_time` | string | 是 | 证券所属市场在目标交易日规定的回放结束时间；当前支持的沪深市场正常交易日为 `15:00:00`。 |
 | `replay.playing` | boolean | 是 | 当前是否正在自动播放；仅在 `session.state` 为 `playing` 时为 `true`。 |
+| `replay.playback_speed` | integer | 是 | 当前权威播放速率，只允许 `1`、`2`、`5`、`10`，默认 `1`。1 分钟模式表示每秒推进对应数量的实际 1 分钟 K；5 分钟降级模式表示每秒推进对应数量的正式闭合 5 分钟 K。 |
 | `replay.step_seconds` | integer | 是 | 回放粒度的名义秒数；1 分钟模式为 60，5 分钟降级模式为 300。用于显示单步粒度，实际单步始终直接到达 `next_bar_time`，不对 `current_time` 机械加秒。 |
 
 `market` 字段说明：
@@ -617,6 +624,18 @@ created/loading/ready/playing/paused/failed ──────→ retired
 - 当 Session 已处于 `ready` 或 `paused` 时，重复调用
   `set_replay_playback(playing=false)` 是幂等 no-op：返回同步成功结果，不增加
   revision，也不发布 `session_status` 或快照事件。
+- `set_replay_speed` 只在 `ready`、`playing` 或 `paused` 状态接受。合法速率为
+  `1`、`2`、`5`、`10`，默认 `1`；其他值同步拒绝为 `invalid_request`。Session
+  不存在或已退休时分别使用 `session_not_found`、`session_retired`；其他不允许的
+  Session 状态同步拒绝为 `invalid_replay_state`。该命令不创建 `operation_id`，也没有
+  异步失败通道。
+- 合法的新速率立即成为 Session 权威状态，revision 增加 1，并发布一个不携带
+  `operation_id` 的 `session_status`。payload 保持原 `state`，使用
+  `reason: playback_speed_changed` 并携带新的 `playback_speed`。完整快照中的
+  `replay.playback_speed` 必须反映同一值。重复设置当前速率是幂等 no-op：同步成功，
+  不增加 revision，也不发布事件。
+- 切换速率只改变自动播放消费实际 K 的节奏，不改变 K 线顺序、指标/CZSC 计算、
+  `current_time`、单步、定位或最终结果。暂停时可切换速率；恢复播放后使用最新值。
 - `end_replay` 退休 Session；退休后所有命令返回 `session_retired`，所有晚到事件丢弃。
 - Python 服务 generation 改变后，旧 Replay 明确丢失；Electron/React 不尝试恢复旧
   Session，只返回未开始的 Replay 状态。
@@ -666,7 +685,7 @@ HTTP/WebSocket 等传输异常不会以 `transport` category 暴露给 React；E
 统一将其映射为 `service` category 和稳定的服务错误。
 
 同步拒绝通常包括 `invalid_request`、`symbol_not_found`、`invalid_trade_date`、
-`session_not_found`、`session_retired`、`replay_busy` 和 `service_unavailable`。
+`session_not_found`、`session_retired`、`invalid_replay_state`、`replay_busy` 和 `service_unavailable`。
 异步失败包括 `replay_data_unavailable`、`calculation_failed` 和
 `operation_superseded`。具体错误仍以操作实际执行阶段为准：同一错误码不得同时通过
 同步响应和异步事件重复交付。
@@ -679,6 +698,7 @@ HTTP/WebSocket 等传输异常不会以 `transport` category 暴露给 React；E
 | `replay_data_unavailable` | `data` | `error` | `replay` | 1m 与正式 5m 数据都无法形成覆盖市场回放要求的可靠输入 | 是 |
 | `session_not_found` | `session` | `error` | `replay` | Session 不存在或不属于当前 generation | 否 |
 | `session_retired` | `session` | `error` | `replay` | Session 已结束 | 否 |
+| `invalid_replay_state` | `session` | `error` | `replay` | 当前 Session 状态不允许所请求的控制命令 | 是 |
 | `operation_superseded` | `session` | `error` | `replay` | 操作被更新的定位操作取代 | 否 |
 | `replay_busy` | `session` | `error` | `replay` | 已有游标操作正在执行 | 是 |
 | `calculation_failed` | `calculation` | `error` | `five_minute_chart` 或 `chan_analysis` | 指标或 CZSC 重建失败 | 是 |
@@ -726,6 +746,11 @@ fixture 不访问网络，时间戳严格递增，覆盖上午、午休、下午
 18. `end_time` 来自证券市场和目标交易日的交易日历；行情缺失不会缩短该时间。
 19. `next_bar_time` 始终指向当前粒度的下一根实际 K，或在序列尾部为 `null`。
 20. React 不依赖 Python 按钮开关字段，也能从事实状态推导回放控件状态。
+21. `set_replay_speed` 只接受 `1/2/5/10`，默认 `1`；合法变更增加一次 revision 并
+    发布一个不带 `operation_id` 的 `playback_speed_changed` 状态事件，相同值为不增加
+    revision 的幂等 no-op。
+22. 速率切换前后的相同输入前缀产生等价业务快照；速率不影响单步、定位、输入顺序或
+    最终结果，1 分钟和 5 分钟降级模式都按各自实际 K 的数量解释倍速。
 
 等价快照比较只允许忽略以下运行身份字段：事件信封中的 `service_generation`、
 `operation_id`，以及 payload 中的 `session.session_id`。`request_id` 不进入工作台快照。

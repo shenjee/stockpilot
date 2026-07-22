@@ -1,0 +1,83 @@
+{
+  "schema_version": "t0_replay_v1",
+  "valid_speeds": [1, 2, 5, 10],
+  "default_speed": 1,
+  "set_speed_requests": [
+    {"schema_version": "t0_replay_v1", "request_id": "speed-1", "session_id": "replay-1", "playback_speed": 1},
+    {"schema_version": "t0_replay_v1", "request_id": "speed-2", "session_id": "replay-1", "playback_speed": 2},
+    {"schema_version": "t0_replay_v1", "request_id": "speed-5", "session_id": "replay-1", "playback_speed": 5},
+    {"schema_version": "t0_replay_v1", "request_id": "speed-10", "session_id": "replay-1", "playback_speed": 10}
+  ],
+  "changed_event": {
+    "schema_version": "t0_replay_v1",
+    "service_generation": 1,
+    "session_id": "replay-1",
+    "revision": 8,
+    "event_type": "session_status",
+    "payload": {
+      "state": "paused",
+      "reason": "playback_speed_changed",
+      "playback_speed": 5
+    }
+  },
+  "snapshot": {
+    "timezone": "Asia/Shanghai",
+    "session": {
+      "session_id": "replay-1",
+      "session_type": "replay",
+      "symbol": "sh.600000",
+      "trade_date": "2026-07-01",
+      "state": "paused",
+      "revision": 8
+    },
+    "replay": {
+      "granularity": "one_minute",
+      "current_time": "2026-07-01 10:23:00",
+      "next_bar_time": "2026-07-01 10:24:00",
+      "start_time": "2026-07-01 09:30:00",
+      "end_time": "2026-07-01 15:00:00",
+      "playing": false,
+      "playback_speed": 5,
+      "step_seconds": 60
+    },
+    "market": {"bars_1m": [], "bars_5m": [], "daily_bars": [], "quote": null},
+    "indicators": {
+      "five_minute": {
+        "ma": {"ma5": [], "ma10": [], "ma20": [], "ma30": [], "ma60": []},
+        "boll": {"period": 20, "stddev": 2.0, "upper": [], "middle": [], "lower": []},
+        "volume": {"values": [], "ma5": [], "ma10": []},
+        "macd": {"fast_period": 12, "slow_period": 26, "signal_period": 9, "dif": [], "dea": [], "histogram": []}
+      },
+      "one_minute": {
+        "vwap": [],
+        "volume": {"values": []},
+        "macd": {"fast_period": 12, "slow_period": 26, "signal_period": 9, "dif": [], "dea": [], "histogram": []}
+      }
+    },
+    "chan_analysis": {
+      "symbol": "600000.SH",
+      "timeframe": "5m",
+      "source": "fixture",
+      "engine": "czsc",
+      "engine_version": "0.10.12",
+      "parameters": {},
+      "fractals": [],
+      "strokes": [],
+      "segments": [],
+      "pivot_zones": [],
+      "divergences": [],
+      "structure_alerts": [],
+      "signal_series": [],
+      "signal_events": [],
+      "signal_snapshots": [],
+      "candidate_point_events": [],
+      "candidate_buy_points": [],
+      "candidate_sell_points": [],
+      "plot_primitives": [],
+      "summary": [],
+      "warnings": [],
+      "meta": {}
+    },
+    "warnings": []
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "name": "stockpilot-t0-assistant",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "electron/main.mjs",
+  "scripts": {
+    "dev:renderer": "vite --config renderer/vite.config.ts",
+    "build": "vite build --config renderer/vite.config.ts",
+    "typecheck": "tsc -p renderer/tsconfig.json",
+    "start": "npm run build && electron .",
+    "test": "node --test tests/*.test.mjs",
+    "smoke": "npm run typecheck && npm run build && npm test"
+  },
+  "dependencies": {
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "26.1.1",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.3",
+    "electron": "43.2.0",
+    "typescript": "7.0.2",
+    "vite": "8.1.5"
+  }
+}
