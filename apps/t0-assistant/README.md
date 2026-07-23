@@ -1,10 +1,11 @@
 # StockPilot T+0 Assistant
 
-This directory is the formal desktop-delivery skeleton created by T0-001. It
-starts an Electron shell, a React renderer, and one Electron-managed fake Python
-service. The fake only proves process ownership, authenticated loopback health,
-renderer status projection, and graceful shutdown; it does not implement market
-data or Replay behavior.
+This directory is the formal desktop-delivery skeleton created by T0-001 and
+extended by T0-004/T0-028. It starts an Electron shell, a React renderer, and
+one Electron-managed Python service. The service proves process
+ownership, authenticated loopback health and commands, ordered WebSocket event
+delivery, Renderer isolation, bounded restart, and graceful shutdown; it does
+not implement market data or Replay domain behavior.
 
 W0 integration coordinator: **Codex**, acting in the repository's integration
 owner role for T0-001, T0-002, and T0-056. Public contract changes remain
@@ -48,10 +49,11 @@ npm install
 npm start
 ```
 
-`npm start` builds the renderer, opens Electron, starts the authenticated fake
-Python service on an ephemeral `127.0.0.1` port, waits for `/health`, and stops
-the child during normal app quit. The renderer receives only status,
-`service_generation`, and a user-facing message—never the port, credential,
+`npm start` builds the renderer, opens Electron, starts the authenticated
+Python service on an ephemeral `127.0.0.1` port, waits for `/health`,
+connects the main-process WebSocket event gateway, and stops the child during
+normal app quit. The renderer receives only the frozen domain Safe Bridge and
+project-owned payloads—never the port, credential, HTTP/WebSocket primitives,
 process handle, or executable path.
 
 For renderer-only development:
@@ -87,7 +89,8 @@ the headless process-host lifecycle without opening a window.
 ## W0 boundary
 
 - No market provider, SQLite repository, indicator, CZSC, Session, or playback
-  implementation is present.
+  implementation is present. Until their handlers are integrated, the formal
+  service rejects those domain commands with `service_unavailable`.
 - `contracts/logical-schema.json` is a logical JSON boundary, not a SQLite
   schema.
 - Replay v1.0 freezes playback-speed intent and state only; runtime playback and
