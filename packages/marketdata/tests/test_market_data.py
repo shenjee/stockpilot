@@ -90,16 +90,24 @@ class TencentStockDataProviderTests(unittest.TestCase):
             "data": {
                 "sh600519": {
                     "m5": [
-                        ["202606111500", "1278.26", "1279.00", "1279.64", "1276.17", "4443.00", {}, "3.55", "568000.00"],
-                        ["202606121455", "1289.53", "1291.40", "1291.50", "1289.48", "1040.00", {}, "0.83", "134200.00"],
-                        ["202606121500", "1291.40", "1291.91", "1292.65", "1291.40", "1556.00", {}, "1.24", "201000.00"],
+                        ["202606111500", "1278.26", "1279.00", "1279.64", "1276.17", "4443.00", {}, "3.55"],
+                        ["202606121455", "1289.53", "1291.40", "1291.50", "1289.48", "1040.00", {}, "0.83"],
+                        ["202606121500", "1291.40", "1291.91", "1292.65", "1291.40", "1556.00", {}, "1.24"],
                     ],
                     "prec": "1279.00",
                 }
             },
         }
+        amount_payload = {
+            "code": 0,
+            "data": {"sh600519": {"data": []}},
+        }
 
-        with patch.object(TencentStockDataProvider, "_fetch_with_retry", return_value=json.dumps(payload)) as fetch:
+        with patch.object(
+            TencentStockDataProvider,
+            "_fetch_with_retry",
+            side_effect=[json.dumps(payload), json.dumps(amount_payload)],
+        ) as fetch:
             rows = TencentStockDataProvider.get_kline(
                 code="600519",
                 market="sh",
@@ -108,7 +116,8 @@ class TencentStockDataProviderTests(unittest.TestCase):
                 ktype="5m",
             )
 
-        self.assertIn("m5", fetch.call_args.args[0])
+        self.assertIn("m5", fetch.call_args_list[0].args[0])
+        self.assertIn("/day/query", fetch.call_args_list[1].args[0])
         self.assertEqual(
             rows,
             [
@@ -120,7 +129,7 @@ class TencentStockDataProviderTests(unittest.TestCase):
                     "high": 1291.50,
                     "low": 1289.48,
                     "volume": 1040,
-                    "amount": 134200.0,
+                    "amount": None,
                     "closed": True,
                 },
                 {
@@ -131,7 +140,7 @@ class TencentStockDataProviderTests(unittest.TestCase):
                     "high": 1292.65,
                     "low": 1291.40,
                     "volume": 1556,
-                    "amount": 201000.0,
+                    "amount": None,
                     "closed": True,
                 },
             ],
@@ -197,15 +206,64 @@ class TencentStockDataProviderTests(unittest.TestCase):
         self.assertEqual([row["amount"] for row in result.data], [1.5, 1.5])
         self.assertTrue(all(row["closed"] for row in result.data))
 
+    def test_get_minute_kline_keeps_historical_bars_without_amount_coverage(self):
+        kline_payload = {
+            "code": 0,
+            "data": {
+                "sh600519": {
+                    "m5": [
+                        ["202606150935", "10.00", "10.10", "10.20", "9.90", "100", {}, "0.1"],
+                        ["202606150940", "10.10", "10.20", "10.30", "10.00", "120", {}, "0.1"],
+                    ]
+                }
+            },
+        }
+        recent_amount_payload = {
+            "code": 0,
+            "data": {
+                "sh600519": {
+                    "data": [
+                        {
+                            "date": "20260723",
+                            "data": ["0935 11.00 100 11000.00"],
+                        }
+                    ]
+                }
+            },
+        }
+        with patch.object(
+            TencentStockDataProvider,
+            "_fetch_with_retry",
+            side_effect=[json.dumps(kline_payload), json.dumps(recent_amount_payload)],
+        ):
+            result = TencentStockDataProvider.get_minute_kline_result(
+                code="600519",
+                market="sh",
+                start_date="2026-06-15",
+                end_date="2026-06-15",
+                ktype="5m",
+            )
+
+        self.assertTrue(result.success)
+        self.assertEqual(len(result.data), 2)
+        self.assertEqual([row["amount"] for row in result.data], [None, None])
+        self.assertTrue(
+            any(
+                issue.reason_code == "minute_amount_missing"
+                and issue.context["missing_count"] == 2
+                for issue in result.warnings()
+            )
+        )
+
     def test_get_minute_kline_paginates_to_cover_start_date(self):
         page1 = {
             "code": 0,
             "data": {
                 "sh600519": {
                     "m60": [
-                        ["202603101500", "1790.00", "1791.00", "1792.00", "1789.00", "900.00", {}, "0.1", "161000.00"],
-                        ["202603131500", "1800.00", "1801.00", "1802.00", "1799.00", "1000.00", {}, "0.1", "180000.00"],
-                        ["202603161030", "1801.00", "1802.00", "1803.00", "1800.00", "1100.00", {}, "0.1", "198000.00"],
+                        ["202603101500", "1790.00", "1791.00", "1792.00", "1789.00", "900.00", {}, "0.1"],
+                        ["202603131500", "1800.00", "1801.00", "1802.00", "1799.00", "1000.00", {}, "0.1"],
+                        ["202603161030", "1801.00", "1802.00", "1803.00", "1800.00", "1100.00", {}, "0.1"],
                     ],
                 }
             },
@@ -215,17 +273,25 @@ class TencentStockDataProviderTests(unittest.TestCase):
             "data": {
                 "sh600519": {
                     "m60": [
-                        ["202510211030", "1700.00", "1701.00", "1702.00", "1699.00", "500.00", {}, "0.1", "85000.00"],
-                        ["202510211130", "1701.00", "1702.00", "1703.00", "1700.00", "600.00", {}, "0.1", "102000.00"],
+                        ["202510211030", "1700.00", "1701.00", "1702.00", "1699.00", "500.00", {}, "0.1"],
+                        ["202510211130", "1701.00", "1702.00", "1703.00", "1700.00", "600.00", {}, "0.1"],
                     ],
                 }
             },
+        }
+        amount_payload = {
+            "code": 0,
+            "data": {"sh600519": {"data": []}},
         }
 
         with patch.object(
             TencentStockDataProvider,
             "_fetch_with_retry",
-            side_effect=[json.dumps(page1), json.dumps(page2)],
+            side_effect=[
+                json.dumps(page1),
+                json.dumps(page2),
+                json.dumps(amount_payload),
+            ],
         ) as fetch:
             rows = TencentStockDataProvider.get_kline(
                 code="600519",
@@ -235,8 +301,8 @@ class TencentStockDataProviderTests(unittest.TestCase):
                 ktype="60m",
             )
 
-        # Two pages fetched: first with empty ref, second using page1's oldest bar as ref
-        self.assertEqual(fetch.call_count, 2)
+        # Two K-line pages plus one optional amount enrichment request.
+        self.assertEqual(fetch.call_count, 3)
         first_url = fetch.call_args_list[0].args[0]
         second_url = fetch.call_args_list[1].args[0]
         self.assertIn(",m60,,800", first_url)

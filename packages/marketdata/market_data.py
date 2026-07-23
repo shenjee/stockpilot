@@ -217,7 +217,7 @@ class TencentStockDataProvider(MarketDataProvider):
             return MarketDataResult(success=True, data=amounts)
         except Exception as exc:
             issue = cls._make_issue(
-                level="error",
+                level="warning",
                 reason_code="minute_amount_unavailable",
                 message="tencent minute cumulative amount request failed",
                 context={
@@ -885,7 +885,7 @@ class TencentStockDataProvider(MarketDataProvider):
                 amount_result.data,
                 ktype,
             )
-            parse_failures += sum(
+            missing_amount_count = sum(
                 1
                 for timestamp, row in merged.items()
                 if (
@@ -895,14 +895,28 @@ class TencentStockDataProvider(MarketDataProvider):
                 )
                 and row["amount"] is None
             )
+            if missing_amount_count:
+                issues.append(
+                    cls._make_issue(
+                        level="warning",
+                        reason_code="minute_amount_missing",
+                        message="tencent minute kline amount is unavailable for some bars",
+                        context={
+                            "operation": "get_minute_kline",
+                            "code": code,
+                            "market": market,
+                            "ktype": ktype,
+                            "missing_count": missing_amount_count,
+                        },
+                    )
+                )
 
         results = []
         for timestamp in sorted(merged.keys()):
             row_day = datetime.strptime(timestamp[:10], "%Y-%m-%d").date()
             if row_day < start_day or row_day > end_day:
                 continue
-            if merged[timestamp]["amount"] is not None:
-                results.append(merged[timestamp])
+            results.append(merged[timestamp])
 
         if parse_failures:
             issues.append(
