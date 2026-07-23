@@ -61,6 +61,7 @@ class KLineStore:
                     high REAL NOT NULL,
                     low REAL NOT NULL,
                     volume INTEGER NOT NULL,
+                    amount REAL,
                     source TEXT NOT NULL DEFAULT 'tencent',
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY (symbol, trade_date)
@@ -81,22 +82,41 @@ class KLineStore:
                     high REAL NOT NULL,
                     low REAL NOT NULL,
                     volume INTEGER NOT NULL,
+                    amount REAL,
                     source TEXT NOT NULL DEFAULT 'tencent',
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY (symbol, timeframe, timestamp)
                 )
                 """
             )
+            self._ensure_column(conn, "daily_klines", "amount", "REAL")
+            self._ensure_column(conn, "klines", "amount", "REAL")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_klines_timeframe_ts ON klines(symbol, timeframe, timestamp)")
             conn.execute(
                 """
                 INSERT OR IGNORE INTO klines (
-                    symbol, code, market, timeframe, timestamp, open, close, high, low, volume, source, updated_at
+                    symbol, code, market, timeframe, timestamp, open, close, high, low,
+                    volume, amount, source, updated_at
                 )
-                SELECT symbol, code, market, 'day', trade_date, open, close, high, low, volume, source, updated_at
+                SELECT symbol, code, market, 'day', trade_date, open, close, high, low,
+                       volume, amount, source, updated_at
                 FROM daily_klines
                 """
             )
+
+    @staticmethod
+    def _ensure_column(
+        conn: sqlite3.Connection,
+        table: str,
+        column: str,
+        definition: str,
+    ) -> None:
+        columns = {
+            str(row[1])
+            for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     @staticmethod
     def symbol(code: str, market: str | None = None) -> str:
@@ -180,6 +200,7 @@ class KLineStore:
                 item["high"],
                 item["low"],
                 item["volume"],
+                item.get("amount"),
                 source,
                 updated_at,
             )
@@ -190,15 +211,17 @@ class KLineStore:
                 """
                 INSERT INTO klines (
                     symbol, code, market, timeframe, timestamp, open, close, high, low,
-                    volume, source, updated_at
+                    volume, amount, source, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(symbol, timeframe, timestamp) DO UPDATE SET
                     open = excluded.open,
                     close = excluded.close,
                     high = excluded.high,
                     low = excluded.low,
                     volume = excluded.volume,
+                    amount = excluded.amount,
+                    source = excluded.source,
                     updated_at = excluded.updated_at
                 """,
                 rows,
@@ -208,15 +231,17 @@ class KLineStore:
                     """
                     INSERT INTO daily_klines (
                         symbol, code, market, trade_date, open, close, high, low,
-                        volume, source, updated_at
+                        volume, amount, source, updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(symbol, trade_date) DO UPDATE SET
                         open = excluded.open,
                         close = excluded.close,
                         high = excluded.high,
                         low = excluded.low,
                         volume = excluded.volume,
+                        amount = excluded.amount,
+                        source = excluded.source,
                         updated_at = excluded.updated_at
                     """,
                     [
@@ -232,6 +257,7 @@ class KLineStore:
                             row[9],
                             row[10],
                             row[11],
+                            row[12],
                         )
                         for row in rows
                     ],
@@ -251,7 +277,7 @@ class KLineStore:
             if start_date:
                 rows = conn.execute(
                     """
-                    SELECT timestamp, open, close, high, low, volume
+                    SELECT timestamp, open, close, high, low, volume, amount
                     FROM klines
                     WHERE symbol = ? AND timeframe = ? AND timestamp >= ? AND timestamp <= ?
                     ORDER BY timestamp DESC
@@ -262,7 +288,7 @@ class KLineStore:
             else:
                 rows = conn.execute(
                     """
-                    SELECT timestamp, open, close, high, low, volume
+                    SELECT timestamp, open, close, high, low, volume, amount
                     FROM klines
                     WHERE symbol = ? AND timeframe = ? AND timestamp <= ?
                     ORDER BY timestamp DESC
@@ -280,6 +306,7 @@ class KLineStore:
                 "high": row[3],
                 "low": row[4],
                 "volume": row[5],
+                **({"amount": row[6]} if row[6] is not None else {}),
             }
             for row in rows
         ]

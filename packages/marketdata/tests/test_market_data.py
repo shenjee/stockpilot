@@ -12,6 +12,28 @@ from marketdata.market_data import TencentStockDataProvider, get_market_prefix, 
 from marketdata.provider_result import MarketDataResult
 
 
+def realtime_payload(code: str, name: str, timestamp: str = "20260716160843") -> str:
+    parts = [""] * 50
+    values = {
+        0: "100",
+        1: name,
+        2: code,
+        3: "5.500",
+        4: "5.200",
+        5: "5.280",
+        6: "1000",
+        30: timestamp,
+        33: "5.600",
+        34: "5.100",
+        37: "550.000",
+        38: "0.10",
+        49: "1.20",
+    }
+    for index, value in values.items():
+        parts[index] = value
+    return f'v_hk{code}="{"~".join(parts)}";'
+
+
 class GetMarketPrefixTests(unittest.TestCase):
     def test_explicit_market_wins(self):
         self.assertEqual(get_market_prefix("000001", market="sh"), "sh")
@@ -68,9 +90,9 @@ class TencentStockDataProviderTests(unittest.TestCase):
             "data": {
                 "sh600519": {
                     "m5": [
-                        ["202606111500", "1278.26", "1279.00", "1279.64", "1276.17", "4443.00", {}, "3.55"],
-                        ["202606121455", "1289.53", "1291.40", "1291.50", "1289.48", "1040.00", {}, "0.83"],
-                        ["202606121500", "1291.40", "1291.91", "1292.65", "1291.40", "1556.00", {}, "1.24"],
+                        ["202606111500", "1278.26", "1279.00", "1279.64", "1276.17", "4443.00", {}, "3.55", "568000.00"],
+                        ["202606121455", "1289.53", "1291.40", "1291.50", "1289.48", "1040.00", {}, "0.83", "134200.00"],
+                        ["202606121500", "1291.40", "1291.91", "1292.65", "1291.40", "1556.00", {}, "1.24", "201000.00"],
                     ],
                     "prec": "1279.00",
                 }
@@ -92,19 +114,25 @@ class TencentStockDataProviderTests(unittest.TestCase):
             [
                 {
                     "date": "2026-06-12 14:55:00",
+                    "timestamp": "2026-06-12 14:55:00",
                     "open": 1289.53,
                     "close": 1291.40,
                     "high": 1291.50,
                     "low": 1289.48,
                     "volume": 1040,
+                    "amount": 134200.0,
+                    "closed": True,
                 },
                 {
                     "date": "2026-06-12 15:00:00",
+                    "timestamp": "2026-06-12 15:00:00",
                     "open": 1291.40,
                     "close": 1291.91,
                     "high": 1292.65,
                     "low": 1291.40,
                     "volume": 1556,
+                    "amount": 201000.0,
+                    "closed": True,
                 },
             ],
         )
@@ -121,15 +149,63 @@ class TencentStockDataProviderTests(unittest.TestCase):
             [],
         )
 
+    def test_get_minute_kline_uses_reported_cumulative_amounts_when_bar_omits_them(self):
+        kline_payload = {
+            "code": 0,
+            "data": {
+                "sh600519": {
+                    "m5": [
+                        ["202606120935", "10.00", "10.10", "10.20", "9.90", "100"],
+                        ["202606120940", "10.10", "10.20", "10.30", "10.00", "120"],
+                    ]
+                }
+            },
+        }
+        amount_payload = {
+            "code": 0,
+            "data": {
+                "sh600519": {
+                    "data": [
+                        {
+                            "date": "20260612",
+                            "data": [
+                                "0930 10.00 10 10000.00",
+                                "0935 10.10 110 25000.00",
+                                "0940 10.20 230 40000.00",
+                            ],
+                        }
+                    ]
+                }
+            },
+        }
+        with patch.object(
+            TencentStockDataProvider,
+            "_fetch_with_retry",
+            side_effect=[json.dumps(kline_payload), json.dumps(amount_payload)],
+        ) as fetch:
+            result = TencentStockDataProvider.get_minute_kline_result(
+                code="600519",
+                market="sh",
+                start_date="2026-06-12",
+                end_date="2026-06-12",
+                ktype="5m",
+            )
+
+        self.assertTrue(result.success)
+        self.assertEqual(fetch.call_count, 2)
+        self.assertIn("/day/query", fetch.call_args_list[1].args[0])
+        self.assertEqual([row["amount"] for row in result.data], [1.5, 1.5])
+        self.assertTrue(all(row["closed"] for row in result.data))
+
     def test_get_minute_kline_paginates_to_cover_start_date(self):
         page1 = {
             "code": 0,
             "data": {
                 "sh600519": {
                     "m60": [
-                        ["202603101500", "1790.00", "1791.00", "1792.00", "1789.00", "900.00"],
-                        ["202603131500", "1800.00", "1801.00", "1802.00", "1799.00", "1000.00"],
-                        ["202603161030", "1801.00", "1802.00", "1803.00", "1800.00", "1100.00"],
+                        ["202603101500", "1790.00", "1791.00", "1792.00", "1789.00", "900.00", {}, "0.1", "161000.00"],
+                        ["202603131500", "1800.00", "1801.00", "1802.00", "1799.00", "1000.00", {}, "0.1", "180000.00"],
+                        ["202603161030", "1801.00", "1802.00", "1803.00", "1800.00", "1100.00", {}, "0.1", "198000.00"],
                     ],
                 }
             },
@@ -139,8 +215,8 @@ class TencentStockDataProviderTests(unittest.TestCase):
             "data": {
                 "sh600519": {
                     "m60": [
-                        ["202510211030", "1700.00", "1701.00", "1702.00", "1699.00", "500.00"],
-                        ["202510211130", "1701.00", "1702.00", "1703.00", "1700.00", "600.00"],
+                        ["202510211030", "1700.00", "1701.00", "1702.00", "1699.00", "500.00", {}, "0.1", "85000.00"],
+                        ["202510211130", "1701.00", "1702.00", "1703.00", "1700.00", "600.00", {}, "0.1", "102000.00"],
                     ],
                 }
             },
@@ -179,7 +255,7 @@ class TencentStockDataProviderTests(unittest.TestCase):
             "data": {
                 "sh000001": {
                     "day": [
-                        ["2026-06-11", "3000.00", "3010.00", "3015.00", "2995.00", "100"],
+                        ["2026-06-11", "3000.00", "3010.00", "3015.00", "2995.00", "100", {}, "0.1", "30000.00"],
                     ],
                 }
             },
@@ -207,7 +283,7 @@ class TencentStockDataProviderTests(unittest.TestCase):
             "data": {
                 "sz000858": {
                     "qfqday": [
-                        ["2006-10-09", "-23.03", "-22.71", "-22.53", "-23.06", "519459.000"],
+                        ["2006-10-09", "-23.03", "-22.71", "-22.53", "-23.06", "519459.000", {}, "0.1", "118000.00"],
                     ],
                 }
             },
@@ -260,9 +336,15 @@ class TencentStockDataProviderTests(unittest.TestCase):
         self.assertNotIn("hk0175,", url)
         self.assertEqual(result.data["name"], "吉利汽车")
         self.assertAlmostEqual(result.data["price"], 19.39)
+        self.assertEqual(result.data["timestamp"], "2026-07-16 16:08:43")
+        self.assertEqual(result.data["latest_price"], 19.39)
+        self.assertEqual(result.data["previous_close"], 18.4)
+        self.assertEqual(result.data["change_percent"], result.data["change_pct"])
+        self.assertIn("volume_ratio", result.data)
+        self.assertIn("turnover_rate", result.data)
 
     def test_realtime_hk_tuple_form_normalizes_code(self):
-        payload = 'v_hk03896="100~金山云~03896~5.500~5.200~5.280~129018484.0~0~0";'
+        payload = realtime_payload("03896", "金山云")
         with patch.object(
             TencentStockDataProvider, "_fetch_with_retry", return_value=payload
         ) as fetch:
@@ -272,7 +354,7 @@ class TencentStockDataProviderTests(unittest.TestCase):
         self.assertTrue(result.success)
 
     def test_realtime_hk_prefixed_input_normalizes_code(self):
-        payload = 'v_hk00175="100~吉利汽车~00175~19.390~18.400~18.640~57727595.0~0~0";'
+        payload = realtime_payload("00175", "吉利汽车")
         with patch.object(
             TencentStockDataProvider, "_fetch_with_retry", return_value=payload
         ) as fetch:
@@ -289,7 +371,7 @@ class TencentStockDataProviderTests(unittest.TestCase):
             "data": {
                 "hk00175": {
                     "qfqday": [
-                        ["2026-07-16", "18.500", "18.260", "18.760", "18.240", "87042911.000"],
+                        ["2026-07-16", "18.500", "18.260", "18.760", "18.240", "87042911.000", {}, "0.1", "160000.00"],
                     ],
                 }
             },
@@ -309,6 +391,9 @@ class TencentStockDataProviderTests(unittest.TestCase):
         self.assertNotIn("hk0175,", url)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["close"], 18.26)
+        self.assertEqual(rows[0]["timestamp"], "2026-07-16")
+        self.assertEqual(rows[0]["amount"], 160000.0)
+        self.assertTrue(rows[0]["closed"])
 
     def test_get_kline_hk_5_digit_code_works_unchanged(self):
         payload = {
@@ -316,7 +401,7 @@ class TencentStockDataProviderTests(unittest.TestCase):
             "data": {
                 "hk03896": {
                     "day": [
-                        ["2026-07-16", "8.010", "7.600", "8.200", "7.560", "290029392.000"],
+                        ["2026-07-16", "8.010", "7.600", "8.200", "7.560", "290029392.000", {}, "0.1", "220000.00"],
                     ],
                 }
             },
@@ -344,7 +429,7 @@ class TencentStockDataProviderTests(unittest.TestCase):
             "data": {
                 "hk00175": {
                     "day": [
-                        ["2026-07-16", "18.500", "18.260", "18.760", "18.240", "87042911.000"],
+                        ["2026-07-16", "18.500", "18.260", "18.760", "18.240", "87042911.000", {}, "0.1", "160000.00"],
                     ],
                 }
             },
@@ -369,7 +454,7 @@ class TencentStockDataProviderTests(unittest.TestCase):
             "data": {
                 "hk00175": {
                     "day": [
-                        ["2026-07-16", "18.500", "18.260", "18.760", "18.240", "87042911.000"],
+                        ["2026-07-16", "18.500", "18.260", "18.760", "18.240", "87042911.000", {}, "0.1", "160000.00"],
                     ],
                 }
             },
@@ -502,8 +587,8 @@ class TencentStockDataProviderTests(unittest.TestCase):
             "data": {
                 "sh600519": {
                     "qfqday": [
-                        ["2026-06-11", "100.00", "101.00", "102.00", "99.00", "100"],
-                        ["2026-06-12", "bad", "101.00", "102.00", "99.00", "100"],
+                        ["2026-06-11", "100.00", "101.00", "102.00", "99.00", "100", {}, "0.1", "10000.00"],
+                        ["2026-06-12", "bad", "101.00", "102.00", "99.00", "100", {}, "0.1", "10000.00"],
                     ]
                 }
             },
@@ -521,6 +606,46 @@ class TencentStockDataProviderTests(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(len(result.data), 1)
         self.assertTrue(any(issue.reason_code == "parse_failed" for issue in result.warnings()))
+
+    def test_get_kline_result_does_not_fabricate_missing_amount(self):
+        payload = {
+            "code": 0,
+            "data": {
+                "sh600519": {
+                    "qfqday": [
+                        ["2026-06-11", "100.00", "101.00", "102.00", "99.00", "100"]
+                    ]
+                }
+            },
+        }
+        with patch.object(
+            TencentStockDataProvider, "_fetch_with_retry", return_value=json.dumps(payload)
+        ):
+            result = TencentStockDataProvider.get_kline_result(
+                code="600519",
+                market="sh",
+                start_date="2026-06-11",
+                end_date="2026-06-11",
+                ktype="day",
+            )
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.data, [])
+        self.assertEqual(result.errors()[0].reason_code, "parse_failed")
+
+    def test_realtime_result_rejects_missing_provider_market_timestamp(self):
+        payload = realtime_payload("00175", "吉利汽车", timestamp="")
+        with patch.object(
+            TencentStockDataProvider, "_fetch_with_retry", return_value=payload
+        ):
+            result = TencentStockDataProvider.realtime_result("hk0175")
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.data, [])
+        self.assertEqual(
+            {issue.reason_code for issue in result.warnings()},
+            {"parse_failed", "no_data"},
+        )
 
     def test_wrappers_keep_original_shapes(self):
         with patch.object(

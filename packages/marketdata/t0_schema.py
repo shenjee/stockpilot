@@ -4,11 +4,10 @@ The cross-process shape is owned by
 ``apps/t0-assistant/contracts/logical-schema.json``.  This module deliberately
 does not introduce a second hierarchy of bar or quote classes: it validates
 and maps provider dictionaries into that frozen logical shape, with security
-identity and timezone carried by a small series/snapshot envelope.  Current
-Tencent/KLineStore rows become directly consumable only after T0-008 supplies
-provider market timestamps, amounts and closed state and T0-009 persists the
-missing amount field; until then callers must supply every non-fabricated field
-explicitly.
+identity and timezone carried by a small series/snapshot envelope. Tencent
+provider rows include market timestamps, reported amounts and closed state;
+KLineStore persists reported amounts while retaining legacy rows with an
+unknown amount as ``NULL`` until a provider refresh replaces them.
 """
 
 from __future__ import annotations
