@@ -66,6 +66,8 @@ class T0MarketSchemaTests(unittest.TestCase):
         }
         with self.assertRaisesRegex(MarketDataSchemaError, "amount"):
             standardize_bar(incomplete, closed=True)
+        with self.assertRaisesRegex(MarketDataSchemaError, "amount"):
+            standardize_bar({**incomplete, "amount": None, "closed": True})
         with self.assertRaisesRegex(MarketDataSchemaError, "closed"):
             standardize_bar({**incomplete, "amount": 1005.0})
 

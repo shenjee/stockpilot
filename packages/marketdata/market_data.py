@@ -103,6 +103,7 @@ class TencentStockDataProvider(MarketDataProvider):
     }
     MINUTE_KLINE_PAGE_SIZE = 800
     MINUTE_KLINE_MAX_PAGES = 100
+    KLINE_AMOUNT_INDEX = 8
 
     @staticmethod
     def _make_issue(
@@ -160,6 +161,121 @@ class TencentStockDataProvider(MarketDataProvider):
         if market == "hk":
             return normalize_hk_code(code)
         return code
+
+    @staticmethod
+    def _format_market_timestamp(value: str) -> str:
+        """Normalize Tencent's market timestamp without substituting wall time."""
+
+        raw = str(value).strip()
+        for pattern in ("%Y%m%d%H%M%S", "%Y/%m/%d %H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+            try:
+                return datetime.strptime(raw, pattern).strftime("%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                continue
+        return ""
+
+    @classmethod
+    def _kline_amount(cls, item: list) -> float:
+        """Return Tencent's reported turnover amount; never derive it from OHLCV."""
+
+        if len(item) <= cls.KLINE_AMOUNT_INDEX:
+            raise ValueError("tencent kline amount field is missing")
+        return float(item[cls.KLINE_AMOUNT_INDEX])
+
+    @classmethod
+    def _minute_cumulative_amounts_result(
+        cls,
+        *,
+        code: str,
+        market: str | None,
+    ) -> MarketDataResult[dict[str, float]]:
+        """Read Tencent's reported intraday cumulative amounts, in ten-thousand CNY."""
+
+        norm = cls._normalize_code(code, market)
+        prefix = cls._get_prefix(norm, market)
+        url = (
+            "https://web.ifzq.gtimg.cn/appstock/app/day/query"
+            f"?code={prefix}{norm}"
+        )
+        try:
+            payload = json.loads(cls._fetch_with_retry(url, decode="utf-8"))
+            symbol_payload = payload["data"][f"{prefix}{norm}"]
+            days = symbol_payload["data"]
+            if not isinstance(days, list):
+                raise TypeError("tencent minute amount days are not a list")
+
+            amounts: dict[str, float] = {}
+            for day in days:
+                raw_date = str(day["date"])
+                date_value = datetime.strptime(raw_date, "%Y%m%d").strftime("%Y-%m-%d")
+                for point in day["data"]:
+                    time_value, _price, _volume, cumulative_amount = str(point).split()
+                    timestamp = datetime.strptime(
+                        f"{date_value} {time_value}", "%Y-%m-%d %H%M"
+                    ).strftime("%Y-%m-%d %H:%M:00")
+                    amounts[timestamp] = float(cumulative_amount) / 10_000
+            return MarketDataResult(success=True, data=amounts)
+        except Exception as exc:
+            issue = cls._make_issue(
+                level="warning",
+                reason_code="minute_amount_unavailable",
+                message="tencent minute cumulative amount request failed",
+                context={
+                    "operation": "get_minute_kline",
+                    "code": code,
+                    "market": market,
+                },
+                exc=exc,
+            )
+            return MarketDataResult(success=False, data={}, issues=[issue])
+
+    @staticmethod
+    def _apply_cumulative_amounts(
+        rows: dict[str, dict],
+        cumulative_amounts: dict[str, float],
+        timeframe: str,
+    ) -> None:
+        """Fill missing bar amounts by differencing provider cumulative amounts."""
+
+        timeframe_minutes = int(timeframe.removesuffix("m"))
+        previous_date = ""
+        previous_amount = 0.0
+        boundary_known = True
+        for timestamp in sorted(rows):
+            row_date = timestamp[:10]
+            if row_date != previous_date:
+                previous_date = row_date
+                target = (
+                    datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
+                    - timedelta(minutes=timeframe_minutes)
+                ).strftime("%Y-%m-%d %H:%M:%S")
+                prior_points = [
+                    (point_timestamp, amount)
+                    for point_timestamp, amount in cumulative_amounts.items()
+                    if point_timestamp[:10] == row_date and point_timestamp <= target
+                ]
+                previous_amount = max(prior_points)[1] if prior_points else 0.0
+                boundary_known = True
+            cumulative = cumulative_amounts.get(timestamp)
+            reported_amount = rows[timestamp].get("amount")
+            if reported_amount is not None:
+                if cumulative is not None:
+                    previous_amount = cumulative
+                elif boundary_known:
+                    previous_amount += reported_amount
+                else:
+                    boundary_known = False
+                continue
+            if cumulative is None:
+                boundary_known = False
+                continue
+            if not boundary_known or cumulative < previous_amount:
+                previous_amount = cumulative
+                boundary_known = True
+                continue
+            rows[timestamp]["amount"] = round(cumulative - previous_amount, 4)
+            previous_amount = cumulative
+            boundary_known = True
 
     @classmethod
     def _fetch_with_retry(cls, url: str, decode: str = "gbk") -> str:
@@ -231,25 +347,39 @@ class TencentStockDataProvider(MarketDataProvider):
                 continue
             try:
                 parts = line.split('"')[1].split("~")
-                if len(parts) < 35:
-                    continue
+                if len(parts) <= 37:
+                    raise ValueError("tencent realtime required fields are missing")
 
                 price = float(parts[3])
                 pre_close = float(parts[4])
                 change = price - pre_close
                 change_pct = (change / pre_close * 100) if pre_close > 0 else 0
+                timestamp = cls._format_market_timestamp(parts[30])
+                if not timestamp:
+                    raise ValueError("tencent realtime market timestamp is invalid")
 
                 results.append(
                     {
                         "name": parts[1],
                         "code": parts[2],
+                        "timestamp": timestamp,
+                        "latest_price": price,
+                        "previous_close": pre_close,
+                        "change_percent": round(change_pct, 2),
                         "price": price,
                         "pre_close": pre_close,
                         "open": float(parts[5]),
                         "high": float(parts[33]),
                         "low": float(parts[34]),
                         "volume": int(float(parts[6])),
-                        "amount": float(parts[37]) if len(parts) > 37 else 0,
+                        "amount": float(parts[37]),
+                        "volume_ratio": (
+                            float(parts[49]) if len(parts) > 49 and parts[49] else None
+                        ),
+                        "order_imbalance": None,
+                        "turnover_rate": (
+                            float(parts[38]) if len(parts) > 38 and parts[38] else None
+                        ),
                         "change": round(change, 2),
                         "change_pct": round(change_pct, 2),
                     }
@@ -317,7 +447,10 @@ class TencentStockDataProvider(MarketDataProvider):
 
         norm = cls._normalize_code(code, market)
         prefix = cls._get_prefix(norm, market)
-        url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={prefix}{norm},{ktype},{start_date},{end_date},500,{autype}"
+        url = (
+            "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get"
+            f"?param={prefix}{norm},{ktype},{start_date},{end_date},500,{autype}"
+        )
 
         try:
             data = json.loads(cls._fetch_with_retry(url, decode="utf-8"))
@@ -448,11 +581,14 @@ class TencentStockDataProvider(MarketDataProvider):
                 results.append(
                     {
                         "date": item[0],
+                        "timestamp": item[0],
                         "open": round(float(item[1]), 2),
                         "close": round(float(item[2]), 2),
                         "high": round(float(item[3]), 2),
                         "low": round(float(item[4]), 2),
                         "volume": int(float(item[5])),
+                        "amount": cls._kline_amount(item),
+                        "closed": True,
                     }
                 )
             except Exception:
@@ -706,13 +842,20 @@ class TencentStockDataProvider(MarketDataProvider):
                         parse_failures += 1
                     continue
                 try:
+                    try:
+                        amount = cls._kline_amount(item)
+                    except (TypeError, ValueError):
+                        amount = None
                     merged[timestamp] = {
                         "date": timestamp,
+                        "timestamp": timestamp,
                         "open": round(float(item[1]), 2),
                         "close": round(float(item[2]), 2),
                         "high": round(float(item[3]), 2),
                         "low": round(float(item[4]), 2),
                         "volume": int(float(item[5])),
+                        "amount": amount,
+                        "closed": True,
                     }
                 except Exception:
                     parse_failures += 1
@@ -730,6 +873,43 @@ class TencentStockDataProvider(MarketDataProvider):
 
             ref = page_oldest_raw
             first_page = False
+
+        if any(row["amount"] is None for row in merged.values()):
+            amount_result = cls._minute_cumulative_amounts_result(
+                code=code,
+                market=market,
+            )
+            issues.extend(amount_result.issues)
+            cls._apply_cumulative_amounts(
+                merged,
+                amount_result.data,
+                ktype,
+            )
+            missing_amount_count = sum(
+                1
+                for timestamp, row in merged.items()
+                if (
+                    start_day
+                    <= datetime.strptime(timestamp[:10], "%Y-%m-%d").date()
+                    <= end_day
+                )
+                and row["amount"] is None
+            )
+            if missing_amount_count:
+                issues.append(
+                    cls._make_issue(
+                        level="warning",
+                        reason_code="minute_amount_missing",
+                        message="tencent minute kline amount is unavailable for some bars",
+                        context={
+                            "operation": "get_minute_kline",
+                            "code": code,
+                            "market": market,
+                            "ktype": ktype,
+                            "missing_count": missing_amount_count,
+                        },
+                    )
+                )
 
         results = []
         for timestamp in sorted(merged.keys()):
