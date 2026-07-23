@@ -18,12 +18,15 @@ apps/t0-assistant/
 ├── contracts/   # process-neutral logical schemas and fixtures
 ├── electron/    # main, preload, window, and Python process host
 ├── renderer/    # React/TypeScript delivery layer
-├── backend/     # Python API/bootstrap delivery adapters and lifecycle fake
+├── backend/     # formal Python API/bootstrap delivery adapter
 └── tests/       # app and contract smoke tests
 ```
 
 Reusable domain behavior must go to `packages/`; Electron, React, HTTP, and
 WebSocket adapters stay here. No source from `spikes/` is copied into this app.
+`backend/service.py` is the sole Electron-managed Python entry point. Until
+domain handlers are integrated, it rejects recognized commands with a
+structured `service_unavailable` response.
 
 ## Validated Python environment
 
@@ -77,7 +80,7 @@ The smoke suite is offline with respect to market services. CI reports four
 independent tracks so failures are attributable without reading unrelated logs:
 
 ```text
-Python smoke     marketdata plus the loopback fake backend
+Python smoke     contracts plus the formal loopback service bootstrap
 Renderer smoke   TypeScript checking plus the production Vite build
 Electron smoke   Python service host lifecycle and bounded shutdown
 Contract smoke   Python JSON Schema validation plus Node fixture consumption
