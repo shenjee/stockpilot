@@ -15,6 +15,7 @@ support, and product planning docs.
 | Reusable package | `packages/chantheory/` | Project-owned adapter layer around `czsc` for Chan Theory structure analysis. |
 | Reusable package | `packages/fundamentalscreener/` | Fundamental Screener core for sector rotation, company ranking, financial quality, valuation, repositories, lineage, CLI payloads, and SQLite sync/schema support. |
 | Reusable package | `packages/marketdata/` | Shared market-data provider, runtime path, K-line store, and securities-store infrastructure used by the Chan Streamlit app and China stock analysis skill. |
+| Reusable package | `packages/indicators/` | Schema-aligned MA, BOLL, MACD, volume-average, and intraday VWAP calculations shared by Live and Replay pipelines. |
 | Local app | `apps/chan-viewer/` | Streamlit debug app for validating `chantheory` chart overlays and structure output. |
 | Local app | `apps/fundamental-screener/` | Streamlit frontend for browsing Fundamental Screener outputs and validations. |
 | Installable skill | `skills/china-stock-analysis/` | Agent skill that generates factual China A-share daily reports using installable scripts, templates, and references. |
@@ -50,6 +51,7 @@ stockpilot/
 |   `-- stock_technical_concepts.zh.md
 |-- packages/
 |   |-- chantheory/
+|   |-- indicators/
 |   |-- marketdata/
 |   `-- fundamentalscreener/
 `-- skills/
@@ -91,6 +93,7 @@ python -m packages.fundamentalscreener.cli screen --format json
 - `packages/chantheory/` is the stable project-facing Chan Theory adapter layer.
 - `packages/fundamentalscreener/` is the stable core for screening, scoring, quality checks, repositories, CLI output, and sync.
 - `packages/marketdata/` is the shared market-data and runtime infrastructure for the Chan app and stock-analysis skill.
+- `packages/indicators/` owns reusable, timestamp-aligned technical indicators for standard market bars.
 - Apps should render and orchestrate shared logic, not duplicate screening or structure-analysis rules.
 - Skills should keep runtime-specific scripting inside `skills/`, while shared analysis logic stays in `packages/`.
 
@@ -117,6 +120,7 @@ Common targeted tests:
 python -m unittest discover -s packages/chantheory/tests -p 'test_*.py'
 python -m unittest discover -s packages/fundamentalscreener/tests -p 'test_*.py'
 python -m unittest discover -s packages/marketdata/tests -p 'test_*.py'
+python -m unittest discover -s packages/indicators/tests -p 'test_*.py'
 python -m unittest discover -s apps/chan-viewer/tests -p 'test_*.py'
 python -m unittest discover -s apps/fundamental-screener/tests -p 'test_*.py'
 python -m unittest discover -s skills/china-stock-analysis/tests -p 'test_*.py'
