@@ -23,10 +23,10 @@ source ~/.venvs/czsc/bin/activate
 python --version
 which python
 python spikes/0008-czsc-update-and-rebuild-strategy/generate_fixture.py --check
-python -m unittest packages.chantheory.tests.test_czsc_5m_spike
-python spikes/0008-czsc-update-and-rebuild-strategy/benchmark.py \
+PYTHONPATH=packages python -m unittest packages.chantheory.tests.test_czsc_5m_spike
+PYTHONPATH=packages python spikes/0008-czsc-update-and-rebuild-strategy/benchmark.py \
   --output spikes/0008-czsc-update-and-rebuild-strategy/benchmark_results.json --quiet
-python -m unittest discover -s packages/chantheory/tests -p 'test_*.py'
+PYTHONPATH=packages python -m unittest discover -s packages/chantheory/tests -p 'test_*.py'
 ```
 
 The 2026-07-21 run could not use `~/.venvs/czsc` because its Homebrew Python framework failed code-signature verification before NumPy import. To avoid a system-wide repair, the recorded run used an isolated Python 3.13.14 `python-build-standalone` runtime under `/private/tmp`, with the same pinned `czsc==0.10.12`. The report records this limitation explicitly.
