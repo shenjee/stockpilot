@@ -1,7 +1,7 @@
 """Private SQLite foundation owned only by the T+0 Assistant.
 
-The schema intentionally starts with preferences.  Later real-trade and fee
-tables share this file and migration boundary, but not the market-data DB.
+Preferences, real trades, and fee plans share this file and migration
+boundary, but never the market-data database.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from packages.t0assistant.preferences import (
 
 PathLike = str | Path
 _T = TypeVar("_T")
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 DDL_STATEMENTS = (
     """
@@ -55,6 +55,53 @@ DDL_STATEMENTS = (
         CHECK (last_symbol IS NULL OR last_symbol GLOB 'sh.[0-9][0-9][0-9][0-9][0-9][0-9]' OR last_symbol GLOB 'sz.[0-9][0-9][0-9][0-9][0-9][0-9]')
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS fee_plans (
+        fee_plan_id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        a_share_commission_rate TEXT NOT NULL,
+        a_share_min_commission TEXT NOT NULL,
+        etf_commission_rate TEXT NOT NULL,
+        etf_min_commission TEXT NOT NULL,
+        stamp_duty_rate TEXT NOT NULL,
+        stamp_duty_sell_only INTEGER NOT NULL
+            CHECK (stamp_duty_sell_only IN (0, 1)),
+        transfer_fee_rate TEXT NOT NULL,
+        transfer_fee_side TEXT NOT NULL
+            CHECK (transfer_fee_side IN ('buy', 'sell', 'both')),
+        transfer_fee_enabled INTEGER NOT NULL
+            CHECK (transfer_fee_enabled IN (0, 1)),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS trades (
+        trade_id TEXT PRIMARY KEY,
+        symbol TEXT NOT NULL,
+        trade_date TEXT NOT NULL,
+        side TEXT NOT NULL CHECK (side IN ('buy', 'sell')),
+        executed_at TEXT NOT NULL,
+        price TEXT NOT NULL,
+        quantity INTEGER NOT NULL CHECK (quantity > 0),
+        fee TEXT,
+        note TEXT NOT NULL DEFAULT '',
+        fee_plan_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        CHECK (
+            symbol GLOB 'sh.[0-9][0-9][0-9][0-9][0-9][0-9]'
+            OR symbol GLOB 'sz.[0-9][0-9][0-9][0-9][0-9][0-9]'
+        )
+    )
+    """,
+)
+
+INDEX_STATEMENTS = (
+    """
+    CREATE INDEX IF NOT EXISTS ix_trades_symbol_date_time
+    ON trades(symbol, trade_date, executed_at, trade_id)
+    """,
 )
 
 _REQUIRED_COLUMNS = {
@@ -72,6 +119,35 @@ _REQUIRED_COLUMNS = {
         "ma60",
         "strokes",
         "pivot_zones",
+        "updated_at",
+    },
+    "fee_plans": {
+        "fee_plan_id",
+        "name",
+        "a_share_commission_rate",
+        "a_share_min_commission",
+        "etf_commission_rate",
+        "etf_min_commission",
+        "stamp_duty_rate",
+        "stamp_duty_sell_only",
+        "transfer_fee_rate",
+        "transfer_fee_side",
+        "transfer_fee_enabled",
+        "created_at",
+        "updated_at",
+    },
+    "trades": {
+        "trade_id",
+        "symbol",
+        "trade_date",
+        "side",
+        "executed_at",
+        "price",
+        "quantity",
+        "fee",
+        "note",
+        "fee_plan_id",
+        "created_at",
         "updated_at",
     },
 }
@@ -153,7 +229,7 @@ def validate_schema(connection: sqlite3.Connection) -> None:
 
 
 def init_db(connection: sqlite3.Connection) -> None:
-    """Idempotently initialize version 1 in one transaction."""
+    """Idempotently initialize or migrate the App schema in one transaction."""
 
     now = _utc_now()
     defaults = PreferenceValues()
@@ -165,10 +241,15 @@ def init_db(connection: sqlite3.Connection) -> None:
         # Fail closed before any seed write when an existing table happens to
         # reuse one of our names with an incompatible shape.
         _validate_columns(connection)
+        for statement in INDEX_STATEMENTS:
+            connection.execute(statement)
         existing = connection.execute(
             "SELECT schema_version FROM app_schema WHERE singleton_id = 1"
         ).fetchone()
-        if existing is not None and existing["schema_version"] != SCHEMA_VERSION:
+        if existing is not None and existing["schema_version"] not in (
+            1,
+            SCHEMA_VERSION,
+        ):
             raise AppDatabaseCompatibilityError(
                 f"unsupported App database schema version: {existing['schema_version']!r}"
             )
@@ -180,6 +261,15 @@ def init_db(connection: sqlite3.Connection) -> None:
             """,
             (SCHEMA_VERSION, now),
         )
+        if existing is not None and existing["schema_version"] == 1:
+            connection.execute(
+                """
+                UPDATE app_schema
+                SET schema_version = ?, updated_at = ?
+                WHERE singleton_id = 1 AND schema_version = 1
+                """,
+                (SCHEMA_VERSION, now),
+            )
         connection.execute(
             """
             INSERT INTO preferences(
@@ -224,14 +314,31 @@ def open_app_database(
 
     path = Path(db_path).expanduser()
     if force_read_only:
-        connection = connect(path, read_only=True)
-        validate_schema(connection)
+        try:
+            connection = connect(path, read_only=True)
+        except (OSError, sqlite3.Error) as read_error:
+            raise AppDatabaseUnavailableError(
+                f"App database cannot be opened read-only: {read_error}"
+            ) from read_error
+        try:
+            validate_schema(connection)
+        except AppDatabaseCompatibilityError:
+            connection.close()
+            raise
+        except (OSError, sqlite3.Error) as read_error:
+            connection.close()
+            raise AppDatabaseUnavailableError(
+                f"App database cannot be read: {read_error}"
+            ) from read_error
         return AppDatabase(
             connection,
             PreferenceCapability(
                 readable=True,
                 writable=False,
-                reason="本地成交与设置文件为只读；偏好和设置不能保存",
+                reason=(
+                    "本地成交与设置文件为只读；成交、收费方案、偏好和设置"
+                    "不能保存或修改"
+                ),
             ),
         )
 
@@ -268,7 +375,10 @@ def open_app_database(
             PreferenceCapability(
                 readable=True,
                 writable=False,
-                reason=f"本地成交与设置文件不可写；偏好和设置不能保存：{write_error}",
+                reason=(
+                    "本地成交与设置文件不可写；成交、收费方案、偏好和设置"
+                    f"不能保存：{write_error}"
+                ),
             ),
         )
 
@@ -287,18 +397,30 @@ class AppDatabaseWriteBoundary:
         self._writable = writable
         self._lock = lock
 
-    def read(self, operation: Callable[[sqlite3.Connection], _T]) -> _T:
+    def read(
+        self,
+        operation: Callable[[sqlite3.Connection], _T],
+        *,
+        error_type: type[RuntimeError] = PreferencePersistenceError,
+        message: str = "偏好读取失败",
+    ) -> _T:
         with self._lock:
             try:
                 return operation(self._connection)
             except sqlite3.Error as exc:
-                raise PreferencePersistenceError(f"偏好读取失败：{exc}") from exc
+                raise error_type(f"{message}：{exc}") from exc
 
-    def run(self, operation: Callable[[sqlite3.Connection], _T]) -> _T:
+    def run(
+        self,
+        operation: Callable[[sqlite3.Connection], _T],
+        *,
+        read_only_error_type: type[RuntimeError] = PreferencesReadOnlyError,
+        persistence_error_type: type[RuntimeError] = PreferencePersistenceError,
+        read_only_message: str = "本地成交与设置文件为只读；偏好和设置不能保存",
+        failure_message: str = "偏好保存失败，未确认持久化",
+    ) -> _T:
         if not self._writable:
-            raise PreferencesReadOnlyError(
-                "本地成交与设置文件为只读；偏好和设置不能保存"
-            )
+            raise read_only_error_type(read_only_message)
         with self._lock:
             try:
                 self._connection.execute("BEGIN IMMEDIATE")
@@ -307,9 +429,7 @@ class AppDatabaseWriteBoundary:
                 return result
             except sqlite3.Error as exc:
                 self._connection.rollback()
-                raise PreferencePersistenceError(
-                    f"偏好保存失败，未确认持久化：{exc}"
-                ) from exc
+                raise persistence_error_type(f"{failure_message}：{exc}") from exc
             except BaseException:
                 self._connection.rollback()
                 raise
