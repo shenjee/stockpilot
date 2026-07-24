@@ -1,0 +1,259 @@
+{
+  "schema_version": "t0_app_v1",
+  "service_generation": 3,
+  "session_id": "live-fixture-1",
+  "initial_snapshot_event": {
+    "schema_version": "t0_app_v1",
+    "service_generation": 3,
+    "session_id": "live-fixture-1",
+    "revision": 1,
+    "event_type": "workbench_snapshot",
+    "payload": {
+      "timezone": "Asia/Shanghai",
+      "session": {
+        "session_id": "live-fixture-1",
+        "session_type": "live",
+        "symbol": "sh.600000",
+        "trade_date": null,
+        "state": "ready",
+        "revision": 1
+      },
+      "replay": null,
+      "market": {
+        "bars_1m": [
+          {
+            "timestamp": "2026-07-22 09:31:00",
+            "open": 10.0,
+            "high": 10.08,
+            "low": 9.98,
+            "close": 10.05,
+            "volume": 12000.0,
+            "amount": 120500.0,
+            "closed": true
+          }
+        ],
+        "bars_5m": [
+          {
+            "timestamp": "2026-07-22 09:35:00",
+            "open": 10.0,
+            "high": 10.12,
+            "low": 9.98,
+            "close": 10.08,
+            "volume": 51000.0,
+            "amount": 513200.0,
+            "closed": true
+          }
+        ],
+        "daily_bars": [
+          {
+            "timestamp": "2026-07-22",
+            "open": 10.0,
+            "high": 10.12,
+            "low": 9.98,
+            "close": 10.08,
+            "volume": 51000.0,
+            "amount": 513200.0,
+            "closed": false
+          }
+        ],
+        "quote": {
+          "timestamp": "2026-07-22 09:35:03",
+          "latest_price": 10.08,
+          "change_percent": 0.8,
+          "open": 10.0,
+          "high": 10.12,
+          "low": 9.98,
+          "previous_close": 10.0,
+          "volume": 51000.0,
+          "amount": 513200.0,
+          "volume_ratio": null,
+          "order_imbalance": null,
+          "turnover_rate": null
+        }
+      },
+      "indicators": {
+        "five_minute": {
+          "ma": {
+            "ma5": [{"timestamp": "2026-07-22 09:35:00", "value": null}],
+            "ma10": [{"timestamp": "2026-07-22 09:35:00", "value": null}],
+            "ma20": [{"timestamp": "2026-07-22 09:35:00", "value": null}],
+            "ma30": [{"timestamp": "2026-07-22 09:35:00", "value": null}],
+            "ma60": [{"timestamp": "2026-07-22 09:35:00", "value": null}]
+          },
+          "boll": {
+            "period": 20,
+            "stddev": 2.0,
+            "upper": [{"timestamp": "2026-07-22 09:35:00", "value": null}],
+            "middle": [{"timestamp": "2026-07-22 09:35:00", "value": null}],
+            "lower": [{"timestamp": "2026-07-22 09:35:00", "value": null}]
+          },
+          "volume": {
+            "values": [{"timestamp": "2026-07-22 09:35:00", "value": 51000.0}],
+            "ma5": [{"timestamp": "2026-07-22 09:35:00", "value": null}],
+            "ma10": [{"timestamp": "2026-07-22 09:35:00", "value": null}]
+          },
+          "macd": {
+            "fast_period": 12,
+            "slow_period": 26,
+            "signal_period": 9,
+            "dif": [{"timestamp": "2026-07-22 09:35:00", "value": null}],
+            "dea": [{"timestamp": "2026-07-22 09:35:00", "value": null}],
+            "histogram": [{"timestamp": "2026-07-22 09:35:00", "value": null}]
+          }
+        },
+        "one_minute": {
+          "vwap": [{"timestamp": "2026-07-22 09:31:00", "value": 10.041667}],
+          "volume": {
+            "values": [{"timestamp": "2026-07-22 09:31:00", "value": 12000.0}]
+          },
+          "macd": {
+            "fast_period": 12,
+            "slow_period": 26,
+            "signal_period": 9,
+            "dif": [{"timestamp": "2026-07-22 09:31:00", "value": null}],
+            "dea": [{"timestamp": "2026-07-22 09:31:00", "value": null}],
+            "histogram": [{"timestamp": "2026-07-22 09:31:00", "value": null}]
+          }
+        }
+      },
+      "chan_analysis": {
+        "symbol": "600000.SH",
+        "timeframe": "5m",
+        "source": "fixture",
+        "engine": "czsc",
+        "engine_version": "0.10.12",
+        "parameters": {},
+        "fractals": [],
+        "strokes": [],
+        "segments": [],
+        "pivot_zones": [],
+        "divergences": [],
+        "structure_alerts": [],
+        "signal_series": [],
+        "signal_events": [],
+        "signal_snapshots": [],
+        "candidate_point_events": [],
+        "candidate_buy_points": [],
+        "candidate_sell_points": [],
+        "plot_primitives": [],
+        "summary": [],
+        "warnings": [],
+        "meta": {}
+      },
+      "warnings": []
+    }
+  },
+  "incremental_events": [
+    {
+      "schema_version": "t0_app_v1",
+      "service_generation": 3,
+      "session_id": "live-fixture-1",
+      "revision": 2,
+      "event_type": "market_update",
+      "payload": {
+        "target": "bars_1m",
+        "bars": [
+          {
+            "timestamp": "2026-07-22 09:32:00",
+            "open": 10.05,
+            "high": 10.1,
+            "low": 10.03,
+            "close": 10.09,
+            "volume": 9000.0,
+            "amount": 90700.0,
+            "closed": true
+          }
+        ],
+        "quote": null
+      }
+    },
+    {
+      "schema_version": "t0_app_v1",
+      "service_generation": 3,
+      "session_id": "live-fixture-1",
+      "revision": 3,
+      "event_type": "indicators_updated",
+      "payload": {
+        "five_minute": {
+          "ma": {"ma5": [], "ma10": [], "ma20": [], "ma30": [], "ma60": []},
+          "boll": {"period": 20, "stddev": 2.0, "upper": [], "middle": [], "lower": []},
+          "volume": {"values": [], "ma5": [], "ma10": []},
+          "macd": {"fast_period": 12, "slow_period": 26, "signal_period": 9, "dif": [], "dea": [], "histogram": []}
+        },
+        "one_minute": {
+          "vwap": [{"timestamp": "2026-07-22 09:32:00", "value": 10.060476}],
+          "volume": {"values": [{"timestamp": "2026-07-22 09:32:00", "value": 9000.0}]},
+          "macd": {"fast_period": 12, "slow_period": 26, "signal_period": 9, "dif": [], "dea": [], "histogram": []}
+        }
+      }
+    },
+    {
+      "schema_version": "t0_app_v1",
+      "service_generation": 3,
+      "session_id": "live-fixture-1",
+      "revision": 4,
+      "event_type": "chan_analysis_replaced",
+      "payload": {
+        "symbol": "600000.SH",
+        "timeframe": "5m",
+        "source": "fixture",
+        "engine": "czsc",
+        "engine_version": "0.10.12",
+        "parameters": {},
+        "fractals": [],
+        "strokes": [],
+        "segments": [],
+        "pivot_zones": [],
+        "divergences": [],
+        "structure_alerts": [],
+        "signal_series": [],
+        "signal_events": [],
+        "signal_snapshots": [],
+        "candidate_point_events": [],
+        "candidate_buy_points": [],
+        "candidate_sell_points": [],
+        "plot_primitives": [],
+        "summary": [],
+        "warnings": [],
+        "meta": {"closed_bars": 1}
+      }
+    }
+  ],
+  "out_of_order_delivery": [0, 2, 1],
+  "operation_failed_event": {
+    "schema_version": "t0_app_v1",
+    "service_generation": 3,
+    "session_id": "live-fixture-1",
+    "revision": 5,
+    "event_type": "operation_failed",
+    "operation_id": "operation-fixture-1",
+    "payload": {
+      "error_code": "calculation_failed",
+      "category": "calculation",
+      "severity": "error",
+      "retryable": true,
+      "affected_capability": "chan_analysis",
+      "message": "缠论计算暂时失败，已保留最后一次成功结果",
+      "request_id": "request-fixture-1",
+      "operation_id": "operation-fixture-1",
+      "details": {}
+    }
+  },
+  "synchronous_error_response": {
+    "schema_version": "t0_app_v1",
+    "request_id": "request-invalid-1",
+    "accepted": false,
+    "operation_id": null,
+    "data": null,
+    "error": {
+      "error_code": "invalid_request",
+      "category": "validation",
+      "severity": "error",
+      "retryable": false,
+      "affected_capability": "live",
+      "message": "请求字段无效",
+      "request_id": "request-invalid-1",
+      "details": {}
+    }
+  }
+}

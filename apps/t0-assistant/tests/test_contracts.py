@@ -24,6 +24,7 @@ class ContractTest(unittest.TestCase):
         cls.app = load_json("app-v1.schema.json")
         cls.replay = load_json("replay-v1.schema.json")
         cls.fixture = load_json("fixtures/replay-speed-v1.json")
+        cls.workbench_flow = load_json("fixtures/workbench-flow-v1.json")
         cls.registry = Registry().with_resources(
             [
                 (cls.logical["$id"], Resource.from_contents(cls.logical)),
@@ -249,6 +250,31 @@ class ContractTest(unittest.TestCase):
         }
         self.assertTrue(
             list(self.app_validator("event_envelope").iter_errors(invalid_real_scope))
+        )
+
+    def test_python_consumes_complete_incremental_out_of_order_and_error_fixture(self) -> None:
+        flow = self.workbench_flow
+        event_validator = self.app_validator("event_envelope")
+        response_validator = self.app_validator("command_response")
+
+        event_validator.validate(flow["initial_snapshot_event"])
+        for event in flow["incremental_events"]:
+            event_validator.validate(event)
+        event_validator.validate(flow["operation_failed_event"])
+        response_validator.validate(flow["synchronous_error_response"])
+
+        delivered = [
+            flow["incremental_events"][index]["revision"]
+            for index in flow["out_of_order_delivery"]
+        ]
+        self.assertEqual(delivered, [2, 4, 3])
+        self.assertEqual(
+            flow["initial_snapshot_event"]["payload"]["session"]["revision"],
+            flow["initial_snapshot_event"]["revision"],
+        )
+        self.assertEqual(
+            flow["operation_failed_event"]["operation_id"],
+            flow["operation_failed_event"]["payload"]["operation_id"],
         )
 
 
