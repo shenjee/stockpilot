@@ -1,6 +1,8 @@
 import sys
 import tempfile
+import threading
 import unittest
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -8,8 +10,10 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "packages"))
 
 from marketdata.repositories.kline_store import KLineStore
+from marketdata.provider_request_queue import ProviderRequestQueue
 from marketdata.provider_result import MarketDataResult, ProviderIssue
 from marketdata.services.kline_data_service import KLineDataService
+from marketdata.services.market_context_service import MarketContextService
 
 
 class FakeProvider:
@@ -40,6 +44,28 @@ class FakeResultProvider:
 
 
 class KLineDataServiceTests(unittest.TestCase):
+    @staticmethod
+    def _daily_row(day: str, close: float = 10.5) -> dict:
+        return {
+            "date": day,
+            "open": 10.0,
+            "close": close,
+            "high": max(10.6, close),
+            "low": 9.9,
+            "volume": 100,
+        }
+
+    @staticmethod
+    def _minute_row(timestamp: str) -> dict:
+        return {
+            "date": timestamp,
+            "open": 10.0,
+            "close": 10.1,
+            "high": 10.2,
+            "low": 9.9,
+            "volume": 100,
+        }
+
     def test_prefers_local_rows_when_count_is_sufficient(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             store = KLineStore(Path(tmpdir) / "market_data.sqlite")
@@ -298,6 +324,384 @@ class KLineDataServiceTests(unittest.TestCase):
             self.assertEqual(result.data, remote_rows)
             self.assertEqual(result.issues[0].reason_code, "request_failed")
             self.assertTrue(result.success)
+
+    def test_authoritative_calendar_finds_and_fetches_only_internal_gap(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = KLineStore(Path(tmpdir) / "market_data.sqlite")
+            store.upsert_many(
+                "600519",
+                "sh",
+                [
+                    self._daily_row("2026-06-10"),
+                    self._daily_row("2026-06-12"),
+                ],
+                source="local",
+            )
+            provider = FakeProvider([self._daily_row("2026-06-11")])
+            calendar = MarketContextService(
+                ["2026-06-10", "2026-06-11", "2026-06-12"]
+            )
+            service = KLineDataService(
+                provider,
+                store,
+                market_context=calendar,
+            )
+
+            rows = service.get_klines(
+                code="600519",
+                market="sh",
+                timeframe="day",
+                start_date="2026-06-10",
+                end_date="2026-06-12",
+                limit=10,
+            )
+
+            self.assertEqual(
+                provider.calls,
+                [("600519", "2026-06-11", "2026-06-11", "day", "sh", None)],
+            )
+            self.assertEqual(
+                [row["date"] for row in rows],
+                ["2026-06-10", "2026-06-11", "2026-06-12"],
+            )
+
+    def test_default_service_detects_internal_gap_above_legacy_count_threshold(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = KLineStore(Path(tmpdir) / "market_data.sqlite")
+            start = date(2026, 1, 5)
+            end = date(2026, 4, 10)
+            missing = "2026-02-10"
+            days = []
+            current = start
+            while current <= end:
+                if current.weekday() < 5 and current.isoformat() != missing:
+                    days.append(self._daily_row(current.isoformat()))
+                current += timedelta(days=1)
+            self.assertGreater(len(days), 60)
+            store.upsert_many("600519", "sh", days, source="local")
+            provider = FakeProvider([self._daily_row(missing)])
+            service = KLineDataService(provider, store)
+
+            service.ensure_local_klines(
+                code="600519",
+                market="sh",
+                start_date=start.isoformat(),
+                end_date=end.isoformat(),
+            )
+
+            self.assertEqual(
+                provider.calls,
+                [("600519", missing, missing, "day", "sh", None)],
+            )
+
+    def test_complete_calendar_range_never_calls_provider(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = KLineStore(Path(tmpdir) / "market_data.sqlite")
+            store.upsert_many(
+                "600519",
+                "sh",
+                [
+                    self._daily_row("2026-06-10"),
+                    self._daily_row("2026-06-12"),
+                ],
+                source="local",
+            )
+            provider = FakeProvider([])
+            calendar = MarketContextService(
+                ["2026-06-10", "2026-06-12"],
+                coverage_start="2026-06-10",
+                coverage_end="2026-06-12",
+            )
+            service = KLineDataService(
+                provider,
+                store,
+                market_context=calendar,
+            )
+
+            service.ensure_local_klines(
+                code="600519",
+                market="sh",
+                start_date="2026-06-10",
+                end_date="2026-06-12",
+            )
+
+            self.assertEqual(provider.calls, [])
+
+    def test_failed_gap_fetch_preserves_cache_and_remains_retryable(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = KLineStore(Path(tmpdir) / "market_data.sqlite")
+            original = self._daily_row("2026-06-10", close=10.8)
+            store.upsert_many("600519", "sh", [original], source="local")
+            issue = ProviderIssue(
+                level="error",
+                reason_code="request_failed",
+                message="network error",
+            )
+            provider = FakeResultProvider(
+                MarketDataResult(success=False, data=[], issues=[issue])
+            )
+            calendar = MarketContextService(["2026-06-10", "2026-06-11"])
+            service = KLineDataService(
+                provider,
+                store,
+                market_context=calendar,
+            )
+
+            first = service.get_klines_result(
+                code="600519",
+                market="sh",
+                start_date="2026-06-10",
+                end_date="2026-06-11",
+                limit=10,
+            )
+            second = service.get_klines_result(
+                code="600519",
+                market="sh",
+                start_date="2026-06-10",
+                end_date="2026-06-11",
+                limit=10,
+            )
+
+            self.assertEqual(len(provider.calls), 2)
+            self.assertEqual(first.data, [original])
+            self.assertEqual(second.data, [original])
+            self.assertEqual(first.issues[0].reason_code, "request_failed")
+
+    def test_successful_no_data_range_is_covered_and_not_refetched(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = KLineStore(Path(tmpdir) / "market_data.sqlite")
+            provider = FakeResultProvider(
+                MarketDataResult(
+                    success=True,
+                    data=[],
+                    issues=[
+                        ProviderIssue(
+                            level="warning",
+                            reason_code="no_data",
+                            message="suspended",
+                        )
+                    ],
+                )
+            )
+            calendar = MarketContextService(["2026-06-11"])
+            service = KLineDataService(
+                provider,
+                store,
+                market_context=calendar,
+            )
+
+            for _ in range(2):
+                service.ensure_local_klines_result(
+                    code="600519",
+                    market="sh",
+                    start_date="2026-06-11",
+                    end_date="2026-06-11",
+                )
+
+            self.assertEqual(len(provider.calls), 1)
+            self.assertEqual(
+                store.coverage_ranges(
+                    "600519",
+                    "2026-06-11",
+                    "2026-06-11",
+                    market="sh",
+                ),
+                [("2026-06-11", "2026-06-11")],
+            )
+
+    def test_incomplete_minute_day_refetches_only_that_date(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = KLineStore(Path(tmpdir) / "market_data.sqlite")
+            calendar = MarketContextService(["2026-06-11"])
+            session = calendar.require_session("2026-06-11", "sh")
+            complete_rows = [
+                self._minute_row(value.strftime("%Y-%m-%d %H:%M:%S"))
+                for value in session.bar_close_times(5)
+            ]
+            store.upsert_many(
+                "600519",
+                "sh",
+                complete_rows[:-1],
+                source="local",
+                timeframe="5m",
+            )
+            provider = FakeProvider(complete_rows)
+            service = KLineDataService(
+                provider,
+                store,
+                market_context=calendar,
+            )
+
+            service.ensure_local_klines(
+                code="600519",
+                market="sh",
+                timeframe="5m",
+                start_date="2026-06-11",
+                end_date="2026-06-11",
+            )
+
+            self.assertEqual(
+                provider.calls,
+                [("600519", "2026-06-11", "2026-06-11", "5m", "sh", None)],
+            )
+            self.assertEqual(
+                len(
+                    store.timestamps_between(
+                        "600519",
+                        "2026-06-11",
+                        "2026-06-11",
+                        market="sh",
+                        timeframe="5m",
+                    )
+                ),
+                48,
+            )
+
+    def test_active_minute_day_is_not_marked_complete_after_partial_success(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = KLineStore(Path(tmpdir) / "market_data.sqlite")
+            provider = FakeProvider(
+                [self._minute_row("2026-06-11 09:35:00")]
+            )
+            calendar = MarketContextService(["2026-06-11"])
+            service = KLineDataService(
+                provider,
+                store,
+                market_context=calendar,
+                clock=lambda: datetime(2026, 6, 11, 10, 0),
+            )
+
+            for _ in range(2):
+                service.ensure_local_klines(
+                    code="600519",
+                    market="sh",
+                    timeframe="5m",
+                    start_date="2026-06-11",
+                    end_date="2026-06-11",
+                )
+
+            self.assertEqual(len(provider.calls), 2)
+            self.assertEqual(
+                store.coverage_ranges(
+                    "600519",
+                    "2026-06-11",
+                    "2026-06-11",
+                    market="sh",
+                    timeframe="5m",
+                ),
+                [],
+            )
+
+    def test_queue_coordination_failure_uses_existing_issue_model(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = KLineStore(Path(tmpdir) / "market_data.sqlite")
+            provider = FakeProvider([self._daily_row("2026-06-11")])
+            queue = ProviderRequestQueue()
+            queue.shutdown()
+            service = KLineDataService(
+                provider,
+                store,
+                provider_queue=queue,
+            )
+
+            result = service.ensure_local_klines_result(
+                code="600519",
+                market="sh",
+                start_date="2026-06-11",
+                end_date="2026-06-11",
+            )
+
+            self.assertFalse(result.success)
+            self.assertEqual(result.first_error_code(), "provider_queue_closed")
+            self.assertEqual(provider.calls, [])
+
+    def test_retired_session_can_still_return_existing_local_rows(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = KLineStore(Path(tmpdir) / "market_data.sqlite")
+            local_row = self._daily_row("2026-06-10")
+            store.upsert_many("600519", "sh", [local_row], source="local")
+            provider = FakeProvider([self._daily_row("2026-06-11")])
+            service = KLineDataService(provider, store)
+
+            result = service.get_klines_result(
+                code="600519",
+                market="sh",
+                start_date="2026-06-10",
+                end_date="2026-06-11",
+                session_validator=lambda: False,
+                limit=10,
+            )
+
+            self.assertTrue(result.success)
+            self.assertEqual(result.data, [local_row])
+            self.assertEqual(result.first_error_code(), "session_retired")
+            self.assertEqual(provider.calls, [])
+
+    def test_services_share_and_coalesce_the_same_provider_gap_request(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            started = threading.Event()
+            both_submitted = threading.Event()
+            release = threading.Event()
+
+            class ObservedQueue(ProviderRequestQueue):
+                submissions = 0
+                submissions_lock = threading.Lock()
+
+                def submit(self, *args, **kwargs):
+                    future = super().submit(*args, **kwargs)
+                    with self.submissions_lock:
+                        self.submissions += 1
+                        if self.submissions >= 2:
+                            both_submitted.set()
+                    return future
+
+            store = KLineStore(Path(tmpdir) / "market_data.sqlite")
+
+            class BlockingProvider(FakeProvider):
+                def get_kline(self, *args, **kwargs):
+                    rows = super().get_kline(*args, **kwargs)
+                    started.set()
+                    release.wait(2)
+                    return rows
+
+            provider = BlockingProvider([self._daily_row("2026-06-11")])
+            queue = ObservedQueue()
+            services = [
+                KLineDataService(provider, store, provider_queue=queue)
+                for _ in range(2)
+            ]
+            results = []
+
+            def load(service):
+                results.append(
+                    service.get_klines(
+                        code="600519",
+                        market="sh",
+                        start_date="2026-06-11",
+                        end_date="2026-06-11",
+                        limit=10,
+                    )
+                )
+
+            threads = [
+                threading.Thread(target=load, args=(service,))
+                for service in services
+            ]
+            try:
+                threads[0].start()
+                self.assertTrue(started.wait(1))
+                threads[1].start()
+                self.assertTrue(both_submitted.wait(1))
+                release.set()
+                for thread in threads:
+                    thread.join(2)
+            finally:
+                release.set()
+                queue.shutdown(cancel_pending=True)
+
+            self.assertEqual(len(provider.calls), 1)
+            self.assertEqual(len(results), 2)
+            self.assertTrue(all(rows[0]["date"] == "2026-06-11" for rows in results))
 
 
 if __name__ == "__main__":

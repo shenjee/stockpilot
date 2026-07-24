@@ -35,6 +35,14 @@ class MarketContextServiceTests(unittest.TestCase):
             self.service.previous_trading_day("2024-10-08", "sz"),
             date(2024, 9, 30),
         )
+        self.assertEqual(
+            self.service.trading_days_between(
+                "2024-09-30",
+                "2024-10-09",
+                "sh",
+            ),
+            (date(2024, 9, 30), date(2024, 10, 8), date(2024, 10, 9)),
+        )
 
     def test_closed_date_has_no_session_and_required_session_fails(self):
         self.assertIsNone(self.service.session_on("2024-10-01", "sh"))

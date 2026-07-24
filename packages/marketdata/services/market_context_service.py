@@ -251,6 +251,25 @@ class MarketContextService:
             index -= 1
         return self._trading_days[index] if index >= 0 else None
 
+    def trading_days_between(
+        self,
+        start_date: date | str,
+        end_date: date | str,
+        market: str,
+    ) -> tuple[date, ...]:
+        """Return authoritative open dates inside an inclusive covered range."""
+
+        _validate_market(market)
+        start = _parse_date(start_date)
+        end = _parse_date(end_date)
+        if start > end:
+            raise MarketContextError("start_date must not exceed end_date")
+        self._require_covered(start)
+        self._require_covered(end)
+        left = bisect_left(self._trading_days, start)
+        right = bisect_right(self._trading_days, end)
+        return self._trading_days[left:right]
+
     def _require_covered(self, value: date) -> None:
         if value < self._coverage_start or value > self._coverage_end:
             raise MarketContextError(

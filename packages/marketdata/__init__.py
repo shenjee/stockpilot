@@ -8,6 +8,15 @@ from .market_data import (
     get_market_prefix,
 )
 from .provider_result import MarketDataResult, ProviderIssue
+from .provider_request_queue import (
+    ProviderQueueClosedError,
+    ProviderQueueError,
+    ProviderQueueFullError,
+    ProviderQueueOutcome,
+    ProviderRequestPriority,
+    ProviderRequestQueue,
+    get_shared_provider_request_queue,
+)
 from .runtime_paths import LOCAL_CONFIG_NAMES, RuntimePaths
 from .t0_schema import (
     T0_MARKET_SCHEMA_VERSION,
@@ -27,12 +36,19 @@ __all__ = [
     "MarketDataResult",
     "MarketDataSchemaError",
     "ProviderIssue",
+    "ProviderQueueClosedError",
+    "ProviderQueueError",
+    "ProviderQueueFullError",
+    "ProviderQueueOutcome",
+    "ProviderRequestPriority",
+    "ProviderRequestQueue",
     "RuntimePaths",
     "T0_MARKET_SCHEMA_VERSION",
     "T0_TIMEZONE",
     "TencentStockDataProvider",
     "create_market_data_provider",
     "get_market_prefix",
+    "get_shared_provider_request_queue",
     "standardize_bar",
     "standardize_kline_series",
     "standardize_quote",

@@ -137,6 +137,78 @@ class MarketdataCompatibilityTests(unittest.TestCase):
                         sys.modules.pop(name, None)
                 sys.modules.update(saved_modules)
 
+    def test_standalone_kline_service_uses_gap_fill_and_provider_queue(self):
+        from _standalone_marketdata.repositories.kline_store import (
+            KLineStore as StandaloneKLineStore,
+        )
+        from _standalone_marketdata.services.kline_data_service import (
+            KLineDataService as StandaloneKLineDataService,
+        )
+
+        class FakeProvider:
+            provider_id = "standalone-fake"
+
+            def __init__(self):
+                self.calls = []
+
+            def get_kline(
+                self,
+                code,
+                start_date,
+                end_date,
+                ktype="day",
+                autype="qfq",
+                market=None,
+                security_type=None,
+            ):
+                self.calls.append(
+                    (code, start_date, end_date, ktype, market, security_type)
+                )
+                return [
+                    {
+                        "date": "2026-01-06",
+                        "open": 10.0,
+                        "close": 10.1,
+                        "high": 10.2,
+                        "low": 9.9,
+                        "volume": 100,
+                    }
+                ]
+
+        def row(day):
+            return {
+                "date": day,
+                "open": 10.0,
+                "close": 10.1,
+                "high": 10.2,
+                "low": 9.9,
+                "volume": 100,
+            }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = StandaloneKLineStore(Path(tmpdir) / "market_data.sqlite")
+            store.upsert_many(
+                "600519",
+                "sh",
+                [row("2026-01-05"), row("2026-01-07")],
+                source="local",
+            )
+            provider = FakeProvider()
+            service = StandaloneKLineDataService(provider, store)
+
+            service.ensure_local_klines(
+                code="600519",
+                market="sh",
+                start_date="2026-01-05",
+                end_date="2026-01-07",
+            )
+
+            self.assertIsNotNone(service.provider_queue)
+            self.assertEqual(
+                provider.calls,
+                [("600519", "2026-01-06", "2026-01-06", "day", "sh", None)],
+            )
+
     def test_standalone_kline_top_level_list_does_not_raise(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             standalone_root = Path(tmpdir) / "china-stock-analysis"
