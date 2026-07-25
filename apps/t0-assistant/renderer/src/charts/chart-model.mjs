@@ -37,7 +37,7 @@ export function formatMarketTick(time, previousTime = null) {
   ).padStart(2, "0")}`;
 }
 
-export function createChartGroupModel(snapshot, kind) {
+export function createChartGroupModel(snapshot, kind, layers = {}) {
   if (kind !== FIVE_MINUTE && kind !== ONE_MINUTE) {
     throw new TypeError(`Unsupported chart group: ${kind}`);
   }
@@ -57,6 +57,26 @@ export function createChartGroupModel(snapshot, kind) {
   const timeByTimestamp = Object.fromEntries(
     timestamps.map((timestamp) => [timestamp, parseMarketTimestamp(timestamp)]),
   );
+  const enabled = (layer) => layers[layer] !== false;
+  const movingAverages = {};
+  for (const period of ["ma5", "ma10", "ma20", "ma30", "ma60"]) {
+    movingAverages[period] =
+      kind === FIVE_MINUTE && enabled(period)
+        ? normalizePoints(
+            indicator.ma?.[period] ?? [],
+            timestampSet,
+            `five_minute ${period}`,
+          )
+        : [];
+  }
+  const strokes =
+    kind === FIVE_MINUTE && enabled("strokes")
+      ? normalizeStrokes(snapshot.chan_analysis?.strokes, timestampSet)
+      : [];
+  const pivotZones =
+    kind === FIVE_MINUTE && enabled("pivot_zones")
+      ? normalizePivotZones(snapshot.chan_analysis?.pivot_zones, timestampSet)
+      : [];
 
   const volumePoints = normalizePoints(
     indicator.volume.values,
@@ -97,6 +117,9 @@ export function createChartGroupModel(snapshot, kind) {
       kind === ONE_MINUTE
         ? normalizePoints(indicator.vwap, timestampSet, "one_minute vwap")
         : [],
+    movingAverages,
+    strokes,
+    pivotZones,
     volume: volumePoints,
     volumeMa5:
       kind === FIVE_MINUTE
@@ -124,6 +147,45 @@ export function createChartGroupModel(snapshot, kind) {
       ),
     },
   };
+}
+
+function normalizeStrokes(strokes, timestampSet) {
+  return (strokes ?? []).flatMap((stroke) => {
+    if (
+      !timestampSet.has(stroke?.start_timestamp) ||
+      !timestampSet.has(stroke?.end_timestamp) ||
+      !Number.isFinite(stroke?.start_price) ||
+      !Number.isFinite(stroke?.end_price)
+    ) {
+      return [];
+    }
+    return [
+      {
+        start: {
+          timestamp: stroke.start_timestamp,
+          value: stroke.start_price,
+        },
+        end: {
+          timestamp: stroke.end_timestamp,
+          value: stroke.end_price,
+        },
+        color:
+          stroke.end_price >= stroke.start_price ? "#2563eb" : "#f97316",
+        dashed: stroke.confirmed === false,
+      },
+    ];
+  });
+}
+
+function normalizePivotZones(zones, timestampSet) {
+  return (zones ?? []).filter(
+    (zone) =>
+      timestampSet.has(zone?.start_timestamp) &&
+      timestampSet.has(zone?.end_timestamp) &&
+      Number.isFinite(zone?.high) &&
+      Number.isFinite(zone?.low) &&
+      zone.high >= zone.low,
+  );
 }
 
 function normalizePoints(points, timestampSet, label) {

@@ -26,6 +26,11 @@ export function createChartProjection(
   snapshot: WorkbenchChartSnapshot,
   identity?: ChartProjectionIdentity,
 ): ChartProjection;
+export function beginChartSession(
+  snapshot: WorkbenchChartSnapshot,
+  serviceGeneration: number,
+  sessionId?: string | null,
+): ChartProjection;
 
 export function applyWorkbenchSnapshot(
   projection: ChartProjection,

@@ -12,6 +12,13 @@ export function createChartProjection(snapshot, identity = {}) {
   };
 }
 
+export function beginChartSession(snapshot, serviceGeneration, sessionId = null) {
+  return createChartProjection(snapshot, {
+    service_generation: serviceGeneration,
+    ...(sessionId ? { session_id: sessionId } : {}),
+  });
+}
+
 export function applyWorkbenchSnapshot(
   projection,
   snapshot,
@@ -76,6 +83,12 @@ export function applyLiveChartEvent(projection, event) {
     snapshot = applyMarketUpdate(snapshot, event.payload);
   } else if (event.event_type === "indicators_updated") {
     snapshot = applyIndicatorUpdate(snapshot, event.payload);
+  } else if (
+    event.event_type === "chan_analysis_replaced" &&
+    event.payload &&
+    typeof event.payload === "object"
+  ) {
+    snapshot = { ...snapshot, chan_analysis: event.payload };
   }
 
   return {
@@ -96,13 +109,17 @@ function stringOrNull(value) {
 }
 
 function applyMarketUpdate(snapshot, payload) {
-  if (
-    !payload ||
-    !Array.isArray(payload.bars) ||
-    (payload.target !== "bars_1m" && payload.target !== "bars_5m")
-  ) {
-    return snapshot;
+  if (!payload || typeof payload !== "object") return snapshot;
+  if (payload.target === "quote") {
+    return {
+      ...snapshot,
+      market: { ...snapshot.market, quote: payload.quote ?? null },
+    };
   }
+  if (
+    !Array.isArray(payload.bars) ||
+    !["bars_1m", "bars_5m", "daily_bars"].includes(payload.target)
+  ) return snapshot;
   return {
     ...snapshot,
     market: {
@@ -126,6 +143,27 @@ function applyIndicatorUpdate(snapshot, incoming) {
       ...current,
       five_minute: {
         ...current.five_minute,
+        ma: mergePointGroup(
+          current.five_minute.ma,
+          incoming.five_minute.ma,
+          ["ma5", "ma10", "ma20", "ma30", "ma60"],
+        ),
+        boll: {
+          ...current.five_minute.boll,
+          ...incoming.five_minute.boll,
+          upper: mergeTimestampRows(
+            current.five_minute.boll?.upper,
+            incoming.five_minute.boll?.upper,
+          ),
+          middle: mergeTimestampRows(
+            current.five_minute.boll?.middle,
+            incoming.five_minute.boll?.middle,
+          ),
+          lower: mergeTimestampRows(
+            current.five_minute.boll?.lower,
+            incoming.five_minute.boll?.lower,
+          ),
+        },
         volume: {
           ...current.five_minute.volume,
           ...incoming.five_minute.volume,
@@ -168,6 +206,15 @@ function applyIndicatorUpdate(snapshot, incoming) {
       },
     },
   };
+}
+
+function mergePointGroup(current = {}, incoming = {}, keys) {
+  return Object.fromEntries(
+    keys.map((key) => [
+      key,
+      mergeTimestampRows(current[key], incoming[key]),
+    ]),
+  );
 }
 
 function mergeMacd(current, incoming) {

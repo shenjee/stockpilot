@@ -17,9 +17,28 @@ sys.path.insert(0, str(APP_ROOT))
 from backend.service import create_server  # noqa: E402
 
 
+class _FakeSearchService:
+    def search(self, query: str, limit: int):
+        return [
+            {
+                "symbol": "sh.600519",
+                "code": "600519",
+                "market": "sh",
+                "name": "贵州茅台",
+                "security_type": "a_share",
+            }
+        ][:limit]
+
+
 class DesktopServiceTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.server = create_server("127.0.0.1", 0, "formal-token", 5)
+        self.server = create_server(
+            "127.0.0.1",
+            0,
+            "formal-token",
+            5,
+            search_service=_FakeSearchService(),
+        )
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.base_url = f"http://127.0.0.1:{self.server.server_port}"
@@ -70,6 +89,30 @@ class DesktopServiceTest(unittest.TestCase):
         self.assertFalse(payload["accepted"])
         self.assertEqual(payload["error"]["error_code"], "service_unavailable")
         self.assertEqual(payload["error"]["request_id"], "formal-command-1")
+
+    def test_security_search_returns_multiple_result_contract(self) -> None:
+        body = json.dumps(
+            {
+                "schema_version": "t0_app_v1",
+                "request_id": "search-1",
+                "command": "search_securities",
+                "session_id": None,
+                "payload": {"query": "gzmt", "limit": 20},
+            }
+        ).encode()
+        request = Request(
+            f"{self.base_url}/api/commands/search_securities",
+            data=body,
+            headers={
+                "Authorization": "Bearer formal-token",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with urlopen(request, timeout=1) as response:
+            payload = json.load(response)
+        self.assertTrue(payload["accepted"])
+        self.assertEqual(payload["data"]["securities"][0]["symbol"], "sh.600519")
 
     def test_non_object_command_body_is_rejected_without_handler_failure(self) -> None:
         request = Request(

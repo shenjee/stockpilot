@@ -14,13 +14,26 @@ import hashlib
 import json
 import os
 import select
+import sys
 import threading
+import traceback
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
+from pathlib import Path
+
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
+
+from packages.marketdata.repositories.securities_store import SecuritiesStore
+from packages.marketdata.runtime_paths import RuntimePaths
+from packages.marketdata.services import SecuritiesSearchService
 
 
 APP_COMMANDS = {
+    "search_securities",
     "select_security",
     "get_live_snapshot",
     "retry_live",
@@ -53,10 +66,12 @@ class DesktopServiceServer(ThreadingHTTPServer):
         server_address: tuple[str, int],
         token: str,
         service_generation: int,
+        search_service: SecuritiesSearchService | None = None,
     ) -> None:
         super().__init__(server_address, _Handler)
         self.token = token
         self.service_generation = service_generation
+        self.search_service = search_service
         self.shutdown_event = threading.Event()
         self._websocket_lock = threading.Lock()
         self._active_websockets = 0
@@ -143,7 +158,90 @@ class _Handler(BaseHTTPRequestHandler):
         request = self._read_request()
         if request is None:
             return
+        if command == "search_securities":
+            self._search_securities(request)
+            return
         self._service_unavailable(command, request)
+
+    def _search_securities(self, request: dict[str, Any]) -> None:
+        request_id = request.get("request_id", "missing-request-id")
+        payload = request.get("payload")
+        query = payload.get("query") if isinstance(payload, dict) else None
+        limit = payload.get("limit") if isinstance(payload, dict) else None
+        if (
+            not isinstance(query, str)
+            or not query.strip()
+            or isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= 50
+        ):
+            error = {
+                "error_code": "invalid_request",
+                "category": "validation",
+                "severity": "error",
+                "retryable": False,
+                "affected_capability": "symbol_selection",
+                "message": "证券搜索条件无效",
+                "request_id": request_id,
+                "details": {},
+            }
+            self._json(
+                HTTPStatus.BAD_REQUEST,
+                {
+                    "schema_version": "t0_app_v1",
+                    "request_id": request_id,
+                    "accepted": False,
+                    "operation_id": None,
+                    "data": None,
+                    "error": error,
+                },
+            )
+            return
+        try:
+            service = getattr(self.server, "search_service", None)
+            if service is None:
+                paths = RuntimePaths()
+                paths.ensure_dirs()
+                service = SecuritiesSearchService(
+                    SecuritiesStore(paths.db_dir / "market_data.sqlite")
+                )
+                self.server.search_service = service
+            securities = service.search(query, limit=limit)
+        except Exception:
+            traceback.print_exc()
+            error = {
+                "error_code": "security_search_failed",
+                "category": "data",
+                "severity": "error",
+                "retryable": True,
+                "affected_capability": "symbol_selection",
+                "message": "证券搜索暂时不可用",
+                "request_id": request_id,
+                "details": {},
+            }
+            self._json(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                {
+                    "schema_version": "t0_app_v1",
+                    "request_id": request_id,
+                    "accepted": False,
+                    "operation_id": None,
+                    "data": None,
+                    "error": error,
+                },
+            )
+            return
+        self._json(
+            HTTPStatus.OK,
+            {
+                "schema_version": "t0_app_v1",
+                "request_id": request_id,
+                "accepted": True,
+                "operation_id": None,
+                "data": {"securities": securities},
+                "error": None,
+            },
+        )
 
     def _read_request(self) -> dict[str, Any] | None:
         try:
@@ -265,12 +363,18 @@ def create_server(
     port: int,
     token: str,
     service_generation: int,
+    search_service: SecuritiesSearchService | None = None,
 ) -> DesktopServiceServer:
     if host != "127.0.0.1":
         raise ValueError("desktop service must bind to 127.0.0.1")
     if not token:
         raise ValueError("a per-launch token is required")
-    return DesktopServiceServer((host, port), token, service_generation)
+    return DesktopServiceServer(
+        (host, port),
+        token,
+        service_generation,
+        search_service=search_service,
+    )
 
 
 def main() -> None:

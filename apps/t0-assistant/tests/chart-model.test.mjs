@@ -60,6 +60,59 @@ test("logical ordering has one slot per real bar across overnight gaps", () => {
   );
 });
 
+test("5 minute layer preferences control MA, stroke, and pivot model data", () => {
+  const layered = structuredClone(fixture);
+  layered.indicators.five_minute.ma = {
+    ma5: [
+      {
+        timestamp: "2026-07-22 10:05:00",
+        value: 10.2,
+      },
+    ],
+    ma10: [],
+    ma20: [],
+    ma30: [],
+    ma60: [],
+  };
+  layered.chan_analysis = {
+    strokes: [
+      {
+        start_timestamp: "2026-07-22 09:55:00",
+        end_timestamp: "2026-07-22 10:05:00",
+        start_price: 10.1,
+        end_price: 10.3,
+        confirmed: true,
+      },
+    ],
+    pivot_zones: [
+      {
+        start_timestamp: "2026-07-22 09:55:00",
+        end_timestamp: "2026-07-22 10:05:00",
+        high: 10.25,
+        low: 10.15,
+      },
+    ],
+  };
+
+  const visible = createChartGroupModel(
+    layered,
+    ChartGroupKind.FIVE_MINUTE,
+    { ma5: true, strokes: true, pivot_zones: true },
+  );
+  const hidden = createChartGroupModel(
+    layered,
+    ChartGroupKind.FIVE_MINUTE,
+    { ma5: false, strokes: false, pivot_zones: false },
+  );
+
+  assert.equal(visible.movingAverages.ma5.length, 1);
+  assert.equal(visible.strokes.length, 1);
+  assert.equal(visible.pivotZones.length, 1);
+  assert.equal(hidden.movingAverages.ma5.length, 0);
+  assert.equal(hidden.strokes.length, 0);
+  assert.equal(hidden.pivotZones.length, 0);
+});
+
 test("intraday model uses backend VWAP/MACD and keeps both sides of lunch", () => {
   const model = createChartGroupModel(
     fixture,

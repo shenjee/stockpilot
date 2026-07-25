@@ -42,6 +42,33 @@ export function createFakeSafeBridge(fixture, { replayFixture = null } = {}) {
           error: null,
         };
       }
+      if (command === "search_securities") {
+        return {
+          schema_version: "t0_app_v1",
+          request_id: request.request_id,
+          accepted: true,
+          operation_id: null,
+          data: {
+            securities: [
+              {
+                symbol: "sh.600000",
+                code: "600000",
+                market: "sh",
+                name: "浦发银行",
+                security_type: "a_share",
+              },
+              {
+                symbol: "sh.600001",
+                code: "600001",
+                market: "sh",
+                name: "示例银行",
+                security_type: "a_share",
+              },
+            ],
+          },
+          error: null,
+        };
+      }
       if (command === "select_symbol") {
         return {
           schema_version: "t0_replay_v1",

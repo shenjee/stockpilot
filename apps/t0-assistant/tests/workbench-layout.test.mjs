@@ -2,9 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  applyWorkbenchPreferences,
   createWorkbenchState,
   selectWorkbenchLayout,
+  selectWorkbenchMode,
+  selectWorkbenchSecurity,
+  toggleWorkbenchLayer,
+  workbenchPreferences,
+  WorkbenchLayer,
   WorkbenchLayoutMode,
+  WorkbenchMode,
   workbenchLayoutMode,
 } from "../renderer/src/workbench-layout.mjs";
 
@@ -44,4 +51,52 @@ test("an unsupported layout cannot silently corrupt state", () => {
     () => selectWorkbenchLayout(createWorkbenchState(), "wide"),
     /Unsupported workbench layout/,
   );
+});
+
+test("mode and layout changes preserve layers, security, and chart view state", () => {
+  const security = {
+    symbol: "sh.600519",
+    code: "600519",
+    market: "sh",
+    name: "贵州茅台",
+    security_type: "a_share",
+  };
+  const range = { from: 10, to: 80 };
+  let state = {
+    ...selectWorkbenchSecurity(createWorkbenchState(), security),
+    chartViews: { fiveMinute: range, intraday: null },
+  };
+  state = toggleWorkbenchLayer(state, WorkbenchLayer.MA20);
+  state = selectWorkbenchMode(state, WorkbenchMode.REPLAY);
+  state = selectWorkbenchLayout(state, WorkbenchLayoutMode.HIDE_INTRADAY);
+
+  assert.equal(state.mode, "replay");
+  assert.equal(state.layers.ma20, true);
+  assert.deepEqual(state.security, security);
+  assert.strictEqual(state.chartViews.fiveMinute, range);
+});
+
+test("persisted preferences are copies and never own current React state", () => {
+  const state = toggleWorkbenchLayer(
+    createWorkbenchState(),
+    WorkbenchLayer.MA5,
+  );
+  const persistedCopy = workbenchPreferences(state);
+  const newerState = toggleWorkbenchLayer(state, WorkbenchLayer.MA10);
+
+  assert.equal(persistedCopy.layers.ma5, true);
+  assert.equal(persistedCopy.layers.ma10, false);
+  assert.equal(newerState.layers.ma10, true);
+  assert.notStrictEqual(persistedCopy.layers, newerState.layers);
+
+  const restored = applyWorkbenchPreferences(createWorkbenchState(), {
+    ...persistedCopy,
+    layout: { chart_split: "50_50", show_intraday: false },
+  });
+  assert.deepEqual(restored.layout, {
+    chartSplit: "50_50",
+    showIntraday: false,
+  });
+  assert.equal(restored.layers.ma5, true);
+  assert.equal(restored.mode, "live");
 });
