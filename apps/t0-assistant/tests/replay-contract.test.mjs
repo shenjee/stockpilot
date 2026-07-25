@@ -24,6 +24,7 @@ test("app v1 imports Replay v1 and keeps Replay commands out of its enum", async
   assert.equal(schema.$defs.replay_event_envelope.$ref.includes("t0-replay-v1.schema.json"), true);
   assert.equal(commands.includes("set_replay_speed"), false);
   assert.equal(commands.includes("select_security"), true);
+  assert.equal(commands.includes("search_securities"), true);
   assert.equal(commands.includes("create_trade"), true);
   assert.equal(commands.includes("save_preferences"), true);
 });

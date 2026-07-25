@@ -31,9 +31,31 @@ export interface WorkbenchChartSnapshot {
   market: {
     bars_1m: MarketBar[];
     bars_5m: MarketBar[];
+    daily_bars?: MarketBar[];
+    quote?: {
+      timestamp: string;
+      latest_price: number;
+      change_percent: number;
+      open: number;
+      high: number;
+      low: number;
+      previous_close: number;
+      volume: number;
+      amount: number;
+      volume_ratio: number | null;
+      order_imbalance: number | null;
+      turnover_rate: number | null;
+    } | null;
   };
   indicators: {
     five_minute: {
+      ma?: {
+        ma5: IndicatorPoint[];
+        ma10: IndicatorPoint[];
+        ma20: IndicatorPoint[];
+        ma30: IndicatorPoint[];
+        ma60: IndicatorPoint[];
+      };
       volume: {
         values: IndicatorPoint[];
         ma5: IndicatorPoint[];
@@ -47,6 +69,36 @@ export interface WorkbenchChartSnapshot {
       macd: MacdContract;
     };
   };
+  chan_analysis?: {
+    strokes?: Array<{
+      start_timestamp: string;
+      end_timestamp: string;
+      start_price: number;
+      end_price: number;
+      confirmed?: boolean;
+    }>;
+    pivot_zones?: Array<{
+      start_timestamp: string;
+      end_timestamp: string;
+      high: number;
+      low: number;
+      active?: boolean;
+    }>;
+  };
+}
+
+export interface PriceLineOverlay {
+  start: { timestamp: string; value: number };
+  end: { timestamp: string; value: number };
+  color?: string;
+  dashed?: boolean;
+}
+
+export interface PriceBoxOverlay {
+  start_timestamp: string;
+  end_timestamp: string;
+  high: number;
+  low: number;
 }
 
 export interface ChartGroupModel {
@@ -66,6 +118,15 @@ export interface ChartGroupModel {
     | { timestamp: string; value: number }
   >;
   vwap: IndicatorPoint[];
+  movingAverages: {
+    ma5: IndicatorPoint[];
+    ma10: IndicatorPoint[];
+    ma20: IndicatorPoint[];
+    ma30: IndicatorPoint[];
+    ma60: IndicatorPoint[];
+  };
+  strokes: PriceLineOverlay[];
+  pivotZones: PriceBoxOverlay[];
   volume: IndicatorPoint[];
   volumeMa5: IndicatorPoint[];
   volumeMa10: IndicatorPoint[];
@@ -89,4 +150,13 @@ export function formatMarketTick(
 export function createChartGroupModel(
   snapshot: WorkbenchChartSnapshot,
   kind: ChartGroupKindValue,
+  layers?: {
+    ma5?: boolean;
+    ma10?: boolean;
+    ma20?: boolean;
+    ma30?: boolean;
+    ma60?: boolean;
+    strokes?: boolean;
+    pivot_zones?: boolean;
+  },
 ): ChartGroupModel;

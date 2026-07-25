@@ -1,4 +1,5 @@
 const APP_COMMANDS = Object.freeze({
+  searchSecurities: "search_securities",
   selectSecurity: "select_security",
   getLiveSnapshot: "get_live_snapshot",
   retryLive: "retry_live",
@@ -30,6 +31,7 @@ const SUBSCRIPTIONS = Object.freeze({
 
 export const SAFE_BRIDGE_METHODS = Object.freeze([
   "getServiceStatus",
+  "retryService",
   ...Object.keys(APP_COMMANDS),
   ...Object.keys(REPLAY_COMMANDS),
   ...Object.keys(SUBSCRIPTIONS),
@@ -42,6 +44,7 @@ export function buildSafeBridge({ invoke, subscribe }) {
 
   const bridge = {
     getServiceStatus: () => invoke("get_service_status", undefined),
+    retryService: () => invoke("retry_service", undefined),
   };
   for (const [method, command] of Object.entries({...APP_COMMANDS, ...REPLAY_COMMANDS})) {
     bridge[method] = (request) => invoke(command, request);

@@ -80,6 +80,13 @@ class ContractTest(unittest.TestCase):
         requests = [
             {
                 "schema_version": "t0_app_v1",
+                "request_id": "req-search",
+                "command": "search_securities",
+                "session_id": None,
+                "payload": {"query": "gzmt", "limit": 20},
+            },
+            {
+                "schema_version": "t0_app_v1",
                 "request_id": "req-select",
                 "command": "select_security",
                 "session_id": None,

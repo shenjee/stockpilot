@@ -26,6 +26,15 @@
         "symbol": {"type": "string", "pattern": "^(sh|sz)\\.[0-9]{6}$"}
       }
     },
+    "security_search_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["query", "limit"],
+      "properties": {
+        "query": {"type": "string", "minLength": 1},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 50}
+      }
+    },
     "trade_scope": {
       "enum": ["real", "simulated"]
     },
@@ -162,6 +171,7 @@
         "request_id": {"type": "string", "minLength": 1},
         "command": {
           "enum": [
+            "search_securities",
             "select_security",
             "get_live_snapshot",
             "retry_live",
@@ -177,6 +187,7 @@
         "payload": {"type": "object"}
       },
       "allOf": [
+        {"if": {"properties": {"command": {"const": "search_securities"}}}, "then": {"properties": {"session_id": {"type": "null"}, "payload": {"$ref": "#/$defs/security_search_payload"}}}},
         {"if": {"properties": {"command": {"const": "select_security"}}}, "then": {"properties": {"payload": {"$ref": "#/$defs/security_selection_payload"}}}},
         {"if": {"properties": {"command": {"enum": ["get_live_snapshot", "retry_live"]}}}, "then": {"properties": {"session_id": {"type": "string"}, "payload": {"$ref": "#/$defs/empty_payload"}}}},
         {"if": {"properties": {"command": {"const": "list_trades"}}}, "then": {"properties": {"payload": {"$ref": "#/$defs/list_trades_payload"}}}},

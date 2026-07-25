@@ -17,6 +17,8 @@ declare global {
 
   interface StockPilotBridge {
     getServiceStatus(): Promise<ServiceStatus>;
+    retryService(): Promise<ServiceStatus>;
+    searchSecurities(request: unknown): Promise<unknown>;
     onServiceStatus(listener: (status: ServiceStatus) => void): () => void;
     selectSecurity(request: unknown): Promise<unknown>;
     getLiveSnapshot(request: unknown): Promise<unknown>;

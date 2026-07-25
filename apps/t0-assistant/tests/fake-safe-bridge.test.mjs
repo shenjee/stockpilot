@@ -47,6 +47,30 @@ test("Fake Safe Bridge serves the shared full snapshot and records snake_case co
   });
 });
 
+test("Safe Bridge exposes a lifecycle-only manual service retry", async () => {
+  const { bridge, controller } = createFakeSafeBridge(fixture);
+  await bridge.retryService();
+  assert.deepEqual(controller.calls[0], {
+    command: "retry_service",
+    request: undefined,
+  });
+});
+
+test("Safe Bridge returns multiple standard securities for fuzzy search", async () => {
+  const { bridge, controller } = createFakeSafeBridge(fixture);
+  const response = await bridge.searchSecurities({
+    schema_version: "t0_app_v1",
+    request_id: "search-1",
+    command: "search_securities",
+    session_id: null,
+    payload: { query: "银行", limit: 20 },
+  });
+
+  assert.equal(response.data.securities.length, 2);
+  assert.equal(response.data.securities[0].symbol, "sh.600000");
+  assert.equal(controller.calls[0].command, "search_securities");
+});
+
 test("Fake Safe Bridge deterministically delivers increments, out-of-order events, and errors", () => {
   const { bridge, controller } = createFakeSafeBridge(fixture);
   const received = [];

@@ -2,6 +2,7 @@ import {
   ColorType,
   CrosshairMode,
   createChart,
+  LineStyle,
   type CandlestickData,
   type HistogramData,
   type IChartApi,
@@ -41,6 +42,13 @@ const GREEN = "#26a69a";
 const BLUE = "#4f8cff";
 const AMBER = "#f6b94a";
 const MUTED = "#8090a8";
+const MA_COLORS = {
+  ma5: "#f6d365",
+  ma10: "#7dd3fc",
+  ma20: "#c4b5fd",
+  ma30: "#fb923c",
+  ma60: "#f472b6",
+} as const;
 
 export class SynchronizedChartGroup {
   private readonly containers: ChartGroupContainers;
@@ -53,6 +61,9 @@ export class SynchronizedChartGroup {
     | ISeriesApi<"Candlestick">
     | ISeriesApi<"Line">;
   private readonly vwapSeries: ISeriesApi<"Line"> | null;
+  private readonly movingAverageSeries: Partial<
+    Record<keyof typeof MA_COLORS, ISeriesApi<"Line">>
+  > = {};
   private readonly volumeSeries: ISeriesApi<"Histogram">;
   private readonly volumeMa5Series: ISeriesApi<"Line"> | null;
   private readonly volumeMa10Series: ISeriesApi<"Line"> | null;
@@ -78,6 +89,7 @@ export class SynchronizedChartGroup {
   private volumeValues = new Map<number, number>();
   private macdValues = new Map<number, number>();
   private macdSeriesByTime = new Map<number, NumericSeries>();
+  private structureSeries: ISeriesApi<"Line">[] = [];
 
   constructor(options: ChartGroupOptions) {
     this.containers = options.containers;
@@ -99,6 +111,16 @@ export class SynchronizedChartGroup {
         priceLineVisible: false,
       });
       this.vwapSeries = null;
+      for (const [period, color] of Object.entries(MA_COLORS) as Array<
+        [keyof typeof MA_COLORS, string]
+      >) {
+        this.movingAverageSeries[period] = this.priceChart.addLineSeries({
+          color,
+          lineWidth: 1,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        });
+      }
       this.volumeMa5Series = this.volumeChart.addLineSeries({
         color: AMBER,
         lineWidth: 1,
@@ -282,6 +304,14 @@ export class SynchronizedChartGroup {
         },
       );
       (this.priceSeries as ISeriesApi<"Candlestick">).setData(candleData);
+      for (const period of Object.keys(MA_COLORS) as Array<
+        keyof typeof MA_COLORS
+      >) {
+        this.movingAverageSeries[period]?.setData(
+          this.toLineData(this.model.movingAverages[period], time),
+        );
+      }
+      this.setStructureData(time);
     } else {
       const priceData: LineData<Time>[] = this.model.price.flatMap((point) =>
         "value" in point
@@ -334,6 +364,48 @@ export class SynchronizedChartGroup {
             ],
       ),
     );
+  }
+
+  private setStructureData(
+    time: (timestamp: string) => UTCTimestamp,
+  ) {
+    for (const series of this.structureSeries) {
+      this.priceChart.removeSeries(series);
+    }
+    this.structureSeries = [];
+    if (!this.model) return;
+
+    for (const stroke of this.model.strokes) {
+      const series = this.priceChart.addLineSeries({
+        color: stroke.color ?? BLUE,
+        lineWidth: 2,
+        lineStyle: stroke.dashed ? LineStyle.Dashed : LineStyle.Solid,
+        priceLineVisible: false,
+        lastValueVisible: false,
+      });
+      series.setData([
+        { time: time(stroke.start.timestamp), value: stroke.start.value },
+        { time: time(stroke.end.timestamp), value: stroke.end.value },
+      ]);
+      this.structureSeries.push(series);
+    }
+
+    for (const zone of this.model.pivotZones) {
+      for (const value of [zone.high, zone.low]) {
+        const series = this.priceChart.addLineSeries({
+          color: "#f59e0b",
+          lineWidth: 1,
+          lineStyle: LineStyle.Dashed,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        });
+        series.setData([
+          { time: time(zone.start_timestamp), value },
+          { time: time(zone.end_timestamp), value },
+        ]);
+        this.structureSeries.push(series);
+      }
+    }
   }
 
   private toLineData(

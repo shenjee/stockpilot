@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   applyLiveChartEvent,
   applyWorkbenchSnapshot,
+  beginChartSession,
   createChartProjection,
 } from "../renderer/src/charts/chart-projection.mjs";
 
@@ -18,7 +19,7 @@ const fixture = JSON.parse(
   ),
 );
 const baseline = fixture.initial_snapshot_event.payload;
-const [marketUpdate, indicatorUpdate] = fixture.incremental_events;
+const [marketUpdate, indicatorUpdate, chanUpdate] = fixture.incremental_events;
 const baselineProjection = () =>
   createChartProjection(baseline, fixture.initial_snapshot_event);
 
@@ -124,6 +125,66 @@ test("a stale or mismatched full snapshot cannot replace the current baseline", 
 
   assert.strictEqual(stale, projection);
   assert.strictEqual(wrongGeneration, projection);
+});
+
+test("starting a new security selection retires the previous Session identity", () => {
+  const empty = structuredClone(baseline);
+  delete empty.session;
+  empty.market.bars_1m = [];
+  empty.market.bars_5m = [];
+  const selecting = beginChartSession(
+    empty,
+    fixture.service_generation,
+  );
+  const replacement = structuredClone(baseline);
+  replacement.session.session_id = "live-fixture-2";
+  replacement.session.symbol = "sz.000001";
+  replacement.session.revision = 1;
+
+  const selected = applyWorkbenchSnapshot(selecting, replacement, {
+    service_generation: fixture.service_generation,
+    session_id: "live-fixture-2",
+    revision: 1,
+  });
+
+  assert.equal(selecting.sessionId, null);
+  assert.equal(selected.sessionId, "live-fixture-2");
+  assert.equal(selected.snapshot.session.symbol, "sz.000001");
+});
+
+test("indicator, Chan, quote, and daily-bar increments update sidebar layers", () => {
+  const indicators = structuredClone(indicatorUpdate);
+  indicators.payload.five_minute.ma.ma5[0] = {
+    timestamp: "2026-07-22 09:35:00",
+    value: 10.08,
+  };
+  const afterMarket = applyLiveChartEvent(
+    baselineProjection(),
+    marketUpdate,
+  );
+  const afterIndicators = applyLiveChartEvent(
+    afterMarket,
+    indicators,
+  );
+  const afterChan = applyLiveChartEvent(afterIndicators, chanUpdate);
+  const quoteUpdate = {
+    ...marketUpdate,
+    revision: 5,
+    event_type: "market_update",
+    payload: {
+      target: "quote",
+      bars: [],
+      quote: { ...baseline.market.quote, latest_price: 10.2 },
+    },
+  };
+  const afterQuote = applyLiveChartEvent(afterChan, quoteUpdate);
+
+  assert.equal(
+    afterIndicators.snapshot.indicators.five_minute.ma.ma5[0].value,
+    10.08,
+  );
+  assert.strictEqual(afterChan.snapshot.chan_analysis, chanUpdate.payload);
+  assert.equal(afterQuote.snapshot.market.quote.latest_price, 10.2);
 });
 
 test("non-chart events advance the shared revision without changing chart data", () => {
