@@ -27,7 +27,24 @@ export interface MacdContract {
 
 export interface WorkbenchChartSnapshot {
   timezone: "Asia/Shanghai";
-  session?: { session_id: string; revision?: number };
+  session?: {
+    session_id: string;
+    session_type?: "live" | "replay";
+    symbol?: string;
+    trade_date?: string;
+    state?: string;
+    revision?: number;
+  };
+  replay?: {
+    granularity: "one_minute" | "five_minute";
+    current_time: string;
+    next_bar_time: string | null;
+    start_time: string;
+    end_time: string;
+    playing: boolean;
+    playback_speed: 1 | 2 | 5 | 10;
+    step_seconds: 60 | 300;
+  };
   market: {
     bars_1m: MarketBar[];
     bars_5m: MarketBar[];

@@ -43,6 +43,16 @@ import {
   type ApplicationError,
 } from "./workbench-presenter.mjs";
 import { createSerialTaskQueue } from "./serial-task-queue.mjs";
+import {
+  REPLAY_SPEEDS,
+  deriveReplayControls,
+  marketClockLabel,
+  marketTimeFromValue,
+  replayFactsFromSnapshot,
+  replayOperationMatches,
+  replaySessionMatches,
+  type ReplayFacts,
+} from "./replay-controls.mjs";
 
 const initialStatus: ServiceStatus = {
   state: "starting",
@@ -120,8 +130,20 @@ export function App() {
   const [preferencesHydrated, setPreferencesHydrated] = useState(false);
   const [preferenceHydrationAttempt, setPreferenceHydrationAttempt] =
     useState(0);
+  const [replayDate, setReplayDate] = useState("");
+  const [replaySnapshot, setReplaySnapshot] =
+    useState<WorkbenchChartSnapshot | null>(null);
+  const [replayLoading, setReplayLoading] = useState(false);
+  const [replayBusy, setReplayBusy] = useState(false);
+  const [replayPlaybackPending, setReplayPlaybackPending] = useState(false);
   const rebaselineRequest = useRef<string | null>(null);
   const activeOperations = useRef(new Map<string, ActiveOperation>());
+  const modeRef = useRef(workbench.mode);
+  const liveProjection = useRef(projection);
+  const serviceGeneration = useRef(initialStatus.service_generation);
+  const activeReplaySession = useRef<string | null>(null);
+  const activeReplayLoadOperation = useRef<string | null>(null);
+  const activeReplayCursorOperation = useRef<string | null>(null);
   const searchRequests = useRef(createLatestRequestTracker());
   const securitySelectionSequence = useRef(0);
   const preferenceHydrationInFlight = useRef(false);
@@ -137,6 +159,14 @@ export function App() {
     }),
   );
   const snapshot = projection.snapshot;
+  const replayFacts = useMemo(
+    () => replayFactsFromSnapshot(replaySnapshot),
+    [replaySnapshot],
+  );
+
+  useEffect(() => {
+    modeRef.current = workbench.mode;
+  }, [workbench.mode]);
 
   useEffect(() => {
     if (!window.stockpilot) {
@@ -149,7 +179,22 @@ export function App() {
       return;
     }
     const updateServiceStatus = (next: ServiceStatus) => {
+      const generationChanged =
+        serviceGeneration.current > 0 &&
+        next.service_generation > 0 &&
+        serviceGeneration.current !== next.service_generation;
+      serviceGeneration.current = next.service_generation;
       setStatus(next);
+      if (generationChanged) {
+        activeReplaySession.current = null;
+        activeReplayLoadOperation.current = null;
+        activeReplayCursorOperation.current = null;
+        setReplaySnapshot(null);
+        setReplayDate("");
+        setReplayLoading(false);
+        setReplayBusy(false);
+        setReplayPlaybackPending(false);
+      }
       if (next.state === "ready" || next.state === "connected") {
         setBackgroundError((current) =>
           current?.affected_capability === "service" ? null : current,
@@ -158,17 +203,29 @@ export function App() {
         setBackgroundError(serviceStatusError(next));
       }
       if (next.service_generation <= 0) return;
-      setProjection((current) =>
-        current.serviceGeneration !== null &&
-        current.serviceGeneration !== next.service_generation
-          ? (() => {
-              activeOperations.current.clear();
-              return createChartProjection(emptyChartSnapshot, {
-                service_generation: next.service_generation,
-              });
-            })()
-          : current,
-      );
+      if (generationChanged) {
+        activeOperations.current.clear();
+        const replacement = createChartProjection(emptyChartSnapshot, {
+          service_generation: next.service_generation,
+        });
+        liveProjection.current = replacement;
+        setProjection(replacement);
+        return;
+      }
+      setProjection((current) => {
+        if (
+          current.serviceGeneration === null ||
+          current.serviceGeneration === next.service_generation
+        ) {
+          return current;
+        }
+        activeOperations.current.clear();
+        const replacement = createChartProjection(emptyChartSnapshot, {
+          service_generation: next.service_generation,
+        });
+        liveProjection.current = replacement;
+        return replacement;
+      });
     };
     void window.stockpilot.getServiceStatus().then(updateServiceStatus);
     const stopStatus = window.stockpilot.onServiceStatus(updateServiceStatus);
@@ -240,6 +297,17 @@ export function App() {
     return window.stockpilot.onAppEvent((event) => {
       const envelope = eventEnvelope(event);
       if (!envelope) return;
+      const applyLiveEvent = () => {
+        if (!isChartAppEvent(event)) return;
+        if (modeRef.current === WorkbenchMode.REPLAY) {
+          liveProjection.current = applyLiveChartEvent(
+            liveProjection.current,
+            event,
+          );
+        } else {
+          setProjection((current) => applyLiveChartEvent(current, event));
+        }
+      };
       if (envelope.event_type === "live_session_status") {
         const state = (envelope.payload as { state?: unknown })?.state;
         if (envelope.operation_id && envelope.session_id) {
@@ -260,9 +328,7 @@ export function App() {
           setLoading(false);
           setBackgroundError(null);
         }
-        if (isChartAppEvent(event)) {
-          setProjection((current) => applyLiveChartEvent(current, event));
-        }
+        applyLiveEvent();
         return;
       }
       if (envelope.event_type === "operation_failed") {
@@ -287,37 +353,163 @@ export function App() {
         } else {
           setBackgroundError(error);
         }
-        if (isChartAppEvent(event)) {
-          setProjection((current) => applyLiveChartEvent(current, event));
-        }
+        applyLiveEvent();
         return;
       }
       if (envelope.event_type === "preferences_changed") {
         // A persistence acknowledgement never replaces React's newer runtime UI.
-        if (isChartAppEvent(event)) {
-          setProjection((current) => applyLiveChartEvent(current, event));
-        }
+        applyLiveEvent();
         return;
       }
       const baseline = chartProjectionFromEvent(event);
       if (baseline) {
         rebaselineRequest.current = null;
-        setProjection((current) =>
-          applyWorkbenchSnapshot(
-            current,
+        if (modeRef.current === WorkbenchMode.REPLAY) {
+          liveProjection.current = applyWorkbenchSnapshot(
+            liveProjection.current,
             baseline.snapshot,
             projectionIdentity(baseline),
-          ),
-        );
+          );
+        } else {
+          setProjection((current) =>
+            applyWorkbenchSnapshot(
+              current,
+              baseline.snapshot,
+              projectionIdentity(baseline),
+            ),
+          );
+        }
         activeOperations.current.clear();
         setLoading(false);
         setBackgroundError(null);
         return;
       }
-      if (isChartAppEvent(event)) {
-        setProjection((current) => applyLiveChartEvent(current, event));
+      applyLiveEvent();
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!window.stockpilot) return;
+    const stopSnapshot = window.stockpilot.onReplaySnapshot((candidate) => {
+      if (modeRef.current !== WorkbenchMode.REPLAY) return;
+      if (!isCompleteWorkbenchSnapshot(candidate)) return;
+      const facts = replayFactsFromSnapshot(candidate);
+      if (!facts) return;
+      if (
+        !replaySessionMatches(
+          activeReplaySession.current,
+          facts.sessionId,
+        )
+      ) {
+        return;
+      }
+      setReplaySnapshot(candidate);
+      if (modeRef.current === WorkbenchMode.REPLAY) {
+        setProjection(
+          createChartProjection(candidate, {
+            service_generation: serviceGeneration.current,
+            session_id: facts.sessionId,
+            revision: candidate.session?.revision,
+          }),
+        );
       }
     });
+    const stopEvent = window.stockpilot.onReplayEvent((event) => {
+      if (modeRef.current !== WorkbenchMode.REPLAY) return;
+      const envelope = replayEventEnvelope(event);
+      if (!envelope) return;
+      if (
+        envelope.service_generation !== serviceGeneration.current ||
+        !replaySessionMatches(
+          activeReplaySession.current,
+          envelope.session_id,
+        )
+      ) {
+        return;
+      }
+      if (envelope.event_type === "operation_failed") {
+        const error = applicationErrorFrom(envelope.payload);
+        if (error) setBackgroundError(error);
+        if (
+          replayOperationMatches(
+            activeReplayLoadOperation.current,
+            envelope.operation_id,
+          )
+        ) {
+          activeReplayLoadOperation.current = null;
+          activeReplaySession.current = null;
+          activeReplayCursorOperation.current = null;
+          setReplayLoading(false);
+          setReplayBusy(false);
+        }
+        if (
+          replayOperationMatches(
+            activeReplayCursorOperation.current,
+            envelope.operation_id,
+          )
+        ) {
+          activeReplayCursorOperation.current = null;
+          setReplayBusy(false);
+        }
+        return;
+      }
+      if (envelope.event_type === "workbench_snapshot") {
+        if (
+          replayOperationMatches(
+            activeReplayLoadOperation.current,
+            envelope.operation_id,
+          )
+        ) {
+          activeReplayLoadOperation.current = null;
+          setReplayLoading(false);
+        }
+        if (
+          replayOperationMatches(
+            activeReplayCursorOperation.current,
+            envelope.operation_id,
+          )
+        ) {
+          activeReplayCursorOperation.current = null;
+          setReplayBusy(false);
+        }
+        return;
+      }
+      if (envelope.event_type !== "session_status") return;
+      const payload = envelope.payload as {
+        state?: unknown;
+        playback_speed?: unknown;
+      };
+      setReplaySnapshot((current) => {
+        if (!current?.session || !current.replay) return current;
+        const nextState =
+          typeof payload.state === "string"
+            ? payload.state
+            : current.session.state;
+        const nextSpeed = REPLAY_SPEEDS.includes(
+          payload.playback_speed as 1 | 2 | 5 | 10,
+        )
+          ? (payload.playback_speed as 1 | 2 | 5 | 10)
+          : current.replay.playback_speed;
+        return {
+          ...current,
+          session: {
+            ...current.session,
+            state: nextState,
+            revision:
+              envelope.revision ?? current.session.revision,
+          },
+          replay: {
+            ...current.replay,
+            playing: nextState === "playing",
+            playback_speed: nextSpeed,
+          },
+        };
+      });
+    });
+    return () => {
+      stopSnapshot();
+      stopEvent();
+    };
   }, []);
 
   useEffect(() => {
@@ -577,6 +769,155 @@ export function App() {
     }
   }
 
+  async function beginReplay() {
+    if (!window.stockpilot || !workbench.security || !replayDate) return;
+    setReplayLoading(true);
+    setReplayBusy(false);
+    setBackgroundError(null);
+    try {
+      const response = await window.stockpilot.beginReplay({
+        schema_version: "t0_replay_v1",
+        request_id: requestId("begin-replay"),
+        symbol: workbench.security.symbol,
+        trade_date: replayDate,
+      });
+      const error = applicationErrorFrom(response);
+      if (error) throw error;
+      const sessionId = responseSessionId(response);
+      if (!sessionId) throw new TypeError("回放响应缺少 session_id");
+      activeReplaySession.current = sessionId;
+      activeReplayLoadOperation.current = responseOperationId(response);
+      if (!activeReplayLoadOperation.current) setReplayLoading(false);
+    } catch (error) {
+      activeReplaySession.current = null;
+      activeReplayLoadOperation.current = null;
+      setReplayLoading(false);
+      setBackgroundError(clientError(error, "replay"));
+    }
+  }
+
+  async function setReplayPlayback(playing: boolean) {
+    if (!window.stockpilot || !replayFacts) return;
+    setReplayPlaybackPending(true);
+    try {
+      const response = await window.stockpilot.setReplayPlayback({
+        schema_version: "t0_replay_v1",
+        request_id: requestId(playing ? "play-replay" : "pause-replay"),
+        session_id: replayFacts.sessionId,
+        playing,
+      });
+      const error = applicationErrorFrom(response);
+      if (error) throw error;
+    } catch (error) {
+      setBackgroundError(clientError(error, "replay"));
+    } finally {
+      setReplayPlaybackPending(false);
+    }
+  }
+
+  async function setReplaySpeed(playbackSpeed: number) {
+    if (
+      !window.stockpilot ||
+      !replayFacts ||
+      !REPLAY_SPEEDS.includes(playbackSpeed as 1 | 2 | 5 | 10)
+    ) {
+      return;
+    }
+    try {
+      const response = await window.stockpilot.setReplaySpeed({
+        schema_version: "t0_replay_v1",
+        request_id: requestId("set-replay-speed"),
+        session_id: replayFacts.sessionId,
+        playback_speed: playbackSpeed,
+      });
+      const error = applicationErrorFrom(response);
+      if (error) throw error;
+    } catch (error) {
+      setBackgroundError(clientError(error, "replay"));
+    }
+  }
+
+  async function stepReplay() {
+    if (!window.stockpilot || !replayFacts) return;
+    setReplayBusy(true);
+    try {
+      const response = await window.stockpilot.stepReplay({
+        schema_version: "t0_replay_v1",
+        request_id: requestId("step-replay"),
+        session_id: replayFacts.sessionId,
+      });
+      const error = applicationErrorFrom(response);
+      if (error) throw error;
+      activeReplayCursorOperation.current = responseOperationId(response);
+      if (!activeReplayCursorOperation.current) setReplayBusy(false);
+    } catch (error) {
+      activeReplayCursorOperation.current = null;
+      setReplayBusy(false);
+      setBackgroundError(clientError(error, "replay"));
+    }
+  }
+
+  async function seekReplay(targetTime: string) {
+    if (!window.stockpilot || !replayFacts) return;
+    setReplayBusy(true);
+    try {
+      const response = await window.stockpilot.seekReplay({
+        schema_version: "t0_replay_v1",
+        request_id: requestId("seek-replay"),
+        session_id: replayFacts.sessionId,
+        target_time: targetTime,
+      });
+      const error = applicationErrorFrom(response);
+      if (error) throw error;
+      activeReplayCursorOperation.current = responseOperationId(response);
+      if (!activeReplayCursorOperation.current) setReplayBusy(false);
+    } catch (error) {
+      activeReplayCursorOperation.current = null;
+      setReplayBusy(false);
+      setBackgroundError(clientError(error, "replay"));
+    }
+  }
+
+  function selectMode(mode: "live" | "replay") {
+    if (mode === workbench.mode) return;
+    modeRef.current = mode;
+    if (mode === WorkbenchMode.REPLAY) {
+      liveProjection.current = projection;
+      updateWorkbenchFromUser((current) =>
+        selectWorkbenchMode(current, WorkbenchMode.REPLAY),
+      );
+      return;
+    }
+    const sessionId = activeReplaySession.current;
+    activeReplaySession.current = null;
+    activeReplayLoadOperation.current = null;
+    activeReplayCursorOperation.current = null;
+    updateWorkbenchFromUser((current) =>
+      selectWorkbenchMode(current, WorkbenchMode.LIVE),
+    );
+    setProjection(liveProjection.current);
+    setReplaySnapshot(null);
+    setReplayDate("");
+    setReplayLoading(false);
+    setReplayBusy(false);
+    setReplayPlaybackPending(false);
+    if (window.stockpilot && sessionId) {
+      void window.stockpilot
+        .endReplay({
+          schema_version: "t0_replay_v1",
+          request_id: requestId("end-replay"),
+          session_id: sessionId,
+        })
+        .then((response) => {
+          const error = applicationErrorFrom(response);
+          if (error) setBackgroundError(error);
+        })
+        .catch((error) =>
+          setBackgroundError(clientError(error, "replay")),
+        );
+    }
+  }
+
   const fiveMinuteModel = useMemo(
     () =>
       createChartGroupModel(
@@ -595,8 +936,20 @@ export function App() {
   const showEmpty = !showFixture && !workbench.security && !loading;
   const dailyBars = latestDailyBars(snapshot);
 
+  const replayMode = workbench.mode === WorkbenchMode.REPLAY;
+  const fiveMinuteFallback =
+    replayMode && replayFacts?.granularity === "five_minute";
+
   return (
-    <main className={`shell${backgroundError ? " has-feedback" : ""}`}>
+    <main
+      className={[
+        "shell",
+        backgroundError ? "has-feedback" : "",
+        replayMode ? "replay-mode" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
       <WorkbenchToolbar
         query={query}
         workbench={workbench}
@@ -605,11 +958,7 @@ export function App() {
         suggestions={suggestions}
         onQuery={setQuery}
         onSelect={(security) => void performSecuritySelection(security)}
-        onMode={(mode) =>
-          updateWorkbenchFromUser((current) =>
-            selectWorkbenchMode(current, mode),
-          )
-        }
+        onMode={selectMode}
       />
 
       {backgroundError && (
@@ -670,14 +1019,20 @@ export function App() {
           aria-label="分时图表组"
           hidden={!workbench.layout.showIntraday}
         >
-          <ChartGroup
-            model={intradayModel}
-            priceHeader={
-              <div className="panel-heading">
-                <h2>分时</h2>
-              </div>
-            }
-          />
+          {fiveMinuteFallback ? (
+            <div className="intraday-unavailable" role="status">
+              无 1 分钟数据
+            </div>
+          ) : (
+            <ChartGroup
+              model={intradayModel}
+              priceHeader={
+                <div className="panel-heading">
+                  <h2>分时</h2>
+                </div>
+              }
+            />
+          )}
         </article>
 
         <MarketSidebar
@@ -699,6 +1054,23 @@ export function App() {
           </div>
         )}
       </section>
+
+      {replayMode && (
+        <ReplayControls
+          tradeDate={replayDate}
+          securitySelected={Boolean(workbench.security)}
+          loading={replayLoading}
+          busy={replayBusy}
+          playbackPending={replayPlaybackPending}
+          facts={replayFacts}
+          onTradeDate={setReplayDate}
+          onBegin={() => void beginReplay()}
+          onPlayback={(playing) => void setReplayPlayback(playing)}
+          onStep={() => void stepReplay()}
+          onSpeed={(speed) => void setReplaySpeed(speed)}
+          onSeek={(targetTime) => void seekReplay(targetTime)}
+        />
+      )}
 
       {activeFailure && (
         <div className="dialog-backdrop" role="presentation">
@@ -736,6 +1108,159 @@ export function App() {
     userModifiedPreferences.current = true;
     setWorkbench(update);
   }
+}
+
+function ReplayControls({
+  tradeDate,
+  securitySelected,
+  loading,
+  busy,
+  playbackPending,
+  facts,
+  onTradeDate,
+  onBegin,
+  onPlayback,
+  onStep,
+  onSpeed,
+  onSeek,
+}: {
+  tradeDate: string;
+  securitySelected: boolean;
+  loading: boolean;
+  busy: boolean;
+  playbackPending: boolean;
+  facts: ReplayFacts | null;
+  onTradeDate: (value: string) => void;
+  onBegin: () => void;
+  onPlayback: (playing: boolean) => void;
+  onStep: () => void;
+  onSpeed: (speed: number) => void;
+  onSeek: (targetTime: string) => void;
+}) {
+  const controls = deriveReplayControls(facts, { busy });
+  const [draftProgress, setDraftProgress] = useState<number | null>(null);
+  const dragging = useRef(false);
+  const progress = draftProgress ?? facts?.currentValue ?? 0;
+  const shownTime = facts
+    ? marketClockLabel(marketTimeFromValue(progress))
+    : "--:--";
+
+  useEffect(() => {
+    setDraftProgress(null);
+  }, [facts?.currentValue, facts?.sessionId]);
+
+  if (!facts) {
+    return (
+      <section className="replay-controls replay-setup" aria-label="回放控制面板">
+        <label htmlFor="replay-date">回放日期</label>
+        <input
+          id="replay-date"
+          type="date"
+          value={tradeDate}
+          max={localDateToday()}
+          disabled={loading}
+          onChange={(event) => onTradeDate(event.target.value)}
+        />
+        <button
+          type="button"
+          className="replay-primary"
+          disabled={!securitySelected || !tradeDate || loading}
+          onClick={onBegin}
+        >
+          {loading ? "正在准备回放…" : "开始回放"}
+        </button>
+        {!securitySelected && (
+          <span className="replay-hint">请先选择股票</span>
+        )}
+      </section>
+    );
+  }
+
+  function commitSeek() {
+    dragging.current = false;
+    if (draftProgress === null || !controls.canSeek) return;
+    onSeek(marketTimeFromValue(draftProgress));
+  }
+
+  return (
+    <section
+      className="replay-controls replay-active"
+      aria-label="回放控制面板"
+      aria-busy={busy}
+    >
+      <button
+        type="button"
+        className="replay-playback"
+        aria-label={controls.playing ? "暂停回放" : "播放回放"}
+        disabled={!controls.canTogglePlayback || playbackPending}
+        onClick={() => onPlayback(!controls.playing)}
+      >
+        <span aria-hidden="true">{controls.playing ? "Ⅱ" : "▶"}</span>
+        {controls.playing ? "暂停" : "播放"}
+      </button>
+      <span className="replay-boundary">
+        {marketClockLabel(facts.startTime)}
+      </span>
+      <div className="replay-progress">
+        <output
+          style={{
+            left: `${progressPercent(
+              progress,
+              facts.startValue,
+              facts.endValue,
+            )}%`,
+          }}
+        >
+          {shownTime}
+        </output>
+        <input
+          type="range"
+          aria-label="回放进度"
+          min={facts.startValue}
+          max={facts.endValue}
+          step={facts.granularity === "five_minute" ? 300_000 : 60_000}
+          value={progress}
+          disabled={!controls.canSeek}
+          onPointerDown={() => {
+            dragging.current = true;
+            if (controls.playing) onPlayback(false);
+          }}
+          onChange={(event) => setDraftProgress(Number(event.target.value))}
+          onPointerUp={commitSeek}
+          onKeyUp={commitSeek}
+          onBlur={() => {
+            if (dragging.current) commitSeek();
+          }}
+        />
+      </div>
+      <span className="replay-boundary">
+        {marketClockLabel(facts.endTime)}
+      </span>
+      <span className="replay-granularity">{controls.granularityLabel}</span>
+      <button
+        type="button"
+        disabled={!controls.canStep}
+        onClick={onStep}
+      >
+        {controls.stepLabel}
+      </button>
+      <label className="replay-speed">
+        <span className="sr-only">回放倍速</span>
+        <select
+          aria-label="回放倍速"
+          value={facts.playbackSpeed}
+          disabled={!controls.canChangeSpeed}
+          onChange={(event) => onSpeed(Number(event.target.value))}
+        >
+          {REPLAY_SPEEDS.map((speed) => (
+            <option key={speed} value={speed}>
+              {speed}×
+            </option>
+          ))}
+        </select>
+      </label>
+    </section>
+  );
 }
 
 function WorkbenchToolbar({
@@ -987,6 +1512,17 @@ function requestId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
+function localDateToday() {
+  const now = new Date();
+  const offset = now.getTimezoneOffset() * 60_000;
+  return new Date(now.getTime() - offset).toISOString().slice(0, 10);
+}
+
+function progressPercent(value: number, start: number, end: number) {
+  if (end <= start) return 0;
+  return Math.min(100, Math.max(0, ((value - start) / (end - start)) * 100));
+}
+
 function responseOperationId(response: unknown) {
   return response && typeof response === "object" &&
     typeof (response as { operation_id?: unknown }).operation_id === "string"
@@ -1065,6 +1601,41 @@ function eventEnvelope(event: unknown) {
         payload: envelope.payload,
       }
     : null;
+}
+
+function replayEventEnvelope(event: unknown) {
+  if (!event || typeof event !== "object") return null;
+  const envelope = event as {
+    schema_version?: unknown;
+    event_type?: unknown;
+    operation_id?: unknown;
+    service_generation?: unknown;
+    session_id?: unknown;
+    revision?: unknown;
+    payload?: unknown;
+  };
+  if (
+    envelope.schema_version !== "t0_replay_v1" ||
+    typeof envelope.event_type !== "string" ||
+    typeof envelope.session_id !== "string"
+  ) {
+    return null;
+  }
+  return {
+    event_type: envelope.event_type,
+    operation_id:
+      typeof envelope.operation_id === "string"
+        ? envelope.operation_id
+        : null,
+    service_generation:
+      typeof envelope.service_generation === "number"
+        ? envelope.service_generation
+        : null,
+    session_id: envelope.session_id,
+    revision:
+      typeof envelope.revision === "number" ? envelope.revision : null,
+    payload: envelope.payload,
+  };
 }
 
 function chartProjectionFromEvent(event: unknown): ChartProjection | null {
