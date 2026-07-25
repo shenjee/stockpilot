@@ -47,4 +47,3 @@ export function workbenchLayoutMode(state) {
     ? WorkbenchLayoutMode.EQUAL
     : WorkbenchLayoutMode.MAIN_PRIORITY;
 }
-

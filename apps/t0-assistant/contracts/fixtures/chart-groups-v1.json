@@ -1,0 +1,123 @@
+{
+  "timezone": "Asia/Shanghai",
+  "market": {
+    "bars_5m": [
+      {"timestamp":"2026-07-21 14:45:00","open":10.00,"high":10.06,"low":9.98,"close":10.04,"volume":41000,"amount":411640,"closed":true},
+      {"timestamp":"2026-07-21 14:50:00","open":10.04,"high":10.08,"low":10.01,"close":10.02,"volume":36000,"amount":361080,"closed":true},
+      {"timestamp":"2026-07-21 14:55:00","open":10.02,"high":10.10,"low":10.02,"close":10.08,"volume":52000,"amount":523120,"closed":true},
+      {"timestamp":"2026-07-21 15:00:00","open":10.08,"high":10.12,"low":10.05,"close":10.10,"volume":68000,"amount":686800,"closed":true},
+      {"timestamp":"2026-07-22 09:35:00","open":10.11,"high":10.18,"low":10.08,"close":10.16,"volume":73000,"amount":741680,"closed":true},
+      {"timestamp":"2026-07-22 09:40:00","open":10.16,"high":10.20,"low":10.12,"close":10.14,"volume":59000,"amount":598260,"closed":true},
+      {"timestamp":"2026-07-22 09:45:00","open":10.14,"high":10.22,"low":10.13,"close":10.20,"volume":77000,"amount":785400,"closed":true},
+      {"timestamp":"2026-07-22 09:50:00","open":10.20,"high":10.24,"low":10.16,"close":10.18,"volume":62000,"amount":631160,"closed":true},
+      {"timestamp":"2026-07-22 09:55:00","open":10.18,"high":10.28,"low":10.17,"close":10.26,"volume":89000,"amount":913140,"closed":true},
+      {"timestamp":"2026-07-22 10:00:00","open":10.26,"high":10.30,"low":10.21,"close":10.23,"volume":71000,"amount":726330,"closed":true},
+      {"timestamp":"2026-07-22 10:05:00","open":10.23,"high":10.32,"low":10.22,"close":10.30,"volume":94000,"amount":968200,"closed":true},
+      {"timestamp":"2026-07-22 10:10:00","open":10.30,"high":10.34,"low":10.27,"close":10.32,"volume":48000,"amount":495360,"closed":false}
+    ],
+    "bars_1m": [
+      {"timestamp":"2026-07-22 11:27:00","open":10.24,"high":10.26,"low":10.23,"close":10.25,"volume":8200,"amount":84050,"closed":true},
+      {"timestamp":"2026-07-22 11:28:00","open":10.25,"high":10.27,"low":10.24,"close":10.26,"volume":7600,"amount":77976,"closed":true},
+      {"timestamp":"2026-07-22 11:29:00","open":10.26,"high":10.28,"low":10.25,"close":10.27,"volume":9100,"amount":93457,"closed":true},
+      {"timestamp":"2026-07-22 11:30:00","open":10.27,"high":10.29,"low":10.26,"close":10.28,"volume":12000,"amount":123360,"closed":true},
+      {"timestamp":"2026-07-22 13:01:00","open":10.29,"high":10.31,"low":10.27,"close":10.30,"volume":13200,"amount":135960,"closed":true},
+      {"timestamp":"2026-07-22 13:02:00","open":10.30,"high":10.32,"low":10.28,"close":10.29,"volume":8800,"amount":90552,"closed":true},
+      {"timestamp":"2026-07-22 13:03:00","open":10.29,"high":10.33,"low":10.29,"close":10.32,"volume":10900,"amount":112488,"closed":true},
+      {"timestamp":"2026-07-22 13:04:00","open":10.32,"high":10.35,"low":10.31,"close":10.34,"volume":14100,"amount":145794,"closed":true}
+    ]
+  },
+  "indicators": {
+    "five_minute": {
+      "volume": {
+        "values": [
+          {"timestamp":"2026-07-21 14:45:00","value":41000},{"timestamp":"2026-07-21 14:50:00","value":36000},
+          {"timestamp":"2026-07-21 14:55:00","value":52000},{"timestamp":"2026-07-21 15:00:00","value":68000},
+          {"timestamp":"2026-07-22 09:35:00","value":73000},{"timestamp":"2026-07-22 09:40:00","value":59000},
+          {"timestamp":"2026-07-22 09:45:00","value":77000},{"timestamp":"2026-07-22 09:50:00","value":62000},
+          {"timestamp":"2026-07-22 09:55:00","value":89000},{"timestamp":"2026-07-22 10:00:00","value":71000},
+          {"timestamp":"2026-07-22 10:05:00","value":94000}
+        ],
+        "ma5": [
+          {"timestamp":"2026-07-21 14:45:00","value":null},{"timestamp":"2026-07-21 14:50:00","value":null},
+          {"timestamp":"2026-07-21 14:55:00","value":null},{"timestamp":"2026-07-21 15:00:00","value":null},
+          {"timestamp":"2026-07-22 09:35:00","value":54000},{"timestamp":"2026-07-22 09:40:00","value":57600},
+          {"timestamp":"2026-07-22 09:45:00","value":65800},{"timestamp":"2026-07-22 09:50:00","value":67800},
+          {"timestamp":"2026-07-22 09:55:00","value":72000},{"timestamp":"2026-07-22 10:00:00","value":71600},
+          {"timestamp":"2026-07-22 10:05:00","value":78600}
+        ],
+        "ma10": [
+          {"timestamp":"2026-07-21 14:45:00","value":null},{"timestamp":"2026-07-21 14:50:00","value":null},
+          {"timestamp":"2026-07-21 14:55:00","value":null},{"timestamp":"2026-07-21 15:00:00","value":null},
+          {"timestamp":"2026-07-22 09:35:00","value":null},{"timestamp":"2026-07-22 09:40:00","value":null},
+          {"timestamp":"2026-07-22 09:45:00","value":null},{"timestamp":"2026-07-22 09:50:00","value":null},
+          {"timestamp":"2026-07-22 09:55:00","value":null},{"timestamp":"2026-07-22 10:00:00","value":62800},
+          {"timestamp":"2026-07-22 10:05:00","value":68100}
+        ]
+      },
+      "macd": {
+        "fast_period":12,"slow_period":26,"signal_period":9,
+        "dif": [
+          {"timestamp":"2026-07-21 14:45:00","value":0.000},{"timestamp":"2026-07-21 14:50:00","value":-0.002},
+          {"timestamp":"2026-07-21 14:55:00","value":0.001},{"timestamp":"2026-07-21 15:00:00","value":0.006},
+          {"timestamp":"2026-07-22 09:35:00","value":0.015},{"timestamp":"2026-07-22 09:40:00","value":0.019},
+          {"timestamp":"2026-07-22 09:45:00","value":0.027},{"timestamp":"2026-07-22 09:50:00","value":0.031},
+          {"timestamp":"2026-07-22 09:55:00","value":0.041},{"timestamp":"2026-07-22 10:00:00","value":0.046},
+          {"timestamp":"2026-07-22 10:05:00","value":0.055}
+        ],
+        "dea": [
+          {"timestamp":"2026-07-21 14:45:00","value":0.000},{"timestamp":"2026-07-21 14:50:00","value":-0.0004},
+          {"timestamp":"2026-07-21 14:55:00","value":-0.0001},{"timestamp":"2026-07-21 15:00:00","value":0.0011},
+          {"timestamp":"2026-07-22 09:35:00","value":0.0039},{"timestamp":"2026-07-22 09:40:00","value":0.0069},
+          {"timestamp":"2026-07-22 09:45:00","value":0.0109},{"timestamp":"2026-07-22 09:50:00","value":0.0149},
+          {"timestamp":"2026-07-22 09:55:00","value":0.0201},{"timestamp":"2026-07-22 10:00:00","value":0.0253},
+          {"timestamp":"2026-07-22 10:05:00","value":0.0312}
+        ],
+        "histogram": [
+          {"timestamp":"2026-07-21 14:45:00","value":0.0000},{"timestamp":"2026-07-21 14:50:00","value":-0.0032},
+          {"timestamp":"2026-07-21 14:55:00","value":0.0022},{"timestamp":"2026-07-21 15:00:00","value":0.0098},
+          {"timestamp":"2026-07-22 09:35:00","value":0.0222},{"timestamp":"2026-07-22 09:40:00","value":0.0242},
+          {"timestamp":"2026-07-22 09:45:00","value":0.0322},{"timestamp":"2026-07-22 09:50:00","value":0.0322},
+          {"timestamp":"2026-07-22 09:55:00","value":0.0418},{"timestamp":"2026-07-22 10:00:00","value":0.0414},
+          {"timestamp":"2026-07-22 10:05:00","value":0.0476}
+        ]
+      }
+    },
+    "one_minute": {
+      "vwap": [
+        {"timestamp":"2026-07-22 11:27:00","value":10.2500},{"timestamp":"2026-07-22 11:28:00","value":10.2548},
+        {"timestamp":"2026-07-22 11:29:00","value":10.2601},{"timestamp":"2026-07-22 11:30:00","value":10.2660},
+        {"timestamp":"2026-07-22 13:01:00","value":10.2750},{"timestamp":"2026-07-22 13:02:00","value":10.2774},
+        {"timestamp":"2026-07-22 13:03:00","value":10.2839},{"timestamp":"2026-07-22 13:04:00","value":10.2931}
+      ],
+      "volume": {
+        "values": [
+          {"timestamp":"2026-07-22 11:27:00","value":8200},{"timestamp":"2026-07-22 11:28:00","value":7600},
+          {"timestamp":"2026-07-22 11:29:00","value":9100},{"timestamp":"2026-07-22 11:30:00","value":12000},
+          {"timestamp":"2026-07-22 13:01:00","value":13200},{"timestamp":"2026-07-22 13:02:00","value":8800},
+          {"timestamp":"2026-07-22 13:03:00","value":10900},{"timestamp":"2026-07-22 13:04:00","value":14100}
+        ]
+      },
+      "macd": {
+        "fast_period":12,"slow_period":26,"signal_period":9,
+        "dif": [
+          {"timestamp":"2026-07-22 11:27:00","value":0.0000},{"timestamp":"2026-07-22 11:28:00","value":0.0008},
+          {"timestamp":"2026-07-22 11:29:00","value":0.0022},{"timestamp":"2026-07-22 11:30:00","value":0.0040},
+          {"timestamp":"2026-07-22 13:01:00","value":0.0072},{"timestamp":"2026-07-22 13:02:00","value":0.0088},
+          {"timestamp":"2026-07-22 13:03:00","value":0.0123},{"timestamp":"2026-07-22 13:04:00","value":0.0165}
+        ],
+        "dea": [
+          {"timestamp":"2026-07-22 11:27:00","value":0.0000},{"timestamp":"2026-07-22 11:28:00","value":0.0002},
+          {"timestamp":"2026-07-22 11:29:00","value":0.0006},{"timestamp":"2026-07-22 11:30:00","value":0.0013},
+          {"timestamp":"2026-07-22 13:01:00","value":0.0025},{"timestamp":"2026-07-22 13:02:00","value":0.0038},
+          {"timestamp":"2026-07-22 13:03:00","value":0.0055},{"timestamp":"2026-07-22 13:04:00","value":0.0077}
+        ],
+        "histogram": [
+          {"timestamp":"2026-07-22 11:27:00","value":0.0000},{"timestamp":"2026-07-22 11:28:00","value":0.0012},
+          {"timestamp":"2026-07-22 11:29:00","value":0.0032},{"timestamp":"2026-07-22 11:30:00","value":0.0054},
+          {"timestamp":"2026-07-22 13:01:00","value":0.0094},{"timestamp":"2026-07-22 13:02:00","value":0.0100},
+          {"timestamp":"2026-07-22 13:03:00","value":0.0136},{"timestamp":"2026-07-22 13:04:00","value":0.0176}
+        ]
+      }
+    }
+  }
+}
