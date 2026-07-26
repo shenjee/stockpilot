@@ -341,6 +341,63 @@ class SqliteTradeRepository(_SqliteRepository):
 class SqliteFeePlanRepository(_SqliteRepository):
     """CRUD adapter for structured fee plans without fee-policy behavior."""
 
+    def initialize_default_plan(
+        self, plan: FeePlanRecord
+    ) -> FeePlanRecord | None:
+        """Atomically seed the default plan exactly once per database.
+
+        The initialization flag and the plan row are written in the same
+        transaction. If the flag is already set, this method returns the
+        persisted plan or ``None`` if the user deleted it later, so the
+        default plan never resurrects on restart.
+        """
+
+        self._require_plan(plan)
+
+        def persist(connection: sqlite3.Connection) -> FeePlanRecord | None:
+            row = connection.execute(
+                "SELECT default_plan_initialized FROM fee_plan_meta WHERE singleton_id = 1"
+            ).fetchone()
+            if row is not None and bool(row["default_plan_initialized"]):
+                return self._from_row(
+                    connection.execute(
+                        "SELECT * FROM fee_plans WHERE fee_plan_id = ?",
+                        (plan.fee_plan_id,),
+                    ).fetchone()
+                )
+
+            now = _utc_now()
+            self._insert(
+                connection,
+                """
+                INSERT INTO fee_plans(
+                    fee_plan_id, name, a_share_commission_rate,
+                    a_share_min_commission, etf_commission_rate,
+                    etf_min_commission, stamp_duty_rate,
+                    stamp_duty_sell_only, transfer_fee_rate,
+                    transfer_fee_side, transfer_fee_enabled,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                self._plan_values(plan) + (now, now),
+                entity="fee_plan",
+                conflict_id=plan.fee_plan_id,
+                display_name="收费方案",
+            )
+            connection.execute(
+                """
+                INSERT INTO fee_plan_meta (singleton_id, default_plan_initialized, updated_at)
+                VALUES (1, 1, ?)
+                ON CONFLICT(singleton_id) DO UPDATE SET
+                    default_plan_initialized = excluded.default_plan_initialized,
+                    updated_at = excluded.updated_at
+                """,
+                (now,),
+            )
+            return plan
+
+        return self._run(persist)
+
     def create(self, plan: FeePlanRecord) -> FeePlanRecord:
         self._require_plan(plan)
         now = _utc_now()
