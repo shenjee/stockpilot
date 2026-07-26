@@ -111,13 +111,17 @@ export function applyModel(state, newTimes, visibleCount) {
   if (end <= start) {
     return followLatest(base, visibleCount);
   }
-  const shrank = length < state.logicalToTime.length;
+  // 区分“数据长度缩短”和“manual 范围真实被裁剪”。只有原范围确实越界并被夹紧
+  // 时，才允许按设计回退到 following；否则保持 manual，避免用户范围被重算。
+  const endWasClamped = state.visibleEnd > length;
+  const startWasClamped = state.visibleStart < 0;
+  const wasClamped = endWasClamped || startWasClamped;
   return {
     ...base,
     visibleStart: start,
     visibleEnd: end,
     followState:
-      end >= length && shrank
+      end >= length && wasClamped
         ? FollowState.FOLLOWING
         : FollowState.MANUAL,
   };
@@ -168,5 +172,17 @@ export function restoreViewportFromSnapshot(
   if (internal.end <= internal.start) {
     return followLatest(state, visibleCount);
   }
-  return setManualRange(state, internal.start, internal.end);
+  // 快照明确为 manual 时，若范围在当前数据中仍然有效（未被真实裁剪），恢复后必须继续
+  // 是 manual；不得仅因为右端点贴近 length - 1 就改为 following。只有在数据缩短导致
+  // 原范围真实越界并被夹紧时，才允许 setManualRange 按默认规则决定回退 following。
+  const naturalEnd = Math.min(
+    Math.floor(snapshot.range.to) + 1,
+    times.length,
+  );
+  const endWasClamped = naturalEnd < Math.floor(snapshot.range.to) + 1;
+  const startWasClamped = snapshot.range.from < 0;
+  const wasClamped = endWasClamped || startWasClamped;
+  return setManualRange(state, internal.start, internal.end, {
+    allowResumeFollowing: wasClamped,
+  });
 }

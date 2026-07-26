@@ -184,6 +184,71 @@ test("applyModel resumes following only when a replay-seek shrink clamps the man
   assert.equal(shrunken.visibleEnd, 80);
 });
 
+// --- 评审 P2 回归：数据长度缩短但 manual 范围仍有效时不得误切 following ---
+
+test("P2: applyModel keeps manual when the range is still fully valid after data shrinks", () => {
+  const bars = Array.from({ length: 100 }, (_, i) => `b${i}`);
+  // manual 范围 [20,60)，数据缩短到 60：范围完整有效，没有发生裁剪。
+  const manual = setManualRange(
+    followLatest(createViewportState(bars), 50),
+    20,
+    60,
+    { allowResumeFollowing: false },
+  );
+  const shrunken = applyModel(manual, bars.slice(0, 60), 50);
+  assert.equal(shrunken.followState, FollowState.MANUAL);
+  assert.deepEqual(visibleLogicalRange(shrunken), { from: 20, to: 60 });
+});
+
+test("P2: applyModel resumes following when the manual range is truly clamped by shrink", () => {
+  const bars = Array.from({ length: 100 }, (_, i) => `b${i}`);
+  // manual 范围 [70,100)，数据缩短到 80：end 被真实裁剪到 80 并贴新边缘 -> following。
+  const manual = setManualRange(
+    followLatest(createViewportState(bars), 50),
+    70,
+    100,
+    { allowResumeFollowing: false },
+  );
+  const shrunken = applyModel(manual, bars.slice(0, 80), 50);
+  assert.equal(shrunken.followState, FollowState.FOLLOWING);
+  assert.equal(shrunken.visibleEnd, 80);
+});
+
+test("P2: applyModel falls back to following when the manual range is completely outside the new data", () => {
+  const bars = Array.from({ length: 100 }, (_, i) => `b${i}`);
+  const manual = setManualRange(
+    followLatest(createViewportState(bars), 50),
+    80,
+    100,
+    { allowResumeFollowing: false },
+  );
+  const shrunken = applyModel(manual, bars.slice(0, 50), 50);
+  assert.equal(shrunken.followState, FollowState.FOLLOWING);
+  assert.deepEqual(toChartLogicalRange(shrunken), { from: 0, to: 49 });
+});
+
+test("P2: applyModel preserves a valid manual range across a same-length live-tick refresh", () => {
+  const bars = Array.from({ length: 100 }, (_, i) => `b${i}`);
+  const manual = setManualRange(
+    followLatest(createViewportState(bars), 50),
+    20,
+    60,
+    { allowResumeFollowing: false },
+  );
+  const refreshed = applyModel(manual, bars, 50);
+  assert.equal(refreshed.followState, FollowState.MANUAL);
+  assert.deepEqual(visibleLogicalRange(refreshed), { from: 20, to: 60 });
+});
+
+test("P2: applyModel right-aligns following state after a replay seek backward", () => {
+  const bars = Array.from({ length: 100 }, (_, i) => `b${i}`);
+  const following = followLatest(createViewportState(bars), 50);
+  assert.deepEqual(toChartLogicalRange(following), { from: 50, to: 99 });
+  const shrunken = applyModel(following, bars.slice(0, 80), 50);
+  assert.equal(shrunken.followState, FollowState.FOLLOWING);
+  assert.deepEqual(toChartLogicalRange(shrunken), { from: 30, to: 79 });
+});
+
 test("pan away from and back to the latest edge resumes following (span preserved)", () => {
   const bars = Array.from({ length: 100 }, (_, i) => `b${i}`);
   const following = followLatest(createViewportState(bars), 50); // {50,100}
@@ -330,15 +395,16 @@ test("restoreViewportFromSnapshot restores a manual range clamped to the current
   assert.equal(manual.visibleEnd, 60);
 });
 
-test("restoreViewportFromSnapshot resumes following when a manual snapshot is pinned to the latest edge", () => {
+test("restoreViewportFromSnapshot keeps manual when a snapshot is pinned to the latest edge", () => {
   const bars = Array.from({ length: 100 }, (_, i) => `b${i}`);
-  // 存储的 manual 范围贴到最新边缘 -> 恢复后回到 following。
+  // 评审 P1：快照明确为 manual 且范围有效时，不得仅因右端点等于 length - 1 就改为 following。
   const pinned = restoreViewportFromSnapshot(
     { range: { from: 50, to: 99 }, followState: "manual" },
     bars,
     50,
   );
-  assert.equal(pinned.followState, FollowState.FOLLOWING);
+  assert.equal(pinned.followState, FollowState.MANUAL);
+  assert.deepEqual(visibleLogicalRange(pinned), { from: 50, to: 100 });
 });
 
 test("restoreViewportFromSnapshot clamps a manual range that exceeds a shrunken (replay seek) length", () => {
@@ -351,4 +417,66 @@ test("restoreViewportFromSnapshot clamps a manual range that exceeds a shrunken 
   );
   assert.equal(clamped.followState, FollowState.FOLLOWING);
   assert.equal(clamped.visibleEnd, 60);
+});
+
+// --- 评审 P1 回归：贴最新边缘的 manual 快照组件重建后不得错误恢复为 following ---
+
+test("P1: restoreViewportFromSnapshot keeps manual for an edge-pinned manual snapshot", () => {
+  const bars = Array.from({ length: 100 }, (_, i) => `b${i}`);
+  const restored = restoreViewportFromSnapshot(
+    { range: { from: 70, to: 99 }, followState: "manual" },
+    bars,
+    50,
+  );
+  assert.equal(restored.followState, FollowState.MANUAL);
+  assert.deepEqual(visibleLogicalRange(restored), { from: 70, to: 100 });
+});
+
+test("P1: after restoring an edge-pinned manual snapshot, a new bar keeps the same logical range", () => {
+  const bars = Array.from({ length: 100 }, (_, i) => `b${i}`);
+  let restored = restoreViewportFromSnapshot(
+    { range: { from: 70, to: 99 }, followState: "manual" },
+    bars,
+    50,
+  );
+  assert.equal(restored.followState, FollowState.MANUAL);
+  const grown = [...bars, "b100"];
+  restored = applyModel(restored, grown, 50);
+  assert.equal(restored.followState, FollowState.MANUAL);
+  assert.deepEqual(visibleLogicalRange(restored), { from: 70, to: 100 });
+});
+
+test("P1: after restoring an edge-pinned manual snapshot, layout/width change keeps the manual range", () => {
+  const bars = Array.from({ length: 100 }, (_, i) => `b${i}`);
+  const restored = restoreViewportFromSnapshot(
+    { range: { from: 70, to: 99 }, followState: "manual" },
+    bars,
+    50,
+  );
+  // 模拟不同宽度（visibleCount 变化）：manual 状态下不应重算 N。
+  const wider = applyModel(restored, bars, 80);
+  assert.equal(wider.followState, FollowState.MANUAL);
+  assert.deepEqual(visibleLogicalRange(wider), { from: 70, to: 100 });
+});
+
+test("P1: restoreViewportFromSnapshot resumes following for a following snapshot", () => {
+  const bars = Array.from({ length: 100 }, (_, i) => `b${i}`);
+  const restored = restoreViewportFromSnapshot(
+    { range: { from: 40, to: 89 }, followState: "following" },
+    bars,
+    50,
+  );
+  assert.equal(restored.followState, FollowState.FOLLOWING);
+  assert.deepEqual(toChartLogicalRange(restored), { from: 50, to: 99 });
+});
+
+test("P1: restoreViewportFromSnapshot falls back to following when a manual snapshot is fully outside the new data", () => {
+  const bars = Array.from({ length: 50 }, (_, i) => `b${i}`);
+  const restored = restoreViewportFromSnapshot(
+    { range: { from: 70, to: 99 }, followState: "manual" },
+    bars,
+    50,
+  );
+  assert.equal(restored.followState, FollowState.FOLLOWING);
+  assert.deepEqual(toChartLogicalRange(restored), { from: 0, to: 49 });
 });
