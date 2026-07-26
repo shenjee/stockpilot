@@ -37,7 +37,9 @@ export function formatMarketTick(time, previousTime = null) {
   ).padStart(2, "0")}`;
 }
 
-export function createChartGroupModel(snapshot, kind, layers = {}) {
+import { projectTradeMarkers } from "./trade-markers.mjs";
+
+export function createChartGroupModel(snapshot, kind, layers = {}, trades = []) {
   if (kind !== FIVE_MINUTE && kind !== ONE_MINUTE) {
     throw new TypeError(`Unsupported chart group: ${kind}`);
   }
@@ -75,6 +77,12 @@ export function createChartGroupModel(snapshot, kind, layers = {}) {
     timestamps.map((timestamp) => [timestamp, parseMarketTimestamp(timestamp)]),
   );
   const enabled = (layer) => layers[layer] !== false;
+
+  const allowedTimes = kind === FIVE_MINUTE ? new Set(Object.values(timeByTimestamp)) : null;
+  const tradeMarkers =
+    kind === FIVE_MINUTE
+      ? projectTradeMarkers(trades, { allowedTimes })
+      : [];
   const movingAverages = {};
   for (const period of ["ma5", "ma10", "ma20", "ma30", "ma60"]) {
     movingAverages[period] =
@@ -214,6 +222,7 @@ export function createChartGroupModel(snapshot, kind, layers = {}) {
         `${kind} macd histogram`,
       ),
     },
+    tradeMarkers,
   };
 }
 

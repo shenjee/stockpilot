@@ -10,6 +10,7 @@ import {
   type LineData,
   type LogicalRange,
   type MouseEventParams,
+  type SeriesMarker,
   type Time,
   type UTCTimestamp,
   type WhitespaceData,
@@ -131,6 +132,7 @@ export class SynchronizedChartGroup {
   private macdValues = new Map<number, number>();
   private macdSeriesByTime = new Map<number, NumericSeries>();
   private structureSeries: ISeriesApi<"Line">[] = [];
+  private tradeMarkerSeries = new Map<string, ISeriesApi<"Line">>();
 
   constructor(options: ChartGroupOptions) {
     this.containers = options.containers;
@@ -549,6 +551,7 @@ export class SynchronizedChartGroup {
       this.bollLowerSeries?.setData(this.toLineData(this.model.boll.lower, time));
       this.setStructureData(time);
       this.applyCzscMarkers(time);
+      this.setTradeMarkerData();
     } else {
       const priceData: LineData<Time>[] = this.model.price.flatMap((point) =>
         "value" in point
@@ -655,6 +658,39 @@ export class SynchronizedChartGroup {
         label: marker.label,
       })),
     );
+  }
+
+  private setTradeMarkerData() {
+    for (const series of this.tradeMarkerSeries.values()) {
+      this.priceChart.removeSeries(series);
+    }
+    this.tradeMarkerSeries.clear();
+
+    if (!this.model || this.model.kind !== ChartGroupKind.FIVE_MINUTE) {
+      return;
+    }
+
+    for (const marker of this.model.tradeMarkers) {
+      const series = this.priceChart.addLineSeries({
+        color: marker.color,
+        lineVisible: false,
+        lastValueVisible: false,
+        priceLineVisible: false,
+        pointMarkersVisible: false,
+        priceScaleId: "right",
+      });
+      series.setData([{ time: marker.time as UTCTimestamp, value: marker.price }]);
+      const seriesMarker: SeriesMarker<Time> = {
+        time: marker.time as UTCTimestamp,
+        position: "inBar",
+        shape: marker.shape,
+        color: marker.color,
+        text: marker.label,
+        size: 2,
+      };
+      series.setMarkers([seriesMarker]);
+      this.tradeMarkerSeries.set(marker.trade_id, series);
+    }
   }
 
   private toLineData(
