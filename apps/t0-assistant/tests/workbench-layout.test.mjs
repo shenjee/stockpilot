@@ -27,8 +27,8 @@ test("workbench defaults to the 64/36 split with a visible intraday group", () =
 });
 
 test("all three layout choices retain chart view state", () => {
-  const fiveMinute = { from: 120, to: 180 };
-  const intraday = { from: 0, to: 60 };
+  const fiveMinute = { range: { from: 120, to: 180 }, followState: "manual" };
+  const intraday = { range: { from: 0, to: 60 }, followState: "following" };
   const initial = {
     ...createWorkbenchState(),
     chartViews: { fiveMinute, intraday },
@@ -53,6 +53,25 @@ test("an unsupported layout cannot silently corrupt state", () => {
   );
 });
 
+test("selecting a new security clears chart view state to avoid inheriting the prior stock", () => {
+  const security = {
+    symbol: "sh.600519",
+    code: "600519",
+    market: "sh",
+    name: "贵州茅台",
+    security_type: "a_share",
+  };
+  const withViews = {
+    ...createWorkbenchState(),
+    chartViews: {
+      fiveMinute: { range: { from: 10, to: 80 }, followState: "manual" },
+      intraday: { range: { from: 0, to: 40 }, followState: "following" },
+    },
+  };
+  const selected = selectWorkbenchSecurity(withViews, security);
+  assert.deepEqual(selected.chartViews, { fiveMinute: null, intraday: null });
+});
+
 test("mode and layout changes preserve layers, security, and chart view state", () => {
   const security = {
     symbol: "sh.600519",
@@ -61,10 +80,10 @@ test("mode and layout changes preserve layers, security, and chart view state", 
     name: "贵州茅台",
     security_type: "a_share",
   };
-  const range = { from: 10, to: 80 };
+  const snapshot = { range: { from: 10, to: 80 }, followState: "manual" };
   let state = {
     ...selectWorkbenchSecurity(createWorkbenchState(), security),
-    chartViews: { fiveMinute: range, intraday: null },
+    chartViews: { fiveMinute: snapshot, intraday: null },
   };
   state = toggleWorkbenchLayer(state, WorkbenchLayer.MA20);
   state = selectWorkbenchMode(state, WorkbenchMode.REPLAY);
@@ -73,7 +92,7 @@ test("mode and layout changes preserve layers, security, and chart view state", 
   assert.equal(state.mode, "replay");
   assert.equal(state.layers.ma20, true);
   assert.deepEqual(state.security, security);
-  assert.strictEqual(state.chartViews.fiveMinute, range);
+  assert.strictEqual(state.chartViews.fiveMinute, snapshot);
 });
 
 test("persisted preferences are copies and never own current React state", () => {

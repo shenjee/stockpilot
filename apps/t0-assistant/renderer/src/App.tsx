@@ -26,6 +26,7 @@ import {
   WorkbenchLayer,
   WorkbenchLayoutMode,
   WorkbenchMode,
+  type ChartViewportSnapshot,
   type SecurityIdentity,
   type WorkbenchLayoutModeValue,
   type WorkbenchState,
@@ -931,6 +932,33 @@ export function App() {
     () => createChartGroupModel(snapshot, ChartGroupKind.ONE_MINUTE),
     [snapshot],
   );
+  // 视口状态镜像到 workbench.chartViews（UI 规格 §12：在 React 状态层保存可见范围）。
+  // 保存 {range, followState} 快照；controller 节流上报，避免高频 setState。React 是
+  // 运行时权威，组件重建后据此恢复，不依赖图表实例未被卸载。
+  const rememberChartView = (
+    group: "fiveMinute" | "intraday",
+    snapshot: ChartViewportSnapshot | null,
+  ) => {
+    setWorkbench((current) => {
+      const existing = current.chartViews[group];
+      if (
+        snapshot &&
+        existing &&
+        existing.followState === snapshot.followState &&
+        existing.range.from === snapshot.range.from &&
+        existing.range.to === snapshot.range.to
+      ) {
+        return current;
+      }
+      if (!snapshot && !existing) {
+        return current;
+      }
+      return {
+        ...current,
+        chartViews: { ...current.chartViews, [group]: snapshot },
+      };
+    });
+  };
   const layoutMode = workbenchLayoutMode(workbench);
   const showFixture = !window.stockpilot;
   const showEmpty = !showFixture && !workbench.security && !loading;
@@ -987,7 +1015,12 @@ export function App() {
       >
         <article className="chart-group five-minute-group" aria-label="5 分钟图表组">
           <ChartGroup
+            key={`five-${workbench.security?.symbol ?? "fixture"}`}
             model={fiveMinuteModel}
+            initialViewport={workbench.chartViews.fiveMinute}
+            onViewportChange={(snapshot) =>
+              rememberChartView("fiveMinute", snapshot)
+            }
             priceHeader={
               <div className="panel-heading">
                 <h1>5 分钟</h1>
@@ -1025,7 +1058,12 @@ export function App() {
             </div>
           ) : (
             <ChartGroup
+              key={`intra-${workbench.security?.symbol ?? "fixture"}`}
               model={intradayModel}
+              initialViewport={workbench.chartViews.intraday}
+              onViewportChange={(snapshot) =>
+                rememberChartView("intraday", snapshot)
+              }
               priceHeader={
                 <div className="panel-heading">
                   <h2>分时</h2>
