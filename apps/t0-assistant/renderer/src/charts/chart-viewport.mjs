@@ -61,16 +61,26 @@ export function followLatest(state, visibleCount) {
 }
 
 // 用户拖动/缩放后设置手动范围；若已回到最新边缘则恢复 following。
-export function setManualRange(state, start, end) {
+//
+// 仅凭“右端点贴最新边缘”无法区分两种操作：平移回最新端（跨度不变）应恢复
+// following；最新端缩放（跨度变小但仍贴边）应进入 manual。否则缩放会被误判为
+// following，之后刷新/布局变化按密度重算 N，丢弃用户缩放。
+// 故由调用方按交互意图传入 allowResumeFollowing：平移贴边传 true 恢复 following；
+// 缩放传 false 始终 manual。默认 true 兼容 restore 等无意图场景。
+export function setManualRange(state, start, end, options = {}) {
   const length = state.logicalToTime.length;
   const clampedStart = Math.max(0, Math.min(start, length));
   const clampedEnd = Math.max(0, Math.min(end, length));
   const atLatestEdge = clampedEnd >= length;
+  const allowResumeFollowing = options.allowResumeFollowing !== false;
   return {
     ...state,
     visibleStart: clampedStart,
     visibleEnd: clampedEnd,
-    followState: atLatestEdge ? FollowState.FOLLOWING : FollowState.MANUAL,
+    followState:
+      atLatestEdge && allowResumeFollowing
+        ? FollowState.FOLLOWING
+        : FollowState.MANUAL,
   };
 }
 
@@ -80,8 +90,10 @@ export function isAtLatestEdge(state) {
 
 // 应用新模型（新时间戳数组）：
 // - following：右对齐最新（新数据自然前滚；回放 seek 重跟随）。
-// - manual：保留逻辑范围并夹紧到新长度（回放向后定位丢弃未来引用）；
-//   若范围因夹紧失效则回退 following；若夹紧后贴到最新边缘则恢复 following。
+// - manual：保留逻辑范围并夹紧到新长度；范围因夹紧失效（end <= start）则回退 following。
+//   仅当序列缩短（回放向后 seek）使范围被夹紧到新最新边缘时恢复 following（旧范围已无
+//   意义）；同长度刷新（动态 K tick）或前滚新 K 不恢复--否则用户最新端缩放会在刷新时
+//   被翻成 following，之后按密度重算 N 丢弃缩放。
 export function applyModel(state, newTimes, visibleCount) {
   const timeToLogical = new Map();
   newTimes.forEach((time, index) => {
@@ -99,11 +111,15 @@ export function applyModel(state, newTimes, visibleCount) {
   if (end <= start) {
     return followLatest(base, visibleCount);
   }
+  const shrank = length < state.logicalToTime.length;
   return {
     ...base,
     visibleStart: start,
     visibleEnd: end,
-    followState: end >= length ? FollowState.FOLLOWING : FollowState.MANUAL,
+    followState:
+      end >= length && shrank
+        ? FollowState.FOLLOWING
+        : FollowState.MANUAL,
   };
 }
 

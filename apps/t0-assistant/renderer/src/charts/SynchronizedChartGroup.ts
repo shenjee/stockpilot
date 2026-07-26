@@ -60,6 +60,9 @@ const BLUE = "#4f8cff";
 const AMBER = "#f6b94a";
 const MUTED = "#8090a8";
 const BOLL_COLOR = "#e879f9";
+// 缩放/平移判定阈值（LC 连续逻辑范围跨度差）。纯平移跨度精确不变（浮点误差 ~1e-9），
+// 缩放跨度变化至少数个 K；0.01 仅吸收浮点漂移，可靠区分二者。
+const ZOOM_SPAN_EPSILON = 0.01;
 const MA_COLORS = {
   ma5: "#f6d365",
   ma10: "#7dd3fc",
@@ -110,6 +113,10 @@ export class SynchronizedChartGroup {
     | ((snapshot: ChartViewportSnapshot | null) => void);
   private viewport: ChartViewportState | null = null;
   private applyingViewportRange = false;
+  // 最近一次已知 LC 连续逻辑范围（原始值，未 floor）。作为缩放/平移判定的跨度基线：
+  // 用户平移不会重跑 setModel/applyVisibleRange，故该字段在平移间保留原始跨度，避免
+  // toChartLogicalRange(state) 取整引入的 floor 噪声污染判定。
+  private lastTrackedLcRange: { from: number; to: number } | null = null;
   private lastReportedFollowState: "following" | "manual" | null = null;
   private lastReportedRange: { from: number; to: number } | null = null;
   private reportTimer: ReturnType<typeof setTimeout> | null = null;
@@ -299,6 +306,8 @@ export class SynchronizedChartGroup {
     }
     // 内部排他范围转 LC 连续逻辑范围（to = visibleEnd - 1，避免右侧空槽）。
     const range = toChartLogicalRange(this.viewport);
+    // 程序化设值后的跨度基线（整数），供下一次用户交互的缩放/平移判定参照。
+    this.lastTrackedLcRange = range;
     const current = this.priceChart.timeScale().getVisibleLogicalRange();
     if (
       current &&
@@ -377,8 +386,10 @@ export class SynchronizedChartGroup {
     this.onViewportChange?.(snapshot);
   }
 
-  // 用户主动拖动/缩放价格图 -> manual（回到最新边缘则恢复 following）。
+  // 用户主动拖动/缩放价格图 -> manual（仅平移回到最新边缘才恢复 following）。
   // applyingViewportRange 守卫避免程序化 setVisibleLogicalRange 被误判为用户操作。
+  // 缩放/平移判定：LC 连续逻辑范围跨度 (to - from) 在纯平移时不变、缩放时变化。
+  // 缩放即便落在最新边缘也强制 manual，避免刷新/布局变化按密度重算 N 丢弃缩放。
   private setupViewportTracking() {
     const handler = (range: LogicalRange | null) => {
       if (this.applyingViewportRange || !range || !this.viewport) {
@@ -387,10 +398,18 @@ export class SynchronizedChartGroup {
       // LC 连续逻辑范围 -> 内部排他范围，再交给状态机判定 following/manual。
       const length = this.viewport.logicalToTime.length;
       const internal = fromChartLogicalRange(range, length);
+      const previousSpan = this.lastTrackedLcRange
+        ? this.lastTrackedLcRange.to - this.lastTrackedLcRange.from
+        : range.to - range.from;
+      const currentSpan = range.to - range.from;
+      const isZoom =
+        Math.abs(currentSpan - previousSpan) > ZOOM_SPAN_EPSILON;
+      this.lastTrackedLcRange = range;
       this.viewport = setManualRange(
         this.viewport,
         internal.start,
         internal.end,
+        { allowResumeFollowing: !isZoom },
       );
       this.reportViewport();
     };
@@ -449,6 +468,9 @@ export class SynchronizedChartGroup {
         rightOffset: 0,
         fixLeftEdge: false,
         fixRightEdge: false,
+        // 布局变化时锁定可见时间范围（仅改 barSpacing，不增减可见 K）：manual 下保留
+        // 用户逻辑范围不被 LC 自动左移露更多 K；following 仍由 resize() 显式重算 N 覆盖。
+        lockVisibleTimeRangeOnResize: true,
         tickMarkFormatter: (time: Time) => {
           const numericTime = Number(time);
           return formatMarketTick(

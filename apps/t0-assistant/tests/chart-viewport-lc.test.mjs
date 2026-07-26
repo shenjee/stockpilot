@@ -13,6 +13,7 @@ import {
   fromChartLogicalRange,
   setManualRange,
   toChartLogicalRange,
+  visibleLogicalRange,
 } from "../renderer/src/charts/chart-viewport.mjs";
 
 // ---- minimal DOM/canvas stub (足以让 lightweight-charts 4.x 初始化与时间轴运算) ----
@@ -237,6 +238,61 @@ test("real LC: dragging back to the latest edge restores following via the adapt
     );
     const resumed = setManualRange(manual, internal.start, internal.end);
     assert.equal(resumed.followState, FollowState.FOLLOWING);
+  } finally {
+    restore();
+  }
+});
+
+// 评审 P1：最新端缩放（跨度变小、仍贴边）应进入 manual；仅平移回最新端（跨度不变、
+// 贴边）才恢复 following。用真实 LC 的 setVisibleLogicalRange 模拟用户缩放/平移，
+// 复刻生产 handler 的“原始 LC 跨度比较”判定，再交 setManualRange 验证终态。
+test("real LC: zoom at the latest edge stays manual; pan back to the latest edge resumes following", async () => {
+  const restore = installDom();
+  try {
+    const N = 100;
+    const chart = await makeChartWithBars(N);
+    const ts = chart.timeScale();
+    const bars = Array.from({ length: N }, (_, i) => `b${i}`);
+
+    // 基线 following：最后 50 根 -> LC {from:50, to:99}，跨度 49。
+    const following = followLatest(createViewportState(bars), 50);
+    const baselineLc = toChartLogicalRange(following);
+    ts.setVisibleLogicalRange(baselineLc);
+    globalThis.__flushRaf();
+
+    const EPSILON = 0.01;
+    // 复刻生产 setupViewportTracking handler：比较原始 LC 跨度判定缩放/平移。
+    const applyInteraction = (state, prevLc, range) => {
+      const prevSpan = prevLc.to - prevLc.from;
+      const curSpan = range.to - range.from;
+      const isZoom = Math.abs(curSpan - prevSpan) > EPSILON;
+      const internal = fromChartLogicalRange(range, N);
+      return setManualRange(state, internal.start, internal.end, {
+        allowResumeFollowing: !isZoom,
+      });
+    };
+
+    // 1) 最新端缩放：{from:70,to:99}（跨度 29 < 49）-> manual（不恢复 following）。
+    ts.setVisibleLogicalRange({ from: 70, to: 99 });
+    globalThis.__flushRaf();
+    const zoomedRange = ts.getVisibleLogicalRange();
+    const zoomed = applyInteraction(following, baselineLc, zoomedRange);
+    assert.equal(zoomed.followState, FollowState.MANUAL);
+    assert.deepEqual(visibleLogicalRange(zoomed), { from: 70, to: 100 });
+
+    // 2) 从 following 平移离开最新端：{from:30,to:79}（跨度 49 不变、离边）-> manual。
+    const pannedAway = applyInteraction(following, baselineLc, {
+      from: 30,
+      to: 79,
+    });
+    assert.equal(pannedAway.followState, FollowState.MANUAL);
+
+    // 3) 平移回最新端：{from:50,to:99}（跨度 49 不变、贴边）-> following。
+    const pannedBack = applyInteraction(pannedAway, { from: 30, to: 79 }, {
+      from: 50,
+      to: 99,
+    });
+    assert.equal(pannedBack.followState, FollowState.FOLLOWING);
   } finally {
     restore();
   }

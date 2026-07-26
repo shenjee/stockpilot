@@ -44,6 +44,7 @@ export function setManualRange(
   state: ChartViewportState,
   start: number,
   end: number,
+  options?: { allowResumeFollowing?: boolean },
 ): ChartViewportState;
 
 export function isAtLatestEdge(state: ChartViewportState): boolean;

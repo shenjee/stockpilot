@@ -101,6 +101,104 @@ test("applyModel in manual with a still-valid range on shrink stays manual", () 
   assert.deepEqual(visibleLogicalRange(state), { from: 1, to: 3 });
 });
 
+// --- 缩放 vs 平移：最新端缩放进入 manual，仅平移回最新端恢复 following ---
+// 评审 P1：仅凭“右端点贴最新边缘”无法区分缩放与平移。setManualRange 通过
+// allowResumeFollowing 表达交互意图（由图表层按 LC 跨度变化判定后传入）：缩放传 false
+// 始终 manual，平移传 true 才在贴边时恢复 following。
+
+test("setManualRange with allowResumeFollowing:false stays manual at the latest edge (zoom-at-edge)", () => {
+  const bars = Array.from({ length: 100 }, (_, i) => `b${i}`);
+  const following = followLatest(createViewportState(bars), 50); // {50,100}
+  // 用户在最新端缩放到最后 30 根：跨度变化 -> 缩放 -> 强制 manual（不恢复 following）。
+  const zoomed = setManualRange(following, 70, 100, {
+    allowResumeFollowing: false,
+  });
+  assert.equal(zoomed.followState, FollowState.MANUAL);
+  assert.deepEqual(visibleLogicalRange(zoomed), { from: 70, to: 100 });
+  // 同一贴边范围，平移意图（allowResumeFollowing:true）则恢复 following--对照证明
+  // 区分缩放/平移的是意图参数，而非端点位置。
+  const resumed = setManualRange(following, 70, 100, {
+    allowResumeFollowing: true,
+  });
+  assert.equal(resumed.followState, FollowState.FOLLOWING);
+});
+
+test("setManualRange defaults to allowResumeFollowing:true (restore / pan-back contract)", () => {
+  const bars = Array.from({ length: 100 }, (_, i) => `b${i}`);
+  const following = followLatest(createViewportState(bars), 50);
+  // 不传 options：贴边恢复 following（兼容 restoreViewportFromSnapshot 与平移回最新端）。
+  assert.equal(
+    setManualRange(following, 50, 100).followState,
+    FollowState.FOLLOWING,
+  );
+  assert.equal(
+    setManualRange(following, 30, 80).followState,
+    FollowState.MANUAL,
+  );
+});
+
+test("applyModel preserves a zoomed manual range across new data (no density recompute)", () => {
+  const bars = Array.from({ length: 100 }, (_, i) => `b${i}`);
+  // 最新端缩放到 30 根 -> manual {70,100}。
+  const zoomed = setManualRange(
+    followLatest(createViewportState(bars), 50),
+    70,
+    100,
+    { allowResumeFollowing: false },
+  );
+  assert.equal(zoomed.followState, FollowState.MANUAL);
+  // 数据刷新（前滚一根）：manual 保留逻辑范围，不按密度重算 N（不会回到 50 根）。
+  const refreshed = applyModel(zoomed, [...bars, "b100"], 50);
+  assert.equal(refreshed.followState, FollowState.MANUAL);
+  assert.deepEqual(visibleLogicalRange(refreshed), { from: 70, to: 100 });
+});
+
+test("applyModel keeps a zoomed manual range on a same-length live-tick refresh (no flip to following)", () => {
+  const bars = Array.from({ length: 100 }, (_, i) => `b${i}`);
+  // 最新端缩放到 30 根贴边 -> manual {70,100}（length 100）。
+  const zoomed = setManualRange(
+    followLatest(createViewportState(bars), 50),
+    70,
+    100,
+    { allowResumeFollowing: false },
+  );
+  // 同长度刷新（动态 K tick 更新最后一根，length 仍 100）：范围贴边但不恢复 following，
+  // 否则下一次布局变化会按密度重算 N 丢弃缩放。
+  const ticked = applyModel(zoomed, bars, 50);
+  assert.equal(ticked.followState, FollowState.MANUAL);
+  assert.deepEqual(visibleLogicalRange(ticked), { from: 70, to: 100 });
+});
+
+test("applyModel resumes following only when a replay-seek shrink clamps the manual range to the new latest edge", () => {
+  const bars = Array.from({ length: 100 }, (_, i) => `b${i}`);
+  // manual 范围 {70,100}（length 100，贴边）。
+  const zoomed = setManualRange(
+    followLatest(createViewportState(bars), 50),
+    70,
+    100,
+    { allowResumeFollowing: false },
+  );
+  // 回放向后 seek：序列缩短到 80，范围夹紧到 {70,80} 贴新最新边缘 -> 恢复 following。
+  const shrunken = applyModel(zoomed, bars.slice(0, 80), 50);
+  assert.equal(shrunken.followState, FollowState.FOLLOWING);
+  assert.equal(shrunken.visibleEnd, 80);
+});
+
+test("pan away from and back to the latest edge resumes following (span preserved)", () => {
+  const bars = Array.from({ length: 100 }, (_, i) => `b${i}`);
+  const following = followLatest(createViewportState(bars), 50); // {50,100}
+  // 平移离开最新端：跨度不变 -> allowResumeFollowing:true，未贴边 -> manual。
+  const pannedAway = setManualRange(following, 30, 80, {
+    allowResumeFollowing: true,
+  });
+  assert.equal(pannedAway.followState, FollowState.MANUAL);
+  // 平移回最新端：跨度不变且贴边 -> following。
+  const pannedBack = setManualRange(pannedAway, 50, 100, {
+    allowResumeFollowing: true,
+  });
+  assert.equal(pannedBack.followState, FollowState.FOLLOWING);
+});
+
 test("logical slots have no gaps across an overnight break", () => {
   const overnight = [
     "2026-07-21 15:00:00",
