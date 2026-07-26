@@ -15,6 +15,7 @@ APP_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(APP_ROOT))
 
 from backend.service import create_server  # noqa: E402
+from packages.t0assistant.replay import ReplayAccepted, ReplayCommandApi  # noqa: E402
 
 
 class _FakeSearchService:
@@ -28,6 +29,22 @@ class _FakeSearchService:
                 "security_type": "a_share",
             }
         ][:limit]
+
+
+class _FakeReplayPort:
+    def __init__(self) -> None:
+        self.requests = []
+        self.started = []
+
+    def execute(self, command, request):
+        self.requests.append((command, dict(request)))
+        if command == "step_replay":
+            return ReplayAccepted(
+                session_id=request["session_id"],
+                operation_id="operation-step",
+                start_operation=lambda: self.started.append("operation-step"),
+            )
+        return ReplayAccepted(session_id=request.get("session_id", "replay-new"))
 
 
 class DesktopServiceTest(unittest.TestCase):
@@ -129,9 +146,85 @@ class DesktopServiceTest(unittest.TestCase):
         self.assertEqual(rejected.exception.code, 400)
         rejected.exception.close()
 
+    def test_replay_command_is_dispatched_through_v1_api(self) -> None:
+        port = _FakeReplayPort()
+        replay_api = ReplayCommandApi(port, service_generation=5)
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=2)
+        self.server = create_server(
+            "127.0.0.1",
+            0,
+            "formal-token",
+            5,
+            search_service=_FakeSearchService(),
+            replay_api=replay_api,
+        )
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.base_url = f"http://127.0.0.1:{self.server.server_port}"
+        body = json.dumps(
+            {
+                "schema_version": "t0_replay_v1",
+                "request_id": "pause-1",
+                "session_id": "replay-1",
+                "playing": False,
+            }
+        ).encode()
+        request = Request(
+            f"{self.base_url}/api/commands/set_replay_playback",
+            data=body,
+            headers={
+                "Authorization": "Bearer formal-token",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+
+        with urlopen(request, timeout=1) as response:
+            payload = json.load(response)
+
+        self.assertEqual(payload["request_id"], "pause-1")
+        self.assertEqual(payload["session_id"], "replay-1")
+        self.assertEqual(port.requests[0][0], "set_replay_playback")
+
+        step_body = json.dumps(
+            {
+                "schema_version": "t0_replay_v1",
+                "request_id": "step-1",
+                "session_id": "replay-1",
+            }
+        ).encode()
+        step_request = Request(
+            f"{self.base_url}/api/commands/step_replay",
+            data=step_body,
+            headers={
+                "Authorization": "Bearer formal-token",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with urlopen(step_request, timeout=1) as response:
+            step_payload = json.load(response)
+
+        self.assertEqual(step_payload["operation_id"], "operation-step")
+        self.assertEqual(port.started, ["operation-step"])
+
     def test_non_loopback_binding_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "127.0.0.1"):
             create_server("0.0.0.0", 0, "token", 1)
+
+    def test_replay_api_generation_must_match_server_generation(self) -> None:
+        replay_api = ReplayCommandApi(_FakeReplayPort(), service_generation=6)
+
+        with self.assertRaisesRegex(ValueError, "service_generation"):
+            create_server(
+                "127.0.0.1",
+                0,
+                "token",
+                5,
+                replay_api=replay_api,
+            )
 
     def test_websocket_handler_exits_when_the_client_disconnects(self) -> None:
         client = socket.create_connection(("127.0.0.1", self.server.server_port))

@@ -82,7 +82,7 @@ main/preload 和 React 可以独立实现并用同一组确定性 fixture 验收
 | `begin_replay` | `request_id`, `symbol`, `trade_date` | `session_id`, `operation_id` |
 | `set_replay_playback` | `request_id`, `session_id`, `playing` | 接受确认 |
 | `set_replay_speed` | `request_id`, `session_id`, `playback_speed` | 接受确认 |
-| `step_replay` | `request_id`, `session_id` | `operation_id` |
+| `step_replay` | `request_id`, `session_id` | `operation_id`；到达序列末端的幂等 no-op 省略 |
 | `seek_replay` | `request_id`, `session_id`, `target_time` | `operation_id` |
 | `end_replay` | `request_id`, `session_id` | 退休确认 |
 | `get_replay_snapshot` | `request_id`, `session_id` | 完整工作台快照 |
@@ -684,25 +684,23 @@ created/loading/ready/playing/paused/failed ──────→ retired
 HTTP/WebSocket 等传输异常不会以 `transport` category 暴露给 React；Electron main
 统一将其映射为 `service` category 和稳定的服务错误。
 
-同步拒绝通常包括 `invalid_request`、`symbol_not_found`、`invalid_trade_date`、
-`session_not_found`、`session_retired`、`invalid_replay_state`、`replay_busy` 和 `service_unavailable`。
-异步失败包括 `replay_data_unavailable`、`calculation_failed` 和
-`operation_superseded`。具体错误仍以操作实际执行阶段为准：同一错误码不得同时通过
+API 实现使用下表作为“错误码 → 默认交付通道”映射。具体错误仍以操作实际发现阶段
+为准：领域契约允许同一错误码在不同发现阶段使用另一通道，但单次失败不得同时通过
 同步响应和异步事件重复交付。
 
-| 错误码 | category | severity | affected_capability | 含义 | 默认可重试 |
-| --- | --- | --- | --- | --- | --- |
-| `invalid_request` | `validation` | `error` | `symbol_selection` 或 `replay` | 字段、类型或时间格式无效 | 否 |
-| `symbol_not_found` | `data` | `error` | `symbol_selection` | 无法解析标准证券 | 是 |
-| `invalid_trade_date` | `validation` | `error` | `replay` | 日期不是可接受的回放目标 | 否 |
-| `replay_data_unavailable` | `data` | `error` | `replay` | 1m 与正式 5m 数据都无法形成覆盖市场回放要求的可靠输入 | 是 |
-| `session_not_found` | `session` | `error` | `replay` | Session 不存在或不属于当前 generation | 否 |
-| `session_retired` | `session` | `error` | `replay` | Session 已结束 | 否 |
-| `invalid_replay_state` | `session` | `error` | `replay` | 当前 Session 状态不允许所请求的控制命令 | 是 |
-| `operation_superseded` | `session` | `error` | `replay` | 操作被更新的定位操作取代 | 否 |
-| `replay_busy` | `session` | `error` | `replay` | 已有游标操作正在执行 | 是 |
-| `calculation_failed` | `calculation` | `error` | `five_minute_chart` 或 `chan_analysis` | 指标或 CZSC 重建失败 | 是 |
-| `service_unavailable` | `service` | `error` | `service` | Python 服务未就绪或正在重启 | 是 |
+| 错误码 | category | severity | affected_capability | 含义 | 默认可重试 | 默认交付通道 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `invalid_request` | `validation` | `error` | `symbol_selection` 或 `replay` | 字段、类型或时间格式无效 | 否 | 同步拒绝 |
+| `symbol_not_found` | `data` | `error` | `symbol_selection` | 无法解析标准证券 | 是 | 同步拒绝 |
+| `invalid_trade_date` | `validation` | `error` | `replay` | 日期不是可接受的回放目标 | 否 | 同步拒绝 |
+| `replay_data_unavailable` | `data` | `error` | `replay` | 1m 与正式 5m 数据都无法形成覆盖市场回放要求的可靠输入 | 是 | `operation_failed` |
+| `session_not_found` | `session` | `error` | `replay` | Session 不存在或不属于当前 generation | 否 | 同步拒绝 |
+| `session_retired` | `session` | `error` | `replay` | Session 已结束 | 否 | 同步拒绝 |
+| `invalid_replay_state` | `session` | `error` | `replay` | 当前 Session 状态不允许所请求的控制命令 | 是 | 同步拒绝 |
+| `operation_superseded` | `session` | `error` | `replay` | 操作被更新的定位操作取代 | 否 | `operation_failed` |
+| `replay_busy` | `session` | `error` | `replay` | 已有游标操作正在执行 | 是 | 同步拒绝 |
+| `calculation_failed` | `calculation` | `error` | `five_minute_chart` 或 `chan_analysis` | 指标或 CZSC 重建失败 | 是 | `operation_failed` |
+| `service_unavailable` | `service` | `error` | `service` | Python 服务未就绪或正在重启 | 是 | 同步拒绝 |
 
 内部异常栈、凭据、文件路径和上游原始响应只写入脱敏技术日志，不进入错误 payload。
 

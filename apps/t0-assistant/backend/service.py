@@ -30,6 +30,7 @@ if str(REPOSITORY_ROOT) not in sys.path:
 from packages.marketdata.repositories.securities_store import SecuritiesStore
 from packages.marketdata.runtime_paths import RuntimePaths
 from packages.marketdata.services import SecuritiesSearchService
+from packages.t0assistant.replay import REPLAY_COMMANDS, ReplayCommandApi
 
 
 APP_COMMANDS = {
@@ -44,18 +45,6 @@ APP_COMMANDS = {
     "get_preferences",
     "save_preferences",
 }
-REPLAY_COMMANDS = {
-    "select_symbol",
-    "begin_replay",
-    "set_replay_playback",
-    "set_replay_speed",
-    "step_replay",
-    "seek_replay",
-    "end_replay",
-    "get_replay_snapshot",
-}
-
-
 class DesktopServiceServer(ThreadingHTTPServer):
     """Loopback-only transport server owned by one Electron App instance."""
 
@@ -67,11 +56,20 @@ class DesktopServiceServer(ThreadingHTTPServer):
         token: str,
         service_generation: int,
         search_service: SecuritiesSearchService | None = None,
+        replay_api: ReplayCommandApi | None = None,
     ) -> None:
+        if (
+            replay_api is not None
+            and replay_api.service_generation != service_generation
+        ):
+            raise ValueError(
+                "Replay API service_generation must match the desktop service"
+            )
         super().__init__(server_address, _Handler)
         self.token = token
         self.service_generation = service_generation
         self.search_service = search_service
+        self.replay_api = replay_api
         self.shutdown_event = threading.Event()
         self._websocket_lock = threading.Lock()
         self._active_websockets = 0
@@ -161,7 +159,19 @@ class _Handler(BaseHTTPRequestHandler):
         if command == "search_securities":
             self._search_securities(request)
             return
+        if command in REPLAY_COMMANDS:
+            self._replay_command(command, request)
+            return
         self._service_unavailable(command, request)
+
+    def _replay_command(self, command: str, request: dict[str, Any]) -> None:
+        replay_api = getattr(self.server, "replay_api", None)
+        if replay_api is None:
+            self._service_unavailable(command, request)
+            return
+        result = replay_api.dispatch(command, request)
+        self._json(HTTPStatus(result.status), result.payload)
+        result.response_delivered()
 
     def _search_securities(self, request: dict[str, Any]) -> None:
         request_id = request.get("request_id", "missing-request-id")
@@ -364,6 +374,7 @@ def create_server(
     token: str,
     service_generation: int,
     search_service: SecuritiesSearchService | None = None,
+    replay_api: ReplayCommandApi | None = None,
 ) -> DesktopServiceServer:
     if host != "127.0.0.1":
         raise ValueError("desktop service must bind to 127.0.0.1")
@@ -374,6 +385,7 @@ def create_server(
         token,
         service_generation,
         search_service=search_service,
+        replay_api=replay_api,
     )
 
 
