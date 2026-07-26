@@ -16,6 +16,15 @@ from .coordinator import (
     SessionType,
 )
 from .five_minute import DynamicFiveMinuteAggregator
+from .pipeline import (
+    ClockPort,
+    CzscAnalyzerPort,
+    MarketInputPort,
+    PipelineMarketInput,
+    PipelineResult,
+    WorkbenchPipeline,
+    WorkbenchPipelineError,
+)
 from .projection import (
     TargetTimeMarketProjection,
     build_dynamic_daily_bar,
@@ -26,12 +35,17 @@ from .projection import (
 __all__ = [
     "AppCoordinator",
     "AppMode",
+    "ClockPort",
     "CoordinatorError",
     "CoordinatorRetirementError",
     "CoordinatorSnapshot",
     "CoordinatorStateError",
     "CoordinatorValidationError",
+    "CzscAnalyzerPort",
     "DynamicFiveMinuteAggregator",
+    "MarketInputPort",
+    "PipelineMarketInput",
+    "PipelineResult",
     "RuntimeMarketDataError",
     "SessionFactoryPort",
     "SessionIdentity",
@@ -39,6 +53,8 @@ __all__ = [
     "SessionSpec",
     "SessionType",
     "TargetTimeMarketProjection",
+    "WorkbenchPipeline",
+    "WorkbenchPipelineError",
     "build_dynamic_daily_bar",
     "project_market_at",
     "project_quote_at",
