@@ -611,5 +611,283 @@ class EmptyPrefixTests(_BasePipelineTests):
         self.assertEqual(analyzer.calls[0][1], [])
 
 
+class PreheatFutureDataTests(_BasePipelineTests):
+    def test_future_preheat_bar_is_rejected(self) -> None:
+        bad_input = PipelineMarketInput(
+            symbol=_SYMBOL,
+            trade_date=_TRADE_DATE,
+            previous_close=10.15,
+            preheat_5m_bars=[
+                bar("2026-07-24 09:35:00", 10, 10, 10, 10, 1, 10),
+            ],
+        )
+        pipeline = self._make_pipeline(market_input=bad_input)
+
+        with self.assertRaisesRegex(
+            WorkbenchPipelineError,
+            "preheat 5m bar timestamp must be before the target session start",
+        ):
+            pipeline.step()
+
+    def test_preheat_at_session_start_is_rejected(self) -> None:
+        bad_input = PipelineMarketInput(
+            symbol=_SYMBOL,
+            trade_date=_TRADE_DATE,
+            previous_close=10.15,
+            preheat_5m_bars=[
+                bar("2026-07-24 09:30:00", 10, 10, 10, 10, 1, 10),
+            ],
+        )
+        pipeline = self._make_pipeline(market_input=bad_input)
+
+        with self.assertRaisesRegex(
+            WorkbenchPipelineError,
+            "preheat 5m bar timestamp must be before the target session start",
+        ):
+            pipeline.step()
+
+
+class AtomicStateUpdateTests(_BasePipelineTests):
+    def test_failed_compute_does_not_update_target_time_or_result(self) -> None:
+        good_input = PipelineMarketInput(
+            symbol=_SYMBOL,
+            trade_date=_TRADE_DATE,
+            previous_close=10.15,
+            preheat_5m_bars=self.preheat,
+        )
+        good_time = datetime.strptime("2026-07-24 09:30:00", "%Y-%m-%d %H:%M:%S")
+        bad_time = datetime.strptime("2026-07-24 09:35:00", "%Y-%m-%d %H:%M:%S")
+        bad_input = PipelineMarketInput(
+            symbol=_SYMBOL,
+            trade_date=_TRADE_DATE,
+            previous_close=10.15,
+            preheat_5m_bars=self.preheat,
+            official_5m_bars=[
+                bar(
+                    "2026-07-24 09:35:00",
+                    10,
+                    10,
+                    10,
+                    10,
+                    1,
+                    10,
+                    closed=False,
+                ),
+            ],
+        )
+        port = _RecordingMarketInputPort(
+            {good_time: good_input, bad_time: bad_input}
+        )
+        pipeline = WorkbenchPipeline(
+            session=self.session,
+            market_input_port=port,
+            clock_port=_FixedClock(good_time),
+        )
+
+        first = pipeline.step()
+        self.assertEqual(pipeline.target_time, good_time)
+        self.assertEqual(pipeline.last_result, first)
+
+        # Force the next computation to fail before the atomic commit.
+        pipeline._clock_port = _FixedClock(bad_time)
+        with self.assertRaises(WorkbenchPipelineError):
+            pipeline.step()
+
+        self.assertEqual(pipeline.target_time, good_time)
+        self.assertEqual(pipeline.last_result, first)
+
+
+class ClosedPrefixDeduplicationTests(_BasePipelineTests):
+    def test_closed_prefix_is_globally_merged_without_duplicates(self) -> None:
+        # Even though preheat validation prevents target-day overlap, the merge
+        # must still be timestamp-keyed rather than a blind concatenation.
+        input_with_official = PipelineMarketInput(
+            symbol=_SYMBOL,
+            trade_date=_TRADE_DATE,
+            previous_close=10.15,
+            preheat_5m_bars=self.preheat,
+            bars_1m=self.bars_1m,
+            official_5m_bars=self.official_5m,
+        )
+        pipeline = self._make_pipeline(
+            market_input=input_with_official,
+            target_time="2026-07-24 09:35:00",
+        )
+        result = pipeline.step()
+
+        timestamps = [b["timestamp"] for b in result.closed_5m_prefix]
+        self.assertEqual(len(timestamps), len(set(timestamps)))
+        self.assertEqual(
+            timestamps,
+            ["2026-07-23 14:55:00", "2026-07-23 15:00:00", "2026-07-24 09:35:00"],
+        )
+
+
+class DailyBarsTests(_BasePipelineTests):
+    def test_daily_bars_merge_history_and_dynamic_bar(self) -> None:
+        history = [
+            {
+                "timestamp": "2026-07-22",
+                "open": 10.0,
+                "high": 10.2,
+                "low": 9.9,
+                "close": 10.1,
+                "volume": 10000,
+                "amount": 101000,
+                "closed": True,
+            },
+            {
+                "timestamp": "2026-07-23",
+                "open": 10.1,
+                "high": 10.3,
+                "low": 10.0,
+                "close": 10.15,
+                "volume": 12000,
+                "amount": 121800,
+                "closed": True,
+            },
+        ]
+        market_input = PipelineMarketInput(
+            symbol=_SYMBOL,
+            trade_date=_TRADE_DATE,
+            previous_close=10.15,
+            bars_1m=self.bars_1m,
+            daily_bars_history=history,
+        )
+        pipeline = self._make_pipeline(market_input=market_input)
+        result = pipeline.step()
+
+        dates = [b["timestamp"] for b in result.daily_bars]
+        self.assertEqual(dates, ["2026-07-22", "2026-07-23", "2026-07-24"])
+        self.assertFalse(result.daily_bars[-1]["closed"])
+        self.assertEqual(result.daily_bars[-1]["timestamp"], "2026-07-24")
+
+    def test_dynamic_daily_bar_overwrites_history_for_trade_date(self) -> None:
+        history = [
+            {
+                "timestamp": "2026-07-24",
+                "open": 9.0,
+                "high": 9.0,
+                "low": 9.0,
+                "close": 9.0,
+                "volume": 1,
+                "amount": 9,
+                "closed": True,
+            },
+        ]
+        market_input = PipelineMarketInput(
+            symbol=_SYMBOL,
+            trade_date=_TRADE_DATE,
+            previous_close=10.15,
+            bars_1m=self.bars_1m,
+            daily_bars_history=history,
+        )
+        pipeline = self._make_pipeline(market_input=market_input)
+        result = pipeline.step()
+
+        self.assertEqual(len(result.daily_bars), 1)
+        self.assertFalse(result.daily_bars[0]["closed"])
+        self.assertEqual(result.daily_bars[0]["close"], 10.4)
+
+    def test_non_closed_daily_history_bar_is_rejected(self) -> None:
+        bad_input = PipelineMarketInput(
+            symbol=_SYMBOL,
+            trade_date=_TRADE_DATE,
+            previous_close=10.15,
+            daily_bars_history=[
+                {
+                    "timestamp": "2026-07-23",
+                    "open": 10,
+                    "high": 10,
+                    "low": 10,
+                    "close": 10,
+                    "volume": 1,
+                    "amount": 10,
+                    "closed": False,
+                },
+            ],
+        )
+        pipeline = self._make_pipeline(market_input=bad_input)
+
+        with self.assertRaisesRegex(
+            WorkbenchPipelineError,
+            "expected a closed daily bar",
+        ):
+            pipeline.step()
+
+
+class _RaisingMarketInputPort:
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    def read(self, target_time: datetime) -> PipelineMarketInput:
+        raise self._exc
+
+
+class _RaisingAnalyzer:
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    def __call__(
+        self,
+        bars: Sequence[Mapping[str, Any]],
+        symbol: str,
+    ) -> dict[str, Any]:
+        raise self._exc
+
+
+class ErrorBoundaryTests(_BasePipelineTests):
+    def test_market_input_runtime_error_is_wrapped(self) -> None:
+        pipeline = WorkbenchPipeline(
+            session=self.session,
+            market_input_port=_RaisingMarketInputPort(RuntimeError("provider down")),
+            clock_port=_FixedClock(self.target_time),
+        )
+
+        with self.assertRaisesRegex(WorkbenchPipelineError, "provider down"):
+            pipeline.step()
+
+    def test_analyzer_runtime_error_is_wrapped(self) -> None:
+        pipeline = self._make_pipeline(
+            analyzer=_RaisingAnalyzer(ValueError("czsc failed")),
+        )
+
+        with self.assertRaisesRegex(WorkbenchPipelineError, "czsc failed"):
+            pipeline.step()
+
+    def test_workbench_pipeline_error_is_not_double_wrapped(self) -> None:
+        pipeline = WorkbenchPipeline(
+            session=self.session,
+            market_input_port=_RaisingMarketInputPort(
+                WorkbenchPipelineError("already pipeline")
+            ),
+            clock_port=_FixedClock(self.target_time),
+        )
+
+        with self.assertRaises(WorkbenchPipelineError) as ctx:
+            pipeline.step()
+        self.assertNotIn("pipeline computation failed", str(ctx.exception))
+
+
+class SymbolIdentityTests(_BasePipelineTests):
+    def test_chan_analysis_uses_same_symbol_as_pipeline(self) -> None:
+        input_with_official = PipelineMarketInput(
+            symbol=_SYMBOL,
+            trade_date=_TRADE_DATE,
+            previous_close=10.15,
+            preheat_5m_bars=self.preheat,
+            bars_1m=self.bars_1m,
+            official_5m_bars=self.official_5m,
+        )
+        pipeline = self._make_pipeline(
+            market_input=input_with_official,
+            target_time="2026-07-24 09:35:00",
+        )
+        result = pipeline.step()
+
+        self.assertEqual(result.chan_analysis["symbol"], result.symbol)
+        self.assertEqual(result.symbol, _SYMBOL)
+
+
 if __name__ == "__main__":
     unittest.main()

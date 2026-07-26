@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any, Protocol
 
-from packages.chantheory import analyze_tracker_klines
+from packages.chantheory import analyze
 from packages.indicators import (
     calculate_five_minute_indicators,
     calculate_one_minute_indicators,
@@ -30,6 +30,7 @@ from ._market_bars import (
     eligible_closed_bars,
     parse_market_timestamp,
     parse_trade_date,
+    standardize_bar,
     validated_bar,
 )
 from .five_minute import DynamicFiveMinuteAggregator
@@ -41,7 +42,7 @@ class WorkbenchPipelineError(RuntimeMarketDataError):
 
 
 class ClockPort(Protocol):
-    """Supplies the target business moment."""
+    """Supplies the current target business moment."""
 
     def now(self) -> datetime:
         """Return the current target time in naive Asia/Shanghai local time."""
@@ -89,6 +90,7 @@ class PipelineResult:
     bars_1m: tuple[dict[str, Any], ...]
     bars_5m: tuple[dict[str, Any], ...]
     closed_5m_prefix: tuple[dict[str, Any], ...]
+    daily_bars: tuple[dict[str, Any], ...]
     daily_bar: dict[str, Any] | None
     quote: dict[str, Any] | None
     indicators_1m: dict[str, Any]
@@ -108,6 +110,7 @@ class PipelineResult:
             "bars_1m": [dict(bar) for bar in self.bars_1m],
             "bars_5m": [dict(bar) for bar in self.bars_5m],
             "closed_5m_prefix": [dict(bar) for bar in self.closed_5m_prefix],
+            "daily_bars": [dict(bar) for bar in self.daily_bars],
             "daily_bar": None if self.daily_bar is None else dict(self.daily_bar),
             "quote": None if self.quote is None else dict(self.quote),
             "indicators_1m": dict(self.indicators_1m),
@@ -123,11 +126,9 @@ def _default_analyze_5m(
 ) -> dict[str, Any]:
     """Project-owned full rebuild over a closed 5m prefix."""
 
-    market, code = _parse_canonical_symbol(symbol)
-    result = analyze_tracker_klines(
+    result = analyze(
         rows=bars,
-        code=code,
-        market=market,
+        symbol=symbol,
         timeframe="5m",
         source="tencent",
     )
@@ -195,19 +196,24 @@ class WorkbenchPipeline:
         pipeline reconstructs its internal aggregator from the supplied input
         prefix so that backward Replay seeks and forward Live advances share
         exactly the same deterministic path.
+
+        ``_target_time`` and ``_last_result`` are updated atomically only after
+        the full computation succeeds, so a failure never leaves the pipeline in
+        a torn state.
         """
 
         resolved_target = self._resolve_target_time(target_time)
-        self._target_time = resolved_target
 
         try:
             result = self._compute_unlocked(resolved_target)
-        except RuntimeMarketDataError as exc:
-            # Preserve already-pipeline errors; surface adapter/validation
-            # failures through the pipeline's stable exception type.
-            if isinstance(exc, WorkbenchPipelineError):
-                raise
-            raise WorkbenchPipelineError(str(exc)) from exc
+        except WorkbenchPipelineError:
+            raise
+        except Exception as exc:
+            raise WorkbenchPipelineError(
+                f"pipeline computation failed: {exc}"
+            ) from exc
+
+        self._target_time = resolved_target
         self._last_result = result
         return result
 
@@ -229,7 +235,10 @@ class WorkbenchPipeline:
             trade_date=trade_date,
             target_time=resolved_target,
         )
-        preheat_5m = _closed_bars(market_input.preheat_5m_bars)
+        preheat_5m = _preheat_closed_bars(
+            market_input.preheat_5m_bars,
+            session_start=self._session.start,
+        )
 
         aggregator = DynamicFiveMinuteAggregator(self._session)
         for bar in bars_1m:
@@ -238,7 +247,7 @@ class WorkbenchPipeline:
             aggregator.accept_official(bar)
 
         display_5m = list(aggregator.display_bars)
-        closed_5m = list(preheat_5m) + list(aggregator.analysis_bars)
+        closed_5m = _merge_sorted_bars(preheat_5m, aggregator.analysis_bars)
         bars_5m = _merge_sorted_bars(preheat_5m, display_5m)
 
         projection = project_market_at(
@@ -247,6 +256,11 @@ class WorkbenchPipeline:
             target_time=resolved_target,
             previous_close=market_input.previous_close,
             quote_snapshots=market_input.quote_snapshots,
+        )
+
+        daily_bars = _build_daily_bars(
+            market_input.daily_bars_history,
+            projection.daily_bar,
         )
 
         indicators_1m = (
@@ -266,7 +280,8 @@ class WorkbenchPipeline:
             trade_date=trade_date,
             bars_1m=tuple(dict(bar) for bar in bars_1m),
             bars_5m=tuple(bars_5m),
-            closed_5m_prefix=tuple(dict(bar) for bar in closed_5m),
+            closed_5m_prefix=tuple(closed_5m),
+            daily_bars=tuple(daily_bars),
             daily_bar=projection.daily_bar,
             quote=projection.quote,
             indicators_1m=indicators_1m,
@@ -309,12 +324,20 @@ def _target_day_closed_bars(
     return [bar for _, bar in eligible_closed_bars(rows, trade_date=trade_date, target_time=target_time)]
 
 
-def _closed_bars(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """Validate and deduplicate a closed-bar sequence by timestamp."""
+def _preheat_closed_bars(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    session_start: datetime,
+) -> list[dict[str, Any]]:
+    """Validate preheat 5m bars: closed and strictly before the session start."""
 
     parsed: dict[datetime, dict[str, Any]] = {}
     for row in rows:
         timestamp, bar = validated_bar(row, closed=True)
+        if timestamp >= session_start:
+            raise WorkbenchPipelineError(
+                "preheat 5m bar timestamp must be before the target session start"
+            )
         parsed[timestamp] = bar
     return [bar for _, bar in sorted(parsed.items())]
 
@@ -323,7 +346,7 @@ def _merge_sorted_bars(
     left: Sequence[Mapping[str, Any]],
     right: Sequence[Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Merge two sorted bar sequences, dropping duplicates by timestamp."""
+    """Merge two sorted bar sequences, with ``right`` overriding ``left`` on timestamp."""
 
     merged: dict[str, dict[str, Any]] = {}
     for bar in left:
@@ -331,6 +354,36 @@ def _merge_sorted_bars(
     for bar in right:
         merged[bar["timestamp"]] = dict(bar)
     return [merged[key] for key in sorted(merged)]
+
+
+def _build_daily_bars(
+    history: Sequence[Mapping[str, Any]],
+    dynamic_daily_bar: Mapping[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Merge historical daily bars with the current dynamic daily bar."""
+
+    merged = _daily_bars_history(history)
+    if dynamic_daily_bar is not None:
+        merged[dynamic_daily_bar["timestamp"]] = dict(dynamic_daily_bar)
+    return [merged[key] for key in sorted(merged)]
+
+
+def _daily_bars_history(
+    rows: Sequence[Mapping[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Validate and deduplicate closed historical daily bars by date."""
+
+    parsed: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        timestamp = row.get("timestamp", row.get("date"))
+        if not timestamp:
+            raise WorkbenchPipelineError("daily bar missing timestamp/date")
+        date_key = parse_trade_date(timestamp).isoformat()
+        bar = standardize_bar(row)
+        if bar["closed"] is not True:
+            raise WorkbenchPipelineError("expected a closed daily bar")
+        parsed[date_key] = bar
+    return parsed
 
 
 def _empty_1m_indicators() -> dict[str, Any]:
@@ -368,14 +421,3 @@ def _empty_5m_indicators() -> dict[str, Any]:
             "histogram": [],
         },
     }
-
-
-def _parse_canonical_symbol(symbol: str) -> tuple[str, str]:
-    """Split ``sh.600000`` into ``(market, code)``."""
-
-    if not isinstance(symbol, str) or "." not in symbol:
-        raise WorkbenchPipelineError("symbol must be canonical sh.###### or sz.######")
-    market, code = symbol.lower().split(".", 1)
-    if market not in {"sh", "sz"} or len(code) != 6 or not code.isdigit():
-        raise WorkbenchPipelineError("symbol must be canonical sh.###### or sz.######")
-    return market, code
