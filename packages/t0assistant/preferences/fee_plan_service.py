@@ -58,7 +58,7 @@ class FeePlanService:
         seed_defaults: bool = True,
     ) -> None:
         self._repository = repository
-        if seed_defaults:
+        if seed_defaults and self._repository.capability.writable:
             self.seed_default_plan()
 
     @property

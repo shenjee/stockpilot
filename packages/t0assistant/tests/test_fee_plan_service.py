@@ -151,6 +151,26 @@ class FeePlanServiceTests(unittest.TestCase):
             with self.assertRaises(RepositoryReadOnlyError):
                 service.delete_plan(FeePlanService.DEFAULT_PLAN_ID)
 
+    def test_read_only_default_constructor_allows_reading_existing_plans(
+        self,
+    ) -> None:
+        with open_app_database(self.db_path) as database:
+            writable_service = FeePlanService(SqliteFeePlanRepository(database))
+            expected = writable_service.get_plan(FeePlanService.DEFAULT_PLAN_ID)
+
+        with open_app_database(self.db_path, force_read_only=True) as database:
+            service = FeePlanService(SqliteFeePlanRepository(database))
+            self.assertFalse(service.capability.writable)
+            self.assertEqual(
+                service.get_plan(FeePlanService.DEFAULT_PLAN_ID), expected
+            )
+            with self.assertRaises(RepositoryReadOnlyError):
+                service.create_plan(expected)
+            with self.assertRaises(RepositoryReadOnlyError):
+                service.update_plan(expected)
+            with self.assertRaises(RepositoryReadOnlyError):
+                service.delete_plan(FeePlanService.DEFAULT_PLAN_ID)
+
     def test_get_missing_plan_raises_not_found(self) -> None:
         with open_app_database(self.db_path) as database:
             service = FeePlanService(
