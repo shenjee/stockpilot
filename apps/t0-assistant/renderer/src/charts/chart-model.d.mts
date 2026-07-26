@@ -73,6 +73,13 @@ export interface WorkbenchChartSnapshot {
         ma30: IndicatorPoint[];
         ma60: IndicatorPoint[];
       };
+      boll?: {
+        period: 20;
+        stddev: 2.0;
+        upper: IndicatorPoint[];
+        middle: IndicatorPoint[];
+        lower: IndicatorPoint[];
+      };
       volume: {
         values: IndicatorPoint[];
         ma5: IndicatorPoint[];
@@ -101,7 +108,20 @@ export interface WorkbenchChartSnapshot {
       low: number;
       active?: boolean;
     }>;
+    candidate_buy_points?: CandidatePoint[];
+    candidate_sell_points?: CandidatePoint[];
   };
+}
+
+export interface CandidatePoint {
+  id: string;
+  point_type: string;
+  timestamp: string;
+  price: number;
+  reference_id: string;
+  confirmed: boolean;
+  reason: string;
+  meta?: Record<string, unknown>;
 }
 
 export interface PriceLineOverlay {
@@ -116,6 +136,19 @@ export interface PriceBoxOverlay {
   end_timestamp: string;
   high: number;
   low: number;
+  active?: boolean;
+}
+
+export interface BollModel {
+  upper: IndicatorPoint[];
+  middle: IndicatorPoint[];
+  lower: IndicatorPoint[];
+}
+
+export interface CzscMarker {
+  timestamp: string;
+  side: "buy" | "sell";
+  label: string;
 }
 
 export interface ChartGroupModel {
@@ -142,8 +175,10 @@ export interface ChartGroupModel {
     ma30: IndicatorPoint[];
     ma60: IndicatorPoint[];
   };
+  boll: BollModel;
   strokes: PriceLineOverlay[];
   pivotZones: PriceBoxOverlay[];
+  czscMarkers: CzscMarker[];
   volume: IndicatorPoint[];
   volumeMa5: IndicatorPoint[];
   volumeMa10: IndicatorPoint[];

@@ -69,6 +69,28 @@ export function createChartGroupModel(snapshot, kind, layers = {}) {
           )
         : [];
   }
+  // BOLL 默认显示，不提供独立开关；只消费契约数据，不在 Renderer 计算。
+  // 保留 null 预热值的空白语义（toLineData 转为 whitespace）。
+  const boll =
+    kind === FIVE_MINUTE
+      ? {
+          upper: normalizePoints(
+            indicator.boll?.upper ?? [],
+            timestampSet,
+            "five_minute boll upper",
+          ),
+          middle: normalizePoints(
+            indicator.boll?.middle ?? [],
+            timestampSet,
+            "five_minute boll middle",
+          ),
+          lower: normalizePoints(
+            indicator.boll?.lower ?? [],
+            timestampSet,
+            "five_minute boll lower",
+          ),
+        }
+      : { upper: [], middle: [], lower: [] };
   const strokes =
     kind === FIVE_MINUTE && enabled("strokes")
       ? normalizeStrokes(snapshot.chan_analysis?.strokes, timestampSet)
@@ -76,6 +98,15 @@ export function createChartGroupModel(snapshot, kind, layers = {}) {
   const pivotZones =
     kind === FIVE_MINUTE && enabled("pivot_zones")
       ? normalizePivotZones(snapshot.chan_analysis?.pivot_zones, timestampSet)
+      : [];
+  // CZSC 买卖点只映射 1B/1S/2B/2S/3B/3S；开关只控制显示，不影响 CZSC 数据。
+  const czscMarkers =
+    kind === FIVE_MINUTE
+      ? normalizeCzscMarkers(
+          snapshot.chan_analysis?.candidate_buy_points,
+          snapshot.chan_analysis?.candidate_sell_points,
+          timestampSet,
+        )
       : [];
 
   const volumePoints = normalizePoints(
@@ -118,8 +149,10 @@ export function createChartGroupModel(snapshot, kind, layers = {}) {
         ? normalizePoints(indicator.vwap, timestampSet, "one_minute vwap")
         : [],
     movingAverages,
+    boll,
     strokes,
     pivotZones,
+    czscMarkers,
     volume: volumePoints,
     volumeMa5:
       kind === FIVE_MINUTE
@@ -178,14 +211,85 @@ function normalizeStrokes(strokes, timestampSet) {
 }
 
 function normalizePivotZones(zones, timestampSet) {
-  return (zones ?? []).filter(
-    (zone) =>
-      timestampSet.has(zone?.start_timestamp) &&
-      timestampSet.has(zone?.end_timestamp) &&
-      Number.isFinite(zone?.high) &&
-      Number.isFinite(zone?.low) &&
-      zone.high >= zone.low,
-  );
+  return (zones ?? [])
+    .filter(
+      (zone) =>
+        timestampSet.has(zone?.start_timestamp) &&
+        timestampSet.has(zone?.end_timestamp) &&
+        Number.isFinite(zone?.high) &&
+        Number.isFinite(zone?.low) &&
+        zone.high >= zone.low,
+    )
+    .map((zone) => ({
+      start_timestamp: zone.start_timestamp,
+      end_timestamp: zone.end_timestamp,
+      high: zone.high,
+      low: zone.low,
+      active: zone.active === true,
+    }));
+}
+
+// 按 chantheory point_type 映射 1B/1S/2B/2S/3B/3S（与 packages/chantheory/plotting.py 一致）。
+// structure_*_candidate 等非标准类型不渲染，避免产生歧义或建议性标记。
+function czscPointLabel(pointType) {
+  switch (pointType) {
+    case "first_buy":
+      return "1B";
+    case "second_buy":
+      return "2B";
+    case "third_buy":
+      return "3B";
+    case "first_sell":
+      return "1S";
+    case "second_sell":
+      return "2S";
+    case "third_sell":
+      return "3S";
+    default:
+      return null;
+  }
+}
+
+function normalizeCzscMarkers(buyPoints, sellPoints, timestampSet) {
+  // 按时间戳聚合：同一时刻同侧多点合并标签（如 "1B, 2B"）。
+  const byTimestamp = new Map();
+  const collect = (points, side) => {
+    for (const point of points ?? []) {
+      const timestamp = point?.timestamp;
+      if (!timestampSet.has(timestamp)) {
+        continue;
+      }
+      const label = czscPointLabel(point?.point_type);
+      if (!label) {
+        continue;
+      }
+      let entry = byTimestamp.get(timestamp);
+      if (!entry) {
+        entry = { buy: [], sell: [] };
+        byTimestamp.set(timestamp, entry);
+      }
+      entry[side].push(label);
+    }
+  };
+  collect(buyPoints, "buy");
+  collect(sellPoints, "sell");
+
+  const markers = [];
+  for (const [timestamp, { buy, sell }] of byTimestamp) {
+    if (buy.length > 0) {
+      markers.push({ timestamp, side: "buy", label: buy.join(", ") });
+    }
+    if (sell.length > 0) {
+      markers.push({ timestamp, side: "sell", label: sell.join(", ") });
+    }
+  }
+  markers.sort((left, right) => {
+    if (left.timestamp === right.timestamp) {
+      return 0;
+    }
+    return left.timestamp < right.timestamp ? -1 : 1;
+  });
+  return markers;
 }
 
 function normalizePoints(points, timestampSet, label) {

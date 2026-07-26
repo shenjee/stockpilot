@@ -153,3 +153,99 @@ test("timestamp parsing is timezone-independent and rejects loose input", () => 
   );
   assert.throws(() => parseMarketTimestamp("2026/07/22 09:35"));
 });
+
+test("5 minute BOLL is consumed from contract and preserves null warmup", () => {
+  const layered = structuredClone(fixture);
+  layered.indicators.five_minute.boll = {
+    period: 20,
+    stddev: 2.0,
+    upper: [
+      { timestamp: "2026-07-22 10:05:00", value: 10.6 },
+      { timestamp: "2026-07-22 10:10:00", value: 10.7 },
+    ],
+    middle: [
+      { timestamp: "2026-07-22 10:05:00", value: null },
+      { timestamp: "2026-07-22 10:10:00", value: 10.4 },
+    ],
+    lower: [
+      { timestamp: "2026-07-22 10:05:00", value: 10.1 },
+      { timestamp: "2026-07-22 10:10:00", value: 10.2 },
+    ],
+  };
+
+  const model = createChartGroupModel(layered, ChartGroupKind.FIVE_MINUTE);
+  assert.equal(model.boll.upper.length, 2);
+  assert.equal(model.boll.middle.length, 2);
+  assert.equal(model.boll.middle[0].value, null);
+  assert.equal(model.boll.lower[1].value, 10.2);
+
+  // 1 分钟组没有 BOLL 图层。
+  const intraday = createChartGroupModel(layered, ChartGroupKind.ONE_MINUTE);
+  assert.deepEqual(intraday.boll, { upper: [], middle: [], lower: [] });
+});
+
+test("CZSC candidate points map to 1B/1S/2B/2S/3B/3S and merge by timestamp", () => {
+  const layered = structuredClone(fixture);
+  layered.chan_analysis = {
+    candidate_buy_points: [
+      { point_type: "first_buy", timestamp: "2026-07-22 09:55:00", price: 10.1 },
+      { point_type: "second_buy", timestamp: "2026-07-22 09:55:00", price: 10.1 },
+      { point_type: "third_buy", timestamp: "2026-07-22 10:05:00", price: 10.3 },
+      { point_type: "structure_buy_candidate", timestamp: "2026-07-22 10:10:00", price: 10.4 },
+    ],
+    candidate_sell_points: [
+      { point_type: "first_sell", timestamp: "2026-07-22 10:00:00", price: 10.5 },
+      { point_type: "unknown_type", timestamp: "2026-07-22 10:05:00", price: 10.3 },
+    ],
+  };
+
+  const model = createChartGroupModel(layered, ChartGroupKind.FIVE_MINUTE);
+  // 09:55 同时 1B + 2B 合并；10:05 只有 3B（unknown_type 卖点被忽略）；
+  // 10:10 的 structure_buy_candidate 不渲染。
+  assert.deepEqual(model.czscMarkers, [
+    { timestamp: "2026-07-22 09:55:00", side: "buy", label: "1B, 2B" },
+    { timestamp: "2026-07-22 10:00:00", side: "sell", label: "1S" },
+    { timestamp: "2026-07-22 10:05:00", side: "buy", label: "3B" },
+  ]);
+});
+
+test("CZSC markers and BOLL are absent for the intraday group", () => {
+  const layered = structuredClone(fixture);
+  layered.chan_analysis = {
+    candidate_buy_points: [
+      { point_type: "first_buy", timestamp: "2026-07-22 09:55:00", price: 10.1 },
+    ],
+  };
+  const model = createChartGroupModel(layered, ChartGroupKind.ONE_MINUTE);
+  assert.deepEqual(model.czscMarkers, []);
+});
+
+test("pivot zone active flag is preserved through normalization", () => {
+  const layered = structuredClone(fixture);
+  layered.chan_analysis = {
+    pivot_zones: [
+      {
+        start_timestamp: "2026-07-22 09:55:00",
+        end_timestamp: "2026-07-22 10:05:00",
+        high: 10.25,
+        low: 10.15,
+        active: true,
+      },
+      {
+        start_timestamp: "2026-07-22 09:55:00",
+        end_timestamp: "2026-07-22 10:05:00",
+        high: 10.3,
+        low: 10.1,
+        active: false,
+      },
+    ],
+  };
+  const model = createChartGroupModel(
+    layered,
+    ChartGroupKind.FIVE_MINUTE,
+    { pivot_zones: true },
+  );
+  assert.equal(model.pivotZones.length, 2);
+  assert.equal(model.pivotZones[0].active, true);
+  assert.equal(model.pivotZones[1].active, false);
+});

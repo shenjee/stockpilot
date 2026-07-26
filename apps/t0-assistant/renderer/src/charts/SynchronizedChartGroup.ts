@@ -10,6 +10,7 @@ import {
   type LineData,
   type LogicalRange,
   type MouseEventParams,
+  type SeriesMarker,
   type Time,
   type UTCTimestamp,
   type WhitespaceData,
@@ -23,6 +24,7 @@ import {
   buildCrosshairFallbackIndex,
   resolveCrosshairTarget,
 } from "./chart-interaction.mjs";
+import { PivotZonePrimitive } from "./pivot-zone-primitive";
 
 interface ChartGroupContainers {
   price: HTMLElement;
@@ -42,6 +44,9 @@ const GREEN = "#26a69a";
 const BLUE = "#4f8cff";
 const AMBER = "#f6b94a";
 const MUTED = "#8090a8";
+const BOLL_COLOR = "#e879f9";
+const CZSC_BUY_COLOR = "#22c55e";
+const CZSC_SELL_COLOR = "#ef4444";
 const MA_COLORS = {
   ma5: "#f6d365",
   ma10: "#7dd3fc",
@@ -64,6 +69,10 @@ export class SynchronizedChartGroup {
   private readonly movingAverageSeries: Partial<
     Record<keyof typeof MA_COLORS, ISeriesApi<"Line">>
   > = {};
+  private readonly bollUpperSeries: ISeriesApi<"Line"> | null;
+  private readonly bollMiddleSeries: ISeriesApi<"Line"> | null;
+  private readonly bollLowerSeries: ISeriesApi<"Line"> | null;
+  private readonly pivotZonePrimitive: PivotZonePrimitive | null;
   private readonly volumeSeries: ISeriesApi<"Histogram">;
   private readonly volumeMa5Series: ISeriesApi<"Line"> | null;
   private readonly volumeMa10Series: ISeriesApi<"Line"> | null;
@@ -121,6 +130,29 @@ export class SynchronizedChartGroup {
           lastValueVisible: false,
         });
       }
+      // BOLL 三条线默认显示，无独立开关。
+      this.bollUpperSeries = this.priceChart.addLineSeries({
+        color: BOLL_COLOR,
+        lineWidth: 1,
+        priceLineVisible: false,
+        lastValueVisible: false,
+      });
+      this.bollMiddleSeries = this.priceChart.addLineSeries({
+        color: BOLL_COLOR,
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        priceLineVisible: false,
+        lastValueVisible: false,
+      });
+      this.bollLowerSeries = this.priceChart.addLineSeries({
+        color: BOLL_COLOR,
+        lineWidth: 1,
+        priceLineVisible: false,
+        lastValueVisible: false,
+      });
+      // 笔中枢以填充矩形原语表达，替换歧义的双线实现。
+      this.pivotZonePrimitive = new PivotZonePrimitive();
+      this.priceSeries.attachPrimitive(this.pivotZonePrimitive);
       this.volumeMa5Series = this.volumeChart.addLineSeries({
         color: AMBER,
         lineWidth: 1,
@@ -145,6 +177,10 @@ export class SynchronizedChartGroup {
         priceLineVisible: false,
         lastValueVisible: false,
       });
+      this.bollUpperSeries = null;
+      this.bollMiddleSeries = null;
+      this.bollLowerSeries = null;
+      this.pivotZonePrimitive = null;
       this.volumeMa5Series = null;
       this.volumeMa10Series = null;
     }
@@ -311,7 +347,13 @@ export class SynchronizedChartGroup {
           this.toLineData(this.model.movingAverages[period], time),
         );
       }
+      this.bollUpperSeries?.setData(this.toLineData(this.model.boll.upper, time));
+      this.bollMiddleSeries?.setData(
+        this.toLineData(this.model.boll.middle, time),
+      );
+      this.bollLowerSeries?.setData(this.toLineData(this.model.boll.lower, time));
       this.setStructureData(time);
+      this.applyCzscMarkers(time);
     } else {
       const priceData: LineData<Time>[] = this.model.price.flatMap((point) =>
         "value" in point
@@ -369,6 +411,7 @@ export class SynchronizedChartGroup {
   private setStructureData(
     time: (timestamp: string) => UTCTimestamp,
   ) {
+    // 笔线段：原子移除旧 series 后按当前 model 重建。
     for (const series of this.structureSeries) {
       this.priceChart.removeSeries(series);
     }
@@ -390,22 +433,33 @@ export class SynchronizedChartGroup {
       this.structureSeries.push(series);
     }
 
-    for (const zone of this.model.pivotZones) {
-      for (const value of [zone.high, zone.low]) {
-        const series = this.priceChart.addLineSeries({
-          color: "#f59e0b",
-          lineWidth: 1,
-          lineStyle: LineStyle.Dashed,
-          priceLineVisible: false,
-          lastValueVisible: false,
-        });
-        series.setData([
-          { time: time(zone.start_timestamp), value },
-          { time: time(zone.end_timestamp), value },
-        ]);
-        this.structureSeries.push(series);
-      }
+    // 笔中枢：原语整体替换 zone 数组（原子替换，旧 zone 不残留）。
+    this.pivotZonePrimitive?.setZones(
+      this.model.pivotZones.map((zone) => ({
+        start: time(zone.start_timestamp),
+        end: time(zone.end_timestamp),
+        high: zone.high,
+        low: zone.low,
+        active: zone.active === true,
+      })),
+    );
+  }
+
+  private applyCzscMarkers(
+    time: (timestamp: string) => UTCTimestamp,
+  ) {
+    if (!this.model || this.kind !== ChartGroupKind.FIVE_MINUTE) {
+      return;
     }
+    // setMarkers 是全量替换：旧标记随每次调用自动消失，满足原子替换。
+    const markers: SeriesMarker<Time>[] = this.model.czscMarkers.map((marker) => ({
+      time: time(marker.timestamp),
+      position: marker.side === "buy" ? "belowBar" : "aboveBar",
+      color: marker.side === "buy" ? CZSC_BUY_COLOR : CZSC_SELL_COLOR,
+      shape: marker.side === "buy" ? "arrowUp" : "arrowDown",
+      text: marker.label,
+    }));
+    (this.priceSeries as ISeriesApi<"Candlestick">).setMarkers(markers);
   }
 
   private toLineData(
