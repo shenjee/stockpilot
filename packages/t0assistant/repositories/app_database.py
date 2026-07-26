@@ -261,6 +261,7 @@ def init_db(connection: sqlite3.Connection) -> None:
         ).fetchone()
         if existing is not None and existing["schema_version"] not in (
             1,
+            2,
             SCHEMA_VERSION,
         ):
             raise AppDatabaseCompatibilityError(

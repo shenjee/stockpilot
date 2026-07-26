@@ -23,9 +23,9 @@ class _FeePlanRepository(Protocol):
     @property
     def capability(self) -> PreferenceCapability: ...
 
-    def is_default_plan_initialized(self) -> bool: ...
-
-    def mark_default_plan_initialized(self) -> None: ...
+    def initialize_default_plan(
+        self, plan: FeePlanRecord
+    ) -> "FeePlanRecord | None": ...
 
     def list_all(self) -> "tuple[FeePlanRecord, ...]": ...
 
@@ -68,15 +68,13 @@ class FeePlanService:
     def seed_default_plan(self) -> FeePlanRecord | None:
         """Idempotently seed the default plan exactly once per database.
 
-        After the first successful seed, the initialization flag is persisted.
-        Deleting the default plan later will not cause it to resurrect.
+        The repository writes the plan row and the initialization flag in a
+        single transaction, so a crash or write failure between the two cannot
+        leave the database in a half-initialized state. Deleting the default
+        plan later will not cause it to resurrect.
         """
 
-        if self._repository.is_default_plan_initialized():
-            return self._repository.get(self.DEFAULT_PLAN_ID)
-        plan = self._repository.create(_default_plan())
-        self._repository.mark_default_plan_initialized()
-        return plan
+        return self._repository.initialize_default_plan(_default_plan())
 
     def list_plans(self) -> tuple[FeePlanRecord, ...]:
         return self._repository.list_all()

@@ -116,6 +116,49 @@ class TradingRepositoryTests(unittest.TestCase):
         self.assertEqual(last_symbol, "sh.600584")
         self.assertTrue({"preferences", "trades", "fee_plans"} <= tables)
 
+    def test_version_two_database_migrates_in_place_and_preserves_trades_plans_and_preferences(
+        self,
+    ) -> None:
+        with open_app_database(self.db_path) as database:
+            database.connection.execute(
+                """
+                UPDATE preferences
+                SET last_symbol = 'sh.600584', chart_split = '50_50'
+                WHERE singleton_id = 1
+                """
+            )
+            database.connection.commit()
+            plans = SqliteFeePlanRepository(database)
+            trades = SqliteTradeRepository(database)
+            plan = self._plan()
+            trade = self._trade()
+            plans.create(plan)
+            trades.create(trade)
+            database.connection.execute(
+                "UPDATE app_schema SET schema_version = 2 WHERE singleton_id = 1"
+            )
+            database.connection.execute("DROP TABLE fee_plan_meta")
+            database.connection.commit()
+
+        with open_app_database(self.db_path) as migrated:
+            schema_version = migrated.connection.execute(
+                "SELECT schema_version FROM app_schema WHERE singleton_id = 1"
+            ).fetchone()[0]
+            last_symbol = migrated.connection.execute(
+                "SELECT last_symbol FROM preferences WHERE singleton_id = 1"
+            ).fetchone()[0]
+            chart_split = migrated.connection.execute(
+                "SELECT chart_split FROM preferences WHERE singleton_id = 1"
+            ).fetchone()[0]
+            migrated_plans = SqliteFeePlanRepository(migrated)
+            migrated_trades = SqliteTradeRepository(migrated)
+
+            self.assertEqual(schema_version, SCHEMA_VERSION)
+            self.assertEqual(last_symbol, "sh.600584")
+            self.assertEqual(chart_split, "50_50")
+            self.assertEqual(migrated_plans.list_all(), (plan,))
+            self.assertEqual(migrated_trades.list_all(), (trade,))
+
     def test_private_schema_has_business_audit_fields_without_market_lineage(
         self,
     ) -> None:
@@ -279,6 +322,48 @@ class TradingRepositoryTests(unittest.TestCase):
             self.assertFalse(plans.delete(plan.fee_plan_id))
             self.assertIsNone(plans.get(plan.fee_plan_id))
             self.assertEqual(trades.get(trade.trade_id), trade)
+
+    def test_default_plan_initialization_is_atomic_and_retryable_after_failure(
+        self,
+    ) -> None:
+        plan = self._plan("default-plan")
+        with open_app_database(self.db_path) as database:
+            plans = SqliteFeePlanRepository(database)
+            database.connection.execute(
+                """
+                CREATE TRIGGER reject_fee_plan_meta_write
+                BEFORE INSERT ON fee_plan_meta
+                BEGIN
+                    SELECT RAISE(ABORT, 'injected meta write failure');
+                END
+                """
+            )
+            database.connection.commit()
+
+            with self.assertRaisesRegex(
+                RepositoryPersistenceError, "未确认持久化"
+            ):
+                plans.initialize_default_plan(plan)
+
+            self.assertEqual(plans.list_all(), ())
+            meta_row = database.connection.execute(
+                "SELECT default_plan_initialized FROM fee_plan_meta WHERE singleton_id = 1"
+            ).fetchone()
+            self.assertTrue(
+                meta_row is None or not meta_row["default_plan_initialized"]
+            )
+
+            database.connection.execute(
+                "DROP TRIGGER reject_fee_plan_meta_write"
+            )
+            database.connection.commit()
+
+            self.assertEqual(plans.initialize_default_plan(plan), plan)
+            self.assertEqual(plans.list_all(), (plan,))
+            self.assertEqual(
+                plans.initialize_default_plan(plan),
+                plan,
+            )
 
     def test_fee_plan_rejects_invalid_persistent_values(self) -> None:
         invalid_changes = (
