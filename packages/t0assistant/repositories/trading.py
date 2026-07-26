@@ -341,6 +341,31 @@ class SqliteTradeRepository(_SqliteRepository):
 class SqliteFeePlanRepository(_SqliteRepository):
     """CRUD adapter for structured fee plans without fee-policy behavior."""
 
+    def is_default_plan_initialized(self) -> bool:
+        def read(connection: sqlite3.Connection) -> bool:
+            row = connection.execute(
+                "SELECT default_plan_initialized FROM fee_plan_meta WHERE singleton_id = 1"
+            ).fetchone()
+            return row is not None and bool(row["default_plan_initialized"])
+
+        return self._read(read)
+
+    def mark_default_plan_initialized(self) -> None:
+        def persist(connection: sqlite3.Connection) -> None:
+            now = _utc_now()
+            connection.execute(
+                """
+                INSERT INTO fee_plan_meta (singleton_id, default_plan_initialized, updated_at)
+                VALUES (1, 1, ?)
+                ON CONFLICT(singleton_id) DO UPDATE SET
+                    default_plan_initialized = excluded.default_plan_initialized,
+                    updated_at = excluded.updated_at
+                """,
+                (now,),
+            )
+
+        self._run(persist)
+
     def create(self, plan: FeePlanRecord) -> FeePlanRecord:
         self._require_plan(plan)
         now = _utc_now()

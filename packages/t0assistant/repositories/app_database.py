@@ -27,7 +27,7 @@ from packages.t0assistant.preferences import (
 
 PathLike = str | Path
 _T = TypeVar("_T")
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 DDL_STATEMENTS = (
     """
@@ -72,6 +72,14 @@ DDL_STATEMENTS = (
         transfer_fee_enabled INTEGER NOT NULL
             CHECK (transfer_fee_enabled IN (0, 1)),
         created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fee_plan_meta (
+        singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+        default_plan_initialized INTEGER NOT NULL
+            CHECK (default_plan_initialized IN (0, 1)),
         updated_at TEXT NOT NULL
     )
     """,
@@ -134,6 +142,11 @@ _REQUIRED_COLUMNS = {
         "transfer_fee_side",
         "transfer_fee_enabled",
         "created_at",
+        "updated_at",
+    },
+    "fee_plan_meta": {
+        "singleton_id",
+        "default_plan_initialized",
         "updated_at",
     },
     "trades": {
@@ -261,14 +274,14 @@ def init_db(connection: sqlite3.Connection) -> None:
             """,
             (SCHEMA_VERSION, now),
         )
-        if existing is not None and existing["schema_version"] == 1:
+        if existing is not None and existing["schema_version"] in (1, 2):
             connection.execute(
                 """
                 UPDATE app_schema
                 SET schema_version = ?, updated_at = ?
-                WHERE singleton_id = 1 AND schema_version = 1
+                WHERE singleton_id = 1 AND schema_version = ?
                 """,
-                (SCHEMA_VERSION, now),
+                (SCHEMA_VERSION, now, existing["schema_version"]),
             )
         connection.execute(
             """

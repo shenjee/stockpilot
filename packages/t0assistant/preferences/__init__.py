@@ -1,5 +1,9 @@
 """T+0 persistent preference values and application service."""
 
+from .fee_plan_service import (
+    FeePlanNotFoundError,
+    FeePlanService,
+)
 from .models import (
     LayerPreference,
     LayoutPreference,
@@ -16,6 +20,8 @@ from .service import (
 )
 
 __all__ = [
+    "FeePlanNotFoundError",
+    "FeePlanService",
     "LayerPreference",
     "LayoutPreference",
     "PreferenceCapability",
