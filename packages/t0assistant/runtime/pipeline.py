@@ -187,7 +187,9 @@ class WorkbenchPipeline:
 
         if self._clock_port is None:
             raise WorkbenchPipelineError("step requires a ClockPort")
-        return self.compute(self._clock_port.now())
+        # Pass None so the clock read happens inside compute, where all runtime
+        # failures are wrapped into WorkbenchPipelineError.
+        return self.compute()
 
     def compute(self, target_time: datetime | str | None = None) -> PipelineResult:
         """Compute the deterministic result for ``target_time``.
@@ -202,9 +204,8 @@ class WorkbenchPipeline:
         a torn state.
         """
 
-        resolved_target = self._resolve_target_time(target_time)
-
         try:
+            resolved_target = self._resolve_target_time(target_time)
             result = self._compute_unlocked(resolved_target)
         except WorkbenchPipelineError:
             raise
@@ -261,6 +262,7 @@ class WorkbenchPipeline:
         daily_bars = _build_daily_bars(
             market_input.daily_bars_history,
             projection.daily_bar,
+            trade_date=trade_date,
         )
 
         indicators_1m = (
@@ -329,17 +331,31 @@ def _preheat_closed_bars(
     *,
     session_start: datetime,
 ) -> list[dict[str, Any]]:
-    """Validate preheat 5m bars: closed and strictly before the session start."""
+    """Validate preheat 5m bars: closed and strictly before the session start.
+
+    The timestamp is checked before any other field is read, so a future
+    preheat row with poison OHLCVA fields cannot leak future market data.
+    """
 
     parsed: dict[datetime, dict[str, Any]] = {}
     for row in rows:
-        timestamp, bar = validated_bar(row, closed=True)
+        timestamp = _peek_timestamp(row)
         if timestamp >= session_start:
             raise WorkbenchPipelineError(
                 "preheat 5m bar timestamp must be before the target session start"
             )
+        _, bar = validated_bar(row, closed=True)
         parsed[timestamp] = bar
     return [bar for _, bar in sorted(parsed.items())]
+
+
+def _peek_timestamp(row: Mapping[str, Any]) -> datetime:
+    """Read only the timestamp/date field from a bar row."""
+
+    timestamp = row.get("timestamp", row.get("date"))
+    if not timestamp:
+        raise WorkbenchPipelineError("bar row missing timestamp/date")
+    return parse_market_timestamp(timestamp, field="timestamp")
 
 
 def _merge_sorted_bars(
@@ -359,10 +375,12 @@ def _merge_sorted_bars(
 def _build_daily_bars(
     history: Sequence[Mapping[str, Any]],
     dynamic_daily_bar: Mapping[str, Any] | None,
+    *,
+    trade_date: date,
 ) -> list[dict[str, Any]]:
     """Merge historical daily bars with the current dynamic daily bar."""
 
-    merged = _daily_bars_history(history)
+    merged = _daily_bars_history(history, trade_date=trade_date)
     if dynamic_daily_bar is not None:
         merged[dynamic_daily_bar["timestamp"]] = dict(dynamic_daily_bar)
     return [merged[key] for key in sorted(merged)]
@@ -370,19 +388,29 @@ def _build_daily_bars(
 
 def _daily_bars_history(
     rows: Sequence[Mapping[str, Any]],
+    *,
+    trade_date: date,
 ) -> dict[str, dict[str, Any]]:
-    """Validate and deduplicate closed historical daily bars by date."""
+    """Validate and deduplicate closed historical daily bars by date.
+
+    Historical daily bars must be strictly before the current trade date so
+    that the current (dynamic) daily bar is the only source for the target day.
+    """
 
     parsed: dict[str, dict[str, Any]] = {}
     for row in rows:
         timestamp = row.get("timestamp", row.get("date"))
         if not timestamp:
             raise WorkbenchPipelineError("daily bar missing timestamp/date")
-        date_key = parse_trade_date(timestamp).isoformat()
+        bar_date = parse_trade_date(timestamp)
+        if bar_date >= trade_date:
+            raise WorkbenchPipelineError(
+                "daily_bars_history must contain only dates before the trade_date"
+            )
         bar = standardize_bar(row)
         if bar["closed"] is not True:
             raise WorkbenchPipelineError("expected a closed daily bar")
-        parsed[date_key] = bar
+        parsed[bar_date.isoformat()] = bar
     return parsed
 
 

@@ -646,6 +646,22 @@ class PreheatFutureDataTests(_BasePipelineTests):
         ):
             pipeline.step()
 
+    def test_future_preheat_ohlcva_fields_are_not_read(self) -> None:
+        """Poison row: accessing any field other than timestamp should fail."""
+        bad_input = PipelineMarketInput(
+            symbol=_SYMBOL,
+            trade_date=_TRADE_DATE,
+            previous_close=10.15,
+            preheat_5m_bars=[_TimestampOnlyPoisonRow("2026-07-24 09:35:00")],
+        )
+        pipeline = self._make_pipeline(market_input=bad_input)
+
+        with self.assertRaisesRegex(
+            WorkbenchPipelineError,
+            "preheat 5m bar timestamp must be before the target session start",
+        ):
+            pipeline.step()
+
 
 class AtomicStateUpdateTests(_BasePipelineTests):
     def test_failed_compute_does_not_update_target_time_or_result(self) -> None:
@@ -762,7 +778,7 @@ class DailyBarsTests(_BasePipelineTests):
         self.assertFalse(result.daily_bars[-1]["closed"])
         self.assertEqual(result.daily_bars[-1]["timestamp"], "2026-07-24")
 
-    def test_dynamic_daily_bar_overwrites_history_for_trade_date(self) -> None:
+    def test_trade_date_history_bar_is_rejected(self) -> None:
         history = [
             {
                 "timestamp": "2026-07-24",
@@ -783,11 +799,39 @@ class DailyBarsTests(_BasePipelineTests):
             daily_bars_history=history,
         )
         pipeline = self._make_pipeline(market_input=market_input)
-        result = pipeline.step()
 
-        self.assertEqual(len(result.daily_bars), 1)
-        self.assertFalse(result.daily_bars[0]["closed"])
-        self.assertEqual(result.daily_bars[0]["close"], 10.4)
+        with self.assertRaisesRegex(
+            WorkbenchPipelineError,
+            "daily_bars_history must contain only dates before the trade_date",
+        ):
+            pipeline.step()
+
+    def test_future_daily_history_bar_is_rejected(self) -> None:
+        history = [
+            {
+                "timestamp": "2026-07-25",
+                "open": 9.0,
+                "high": 9.0,
+                "low": 9.0,
+                "close": 9.0,
+                "volume": 1,
+                "amount": 9,
+                "closed": True,
+            },
+        ]
+        market_input = PipelineMarketInput(
+            symbol=_SYMBOL,
+            trade_date=_TRADE_DATE,
+            previous_close=10.15,
+            daily_bars_history=history,
+        )
+        pipeline = self._make_pipeline(market_input=market_input)
+
+        with self.assertRaisesRegex(
+            WorkbenchPipelineError,
+            "daily_bars_history must contain only dates before the trade_date",
+        ):
+            pipeline.step()
 
     def test_non_closed_daily_history_bar_is_rejected(self) -> None:
         bad_input = PipelineMarketInput(
@@ -836,6 +880,14 @@ class _RaisingAnalyzer:
         raise self._exc
 
 
+class _RaisingClock:
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    def now(self) -> datetime:
+        raise self._exc
+
+
 class ErrorBoundaryTests(_BasePipelineTests):
     def test_market_input_runtime_error_is_wrapped(self) -> None:
         pipeline = WorkbenchPipeline(
@@ -853,6 +905,16 @@ class ErrorBoundaryTests(_BasePipelineTests):
         )
 
         with self.assertRaisesRegex(WorkbenchPipelineError, "czsc failed"):
+            pipeline.step()
+
+    def test_clock_runtime_error_is_wrapped(self) -> None:
+        pipeline = WorkbenchPipeline(
+            session=self.session,
+            market_input_port=_RecordingMarketInputPort({}),
+            clock_port=_RaisingClock(RuntimeError("clock drift")),
+        )
+
+        with self.assertRaisesRegex(WorkbenchPipelineError, "clock drift"):
             pipeline.step()
 
     def test_workbench_pipeline_error_is_not_double_wrapped(self) -> None:
