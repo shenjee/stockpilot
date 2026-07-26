@@ -184,7 +184,7 @@ test("5 minute BOLL is consumed from contract and preserves null warmup", () => 
   assert.deepEqual(intraday.boll, { upper: [], middle: [], lower: [] });
 });
 
-test("CZSC candidate points map to 1B/1S/2B/2S/3B/3S and merge by timestamp", () => {
+test("CZSC candidate points map to 1B/1S/2B/2S/3B/3S and preserve price", () => {
   const layered = structuredClone(fixture);
   layered.chan_analysis = {
     candidate_buy_points: [
@@ -200,13 +200,48 @@ test("CZSC candidate points map to 1B/1S/2B/2S/3B/3S and merge by timestamp", ()
   };
 
   const model = createChartGroupModel(layered, ChartGroupKind.FIVE_MINUTE);
-  // 09:55 同时 1B + 2B 合并；10:05 只有 3B（unknown_type 卖点被忽略）；
-  // 10:10 的 structure_buy_candidate 不渲染。
+  // 09:55 同时 1B + 2B 同价合并；10:05 只有 3B（unknown_type 卖点被忽略）；
+  // 10:10 的 structure_buy_candidate 不渲染。每个标记保留契约价格。
   assert.deepEqual(model.czscMarkers, [
-    { timestamp: "2026-07-22 09:55:00", side: "buy", label: "1B, 2B" },
-    { timestamp: "2026-07-22 10:00:00", side: "sell", label: "1S" },
-    { timestamp: "2026-07-22 10:05:00", side: "buy", label: "3B" },
+    { timestamp: "2026-07-22 09:55:00", side: "buy", price: 10.1, label: "1B, 2B" },
+    { timestamp: "2026-07-22 10:00:00", side: "sell", price: 10.5, label: "1S" },
+    { timestamp: "2026-07-22 10:05:00", side: "buy", price: 10.3, label: "3B" },
   ]);
+});
+
+test("CZSC markers at the same time but different prices are not merged", () => {
+  const layered = structuredClone(fixture);
+  layered.chan_analysis = {
+    candidate_buy_points: [
+      { point_type: "first_buy", timestamp: "2026-07-22 09:55:00", price: 10.1 },
+      { point_type: "third_buy", timestamp: "2026-07-22 09:55:00", price: 10.4 },
+    ],
+    candidate_sell_points: [],
+  };
+
+  const model = createChartGroupModel(layered, ChartGroupKind.FIVE_MINUTE);
+  // 同一时刻、同侧、不同价格 -> 两个独立标记，按价格升序。
+  assert.deepEqual(model.czscMarkers, [
+    { timestamp: "2026-07-22 09:55:00", side: "buy", price: 10.1, label: "1B" },
+    { timestamp: "2026-07-22 09:55:00", side: "buy", price: 10.4, label: "3B" },
+  ]);
+});
+
+test("CZSC markers with invalid or missing price are dropped", () => {
+  const layered = structuredClone(fixture);
+  layered.chan_analysis = {
+    candidate_buy_points: [
+      { point_type: "first_buy", timestamp: "2026-07-22 09:55:00" }, // 缺 price
+      { point_type: "second_buy", timestamp: "2026-07-22 10:00:00", price: NaN },
+      { point_type: "third_buy", timestamp: "2026-07-22 10:05:00", price: "10.3" }, // 非数字
+      { point_type: "first_buy", timestamp: "2026-07-22 10:10:00", price: Infinity },
+    ],
+    candidate_sell_points: [],
+  };
+
+  const model = createChartGroupModel(layered, ChartGroupKind.FIVE_MINUTE);
+  // 非法/缺失价格不产生标记。
+  assert.deepEqual(model.czscMarkers, []);
 });
 
 test("CZSC markers and BOLL are absent for the intraday group", () => {

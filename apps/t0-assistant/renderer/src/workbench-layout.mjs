@@ -92,7 +92,12 @@ export function selectWorkbenchSecurity(state, security) {
   ) {
     throw new TypeError("Invalid standard security identity");
   }
-  return { ...state, security: { ...security } };
+  // 切股时丢弃上一只股票的可见范围，避免错误继承（UI 规格 §12）。
+  return {
+    ...state,
+    security: { ...security },
+    chartViews: { fiveMinute: null, intraday: null },
+  };
 }
 
 export function toggleWorkbenchLayer(state, layer) {

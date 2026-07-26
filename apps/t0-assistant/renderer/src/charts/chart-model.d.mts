@@ -148,6 +148,8 @@ export interface BollModel {
 export interface CzscMarker {
   timestamp: string;
   side: "buy" | "sell";
+  /** 候选点契约价格；标记按 (timestamp, side, price) 定位与去重。 */
+  price: number;
   label: string;
 }
 

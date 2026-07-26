@@ -286,43 +286,46 @@ function czscPointLabel(pointType) {
 }
 
 function normalizeCzscMarkers(buyPoints, sellPoints, timestampSet) {
-  // 按时间戳聚合：同一时刻同侧多点合并标签（如 "1B, 2B"）。
-  const byTimestamp = new Map();
+  // 按 timestamp + side + price 聚合：同一时刻、同侧、同价的多点合并标签（如 "1B, 2B"）；
+  // 同时刻同侧但不同价的信号保留为独立标记，避免丢失结构价位。非法/缺失价格不产生标记。
+  const byKey = new Map();
   const collect = (points, side) => {
     for (const point of points ?? []) {
       const timestamp = point?.timestamp;
       if (!timestampSet.has(timestamp)) {
         continue;
       }
+      const price = point?.price;
+      if (!Number.isFinite(price)) {
+        continue;
+      }
       const label = czscPointLabel(point?.point_type);
       if (!label) {
         continue;
       }
-      let entry = byTimestamp.get(timestamp);
+      const key = `${timestamp}|${side}|${price}`;
+      let entry = byKey.get(key);
       if (!entry) {
-        entry = { buy: [], sell: [] };
-        byTimestamp.set(timestamp, entry);
+        entry = { timestamp, side, price, labels: [] };
+        byKey.set(key, entry);
       }
-      entry[side].push(label);
+      entry.labels.push(label);
     }
   };
   collect(buyPoints, "buy");
   collect(sellPoints, "sell");
 
-  const markers = [];
-  for (const [timestamp, { buy, sell }] of byTimestamp) {
-    if (buy.length > 0) {
-      markers.push({ timestamp, side: "buy", label: buy.join(", ") });
-    }
-    if (sell.length > 0) {
-      markers.push({ timestamp, side: "sell", label: sell.join(", ") });
-    }
-  }
+  const markers = [...byKey.values()].map((entry) => ({
+    timestamp: entry.timestamp,
+    side: entry.side,
+    price: entry.price,
+    label: [...new Set(entry.labels)].join(", "),
+  }));
   markers.sort((left, right) => {
-    if (left.timestamp === right.timestamp) {
-      return 0;
+    if (left.timestamp !== right.timestamp) {
+      return left.timestamp < right.timestamp ? -1 : 1;
     }
-    return left.timestamp < right.timestamp ? -1 : 1;
+    return left.price - right.price;
   });
   return markers;
 }

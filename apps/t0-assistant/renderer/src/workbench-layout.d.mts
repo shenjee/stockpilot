@@ -23,6 +23,12 @@ export interface LogicalRange {
   to: number;
 }
 
+/** 图表可见范围快照：range 为 LC 连续逻辑范围，followState 标记跟随/手工。 */
+export interface ChartViewportSnapshot {
+  range: LogicalRange;
+  followState: "following" | "manual";
+}
+
 export interface SecurityIdentity {
   symbol: string;
   code: string;
@@ -48,8 +54,8 @@ export interface WorkbenchState {
     pivot_zones: boolean;
   };
   chartViews: {
-    fiveMinute: LogicalRange | null;
-    intraday: LogicalRange | null;
+    fiveMinute: ChartViewportSnapshot | null;
+    intraday: ChartViewportSnapshot | null;
   };
 }
 

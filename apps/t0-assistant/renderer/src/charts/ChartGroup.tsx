@@ -4,16 +4,19 @@ import {
   type ChartGroupModel,
 } from "./chart-model.mjs";
 import { SynchronizedChartGroup } from "./SynchronizedChartGroup";
+import type { ChartViewportSnapshot } from "./chart-viewport.mjs";
 
 interface ChartGroupProps {
   model: ChartGroupModel;
   priceHeader: React.ReactNode;
-  onViewportChange?: (range: { from: number; to: number } | null) => void;
+  initialViewport?: ChartViewportSnapshot | null;
+  onViewportChange?: (snapshot: ChartViewportSnapshot | null) => void;
 }
 
 export function ChartGroup({
   model,
   priceHeader,
+  initialViewport,
   onViewportChange,
 }: ChartGroupProps) {
   const priceRef = useRef<HTMLDivElement>(null);
@@ -23,6 +26,9 @@ export function ChartGroup({
   // 保持回调最新，避免 controller 持有过期闭包。
   const onViewportChangeRef = useRef(onViewportChange);
   onViewportChangeRef.current = onViewportChange;
+  // initialViewport 仅在组件（重新）挂载时消费一次，用于从 React 恢复可见范围。
+  const initialViewportRef = useRef(initialViewport);
+  initialViewportRef.current = initialViewport;
 
   useEffect(() => {
     const price = priceRef.current;
@@ -34,7 +40,9 @@ export function ChartGroup({
     const controller = new SynchronizedChartGroup({
       containers: { price, volume, macd },
       kind: model.kind,
-      onViewportChange: (range) => onViewportChangeRef.current?.(range),
+      initialViewport: initialViewportRef.current ?? null,
+      onViewportChange: (snapshot) =>
+        onViewportChangeRef.current?.(snapshot),
     });
     controllerRef.current = controller;
     return () => {

@@ -10,7 +10,6 @@ import {
   type LineData,
   type LogicalRange,
   type MouseEventParams,
-  type SeriesMarker,
   type Time,
   type UTCTimestamp,
   type WhitespaceData,
@@ -25,14 +24,17 @@ import {
   resolveCrosshairTarget,
 } from "./chart-interaction.mjs";
 import { PivotZonePrimitive } from "./pivot-zone-primitive";
+import { CzscMarkerPrimitive } from "./czsc-marker-primitive";
 import {
   FollowState,
   applyModel,
   calculateVisibleCount,
-  createViewportState,
   followLatest,
+  fromChartLogicalRange,
+  restoreViewportFromSnapshot,
   setManualRange,
-  visibleLogicalRange,
+  toChartLogicalRange,
+  type ChartViewportSnapshot,
   type ChartViewportState,
 } from "./chart-viewport.mjs";
 
@@ -46,7 +48,8 @@ interface ChartGroupOptions {
   containers: ChartGroupContainers;
   kind: ChartGroupModel["kind"];
   barSlotWidth?: number;
-  onViewportChange?: (range: { from: number; to: number } | null) => void;
+  initialViewport?: ChartViewportSnapshot | null;
+  onViewportChange?: (snapshot: ChartViewportSnapshot | null) => void;
 }
 
 type NumericSeries = ISeriesApi<"Line"> | ISeriesApi<"Histogram">;
@@ -57,8 +60,6 @@ const BLUE = "#4f8cff";
 const AMBER = "#f6b94a";
 const MUTED = "#8090a8";
 const BOLL_COLOR = "#e879f9";
-const CZSC_BUY_COLOR = "#22c55e";
-const CZSC_SELL_COLOR = "#ef4444";
 const MA_COLORS = {
   ma5: "#f6d365",
   ma10: "#7dd3fc",
@@ -85,6 +86,7 @@ export class SynchronizedChartGroup {
   private readonly bollMiddleSeries: ISeriesApi<"Line"> | null;
   private readonly bollLowerSeries: ISeriesApi<"Line"> | null;
   private readonly pivotZonePrimitive: PivotZonePrimitive | null;
+  private readonly czscMarkerPrimitive: CzscMarkerPrimitive | null;
   private readonly volumeSeries: ISeriesApi<"Histogram">;
   private readonly volumeMa5Series: ISeriesApi<"Line"> | null;
   private readonly volumeMa10Series: ISeriesApi<"Line"> | null;
@@ -103,11 +105,14 @@ export class SynchronizedChartGroup {
 
   private model: ChartGroupModel | null = null;
   private readonly barSlotWidth: number;
+  private readonly initialViewport?: ChartViewportSnapshot | null;
   private readonly onViewportChange?:
-    | ((range: { from: number; to: number } | null) => void);
+    | ((snapshot: ChartViewportSnapshot | null) => void);
   private viewport: ChartViewportState | null = null;
   private applyingViewportRange = false;
   private lastReportedFollowState: "following" | "manual" | null = null;
+  private lastReportedRange: { from: number; to: number } | null = null;
+  private reportTimer: ReturnType<typeof setTimeout> | null = null;
   private viewportRangeHandler:
     | ((range: LogicalRange | null) => void)
     | null = null;
@@ -124,6 +129,7 @@ export class SynchronizedChartGroup {
     this.containers = options.containers;
     this.kind = options.kind;
     this.barSlotWidth = options.barSlotWidth ?? 8;
+    this.initialViewport = options.initialViewport;
     this.onViewportChange = options.onViewportChange;
 
     this.priceChart = this.createChart(options.containers.price, false);
@@ -175,6 +181,9 @@ export class SynchronizedChartGroup {
       // 笔中枢以填充矩形原语表达，替换歧义的双线实现。
       this.pivotZonePrimitive = new PivotZonePrimitive();
       this.priceSeries.attachPrimitive(this.pivotZonePrimitive);
+      // CZSC 买卖点按 (time, price) 精确定位，替换内置 setMarkers 的 belowBar/aboveBar。
+      this.czscMarkerPrimitive = new CzscMarkerPrimitive();
+      this.priceSeries.attachPrimitive(this.czscMarkerPrimitive);
       this.volumeMa5Series = this.volumeChart.addLineSeries({
         color: AMBER,
         lineWidth: 1,
@@ -203,6 +212,7 @@ export class SynchronizedChartGroup {
       this.bollMiddleSeries = null;
       this.bollLowerSeries = null;
       this.pivotZonePrimitive = null;
+      this.czscMarkerPrimitive = null;
       this.volumeMa5Series = null;
       this.volumeMa10Series = null;
     }
@@ -251,6 +261,8 @@ export class SynchronizedChartGroup {
   }
 
   // 视口状态机：following 右对齐最新；manual 保留逻辑范围；空数据重置。
+  // 首次 setModel（viewport 为空）从 React 保存的 initialViewport 恢复，使组件重建后
+  // 不依赖图表实例存活即可还原可见范围（UI 规格 §12）。
   private applyViewport() {
     if (!this.model) {
       return;
@@ -259,6 +271,7 @@ export class SynchronizedChartGroup {
     if (times.length === 0) {
       this.viewport = null;
       this.lastReportedFollowState = null;
+      this.lastReportedRange = null;
       this.onViewportChange?.(null);
       return;
     }
@@ -268,10 +281,12 @@ export class SynchronizedChartGroup {
       this.barSlotWidth,
     );
     if (this.viewport === null) {
-      this.viewport = createViewportState(times, {
-        barSlotWidth: this.barSlotWidth,
-      });
-      this.viewport = followLatest(this.viewport, visibleCount);
+      this.viewport = restoreViewportFromSnapshot(
+        this.initialViewport ?? null,
+        times,
+        visibleCount,
+        { barSlotWidth: this.barSlotWidth },
+      );
     } else {
       this.viewport = applyModel(this.viewport, times, visibleCount);
     }
@@ -282,14 +297,15 @@ export class SynchronizedChartGroup {
     if (!this.viewport) {
       return;
     }
-    const range = visibleLogicalRange(this.viewport);
+    // 内部排他范围转 LC 连续逻辑范围（to = visibleEnd - 1，避免右侧空槽）。
+    const range = toChartLogicalRange(this.viewport);
     const current = this.priceChart.timeScale().getVisibleLogicalRange();
     if (
       current &&
       Math.abs(current.from - range.from) < 0.001 &&
       Math.abs(current.to - range.to) < 0.001
     ) {
-      this.reportViewport();
+      this.reportViewport(true);
       return;
     }
     this.applyingViewportRange = true;
@@ -300,19 +316,65 @@ export class SynchronizedChartGroup {
     } finally {
       this.applyingViewportRange = false;
     }
-    this.reportViewport();
+    this.reportViewport(true);
   }
 
-  // 仅在 following/manual 状态切换时上报到 React，避免高频 setState。
-  private reportViewport() {
+  // 上报视口快照到 React：followState 切换立即上报；manual 拖动期间仅 range 变化时节流
+  // 上报（~120ms），保证 React 作为运行时权威且不被高频 setState 拖垮。force 用于程序化
+  // 设置（applyVisibleRange）立即同步。
+  private reportViewport(force = false) {
     if (!this.viewport || !this.onViewportChange) {
       return;
     }
-    if (this.viewport.followState === this.lastReportedFollowState) {
+    const snapshot: ChartViewportSnapshot = {
+      range: toChartLogicalRange(this.viewport),
+      followState: this.viewport.followState,
+    };
+    const followChanged =
+      snapshot.followState !== this.lastReportedFollowState;
+    const rangeChanged =
+      !this.lastReportedRange ||
+      Math.abs(this.lastReportedRange.from - snapshot.range.from) > 0.001 ||
+      Math.abs(this.lastReportedRange.to - snapshot.range.to) > 0.001;
+    if (followChanged) {
+      if (this.reportTimer) {
+        clearTimeout(this.reportTimer);
+        this.reportTimer = null;
+      }
+      this.commitReport(snapshot);
       return;
     }
-    this.lastReportedFollowState = this.viewport.followState;
-    this.onViewportChange(visibleLogicalRange(this.viewport));
+    if (!rangeChanged) {
+      return;
+    }
+    if (force) {
+      if (this.reportTimer) {
+        clearTimeout(this.reportTimer);
+        this.reportTimer = null;
+      }
+      this.commitReport(snapshot);
+      return;
+    }
+    // manual 拖动：节流上报最新范围。
+    if (this.reportTimer) {
+      return;
+    }
+    this.reportTimer = setTimeout(() => {
+      this.reportTimer = null;
+      if (!this.viewport || !this.onViewportChange) {
+        return;
+      }
+      this.commitReport({
+        range: toChartLogicalRange(this.viewport),
+        followState: this.viewport.followState,
+      });
+    }, 120);
+  }
+
+  private commitReport(snapshot: ChartViewportSnapshot) {
+    this.lastReportedFollowState = snapshot.followState;
+    this.lastReportedRange = { ...snapshot.range };
+    this.onViewportChange?.(snapshot);
   }
 
   // 用户主动拖动/缩放价格图 -> manual（回到最新边缘则恢复 following）。
@@ -322,7 +384,14 @@ export class SynchronizedChartGroup {
       if (this.applyingViewportRange || !range || !this.viewport) {
         return;
       }
-      this.viewport = setManualRange(this.viewport, range.from, range.to);
+      // LC 连续逻辑范围 -> 内部排他范围，再交给状态机判定 following/manual。
+      const length = this.viewport.logicalToTime.length;
+      const internal = fromChartLogicalRange(range, length);
+      this.viewport = setManualRange(
+        this.viewport,
+        internal.start,
+        internal.end,
+      );
       this.reportViewport();
     };
     this.priceChart.timeScale().subscribeVisibleLogicalRangeChange(handler);
@@ -330,6 +399,10 @@ export class SynchronizedChartGroup {
   }
 
   destroy() {
+    if (this.reportTimer) {
+      clearTimeout(this.reportTimer);
+      this.reportTimer = null;
+    }
     this.resizeObserver.disconnect();
     for (const [chart, handler] of this.crosshairHandlers) {
       chart.unsubscribeCrosshairMove(handler);
@@ -551,15 +624,15 @@ export class SynchronizedChartGroup {
     if (!this.model || this.kind !== ChartGroupKind.FIVE_MINUTE) {
       return;
     }
-    // setMarkers 是全量替换：旧标记随每次调用自动消失，满足原子替换。
-    const markers: SeriesMarker<Time>[] = this.model.czscMarkers.map((marker) => ({
-      time: time(marker.timestamp),
-      position: marker.side === "buy" ? "belowBar" : "aboveBar",
-      color: marker.side === "buy" ? CZSC_BUY_COLOR : CZSC_SELL_COLOR,
-      shape: marker.side === "buy" ? "arrowUp" : "arrowDown",
-      text: marker.label,
-    }));
-    (this.priceSeries as ISeriesApi<"Candlestick">).setMarkers(markers);
+    // 原语整体替换 markers 数组（原子替换，旧标记不残留），按 (time, price) 精确定位。
+    this.czscMarkerPrimitive?.setMarkers(
+      this.model.czscMarkers.map((marker) => ({
+        time: time(marker.timestamp),
+        price: marker.price,
+        side: marker.side,
+        label: marker.label,
+      })),
+    );
   }
 
   private toLineData(
