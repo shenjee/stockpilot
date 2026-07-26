@@ -8,16 +8,21 @@ import { SynchronizedChartGroup } from "./SynchronizedChartGroup";
 interface ChartGroupProps {
   model: ChartGroupModel;
   priceHeader: React.ReactNode;
+  onViewportChange?: (range: { from: number; to: number } | null) => void;
 }
 
 export function ChartGroup({
   model,
   priceHeader,
+  onViewportChange,
 }: ChartGroupProps) {
   const priceRef = useRef<HTMLDivElement>(null);
   const volumeRef = useRef<HTMLDivElement>(null);
   const macdRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<SynchronizedChartGroup | null>(null);
+  // 保持回调最新，避免 controller 持有过期闭包。
+  const onViewportChangeRef = useRef(onViewportChange);
+  onViewportChangeRef.current = onViewportChange;
 
   useEffect(() => {
     const price = priceRef.current;
@@ -29,6 +34,7 @@ export function ChartGroup({
     const controller = new SynchronizedChartGroup({
       containers: { price, volume, macd },
       kind: model.kind,
+      onViewportChange: (range) => onViewportChangeRef.current?.(range),
     });
     controllerRef.current = controller;
     return () => {

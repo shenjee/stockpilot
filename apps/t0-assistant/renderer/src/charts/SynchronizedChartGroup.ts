@@ -25,6 +25,16 @@ import {
   resolveCrosshairTarget,
 } from "./chart-interaction.mjs";
 import { PivotZonePrimitive } from "./pivot-zone-primitive";
+import {
+  FollowState,
+  applyModel,
+  calculateVisibleCount,
+  createViewportState,
+  followLatest,
+  setManualRange,
+  visibleLogicalRange,
+  type ChartViewportState,
+} from "./chart-viewport.mjs";
 
 interface ChartGroupContainers {
   price: HTMLElement;
@@ -35,6 +45,8 @@ interface ChartGroupContainers {
 interface ChartGroupOptions {
   containers: ChartGroupContainers;
   kind: ChartGroupModel["kind"];
+  barSlotWidth?: number;
+  onViewportChange?: (range: { from: number; to: number } | null) => void;
 }
 
 type NumericSeries = ISeriesApi<"Line"> | ISeriesApi<"Histogram">;
@@ -90,7 +102,15 @@ export class SynchronizedChartGroup {
   >();
 
   private model: ChartGroupModel | null = null;
-  private hasAppliedInitialRange = false;
+  private readonly barSlotWidth: number;
+  private readonly onViewportChange?:
+    | ((range: { from: number; to: number } | null) => void);
+  private viewport: ChartViewportState | null = null;
+  private applyingViewportRange = false;
+  private lastReportedFollowState: "following" | "manual" | null = null;
+  private viewportRangeHandler:
+    | ((range: LogicalRange | null) => void)
+    | null = null;
   private syncingRange = false;
   private syncingCrosshair = false;
   private previousTimeByTime = new Map<number, number | null>();
@@ -103,6 +123,8 @@ export class SynchronizedChartGroup {
   constructor(options: ChartGroupOptions) {
     this.containers = options.containers;
     this.kind = options.kind;
+    this.barSlotWidth = options.barSlotWidth ?? 8;
+    this.onViewportChange = options.onViewportChange;
 
     this.priceChart = this.createChart(options.containers.price, false);
     this.volumeChart = this.createChart(options.containers.volume, false);
@@ -209,6 +231,7 @@ export class SynchronizedChartGroup {
 
     this.setupRangeSynchronization();
     this.setupCrosshairSynchronization();
+    this.setupViewportTracking();
     this.resizeObserver = new ResizeObserver(() => this.resize());
     Object.values(this.containers).forEach((container) =>
       this.resizeObserver.observe(container),
@@ -224,15 +247,86 @@ export class SynchronizedChartGroup {
     this.model = model;
     this.rebuildTimeMaps();
     this.setSeriesData();
+    this.applyViewport();
+  }
 
-    if (model.timestamps.length === 0) {
-      // setSeriesData() has cleared every series; allow the next non-empty
-      // model to establish a fresh initial viewport.
-      this.hasAppliedInitialRange = false;
-    } else if (!this.hasAppliedInitialRange) {
-      this.charts.forEach((chart) => chart.timeScale().fitContent());
-      this.hasAppliedInitialRange = true;
+  // 视口状态机：following 右对齐最新；manual 保留逻辑范围；空数据重置。
+  private applyViewport() {
+    if (!this.model) {
+      return;
     }
+    const times = this.model.timestamps;
+    if (times.length === 0) {
+      this.viewport = null;
+      this.lastReportedFollowState = null;
+      this.onViewportChange?.(null);
+      return;
+    }
+    const plotWidth = this.priceChart.timeScale().width();
+    const visibleCount = calculateVisibleCount(
+      plotWidth,
+      this.barSlotWidth,
+    );
+    if (this.viewport === null) {
+      this.viewport = createViewportState(times, {
+        barSlotWidth: this.barSlotWidth,
+      });
+      this.viewport = followLatest(this.viewport, visibleCount);
+    } else {
+      this.viewport = applyModel(this.viewport, times, visibleCount);
+    }
+    this.applyVisibleRange();
+  }
+
+  private applyVisibleRange() {
+    if (!this.viewport) {
+      return;
+    }
+    const range = visibleLogicalRange(this.viewport);
+    const current = this.priceChart.timeScale().getVisibleLogicalRange();
+    if (
+      current &&
+      Math.abs(current.from - range.from) < 0.001 &&
+      Math.abs(current.to - range.to) < 0.001
+    ) {
+      this.reportViewport();
+      return;
+    }
+    this.applyingViewportRange = true;
+    try {
+      this.priceChart.timeScale().setVisibleLogicalRange(
+        range as LogicalRange,
+      );
+    } finally {
+      this.applyingViewportRange = false;
+    }
+    this.reportViewport();
+  }
+
+  // 仅在 following/manual 状态切换时上报到 React，避免高频 setState。
+  private reportViewport() {
+    if (!this.viewport || !this.onViewportChange) {
+      return;
+    }
+    if (this.viewport.followState === this.lastReportedFollowState) {
+      return;
+    }
+    this.lastReportedFollowState = this.viewport.followState;
+    this.onViewportChange(visibleLogicalRange(this.viewport));
+  }
+
+  // 用户主动拖动/缩放价格图 -> manual（回到最新边缘则恢复 following）。
+  // applyingViewportRange 守卫避免程序化 setVisibleLogicalRange 被误判为用户操作。
+  private setupViewportTracking() {
+    const handler = (range: LogicalRange | null) => {
+      if (this.applyingViewportRange || !range || !this.viewport) {
+        return;
+      }
+      this.viewport = setManualRange(this.viewport, range.from, range.to);
+      this.reportViewport();
+    };
+    this.priceChart.timeScale().subscribeVisibleLogicalRangeChange(handler);
+    this.viewportRangeHandler = handler;
   }
 
   destroy() {
@@ -242,6 +336,12 @@ export class SynchronizedChartGroup {
     }
     for (const [chart, handler] of this.rangeHandlers) {
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(handler);
+    }
+    if (this.viewportRangeHandler) {
+      this.priceChart.timeScale().unsubscribeVisibleLogicalRangeChange(
+        this.viewportRangeHandler,
+      );
+      this.viewportRangeHandler = null;
     }
     this.charts.forEach((chart) => chart.remove());
   }
@@ -615,6 +715,20 @@ export class SynchronizedChartGroup {
           height: container.clientHeight,
         });
       }
+    }
+    // following：按新绘图区宽度重算 N 并右对齐；manual 保留逻辑范围不跳回最新。
+    if (
+      this.viewport?.followState === FollowState.FOLLOWING &&
+      this.model &&
+      this.model.timestamps.length > 0
+    ) {
+      const plotWidth = this.priceChart.timeScale().width();
+      const visibleCount = calculateVisibleCount(
+        plotWidth,
+        this.barSlotWidth,
+      );
+      this.viewport = followLatest(this.viewport, visibleCount);
+      this.applyVisibleRange();
     }
   }
 }

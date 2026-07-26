@@ -249,3 +249,53 @@ test("pivot zone active flag is preserved through normalization", () => {
   assert.equal(model.pivotZones[0].active, true);
   assert.equal(model.pivotZones[1].active, false);
 });
+
+test("replay asOf truncation drops bars, indicators, and CZSC layers after current_time", () => {
+  const replay = structuredClone(fixture);
+  replay.replay = {
+    granularity: "five_minute",
+    current_time: "2026-07-22 10:00:00",
+    next_bar_time: "2026-07-22 10:05:00",
+    start_time: "2026-07-22 09:30:00",
+    end_time: "2026-07-22 15:00:00",
+    playing: false,
+    playback_speed: 1,
+    step_seconds: 300,
+  };
+  replay.chan_analysis = {
+    strokes: [
+      {
+        start_timestamp: "2026-07-22 09:55:00",
+        end_timestamp: "2026-07-22 10:05:00",
+        start_price: 10.1,
+        end_price: 10.3,
+        confirmed: true,
+      },
+    ],
+    pivot_zones: [
+      {
+        start_timestamp: "2026-07-22 09:55:00",
+        end_timestamp: "2026-07-22 10:05:00",
+        high: 10.25,
+        low: 10.15,
+        active: true,
+      },
+    ],
+    candidate_buy_points: [
+      { point_type: "first_buy", timestamp: "2026-07-22 10:05:00", price: 10.3 },
+    ],
+  };
+
+  const model = createChartGroupModel(replay, ChartGroupKind.FIVE_MINUTE);
+  // 10:05 / 10:10 bars dropped；10:00 保留为右边界。
+  assert.equal(model.timestamps.at(-1), "2026-07-22 10:00:00");
+  // 笔/中枢/买卖点 end 或 timestamp 越过 current_time -> 丢弃。
+  assert.equal(model.strokes.length, 0);
+  assert.equal(model.pivotZones.length, 0);
+  assert.equal(model.czscMarkers.length, 0);
+  // MACD/Volume 指标在 10:05 的点也被截断，不抛错。
+  assert.equal(
+    model.macd.histogram.at(-1)?.timestamp ?? null,
+    "2026-07-22 10:00:00",
+  );
+});

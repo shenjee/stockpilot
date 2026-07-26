@@ -26,6 +26,7 @@ import {
   WorkbenchLayer,
   WorkbenchLayoutMode,
   WorkbenchMode,
+  type LogicalRange,
   type SecurityIdentity,
   type WorkbenchLayoutModeValue,
   type WorkbenchState,
@@ -931,6 +932,31 @@ export function App() {
     () => createChartGroupModel(snapshot, ChartGroupKind.ONE_MINUTE),
     [snapshot],
   );
+  // 视口状态镜像到 workbench.chartViews（UI 规格 §12：在 React 状态层保存可见范围）。
+  // 只保留范围副本；权威状态仍在图表实例中。保留 layers 引用，避免触发 model 重算。
+  const rememberChartView = (
+    group: "fiveMinute" | "intraday",
+    range: LogicalRange | null,
+  ) => {
+    setWorkbench((current) => {
+      const existing = current.chartViews[group];
+      if (
+        range &&
+        existing &&
+        existing.from === range.from &&
+        existing.to === range.to
+      ) {
+        return current;
+      }
+      if (!range && !existing) {
+        return current;
+      }
+      return {
+        ...current,
+        chartViews: { ...current.chartViews, [group]: range },
+      };
+    });
+  };
   const layoutMode = workbenchLayoutMode(workbench);
   const showFixture = !window.stockpilot;
   const showEmpty = !showFixture && !workbench.security && !loading;
@@ -988,6 +1014,9 @@ export function App() {
         <article className="chart-group five-minute-group" aria-label="5 分钟图表组">
           <ChartGroup
             model={fiveMinuteModel}
+            onViewportChange={(range) =>
+              rememberChartView("fiveMinute", range)
+            }
             priceHeader={
               <div className="panel-heading">
                 <h1>5 分钟</h1>
@@ -1026,6 +1055,9 @@ export function App() {
           ) : (
             <ChartGroup
               model={intradayModel}
+              onViewportChange={(range) =>
+                rememberChartView("intraday", range)
+              }
               priceHeader={
                 <div className="panel-heading">
                   <h2>分时</h2>

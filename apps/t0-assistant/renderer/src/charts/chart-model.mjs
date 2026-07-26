@@ -42,10 +42,27 @@ export function createChartGroupModel(snapshot, kind, layers = {}) {
     throw new TypeError(`Unsupported chart group: ${kind}`);
   }
 
-  const bars =
+  // 回放截断（前端防线）：后端快照已按时点截断；此处再丢弃 current_time 之后的数据，
+  // 防止视口或图层越过当前模拟时点。时间戳为定长字符串，字典序与时间序一致。
+  const asOf = snapshot.replay?.current_time ?? null;
+  const clipRows = (rows) => {
+    const list = rows ?? [];
+    return asOf === null
+      ? list
+      : list.filter((row) => row.timestamp <= asOf);
+  };
+  const clipChanByEnd = (rows) => {
+    const list = rows ?? [];
+    return asOf === null
+      ? list
+      : list.filter((row) => row.end_timestamp <= asOf);
+  };
+
+  const bars = clipRows(
     kind === FIVE_MINUTE
       ? snapshot.market.bars_5m
-      : snapshot.market.bars_1m;
+      : snapshot.market.bars_1m,
+  );
   const indicator =
     kind === FIVE_MINUTE
       ? snapshot.indicators.five_minute
@@ -63,7 +80,7 @@ export function createChartGroupModel(snapshot, kind, layers = {}) {
     movingAverages[period] =
       kind === FIVE_MINUTE && enabled(period)
         ? normalizePoints(
-            indicator.ma?.[period] ?? [],
+            clipRows(indicator.ma?.[period]),
             timestampSet,
             `five_minute ${period}`,
           )
@@ -75,17 +92,17 @@ export function createChartGroupModel(snapshot, kind, layers = {}) {
     kind === FIVE_MINUTE
       ? {
           upper: normalizePoints(
-            indicator.boll?.upper ?? [],
+            clipRows(indicator.boll?.upper),
             timestampSet,
             "five_minute boll upper",
           ),
           middle: normalizePoints(
-            indicator.boll?.middle ?? [],
+            clipRows(indicator.boll?.middle),
             timestampSet,
             "five_minute boll middle",
           ),
           lower: normalizePoints(
-            indicator.boll?.lower ?? [],
+            clipRows(indicator.boll?.lower),
             timestampSet,
             "five_minute boll lower",
           ),
@@ -93,24 +110,30 @@ export function createChartGroupModel(snapshot, kind, layers = {}) {
       : { upper: [], middle: [], lower: [] };
   const strokes =
     kind === FIVE_MINUTE && enabled("strokes")
-      ? normalizeStrokes(snapshot.chan_analysis?.strokes, timestampSet)
+      ? normalizeStrokes(
+          clipChanByEnd(snapshot.chan_analysis?.strokes),
+          timestampSet,
+        )
       : [];
   const pivotZones =
     kind === FIVE_MINUTE && enabled("pivot_zones")
-      ? normalizePivotZones(snapshot.chan_analysis?.pivot_zones, timestampSet)
+      ? normalizePivotZones(
+          clipChanByEnd(snapshot.chan_analysis?.pivot_zones),
+          timestampSet,
+        )
       : [];
   // CZSC 买卖点只映射 1B/1S/2B/2S/3B/3S；开关只控制显示，不影响 CZSC 数据。
   const czscMarkers =
     kind === FIVE_MINUTE
       ? normalizeCzscMarkers(
-          snapshot.chan_analysis?.candidate_buy_points,
-          snapshot.chan_analysis?.candidate_sell_points,
+          clipRows(snapshot.chan_analysis?.candidate_buy_points),
+          clipRows(snapshot.chan_analysis?.candidate_sell_points),
           timestampSet,
         )
       : [];
 
   const volumePoints = normalizePoints(
-    indicator.volume.values,
+    clipRows(indicator.volume.values),
     timestampSet,
     `${kind} volume`,
   );
@@ -146,7 +169,11 @@ export function createChartGroupModel(snapshot, kind, layers = {}) {
           })),
     vwap:
       kind === ONE_MINUTE
-        ? normalizePoints(indicator.vwap, timestampSet, "one_minute vwap")
+        ? normalizePoints(
+            clipRows(indicator.vwap),
+            timestampSet,
+            "one_minute vwap",
+          )
         : [],
     movingAverages,
     boll,
@@ -157,7 +184,7 @@ export function createChartGroupModel(snapshot, kind, layers = {}) {
     volumeMa5:
       kind === FIVE_MINUTE
         ? normalizePoints(
-            indicator.volume.ma5,
+            clipRows(indicator.volume.ma5),
             timestampSet,
             "five_minute volume ma5",
           )
@@ -165,16 +192,24 @@ export function createChartGroupModel(snapshot, kind, layers = {}) {
     volumeMa10:
       kind === FIVE_MINUTE
         ? normalizePoints(
-            indicator.volume.ma10,
+            clipRows(indicator.volume.ma10),
             timestampSet,
             "five_minute volume ma10",
           )
         : [],
     macd: {
-      dif: normalizePoints(indicator.macd.dif, timestampSet, `${kind} macd dif`),
-      dea: normalizePoints(indicator.macd.dea, timestampSet, `${kind} macd dea`),
+      dif: normalizePoints(
+        clipRows(indicator.macd.dif),
+        timestampSet,
+        `${kind} macd dif`,
+      ),
+      dea: normalizePoints(
+        clipRows(indicator.macd.dea),
+        timestampSet,
+        `${kind} macd dea`,
+      ),
       histogram: normalizePoints(
-        indicator.macd.histogram,
+        clipRows(indicator.macd.histogram),
         timestampSet,
         `${kind} macd histogram`,
       ),
