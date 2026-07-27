@@ -31,6 +31,13 @@ from .projection import (
     project_market_at,
     project_quote_at,
 )
+from .workbench_projection import (
+    ReplayProjectionInput,
+    SessionProjectionInput,
+    WorkbenchProjection,
+    WorkbenchProjectionError,
+    build_workbench_projection,
+)
 
 __all__ = [
     "AppCoordinator",
@@ -46,16 +53,21 @@ __all__ = [
     "MarketInputPort",
     "PipelineMarketInput",
     "PipelineResult",
+    "ReplayProjectionInput",
     "RuntimeMarketDataError",
     "SessionFactoryPort",
     "SessionIdentity",
     "SessionPort",
+    "SessionProjectionInput",
     "SessionSpec",
     "SessionType",
     "TargetTimeMarketProjection",
     "WorkbenchPipeline",
     "WorkbenchPipelineError",
+    "WorkbenchProjection",
+    "WorkbenchProjectionError",
     "build_dynamic_daily_bar",
+    "build_workbench_projection",
     "project_market_at",
     "project_quote_at",
 ]

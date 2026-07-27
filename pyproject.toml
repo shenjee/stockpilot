@@ -12,6 +12,7 @@ dependencies = [
   "czsc==0.10.12",
   "numpy>=1.26",
   "PyYAML>=6.0",
+  "jsonschema>=4.23",
 ]
 
 [project.optional-dependencies]
@@ -54,3 +55,4 @@ namespaces = true
 
 [tool.setuptools.package-data]
 "packages.marketdata" = ["securities_master.json"]
+"packages.t0assistant" = ["contracts/*.json"]
