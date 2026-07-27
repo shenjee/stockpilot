@@ -25,6 +25,7 @@ class ContractTest(unittest.TestCase):
         cls.replay = load_json("replay-v1.schema.json")
         cls.fixture = load_json("fixtures/replay-speed-v1.json")
         cls.workbench_flow = load_json("fixtures/workbench-flow-v1.json")
+        cls.list_trades_flow = load_json("fixtures/list-trades-flow-v1.json")
         cls.registry = Registry().with_resources(
             [
                 (cls.logical["$id"], Resource.from_contents(cls.logical)),
@@ -283,6 +284,69 @@ class ContractTest(unittest.TestCase):
             flow["operation_failed_event"]["operation_id"],
             flow["operation_failed_event"]["payload"]["operation_id"],
         )
+
+
+    def test_list_trades_is_fact_via_changed_event(self) -> None:
+        """list_trades -> trades_changed cause/effect (T0-041 contract).
+
+        list_trades is a fact-via-changed-event command: the accepted response
+        carries operation_id:null and data:null (the renderer must not consume
+        command_response.data.trades). After an accepted list_trades the backend
+        must publish one authoritative real trades_changed event (session_id
+        null), including when the repository is empty. The event's trades are a
+        complete repository snapshot, not a query-scoped subset.
+        """
+        flow = self.list_trades_flow
+        request_validator = self.app_validator("command_request")
+        response_validator = self.app_validator("command_response")
+        event_validator = self.app_validator("event_envelope")
+
+        for scenario_name in ("existing_trades", "empty_repository"):
+            scenario = flow[scenario_name]
+            request_validator.validate(scenario["list_trades_request"])
+            response = scenario["list_trades_response"]
+            response_validator.validate(response)
+
+            # The renderer must not consume the sync response data: the accepted
+            # list_trades response carries operation_id:null and data:null.
+            self.assertTrue(response["accepted"])
+            self.assertIsNone(response["operation_id"])
+            self.assertIsNone(response["data"])
+
+            event = scenario["trades_changed_event"]
+            event_validator.validate(event)
+            # The event is the sole authoritative source for the trade list.
+            self.assertEqual(event["event_type"], "trades_changed")
+            self.assertIsNone(event["session_id"])
+            self.assertIn("trade_revision", event["payload"])
+
+        # The existing-trades event is a COMPLETE REPOSITORY SNAPSHOT: it
+        # contains trades for multiple symbols and trading dates, not just the
+        # symbol/date the list_trades request asked for.
+        existing_event = flow["existing_trades"]["trades_changed_event"]
+        snapshot_trades = existing_event["payload"]["trades"]
+        self.assertGreater(len(snapshot_trades), 1)
+        symbols = {trade["symbol"] for trade in snapshot_trades}
+        dates = {trade["executed_at"][:10] for trade in snapshot_trades}
+        self.assertGreater(len(symbols), 1)
+        self.assertGreater(len(dates), 1)
+
+        # The empty repository still publishes a trades_changed event with an
+        # empty trades array (the cause/effect holds even when there is nothing).
+        empty_event = flow["empty_repository"]["trades_changed_event"]
+        self.assertEqual(empty_event["payload"]["trades"], [])
+
+        # The expected scope filter documents which snapshot trades a renderer
+        # keeps for the list_trades request's symbol/date (it filters the full
+        # snapshot itself; the event carries no scope fields).
+        scope = flow["existing_trades"]["expected_scope_filter"]
+        matched = [
+            trade["trade_id"]
+            for trade in snapshot_trades
+            if trade["symbol"] == scope["symbol"]
+            and trade["executed_at"][:10] == scope["trade_date"]
+        ]
+        self.assertEqual(matched, scope["matched_trade_ids"])
 
 
 if __name__ == "__main__":

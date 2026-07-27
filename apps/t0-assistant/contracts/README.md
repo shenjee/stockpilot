@@ -53,5 +53,21 @@ paths, and SQLite implementation fields may not cross this boundary.
   repository-scoped and therefore has `session_id: null`; a simulated event is
   Replay-Session-scoped, has a non-null `session_id`, and may only contain
   `trade_scope: simulated` records.
+- `list_trades` is a fact-via-changed-event command. An accepted `list_trades`
+  response carries `operation_id: null` and `data: null`; the renderer must not
+  consume `command_response.data.trades` (that object shape is intentionally
+  unfrozen). After an accepted `list_trades` request the backend MUST publish
+  exactly one authoritative real `trades_changed` event (`session_id: null`),
+  including when the repository is empty (`payload.trades: []`). The renderer
+  treats that event as the sole source of the trade list and never reads the
+  synchronous response data.
+- A real `trades_changed.payload.trades` value is a **complete repository
+  snapshot**: every persisted real trade for every symbol and trading date, in
+  no required order. The payload carries no symbol/date scope fields, so a
+  query-scoped subset would be ambiguous; consumers that need one symbol/date
+  filter the snapshot themselves. `trade_revision` is monotonic within a
+  `service_generation` and gates the snapshot (a consumer discards an event
+  whose `(service_generation, trade_revision)` is not newer than its current
+  state). A `service_generation` change resets the revision gate.
 - Preference events report persisted copies and their own revision. React
   remains authoritative for current layout and chart interaction state.

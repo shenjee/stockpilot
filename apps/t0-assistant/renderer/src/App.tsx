@@ -60,6 +60,7 @@ import {
   createInMemoryFeePlanClient,
 } from "./trading/TradeDrawer";
 import { createNullFeeAdvisor } from "./trading/fee-advisor.mjs";
+import { isTradeScopedError } from "./trading/app-event-ownership.mjs";
 
 const initialStatus: ServiceStatus = {
   state: "starting",
@@ -360,6 +361,14 @@ export function App() {
       if (envelope.event_type === "operation_failed") {
         const error = applicationErrorFrom(envelope.payload);
         if (!error) return;
+        if (isTradeScopedError(error)) {
+          // Trade operation failures are owned by the TradeDrawer (it tracks
+          // the operation_id and shows the correct create/update/delete retry).
+          // Do not surface a global backgroundError whose 重试 would call
+          // retryLive/retryService - the wrong action for a trade command.
+          applyLiveEvent();
+          return;
+        }
         const candidate = envelope.operation_id
           ? activeOperations.current.get(envelope.operation_id)
           : undefined;
