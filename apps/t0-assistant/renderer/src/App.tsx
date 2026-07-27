@@ -54,6 +54,11 @@ import {
   replaySessionMatches,
   type ReplayFacts,
 } from "./replay-controls.mjs";
+import {
+  TradeDrawer,
+  createBoundTradeClient,
+  createInMemoryFeePlanClient,
+} from "./trading/TradeDrawer";
 
 const initialStatus: ServiceStatus = {
   state: "starting",
@@ -164,6 +169,14 @@ export function App() {
     () => replayFactsFromSnapshot(replaySnapshot),
     [replaySnapshot],
   );
+  // T+0 成交与收费方案客户端。成交客户端绑定冻结的 Safe Bridge（后端 CRUD
+  // 尚未接入时 bridge 返回 service_unavailable，由成交 UI 主动失败重试）；
+  // 收费方案暂无冻结传输契约，使用 renderer 内存客户端，待契约 Issue 落地后替换。
+  const tradeClient = useMemo(
+    () => (window.stockpilot ? createBoundTradeClient(window.stockpilot) : null),
+    [],
+  );
+  const feePlanClient = useMemo(() => createInMemoryFeePlanClient(), []);
 
   useEffect(() => {
     modeRef.current = workbench.mode;
@@ -1107,6 +1120,15 @@ export function App() {
           onStep={() => void stepReplay()}
           onSpeed={(speed) => void setReplaySpeed(speed)}
           onSeek={(targetTime) => void seekReplay(targetTime)}
+        />
+      )}
+
+      {!replayMode && (
+        <TradeDrawer
+          security={workbench.security}
+          tradeClient={tradeClient}
+          feePlanClient={feePlanClient}
+          serviceReady={status.state === "connected" || status.state === "ready"}
         />
       )}
 
