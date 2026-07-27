@@ -15,10 +15,9 @@ import type { TradeDraft } from "./trade-form.mjs";
 import {
   applyTradesChanged,
   isRealTradesChangedEvent,
-  matchTradeOperationFailed,
-  pendingOpResolvedByTradesChanged,
   type TradeListState,
 } from "./trade-state.mjs";
+import type { TradeOperationController } from "./trade-operation-controller.mjs";
 import type { SecurityIdentity } from "../workbench-layout.mjs";
 import { TradeFormDialog } from "./TradeFormDialog";
 import { FeePlanSettingsDialog } from "./FeePlanSettingsDialog";
@@ -42,16 +41,6 @@ function errorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
-type PendingOp = {
-  command: "create" | "update" | "delete";
-  retry: () => Promise<void>;
-};
-
-type FailedOp = {
-  message: string;
-  retry: (() => Promise<void>) | null;
-};
-
 type AppEventSubscriber =
   | ((listener: (event: unknown) => void) => () => void)
   | null;
@@ -64,6 +53,7 @@ export function TradeDrawer({
   serviceReady,
   subscribeAppEvent,
   serviceGeneration,
+  tradeOpController,
 }: {
   security: SecurityIdentity | null;
   tradeClient: TradeClient | null;
@@ -72,11 +62,17 @@ export function TradeDrawer({
   serviceReady: boolean;
   subscribeAppEvent: AppEventSubscriber;
   serviceGeneration: number;
+  /**
+   * App-owned, always-mounted controller for pending trade operations and
+   * their retry context. The Drawer delegates track/fail to it so a trade op
+   * started in Live that fails after the user switches to Replay is still
+   * surfaced with the correct CRUD retry (the controller survives unmount).
+   */
+  tradeOpController: TradeOperationController;
 }) {
   const [trades, setTrades] = useState<TradeRecord[]>([]);
   const [expanded, setExpanded] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
-  const [failedOp, setFailedOp] = useState<FailedOp | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [formOpen, setFormOpen] = useState<
     | { mode: "create" }
@@ -91,8 +87,7 @@ export function TradeDrawer({
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
 
-  // Mirror of the trade-list state for use inside the event handler, which
-  // must read the latest state without re-subscribing on every change.
+  // Mirror of the trade-list state for use inside the event handler.
   const tradeListRef = useRef<TradeListState>({
     trades: [],
     tradeRevision: -1,
@@ -100,9 +95,6 @@ export function TradeDrawer({
   });
   const loadedSymbolRef = useRef<string | null>(null);
   const prevGenRef = useRef<number>(serviceGeneration);
-  // Pending async trade operations, keyed by operation_id, with the retry
-  // context (captured draft/tradeId) so an operation_failed can be retried.
-  const pendingOpsRef = useRef<Map<string, PendingOp>>(new Map());
 
   function commitTradeList(next: TradeListState) {
     tradeListRef.current = next;
@@ -154,9 +146,6 @@ export function TradeDrawer({
   }, [security, tradeClient, serviceReady, reloadKey]);
 
   // Reset the revision gate on a service_generation change (Python restart).
-  // Keep the last successful trades, reset the gate so the new generation's
-  // low revisions are accepted, drop stale pending operations, and re-trigger
-  // hydration.
   useEffect(() => {
     const prev = prevGenRef.current;
     prevGenRef.current = serviceGeneration;
@@ -166,41 +155,23 @@ export function TradeDrawer({
       tradeRevision: -1,
       serviceGeneration,
     };
-    pendingOpsRef.current.clear();
-    setFailedOp(null);
     setListError(null);
     setReloadKey((k) => k + 1);
   }, [serviceGeneration]);
 
-  // Authoritative updates via the frozen trades_changed event, plus
-  // operation_failed for tracked async trade operations.
+  // Authoritative list updates via the frozen trades_changed event. Pending-op
+  // resolution and operation_failed are handled by the App-level controller
+  // (so they survive this Drawer unmounting in Replay); this subscription only
+  // maintains the visible trade list.
   useEffect(() => {
     if (!subscribeAppEvent) return;
     return subscribeAppEvent((event) => {
       if (!security) return;
+      if (!isRealTradesChangedEvent(event)) return;
       const scope = { symbol: security.symbol, tradeDate: localToday() };
-      if (isRealTradesChangedEvent(event)) {
-        const next = applyTradesChanged(tradeListRef.current, event, scope);
-        if (next !== tradeListRef.current) {
-          commitTradeList(next);
-        }
-        // Clear only the pending op this event resolves (by operation_id).
-        // Never blanket-clear: other in-flight ops must keep their tracking.
-        const resolved = pendingOpResolvedByTradesChanged(
-          event,
-          pendingOpsRef.current,
-        );
-        if (resolved) pendingOpsRef.current.delete(resolved);
-        return;
-      }
-      const failed = matchTradeOperationFailed(event, pendingOpsRef.current);
-      if (failed) {
-        const op = pendingOpsRef.current.get(failed.operationId);
-        pendingOpsRef.current.delete(failed.operationId);
-        setFailedOp({
-          message: errorMessage(failed.error, "成交操作未完成"),
-          retry: op ? op.retry : null,
-        });
+      const next = applyTradesChanged(tradeListRef.current, event, scope);
+      if (next !== tradeListRef.current) {
+        commitTradeList(next);
       }
     });
   }, [subscribeAppEvent, security]);
@@ -209,13 +180,15 @@ export function TradeDrawer({
     if (feePlanClient) setFeePlans(feePlanClient.listPlans());
   }
 
-  // Re-run a create, capturing sync failures into the failed-op banner.
+  // Submit a create/update, tracking the async operation on the App-level
+  // controller so its retry survives a mode switch. Sync rejections surface on
+  // the controller's persistent banner too (so they aren't lost on unmount).
   async function reRunCreate(draft: TradeDraft) {
     if (!tradeClient) return;
     try {
       const result = await tradeClient.createTrade(draft);
       if (result.operationId) {
-        pendingOpsRef.current.set(result.operationId, {
+        tradeOpController.track(result.operationId, {
           command: "create",
           retry: () => reRunCreate(draft),
         });
@@ -223,10 +196,7 @@ export function TradeDrawer({
         setReloadKey((k) => k + 1);
       }
     } catch (error) {
-      setFailedOp({
-        message: errorMessage(error, "成交保存失败"),
-        retry: () => reRunCreate(draft),
-      });
+      tradeOpController.failUntracked(errorMessage(error, "成交保存失败"), error);
     }
   }
 
@@ -235,7 +205,7 @@ export function TradeDrawer({
     try {
       const result = await tradeClient.updateTrade(tradeId, draft);
       if (result.operationId) {
-        pendingOpsRef.current.set(result.operationId, {
+        tradeOpController.track(result.operationId, {
           command: "update",
           retry: () => reRunUpdate(tradeId, draft),
         });
@@ -243,10 +213,7 @@ export function TradeDrawer({
         setReloadKey((k) => k + 1);
       }
     } catch (error) {
-      setFailedOp({
-        message: errorMessage(error, "成交保存失败"),
-        retry: () => reRunUpdate(tradeId, draft),
-      });
+      tradeOpController.failUntracked(errorMessage(error, "成交保存失败"), error);
     }
   }
 
@@ -255,7 +222,7 @@ export function TradeDrawer({
     try {
       const result = await tradeClient.deleteTrade(tradeId);
       if (result.operationId) {
-        pendingOpsRef.current.set(result.operationId, {
+        tradeOpController.track(result.operationId, {
           command: "delete",
           retry: () => reRunDelete(tradeId),
         });
@@ -263,10 +230,10 @@ export function TradeDrawer({
         setReloadKey((k) => k + 1);
       }
     } catch (error) {
-      setFailedOp({
-        message: errorMessage(error, "成交记录删除失败"),
-        retry: () => reRunDelete(tradeId),
-      });
+      tradeOpController.failUntracked(
+        errorMessage(error, "成交记录删除失败"),
+        error,
+      );
     }
   }
 
@@ -276,7 +243,8 @@ export function TradeDrawer({
     const mode = formOpen.mode;
     const tradeId = mode === "edit" ? formOpen.trade.trade_id : null;
     // A sync rejection throws here and the form surfaces an inline retry; an
-    // accepted async op is tracked for a later operation_failed retry.
+    // accepted async op is tracked on the controller for a later
+    // operation_failed retry (which survives a mode switch).
     const result =
       mode === "edit"
         ? await tradeClient.updateTrade(tradeId as string, draft)
@@ -287,7 +255,7 @@ export function TradeDrawer({
         mode === "edit"
           ? () => reRunUpdate(tradeId as string, draft)
           : () => reRunCreate(draft);
-      pendingOpsRef.current.set(result.operationId, {
+      tradeOpController.track(result.operationId, {
         command: mode === "edit" ? "update" : "create",
         retry,
       });
@@ -305,7 +273,7 @@ export function TradeDrawer({
       const result = await tradeClient.deleteTrade(tradeId);
       setPendingDelete(null);
       if (result.operationId) {
-        pendingOpsRef.current.set(result.operationId, {
+        tradeOpController.track(result.operationId, {
           command: "delete",
           retry: () => reRunDelete(tradeId),
         });
@@ -368,27 +336,6 @@ export function TradeDrawer({
           role="region"
           aria-label="当日成交记录"
         >
-          {failedOp && (
-            <div className="inline-error" role="status">
-              <span>{failedOp.message}</span>
-              {failedOp.retry && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const retry = failedOp.retry;
-                    if (!retry) return;
-                    setFailedOp(null);
-                    void retry();
-                  }}
-                >
-                  重试
-                </button>
-              )}
-              <button type="button" onClick={() => setFailedOp(null)}>
-                关闭
-              </button>
-            </div>
-          )}
           {listError ? (
             <div className="inline-error" role="status">
               <span>{listError}</span>

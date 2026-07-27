@@ -61,6 +61,10 @@ import {
 } from "./trading/TradeDrawer";
 import { createNullFeeAdvisor } from "./trading/fee-advisor.mjs";
 import { isTradeScopedError } from "./trading/app-event-ownership.mjs";
+import {
+  TradeOperationController,
+  type TradeOperationFailure,
+} from "./trading/trade-operation-controller.mjs";
 
 const initialStatus: ServiceStatus = {
   state: "starting",
@@ -190,6 +194,23 @@ export function App() {
       window.stockpilot ? window.stockpilot.onAppEvent.bind(window.stockpilot) : null,
     [],
   );
+  // Persistent trade-operation registry + failure surface. Owned at the App
+  // level (always mounted) so a trade op started in Live that fails after the
+  // user switches to Replay is still surfaced with the correct CRUD retry, and
+  // the App never silently drops a trades-scoped operation_failed. The
+  // TradeDrawer delegates its track/resolve/fail to this controller.
+  const tradeOpController = useRef<TradeOperationController | null>(null);
+  if (tradeOpController.current === null) {
+    tradeOpController.current = new TradeOperationController();
+  }
+  const [tradeFailure, setTradeFailure] = useState<TradeOperationFailure | null>(
+    null,
+  );
+  useEffect(() => {
+    const controller = tradeOpController.current;
+    if (!controller) return;
+    return controller.subscribe((failure) => setTradeFailure(failure));
+  }, []);
 
   useEffect(() => {
     modeRef.current = workbench.mode;
@@ -232,6 +253,10 @@ export function App() {
       if (next.service_generation <= 0) return;
       if (generationChanged) {
         activeOperations.current.clear();
+        // Drop stale pending trade operations from the previous generation;
+        // the new generation's revisions restart. The controller itself stays
+        // mounted (it only clears its pending map, not its failure surface).
+        tradeOpController.current?.clearPending();
         const replacement = createChartProjection(emptyChartSnapshot, {
           service_generation: next.service_generation,
         });
@@ -362,10 +387,28 @@ export function App() {
         const error = applicationErrorFrom(envelope.payload);
         if (!error) return;
         if (isTradeScopedError(error)) {
-          // Trade operation failures are owned by the TradeDrawer (it tracks
-          // the operation_id and shows the correct create/update/delete retry).
-          // Do not surface a global backgroundError whose 重试 would call
-          // retryLive/retryService - the wrong action for a trade command.
+          // Trade operation failures are owned by the persistent
+          // TradeOperationController (not the generic retryLive/retryService
+          // path). The controller survives Live/Replay mode switches, so a
+          // trade op started in Live that fails after the user switched to
+          // Replay is still surfaced with the correct CRUD retry and never
+          // silently dropped.
+          const opId =
+            typeof envelope.operation_id === "string"
+              ? envelope.operation_id
+              : null;
+          const message = error.message;
+          const controller = tradeOpController.current;
+          if (controller) {
+            if (opId && controller.has(opId)) {
+              controller.fail(opId, message, error);
+            } else {
+              // Untracked (e.g. event arrived before the op was registered, or
+              // the Drawer unmounted and dropped tracking): still surface it so
+              // it is not silently swallowed. Retry is null in this case.
+              controller.failUntracked(message, error);
+            }
+          }
           applyLiveEvent();
           return;
         }
@@ -399,6 +442,16 @@ export function App() {
       if (envelope.event_type === "trades_changed") {
         // Trade-list updates are consumed by the TradeDrawer; they are not
         // chart events and must not be routed to the workbench projection.
+        // Resolve any pending trade operation the controller is tracking via
+        // the event's operation_id (the controller is always mounted, even in
+        // Replay, so an op started in Live is resolved here even if the Drawer
+        // unmounted).
+        const opId =
+          typeof envelope.operation_id === "string"
+            ? envelope.operation_id
+            : null;
+        if (opId) tradeOpController.current?.resolve(opId);
+        applyLiveEvent();
         return;
       }
       const baseline = chartProjectionFromEvent(event);
@@ -1046,6 +1099,31 @@ export function App() {
         </section>
       )}
 
+      {tradeFailure && (
+        <section className="feedback-banner trade-feedback" role="status">
+          <span>{tradeFailure.message}</span>
+          {tradeFailure.retry && (
+            <button
+              type="button"
+              onClick={() => {
+                const retry = tradeFailure.retry;
+                tradeOpController.current?.dismissFailure();
+                if (retry) void retry();
+              }}
+            >
+              重试
+            </button>
+          )}
+          <button
+            type="button"
+            aria-label="关闭提示"
+            onClick={() => tradeOpController.current?.dismissFailure()}
+          >
+            ×
+          </button>
+        </section>
+      )}
+
       <section
         className="workspace"
         data-chart-split={workbench.layout.chartSplit}
@@ -1158,6 +1236,7 @@ export function App() {
           serviceReady={status.state === "connected" || status.state === "ready"}
           subscribeAppEvent={subscribeAppEvent}
           serviceGeneration={status.service_generation}
+          tradeOpController={tradeOpController.current as TradeOperationController}
         />
       )}
 

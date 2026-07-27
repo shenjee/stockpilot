@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { isTradeScopedError } from "../renderer/src/trading/app-event-ownership.mjs";
-import { matchTradeOperationFailed } from "../renderer/src/trading/trade-state.mjs";
+import { TradeOperationController } from "../renderer/src/trading/trade-operation-controller.mjs";
 
 // A trade operation_failed event carrying the frozen application_error shape.
 function tradeOperationFailedEvent(operationId) {
@@ -51,8 +51,6 @@ test("isTradeScopedError is false for live/preferences/service capabilities", ()
 });
 
 test("isTradeScopedError accepts an envelope wrapping the error in payload", () => {
-  // App's handler passes applicationErrorFrom(envelope.payload), but the
-  // predicate also tolerates a raw envelope (error in .payload) defensively.
   const envelope = tradeOperationFailedEvent("op-1");
   assert.equal(isTradeScopedError(envelope), true);
 });
@@ -63,43 +61,46 @@ test("isTradeScopedError is false for null/non-object input", () => {
   assert.equal(isTradeScopedError("trades"), false);
 });
 
-test("a trade operation_failed is owned by the TradeDrawer, not the App generic path", () => {
+test("a trade operation_failed is owned by the App-level controller, not the generic App path", () => {
   // Integration contract: one trade async failure must produce exactly one
-  // error entry (the TradeDrawer's), with a retry that re-runs the original
-  // create/update/delete. The App must NOT also surface it as a global
-  // backgroundError (whose retry would call retryLive/retryService).
+  // error entry (the App-level persistent banner via the controller), with a
+  // retry that re-runs the original create/update/delete. The App must NOT
+  // route it through the generic backgroundError path (whose retry would call
+  // retryLive/retryService). The controller is always mounted, so the failure
+  // is surfaced even if the TradeDrawer unmounted (e.g. in Replay).
   const event = tradeOperationFailedEvent("op-create-1");
   const retryCalls = [];
-  const pending = new Map([
-    [
-      "op-create-1",
-      {
-        command: "create",
-        retry: () => {
-          retryCalls.push("create");
-          return Promise.resolve();
-        },
-      },
-    ],
-  ]);
+  const controller = new TradeOperationController();
+  controller.track("op-create-1", {
+    command: "create",
+    retry: () => {
+      retryCalls.push("create");
+      return Promise.resolve();
+    },
+  });
 
   // (1) The App generic path skips trade-scoped failures.
   assert.equal(isTradeScopedError(event), true);
 
-  // (2) The TradeDrawer matches the tracked operation and keeps the retry.
-  const match = matchTradeOperationFailed(event, pending);
-  assert.equal(match.operationId, "op-create-1");
-  const op = pending.get(match.operationId);
-  assert.equal(op.command, "create");
+  // (2) The App routes the failure to the controller, which claims it.
+  const claimed = controller.fail(
+    "op-create-1",
+    event.payload.message,
+    event.payload,
+  );
+  assert.equal(claimed, true);
+  assert.equal(controller.failure !== null, true);
+  assert.equal(controller.failure.command, "create");
 
   // (3) The retry re-runs the original create (not retryLive/retryService).
-  op.retry();
+  controller.failure.retry();
   assert.deepEqual(retryCalls, ["create"]);
 });
 
-test("a non-trade operation_failed is NOT claimed by the TradeDrawer ownership path", () => {
+test("a non-trade operation_failed is NOT claimed by the trade ownership path", () => {
   // A live operation_failed must still flow through the App's generic path;
-  // isTradeScopedError must be false so the App handles it.
+  // isTradeScopedError must be false so the App handles it, and the trade
+  // controller does not claim an untracked op.
   const liveEvent = {
     ...tradeOperationFailedEvent("op-live-1"),
     payload: {
@@ -108,9 +109,14 @@ test("a non-trade operation_failed is NOT claimed by the TradeDrawer ownership p
     },
   };
   assert.equal(isTradeScopedError(liveEvent), false);
-  // And the TradeDrawer does not match it (untracked operation id).
-  const pending = new Map([
-    ["op-create-1", { command: "create", retry: () => Promise.resolve() }],
-  ]);
-  assert.equal(matchTradeOperationFailed(liveEvent, pending), null);
+  const controller = new TradeOperationController();
+  controller.track("op-create-1", {
+    command: "create",
+    retry: () => Promise.resolve(),
+  });
+  assert.equal(
+    controller.fail("op-live-1", "x", liveEvent.payload),
+    false,
+  );
+  assert.equal(controller.failure, null);
 });
