@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from collections.abc import Callable, Iterable, Sequence
 from datetime import date, datetime, timedelta
 import logging
@@ -27,6 +26,7 @@ _RELIABILITY_COMPLETE = "complete"
 _RELIABILITY_NO_DATA = "no_data"
 _RELIABILITY_INCOMPLETE = "incomplete"
 _RELIABILITY_UNKNOWN = "unknown"
+_REPLAY_RELIABILITY_EVIDENCE_REASON = "replay_reliability_evidence"
 
 
 class KLineDataService:
@@ -139,39 +139,66 @@ class KLineDataService:
                     source=self.provider.provider_id,
                     timeframe=timeframe,
                 )
-            provider_completed_successfully = result.success or (
-                any(
-                    issue.reason_code == "session_retired"
-                    for issue in result.issues
+            if timeframe in MINUTE_TIMEFRAMES:
+                minute_statuses = self._minute_reliability_statuses(
+                    market=market,
+                    timeframe=timeframe,
+                    start_date=missing_start,
+                    end_date=missing_end,
+                    result=result,
                 )
-                and not any(
-                    issue.level == "error"
-                    and issue.reason_code != "session_retired"
-                    for issue in result.issues
+                self._record_replay_reliability(
+                    code=code,
+                    market=market,
+                    timeframe=timeframe,
+                    statuses=minute_statuses,
                 )
-            )
-            if provider_completed_successfully:
                 historical_end = min(
                     date.fromisoformat(missing_end),
                     self.clock().date() - timedelta(days=1),
                 )
                 if date.fromisoformat(missing_start) <= historical_end:
-                    self.store.mark_coverage(
-                        code,
-                        market,
-                        missing_start,
-                        historical_end.isoformat(),
-                        source=self.provider.provider_id,
-                        timeframe=timeframe,
+                    covered_days = [
+                        trade_date
+                        for trade_date, status in minute_statuses.items()
+                        if trade_date <= historical_end.isoformat()
+                        and status in {_RELIABILITY_COMPLETE, _RELIABILITY_NO_DATA}
+                    ]
+                    for covered_start, covered_end in _group_present_dates(covered_days):
+                        self.store.mark_coverage(
+                            code,
+                            market,
+                            covered_start,
+                            covered_end,
+                            source=self.provider.provider_id,
+                            timeframe=timeframe,
+                        )
+            else:
+                provider_completed_successfully = result.success or (
+                    any(
+                        issue.reason_code == "session_retired"
+                        for issue in result.issues
                     )
-            self._record_replay_reliability(
-                code=code,
-                market=market,
-                timeframe=timeframe,
-                start_date=missing_start,
-                end_date=missing_end,
-                result=result,
-            )
+                    and not any(
+                        issue.level == "error"
+                        and issue.reason_code != "session_retired"
+                        for issue in result.issues
+                    )
+                )
+                if provider_completed_successfully:
+                    historical_end = min(
+                        date.fromisoformat(missing_end),
+                        self.clock().date() - timedelta(days=1),
+                    )
+                    if date.fromisoformat(missing_start) <= historical_end:
+                        self.store.mark_coverage(
+                            code,
+                            market,
+                            missing_start,
+                            historical_end.isoformat(),
+                            source=self.provider.provider_id,
+                            timeframe=timeframe,
+                        )
         return MarketDataResult(success=success, data=None, issues=issues)
 
     def get_klines(
@@ -332,8 +359,22 @@ class KLineDataService:
                 if timestamp[:10] != active_date
             )
         else:
+            reliability = self.store.replay_reliability_between(
+                code,
+                start_date,
+                end_date,
+                market=market,
+                timeframe=timeframe,
+            )
             covered_dates.update(
-                self._complete_minute_dates(timestamps, timeframe)
+                trade_date
+                for trade_date, status in reliability.items()
+                if status in {_RELIABILITY_COMPLETE, _RELIABILITY_NO_DATA}
+            )
+            covered_dates.difference_update(
+                trade_date
+                for trade_date, status in reliability.items()
+                if status in {_RELIABILITY_INCOMPLETE, _RELIABILITY_UNKNOWN}
             )
         covered_dates.difference_update(invalid_dates)
 
@@ -371,29 +412,6 @@ class KLineDataService:
             )
             if value.weekday() < 5
         ]
-
-    @staticmethod
-    def _complete_minute_dates(
-        timestamps: Sequence[str],
-        timeframe: str,
-    ) -> set[str]:
-        grouped: dict[str, list[str]] = defaultdict(list)
-        for timestamp in timestamps:
-            grouped[timestamp[:10]].append(timestamp)
-        bars_per_day = {
-            "1m": 240,
-            "5m": 48,
-            "30m": 8,
-            "60m": 4,
-        }.get(timeframe)
-        if bars_per_day is None:
-            return set()
-        return {
-            day
-            for day, values in grouped.items()
-            if len(values) >= bars_per_day
-            and max(values).endswith("15:00:00")
-        }
 
     def _default_start_date(self, end_date: str) -> str:
         end_dt = datetime.strptime(end_date, "%Y-%m-%d")
@@ -545,46 +563,73 @@ class KLineDataService:
             )
         return outcome.result
 
-    def _record_replay_reliability(
+    def _minute_reliability_statuses(
         self,
         *,
-        code: str,
         market: str | None,
         timeframe: str,
         start_date: str,
         end_date: str,
         result: MarketDataResult[list],
-    ) -> None:
-        if timeframe not in MINUTE_TIMEFRAMES:
-            return
-        source = getattr(self.provider, "provider_id", "unknown")
+    ) -> dict[str, str]:
         requested_dates = self._required_dates(
             start_date=start_date,
             end_date=end_date,
             market=market,
         )
         if not requested_dates:
+            return {}
+        evidence = self._extract_minute_reliability_evidence(result)
+        if evidence is None:
+            issue_codes = {issue.reason_code for issue in result.issues}
+            fallback = (
+                _RELIABILITY_INCOMPLETE
+                if result.errors() or "parse_failed" in issue_codes
+                else _RELIABILITY_UNKNOWN
+            )
+            return {trade_date: fallback for trade_date in requested_dates}
+        default_status = evidence.get("default_status", _RELIABILITY_UNKNOWN)
+        explicit_statuses = evidence.get("trade_date_statuses", {})
+        return {
+            trade_date: explicit_statuses.get(trade_date, default_status)
+            for trade_date in requested_dates
+        }
+
+    @staticmethod
+    def _extract_minute_reliability_evidence(
+        result: MarketDataResult[list],
+    ) -> dict[str, object] | None:
+        for issue in result.issues:
+            if issue.reason_code != _REPLAY_RELIABILITY_EVIDENCE_REASON:
+                continue
+            context = issue.context or {}
+            explicit = context.get("trade_date_statuses", {})
+            if not isinstance(explicit, dict):
+                explicit = {}
+            default_status = str(
+                context.get("default_status", _RELIABILITY_UNKNOWN)
+            )
+            return {
+                "default_status": default_status,
+                "trade_date_statuses": {
+                    str(trade_date): str(status)
+                    for trade_date, status in explicit.items()
+                },
+            }
+        return None
+
+    def _record_replay_reliability(
+        self,
+        *,
+        code: str,
+        market: str | None,
+        timeframe: str,
+        statuses: dict[str, str],
+    ) -> None:
+        if timeframe not in MINUTE_TIMEFRAMES:
             return
-        grouped_rows: dict[str, list[str]] = defaultdict(list)
-        for row in result.data or []:
-            timestamp = str(row.get("timestamp", row.get("date", "")))
-            if len(timestamp) >= 10:
-                grouped_rows[timestamp[:10]].append(timestamp)
-        issue_codes = {issue.reason_code for issue in result.issues}
-        complete_days = self._complete_minute_dates(
-            [timestamp for values in grouped_rows.values() for timestamp in values],
-            timeframe,
-        )
-        for trade_date in requested_dates:
-            status = _RELIABILITY_UNKNOWN
-            if "no_data" in issue_codes and trade_date not in grouped_rows:
-                status = _RELIABILITY_NO_DATA
-            elif any(issue.level == "error" for issue in result.issues) or "parse_failed" in issue_codes:
-                status = _RELIABILITY_INCOMPLETE
-            elif trade_date in complete_days:
-                status = _RELIABILITY_COMPLETE
-            elif trade_date in grouped_rows:
-                status = _RELIABILITY_UNKNOWN
+        source = getattr(self.provider, "provider_id", "unknown")
+        for trade_date, status in statuses.items():
             self.store.set_replay_reliability(
                 code,
                 market,
@@ -674,4 +719,24 @@ def _group_missing_dates(
             previous = None
     if group_start is not None:
         groups.append((group_start, previous or group_start))
+    return groups
+
+
+def _group_present_dates(
+    present_dates: Sequence[str],
+) -> list[tuple[str, str]]:
+    if not present_dates:
+        return []
+    ordered = sorted(set(present_dates))
+    groups: list[tuple[str, str]] = []
+    group_start = ordered[0]
+    previous = ordered[0]
+    for value in ordered[1:]:
+        if date.fromisoformat(value) == date.fromisoformat(previous) + timedelta(days=1):
+            previous = value
+            continue
+        groups.append((group_start, previous))
+        group_start = value
+        previous = value
+    groups.append((group_start, previous))
     return groups

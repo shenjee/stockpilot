@@ -267,6 +267,18 @@ class RealKLineServiceIntegrationTests(unittest.TestCase):
             provider_id = "fixture"
 
             @staticmethod
+            def _reliability_issue(default_status: str, statuses: dict[str, str]) -> ProviderIssue:
+                return ProviderIssue(
+                    level="warning",
+                    reason_code="replay_reliability_evidence",
+                    message="fixture reliability evidence",
+                    context={
+                        "default_status": default_status,
+                        "trade_date_statuses": statuses,
+                    },
+                )
+
+            @staticmethod
             def _rows(values):
                 rows = []
                 for row in values:
@@ -286,17 +298,36 @@ class RealKLineServiceIntegrationTests(unittest.TestCase):
                 market: str = None,
                 security_type: str | None = None,
             ):
+                issues: list[ProviderIssue] = []
                 if ktype == "1m" and start_date == TRADE_DATE.isoformat():
                     rows = self._rows(fixture.target_day_1m_bars)
+                    issues.append(
+                        self._reliability_issue(
+                            "no_data",
+                            {TRADE_DATE.isoformat(): "complete"},
+                        )
+                    )
                 elif ktype == "5m" and start_date == PREVIOUS_TRADE_DATE.isoformat():
                     rows = self._rows(fixture.preheat_5m_bars)
+                    issues.append(
+                        self._reliability_issue(
+                            "no_data",
+                            {PREVIOUS_TRADE_DATE.isoformat(): "complete"},
+                        )
+                    )
                 elif ktype == "5m" and start_date == TRADE_DATE.isoformat():
                     rows = self._rows(fixture.target_day_5m_bars)
+                    issues.append(
+                        self._reliability_issue(
+                            "no_data",
+                            {TRADE_DATE.isoformat(): "complete"},
+                        )
+                    )
                 elif ktype == "day":
                     rows = self._rows(fixture.daily_bars_history)
                 else:
                     rows = []
-                return MarketDataResult(success=True, data=rows, issues=[])
+                return MarketDataResult(success=True, data=rows, issues=issues)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             store = KLineStore(Path(tmpdir) / "market_data.sqlite")

@@ -313,6 +313,94 @@ class TencentStockDataProviderTests(unittest.TestCase):
         self.assertEqual(rows[0]["date"], "2025-10-21 10:30:00")
         self.assertEqual(rows[-1]["date"], "2026-03-16 10:30:00")
 
+    def test_get_minute_kline_emits_complete_evidence_for_sparse_day(self):
+        payload = {
+            "code": 0,
+            "data": {
+                "sh600519": {
+                    "m5": [
+                        ["202606111000", "10.00", "10.10", "10.20", "9.90", "100", {}, "0.1"],
+                        ["202606111330", "10.10", "10.20", "10.30", "10.00", "120", {}, "0.1"],
+                    ],
+                }
+            },
+        }
+        amount_payload = {
+            "code": 0,
+            "data": {"sh600519": {"data": []}},
+        }
+
+        with patch.object(
+            TencentStockDataProvider,
+            "_fetch_with_retry",
+            side_effect=[json.dumps(payload), json.dumps(amount_payload)],
+        ):
+            result = TencentStockDataProvider.get_minute_kline_result(
+                code="600519",
+                market="sh",
+                start_date="2026-06-11",
+                end_date="2026-06-11",
+                ktype="5m",
+            )
+
+        evidence = next(
+            issue
+            for issue in result.warnings()
+            if issue.reason_code == TencentStockDataProvider.REPLAY_RELIABILITY_EVIDENCE_REASON
+        )
+        self.assertEqual(evidence.context["termination_reason"], "covered_start_date")
+        self.assertEqual(evidence.context["default_status"], "no_data")
+        self.assertEqual(
+            evidence.context["trade_date_statuses"]["2026-06-11"],
+            "complete",
+        )
+
+    def test_get_minute_kline_emits_incomplete_evidence_when_page_limit_truncates(self):
+        payload = {
+            "code": 0,
+            "data": {
+                "sh600519": {
+                    "m60": [
+                        ["202603131500", "1800.00", "1801.00", "1802.00", "1799.00", "1000.00", {}, "0.1"],
+                        ["202603161030", "1801.00", "1802.00", "1803.00", "1800.00", "1100.00", {}, "0.1"],
+                    ],
+                }
+            },
+        }
+        amount_payload = {
+            "code": 0,
+            "data": {"sh600519": {"data": []}},
+        }
+
+        with patch.object(
+            TencentStockDataProvider,
+            "MINUTE_KLINE_MAX_PAGES",
+            1,
+        ), patch.object(
+            TencentStockDataProvider,
+            "_fetch_with_retry",
+            side_effect=[json.dumps(payload), json.dumps(amount_payload)],
+        ):
+            result = TencentStockDataProvider.get_minute_kline_result(
+                code="600519",
+                market="sh",
+                start_date="2025-10-21",
+                end_date="2026-03-16",
+                ktype="60m",
+            )
+
+        evidence = next(
+            issue
+            for issue in result.warnings()
+            if issue.reason_code == TencentStockDataProvider.REPLAY_RELIABILITY_EVIDENCE_REASON
+        )
+        self.assertEqual(evidence.context["termination_reason"], "max_pages_reached")
+        self.assertEqual(evidence.context["default_status"], "incomplete")
+        self.assertEqual(
+            evidence.context["trade_date_statuses"]["2026-03-13"],
+            "incomplete",
+        )
+
     def test_get_kline_index_uses_no_adjustment(self):
         # 指数在 qfq 下腾讯返回空；security_type="index" 应把 autype 折成 ""，
         # 用不复权的 "day" 键取数据，且 URL 里不出现 qfq。

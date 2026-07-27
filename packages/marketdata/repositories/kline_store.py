@@ -386,6 +386,33 @@ class KLineStore:
             ).fetchone()
         return str(row[0]) if row and row[0] else None
 
+    def replay_reliability_between(
+        self,
+        code: str,
+        start_date: str,
+        end_date: str,
+        *,
+        market: str | None = None,
+        timeframe: str,
+    ) -> dict[str, str]:
+        symbol = self.symbol(code, market)
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT trade_date, status
+                FROM kline_replay_reliability
+                WHERE symbol = ? AND timeframe = ?
+                  AND trade_date >= ? AND trade_date <= ?
+                ORDER BY trade_date
+                """,
+                (symbol, timeframe, start_date, end_date),
+            ).fetchall()
+        return {
+            str(trade_date): str(status)
+            for trade_date, status in rows
+            if trade_date and status
+        }
+
     def upsert_many(self, code: str, market: str | None, klines: list, source: str = "unknown", timeframe: str = "day") -> None:
         if not klines:
             return

@@ -306,6 +306,65 @@ class ProviderRequestQueueTests(unittest.TestCase):
         release.set()
         self.assertEqual(future.result(1).result.data, ["late"])
 
+    def test_queued_timeout_detaches_only_subscriber_and_skips_unstarted_request(self):
+        first_started = threading.Event()
+        release_first = threading.Event()
+        timed_out_started = threading.Event()
+
+        def blocking_operation():
+            first_started.set()
+            release_first.wait(2)
+            return "blocking"
+
+        def should_not_run():
+            timed_out_started.set()
+            return "late"
+
+        first = self.queue.submit("first-request", blocking_operation)
+        self.assertTrue(first_started.wait(1))
+
+        with self.assertRaises(FutureTimeoutError):
+            self.queue.execute(
+                "timed-out-request",
+                should_not_run,
+                timeout=0.05,
+            )
+
+        release_first.set()
+        self.assertEqual(first.result(1).result, "blocking")
+        self.assertFalse(timed_out_started.is_set())
+
+    def test_coalesced_timeout_does_not_detach_other_valid_subscribers(self):
+        started = threading.Event()
+        release = threading.Event()
+        completed = {}
+
+        def operation():
+            started.set()
+            release.wait(2)
+            return "shared"
+
+        first_future = self.queue.submit("shared-request", operation)
+        self.assertTrue(started.wait(1))
+
+        def wait_with_timeout():
+            with self.assertRaises(FutureTimeoutError):
+                self.queue.execute(
+                    "shared-request",
+                    lambda: self.fail("coalesced operation must not execute"),
+                    timeout=0.05,
+                )
+            completed["timed_out"] = True
+
+        thread = threading.Thread(target=wait_with_timeout)
+        thread.start()
+        thread.join(1)
+        self.assertFalse(thread.is_alive())
+        self.assertTrue(completed["timed_out"])
+
+        release.set()
+        self.assertEqual(first_future.result(1).result, "shared")
+
     def test_provider_timeout_error_does_not_spin_forever_with_session_validator(self):
         finished = {}
 

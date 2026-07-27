@@ -243,6 +243,14 @@ class ProviderRequestQueue:
             if deadline is not None:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
+                    if future.done():
+                        return future.result()
+                    self._detach_subscriber(
+                        key,
+                        future,
+                        coalesced=coalesced,
+                        session_valid=True,
+                    )
                     raise ProviderWaitTimeoutError()
                 wait_timeout = min(wait_timeout, remaining)
             try:

@@ -45,6 +45,22 @@ class FakeResultProvider:
 
 class KLineDataServiceTests(unittest.TestCase):
     @staticmethod
+    def _reliability_issue(
+        *,
+        default_status: str,
+        trade_date_statuses: dict[str, str] | None = None,
+    ) -> ProviderIssue:
+        return ProviderIssue(
+            level="warning",
+            reason_code="replay_reliability_evidence",
+            message="test reliability evidence",
+            context={
+                "default_status": default_status,
+                "trade_date_statuses": dict(trade_date_statuses or {}),
+            },
+        )
+
+    @staticmethod
     def _daily_row(day: str, close: float = 10.5) -> dict:
         return {
             "date": day,
@@ -475,6 +491,7 @@ class KLineDataServiceTests(unittest.TestCase):
                     success=True,
                     data=[],
                     issues=[
+                        self._reliability_issue(default_status="no_data"),
                         ProviderIssue(
                             level="warning",
                             reason_code="no_data",
@@ -525,7 +542,18 @@ class KLineDataServiceTests(unittest.TestCase):
                 source="local",
                 timeframe="5m",
             )
-            provider = FakeProvider(complete_rows)
+            provider = FakeResultProvider(
+                MarketDataResult(
+                    success=True,
+                    data=complete_rows,
+                    issues=[
+                        self._reliability_issue(
+                            default_status="no_data",
+                            trade_date_statuses={"2026-06-11": "complete"},
+                        )
+                    ],
+                )
+            )
             service = KLineDataService(
                 provider,
                 store,
@@ -616,6 +644,7 @@ class KLineDataServiceTests(unittest.TestCase):
                     success=True,
                     data=[],
                     issues=[
+                        self._reliability_issue(default_status="no_data"),
                         ProviderIssue(
                             level="warning",
                             reason_code="no_data",
@@ -646,6 +675,122 @@ class KLineDataServiceTests(unittest.TestCase):
                     market="sh",
                     timeframe="5m",
                 )
+            )
+
+    def test_partial_minute_success_remains_retryable_after_parse_failure(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = KLineStore(Path(tmpdir) / "market_data.sqlite")
+            partial_rows = [self._minute_row("2026-06-11 09:35:00")]
+            provider = FakeResultProvider(
+                MarketDataResult(
+                    success=True,
+                    data=partial_rows,
+                    issues=[
+                        self._reliability_issue(default_status="incomplete"),
+                        ProviderIssue(
+                            level="warning",
+                            reason_code="parse_failed",
+                            message="partial parse failure",
+                        ),
+                    ],
+                )
+            )
+            calendar = MarketContextService(["2026-06-11"])
+            service = KLineDataService(
+                provider,
+                store,
+                market_context=calendar,
+            )
+
+            first = service.ensure_local_klines_result(
+                code="600519",
+                market="sh",
+                timeframe="5m",
+                start_date="2026-06-11",
+                end_date="2026-06-11",
+            )
+            missing_after_first = service.identify_missing_ranges(
+                code="600519",
+                market="sh",
+                timeframe="5m",
+                start_date="2026-06-11",
+                end_date="2026-06-11",
+            )
+            second = service.ensure_local_klines_result(
+                code="600519",
+                market="sh",
+                timeframe="5m",
+                start_date="2026-06-11",
+                end_date="2026-06-11",
+            )
+
+            self.assertTrue(first.success)
+            self.assertTrue(second.success)
+            self.assertEqual(len(provider.calls), 2)
+            self.assertEqual(missing_after_first, [("2026-06-11", "2026-06-11")])
+            self.assertEqual(
+                store.coverage_ranges(
+                    "600519",
+                    "2026-06-11",
+                    "2026-06-11",
+                    market="sh",
+                    timeframe="5m",
+                ),
+                [],
+            )
+
+    def test_sparse_suspended_minute_day_can_be_marked_complete_from_provider_evidence(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = KLineStore(Path(tmpdir) / "market_data.sqlite")
+            sparse_rows = [
+                self._minute_row("2026-06-11 10:00:00"),
+                self._minute_row("2026-06-11 13:30:00"),
+            ]
+            provider = FakeResultProvider(
+                MarketDataResult(
+                    success=True,
+                    data=sparse_rows,
+                    issues=[
+                        self._reliability_issue(
+                            default_status="no_data",
+                            trade_date_statuses={"2026-06-11": "complete"},
+                        )
+                    ],
+                )
+            )
+            calendar = MarketContextService(["2026-06-11"])
+            service = KLineDataService(
+                provider,
+                store,
+                market_context=calendar,
+                clock=lambda: datetime(2026, 6, 12, 9, 0),
+            )
+
+            service.ensure_local_klines_result(
+                code="600519",
+                market="sh",
+                timeframe="5m",
+                start_date="2026-06-11",
+                end_date="2026-06-11",
+            )
+
+            self.assertTrue(
+                service.replay_reliability_evidence(
+                    code="600519",
+                    trade_date="2026-06-11",
+                    market="sh",
+                    timeframe="5m",
+                )
+            )
+            self.assertEqual(
+                service.identify_missing_ranges(
+                    code="600519",
+                    market="sh",
+                    timeframe="5m",
+                    start_date="2026-06-11",
+                    end_date="2026-06-11",
+                ),
+                [],
             )
 
     def test_queue_coordination_failure_uses_existing_issue_model(self):
