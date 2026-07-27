@@ -1,6 +1,27 @@
 """Live/Replay shared runtime market processing primitives."""
 
 from ._market_bars import RuntimeMarketDataError
+from .computation_contract import (
+    CancelReason,
+    ComputationExecutorPort,
+    ComputationFuture,
+    ComputationOutcome,
+    ComputationPriority,
+    ComputationStatus,
+    ComputationTask,
+    PipelineInstanceIdentity,
+    PreparedReplayData,
+    ReplayMarketInputPort,
+    ReplayReliabilityAssessment,
+    default_accept_result,
+    new_task_id,
+)
+from .computation_executor import (
+    BoundedComputationExecutor,
+    ComputationExecutorClosedError,
+    ComputationExecutorError,
+    ComputationQueueFullError,
+)
 from .coordinator import (
     AppCoordinator,
     AppMode,
@@ -31,6 +52,14 @@ from .projection import (
     project_market_at,
     project_quote_at,
 )
+from .replay_data import (
+    ReplayDataError,
+    ReplayDataPreparator,
+    ReplayDataTimeoutError,
+    ReplayDataUnavailableError,
+    ReplayMarketDataPort,
+    ReplayPreparationConfig,
+)
 from .workbench_projection import (
     ReplayProjectionInput,
     SessionProjectionInput,
@@ -42,7 +71,18 @@ from .workbench_projection import (
 __all__ = [
     "AppCoordinator",
     "AppMode",
+    "BoundedComputationExecutor",
+    "CancelReason",
     "ClockPort",
+    "ComputationExecutorClosedError",
+    "ComputationExecutorError",
+    "ComputationExecutorPort",
+    "ComputationFuture",
+    "ComputationOutcome",
+    "ComputationPriority",
+    "ComputationQueueFullError",
+    "ComputationStatus",
+    "ComputationTask",
     "CoordinatorError",
     "CoordinatorRetirementError",
     "CoordinatorSnapshot",
@@ -51,9 +91,19 @@ __all__ = [
     "CzscAnalyzerPort",
     "DynamicFiveMinuteAggregator",
     "MarketInputPort",
+    "PipelineInstanceIdentity",
     "PipelineMarketInput",
     "PipelineResult",
+    "PreparedReplayData",
+    "ReplayDataError",
+    "ReplayDataPreparator",
+    "ReplayDataTimeoutError",
+    "ReplayDataUnavailableError",
+    "ReplayMarketDataPort",
+    "ReplayMarketInputPort",
+    "ReplayPreparationConfig",
     "ReplayProjectionInput",
+    "ReplayReliabilityAssessment",
     "RuntimeMarketDataError",
     "SessionFactoryPort",
     "SessionIdentity",
@@ -68,6 +118,8 @@ __all__ = [
     "WorkbenchProjectionError",
     "build_dynamic_daily_bar",
     "build_workbench_projection",
+    "default_accept_result",
+    "new_task_id",
     "project_market_at",
     "project_quote_at",
 ]

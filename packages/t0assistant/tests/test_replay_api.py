@@ -15,6 +15,17 @@ from packages.t0assistant.replay import (
     ReplayApiError,
     ReplayCommandApi,
     ReplayDeliveryChannel,
+    map_computation_outcome_to_replay_error,
+    map_replay_prepare_error_to_replay_error,
+)
+from packages.t0assistant.runtime.computation_contract import (
+    CancelReason,
+    ComputationOutcome,
+    ComputationStatus,
+)
+from packages.t0assistant.runtime.replay_data import (
+    ReplayDataTimeoutError,
+    ReplayDataUnavailableError,
 )
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -406,6 +417,82 @@ class ReplayCommandApiTests(unittest.TestCase):
                     "set_replay_speed", _requests()["set_replay_speed"]
                 )
                 self.assertEqual(result.status, status)
+
+    def test_computation_outcome_to_replay_error_mapping_is_frozen(self) -> None:
+        cases = [
+            (
+                "failed",
+                ComputationOutcome("t1", ComputationStatus.FAILED),
+                "calculation_failed",
+                ReplayDeliveryChannel.ASYNCHRONOUS,
+            ),
+            (
+                "superseded",
+                ComputationOutcome(
+                    "t2",
+                    ComputationStatus.CANCELLED,
+                    cancel_reason=CancelReason.SUPERSEDED,
+                ),
+                "operation_superseded",
+                ReplayDeliveryChannel.ASYNCHRONOUS,
+            ),
+            (
+                "deadline_exceeded",
+                ComputationOutcome(
+                    "t3",
+                    ComputationStatus.CANCELLED,
+                    cancel_reason=CancelReason.DEADLINE_EXCEEDED,
+                ),
+                "calculation_failed",
+                ReplayDeliveryChannel.ASYNCHRONOUS,
+            ),
+            (
+                "executor_closed",
+                ComputationOutcome(
+                    "t4",
+                    ComputationStatus.CANCELLED,
+                    cancel_reason=CancelReason.EXECUTOR_CLOSED,
+                ),
+                "service_unavailable",
+                ReplayDeliveryChannel.ASYNCHRONOUS,
+            ),
+        ]
+        for name, outcome, error_code, channel in cases:
+            with self.subTest(name=name):
+                error, actual_channel = map_computation_outcome_to_replay_error(
+                    outcome
+                )
+                self.assertIsNotNone(error)
+                self.assertEqual(error.error_code, error_code)
+                self.assertEqual(actual_channel, channel)
+
+    def test_computation_outcome_drop_cases_are_frozen(self) -> None:
+        for reason in (CancelReason.CANCELLED, CancelReason.SESSION_INVALID):
+            with self.subTest(reason=reason):
+                error, channel = map_computation_outcome_to_replay_error(
+                    ComputationOutcome(
+                        "t-drop",
+                        ComputationStatus.CANCELLED,
+                        cancel_reason=reason,
+                    )
+                )
+                self.assertIsNone(error)
+                self.assertIsNone(channel)
+
+    def test_replay_prepare_error_to_replay_error_mapping_is_frozen(self) -> None:
+        unavailable_error, unavailable_channel = (
+            map_replay_prepare_error_to_replay_error(
+                ReplayDataUnavailableError("no bars")
+            )
+        )
+        self.assertEqual(unavailable_error.error_code, "replay_data_unavailable")
+        self.assertEqual(unavailable_channel, ReplayDeliveryChannel.ASYNCHRONOUS)
+
+        timeout_error, timeout_channel = map_replay_prepare_error_to_replay_error(
+            ReplayDataTimeoutError("deadline")
+        )
+        self.assertEqual(timeout_error.error_code, "service_unavailable")
+        self.assertEqual(timeout_channel, ReplayDeliveryChannel.ASYNCHRONOUS)
 
 
 if __name__ == "__main__":

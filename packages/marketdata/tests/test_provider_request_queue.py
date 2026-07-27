@@ -1,4 +1,5 @@
 import sys
+from concurrent.futures import TimeoutError as FutureTimeoutError
 import threading
 import unittest
 from pathlib import Path
@@ -252,6 +253,119 @@ class ProviderRequestQueueTests(unittest.TestCase):
         self.assertFalse(outcome.executed)
         self.assertFalse(outcome.session_valid)
         self.assertIsNone(outcome.result)
+
+    def test_execute_stops_waiting_when_session_retires_mid_flight(self):
+        started = threading.Event()
+        release = threading.Event()
+        retired = {"value": False}
+        outcome_holder = {}
+
+        def operation():
+            started.set()
+            release.wait(2)
+            return MarketDataResult(success=True, data=["late"])
+
+        def run_execute():
+            outcome_holder["outcome"] = self.queue.execute(
+                "retire-mid-flight",
+                operation,
+                session_validator=lambda: not retired["value"],
+                timeout=1,
+            )
+
+        thread = threading.Thread(target=run_execute)
+        thread.start()
+        self.assertTrue(started.wait(1))
+        retired["value"] = True
+        thread.join(1)
+        self.assertFalse(thread.is_alive())
+        outcome = outcome_holder["outcome"]
+        self.assertTrue(outcome.executed)
+        self.assertFalse(outcome.session_valid)
+        self.assertIsNone(outcome.result)
+        self.assertTrue(outcome.subscriber_detached)
+        release.set()
+
+    def test_execute_timeout_cancels_subscriber_wait_only(self):
+        started = threading.Event()
+        release = threading.Event()
+
+        def operation():
+            started.set()
+            release.wait(2)
+            return MarketDataResult(success=True, data=["late"])
+
+        future = self.queue.submit("shared-timeout", operation)
+        self.assertTrue(started.wait(1))
+        with self.assertRaises(FutureTimeoutError):
+            self.queue.execute(
+                "shared-timeout",
+                lambda: self.fail("second operation should not run"),
+                timeout=0.05,
+            )
+        release.set()
+        self.assertEqual(future.result(1).result.data, ["late"])
+
+    def test_provider_timeout_error_does_not_spin_forever_with_session_validator(self):
+        finished = {}
+
+        def operation():
+            raise TimeoutError("provider timeout")
+
+        def run_execute():
+            try:
+                self.queue.execute(
+                    "provider-timeout",
+                    operation,
+                    session_validator=lambda: True,
+                )
+            except TimeoutError as exc:
+                finished["error"] = str(exc)
+
+        thread = threading.Thread(target=run_execute)
+        thread.start()
+        thread.join(1)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(finished["error"], "provider timeout")
+
+    def test_detached_wait_does_not_stop_worker_from_processing_next_request(self):
+        started = threading.Event()
+        release = threading.Event()
+        retired = {"value": False}
+        order: list[str] = []
+
+        def blocking_operation():
+            started.set()
+            release.wait(2)
+            order.append("blocking")
+            return "blocking"
+
+        def second_operation():
+            order.append("second")
+            return "second"
+
+        holder = {}
+
+        def detach_waiter():
+            holder["outcome"] = self.queue.execute(
+                "detach-request",
+                blocking_operation,
+                session_validator=lambda: not retired["value"],
+                timeout=1,
+            )
+
+        thread = threading.Thread(target=detach_waiter)
+        thread.start()
+        self.assertTrue(started.wait(1))
+        retired["value"] = True
+        thread.join(1)
+        self.assertFalse(thread.is_alive())
+        release.set()
+        self.assertEqual(
+            self.queue.execute("second-request", second_operation, timeout=1).result,
+            "second",
+        )
+        self.assertEqual(holder["outcome"].subscriber_detached, True)
 
 
 if __name__ == "__main__":

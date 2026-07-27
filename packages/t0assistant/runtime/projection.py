@@ -38,12 +38,18 @@ def build_dynamic_daily_bar(
     *,
     trade_date: date | str,
     target_time: datetime | str,
+    official_5m_bars: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any] | None:
-    """Aggregate only target-day 1m bars at or before ``target_time``."""
+    """Aggregate target-day bars at or before ``target_time``.
+
+    In 5-minute degradation mode (``bars_1m`` empty), official closed 5m bars
+    are aggregated instead so the dynamic daily K still advances per PRD.
+    """
 
     resolved_date, resolved_target = _projection_time(trade_date, target_time)
+    source = bars_1m if bars_1m else official_5m_bars
     eligible = eligible_closed_bars(
-        bars_1m,
+        source,
         trade_date=resolved_date,
         target_time=resolved_target,
     )
@@ -63,19 +69,23 @@ def project_quote_at(
     target_time: datetime | str,
     previous_close: float | int | None,
     quote_snapshots: Sequence[Mapping[str, Any]] = (),
+    official_5m_bars: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any] | None:
     """Build the freshest quote without inspecting future snapshot values.
 
-    Core OHLCVA fields advance from eligible 1m bars.  A quote snapshot at or
-    before the target may be fresher and then remains authoritative.  When the
-    minute-derived core is fresher, only the snapshot's optional fields are
-    carried forward.  Missing Replay-only optional fields remain ``None``.
+    Core OHLCVA fields advance from eligible 1m bars.  In 5-minute degradation
+    mode (``bars_1m`` empty), official closed 5m bars are used instead so the
+    quote still forms.  A quote snapshot at or before the target may be fresher
+    and then remains authoritative.  When the minute-derived core is fresher,
+    only the snapshot's optional fields are carried forward.  Missing
+    Replay-only optional fields remain ``None``.
     """
 
     resolved_previous_close = _previous_close(previous_close)
     resolved_date, resolved_target = _projection_time(trade_date, target_time)
+    source = bars_1m if bars_1m else official_5m_bars
     eligible_bars = eligible_closed_bars(
-        bars_1m,
+        source,
         trade_date=resolved_date,
         target_time=resolved_target,
     )
@@ -132,14 +142,21 @@ def project_market_at(
     target_time: datetime | str,
     previous_close: float | int | None,
     quote_snapshots: Sequence[Mapping[str, Any]] = (),
+    official_5m_bars: Sequence[Mapping[str, Any]] = (),
 ) -> TargetTimeMarketProjection:
-    """Project dynamic daily and quote facts from the same input prefix."""
+    """Project dynamic daily and quote facts from the same input prefix.
+
+    In 5-minute degradation mode (``bars_1m`` empty), official closed 5m bars
+    drive the projection so the dynamic daily K and quote still advance per
+    PRD while ``market.bars_1m`` stays empty.
+    """
 
     return TargetTimeMarketProjection(
         daily_bar=build_dynamic_daily_bar(
             bars_1m,
             trade_date=trade_date,
             target_time=target_time,
+            official_5m_bars=official_5m_bars,
         ),
         quote=project_quote_at(
             bars_1m,
@@ -147,6 +164,7 @@ def project_market_at(
             target_time=target_time,
             previous_close=previous_close,
             quote_snapshots=quote_snapshots,
+            official_5m_bars=official_5m_bars,
         ),
     )
 

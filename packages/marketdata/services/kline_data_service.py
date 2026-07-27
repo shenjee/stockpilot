@@ -8,6 +8,7 @@ import logging
 from ..provider_request_queue import (
     ProviderQueueClosedError,
     ProviderQueueFullError,
+    ProviderWaitTimeoutError,
     ProviderRequestPriority,
     ProviderRequestQueue,
     get_shared_provider_request_queue,
@@ -22,6 +23,10 @@ logger.addHandler(logging.NullHandler())
 DEFAULT_LOOKBACK_DAYS = 140
 DEFAULT_MIN_LOCAL_COUNT = 60
 MINUTE_TIMEFRAMES = {"1m", "5m", "30m", "60m"}
+_RELIABILITY_COMPLETE = "complete"
+_RELIABILITY_NO_DATA = "no_data"
+_RELIABILITY_INCOMPLETE = "incomplete"
+_RELIABILITY_UNKNOWN = "unknown"
 
 
 class KLineDataService:
@@ -58,6 +63,7 @@ class KLineDataService:
         request_priority: ProviderRequestPriority = ProviderRequestPriority.LIVE,
         session_validator: Callable[[], bool] | None = None,
         provider_max_attempts: int = 1,
+        request_timeout: float | None = None,
     ) -> None:
         self.ensure_local_klines_result(
             code=code,
@@ -70,6 +76,7 @@ class KLineDataService:
             request_priority=request_priority,
             session_validator=session_validator,
             provider_max_attempts=provider_max_attempts,
+            request_timeout=request_timeout,
         )
 
     def ensure_local_klines_result(
@@ -84,6 +91,7 @@ class KLineDataService:
         request_priority: ProviderRequestPriority = ProviderRequestPriority.LIVE,
         session_validator: Callable[[], bool] | None = None,
         provider_max_attempts: int = 1,
+        request_timeout: float | None = None,
     ) -> MarketDataResult[None]:
         start_date = start_date or self._default_start_date(end_date)
         self._validate_date_range(start_date, end_date)
@@ -110,6 +118,7 @@ class KLineDataService:
                 request_priority=request_priority,
                 session_validator=session_validator,
                 provider_max_attempts=provider_max_attempts,
+                request_timeout=request_timeout,
             )
             issues.extend(result.issues)
             success = success and result.success
@@ -155,6 +164,14 @@ class KLineDataService:
                         source=self.provider.provider_id,
                         timeframe=timeframe,
                     )
+            self._record_replay_reliability(
+                code=code,
+                market=market,
+                timeframe=timeframe,
+                start_date=missing_start,
+                end_date=missing_end,
+                result=result,
+            )
         return MarketDataResult(success=success, data=None, issues=issues)
 
     def get_klines(
@@ -170,6 +187,7 @@ class KLineDataService:
         request_priority: ProviderRequestPriority = ProviderRequestPriority.LIVE,
         session_validator: Callable[[], bool] | None = None,
         provider_max_attempts: int = 1,
+        request_timeout: float | None = None,
     ) -> list:
         query_end_date = end_date if timeframe == "day" else f"{end_date} 23:59:59"
         self.ensure_local_klines(
@@ -183,6 +201,7 @@ class KLineDataService:
             request_priority=request_priority,
             session_validator=session_validator,
             provider_max_attempts=provider_max_attempts,
+            request_timeout=request_timeout,
         )
         return self.store.get_klines(
             code,
@@ -206,6 +225,7 @@ class KLineDataService:
         request_priority: ProviderRequestPriority = ProviderRequestPriority.LIVE,
         session_validator: Callable[[], bool] | None = None,
         provider_max_attempts: int = 1,
+        request_timeout: float | None = None,
     ) -> MarketDataResult[list]:
         query_end_date = end_date if timeframe == "day" else f"{end_date} 23:59:59"
         sync_result = self.ensure_local_klines_result(
@@ -219,6 +239,7 @@ class KLineDataService:
             request_priority=request_priority,
             session_validator=session_validator,
             provider_max_attempts=provider_max_attempts,
+            request_timeout=request_timeout,
         )
         rows = self.store.get_klines(
             code,
@@ -233,6 +254,30 @@ class KLineDataService:
         # caller while allowing consumers to use valid cached rows.
         success = True if rows else sync_result.success
         return MarketDataResult(success=success, data=rows, issues=sync_result.issues)
+
+    def replay_reliability_evidence(
+        self,
+        *,
+        code: str,
+        trade_date: str,
+        market: str | None,
+        timeframe: str,
+    ) -> bool | None:
+        status = self.store.get_replay_reliability(
+            code,
+            trade_date,
+            market=market,
+            timeframe=timeframe,
+        )
+        if status == _RELIABILITY_COMPLETE:
+            return True
+        if status in {
+            _RELIABILITY_NO_DATA,
+            _RELIABILITY_INCOMPLETE,
+            _RELIABILITY_UNKNOWN,
+        }:
+            return False
+        return None
 
     def identify_missing_ranges(
         self,
@@ -366,6 +411,7 @@ class KLineDataService:
         request_priority: ProviderRequestPriority,
         session_validator: Callable[[], bool] | None,
         provider_max_attempts: int,
+        request_timeout: float | None,
     ) -> MarketDataResult[list]:
         def operation() -> MarketDataResult[list]:
             result_func = getattr(self.provider, "get_kline_result", None)
@@ -406,6 +452,7 @@ class KLineDataService:
                 priority=request_priority,
                 session_validator=session_validator,
                 max_attempts=provider_max_attempts,
+                timeout=request_timeout,
             )
         except (ProviderQueueFullError, ProviderQueueClosedError) as exc:
             reason_code = (
@@ -426,6 +473,34 @@ class KLineDataService:
                     )
                 ],
             )
+        except ProviderWaitTimeoutError:
+            return MarketDataResult(
+                success=False,
+                data=[],
+                issues=[
+                    ProviderIssue(
+                        level="error",
+                        reason_code="request_timeout",
+                        message="provider request wait exceeded timeout",
+                        context={"operation": "get_kline"},
+                        exception_type="TimeoutError",
+                    )
+                ],
+            )
+        except Exception as exc:
+            return MarketDataResult(
+                success=False,
+                data=[],
+                issues=[
+                    ProviderIssue(
+                        level="error",
+                        reason_code="request_failed",
+                        message="provider request failed during execution",
+                        context={"operation": "get_kline"},
+                        exception_type=type(exc).__name__,
+                    )
+                ],
+            )
         if not outcome.executed:
             return MarketDataResult(
                 success=False,
@@ -435,6 +510,22 @@ class KLineDataService:
                         level="error",
                         reason_code="session_retired",
                         message="provider request skipped for retired session",
+                    )
+                ],
+            )
+        if outcome.subscriber_detached:
+            return MarketDataResult(
+                success=False,
+                data=[],
+                issues=[
+                    ProviderIssue(
+                        level="error",
+                        reason_code="session_retired",
+                        message="provider request detached after session retired",
+                        context={
+                            "operation": "get_kline",
+                            "executed": outcome.executed,
+                        },
                     )
                 ],
             )
@@ -453,6 +544,55 @@ class KLineDataService:
                 ],
             )
         return outcome.result
+
+    def _record_replay_reliability(
+        self,
+        *,
+        code: str,
+        market: str | None,
+        timeframe: str,
+        start_date: str,
+        end_date: str,
+        result: MarketDataResult[list],
+    ) -> None:
+        if timeframe not in MINUTE_TIMEFRAMES:
+            return
+        source = getattr(self.provider, "provider_id", "unknown")
+        requested_dates = self._required_dates(
+            start_date=start_date,
+            end_date=end_date,
+            market=market,
+        )
+        if not requested_dates:
+            return
+        grouped_rows: dict[str, list[str]] = defaultdict(list)
+        for row in result.data or []:
+            timestamp = str(row.get("timestamp", row.get("date", "")))
+            if len(timestamp) >= 10:
+                grouped_rows[timestamp[:10]].append(timestamp)
+        issue_codes = {issue.reason_code for issue in result.issues}
+        complete_days = self._complete_minute_dates(
+            [timestamp for values in grouped_rows.values() for timestamp in values],
+            timeframe,
+        )
+        for trade_date in requested_dates:
+            status = _RELIABILITY_UNKNOWN
+            if "no_data" in issue_codes and trade_date not in grouped_rows:
+                status = _RELIABILITY_NO_DATA
+            elif any(issue.level == "error" for issue in result.issues) or "parse_failed" in issue_codes:
+                status = _RELIABILITY_INCOMPLETE
+            elif trade_date in complete_days:
+                status = _RELIABILITY_COMPLETE
+            elif trade_date in grouped_rows:
+                status = _RELIABILITY_UNKNOWN
+            self.store.set_replay_reliability(
+                code,
+                market,
+                trade_date,
+                timeframe=timeframe,
+                status=status,
+                source=source,
+            )
 
     @staticmethod
     def _validate_date_range(start_date: str, end_date: str) -> None:

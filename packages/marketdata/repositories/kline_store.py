@@ -113,6 +113,25 @@ class KLineStore:
             )
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS kline_replay_reliability (
+                    symbol TEXT NOT NULL,
+                    timeframe TEXT NOT NULL,
+                    trade_date TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    source TEXT NOT NULL DEFAULT 'unknown',
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (symbol, timeframe, trade_date)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_kline_replay_reliability_lookup
+                ON kline_replay_reliability(symbol, timeframe, trade_date)
+                """
+            )
+            conn.execute(
+                """
                 INSERT OR IGNORE INTO klines (
                     symbol, code, market, timeframe, timestamp, open, close, high, low,
                     volume, amount, source, updated_at
@@ -312,6 +331,60 @@ class KLineStore:
                     updated_at,
                 ),
             )
+
+    def set_replay_reliability(
+        self,
+        code: str,
+        market: str | None,
+        trade_date: str,
+        *,
+        timeframe: str,
+        status: str,
+        source: str = "unknown",
+    ) -> None:
+        symbol = self.symbol(code, market)
+        updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO kline_replay_reliability (
+                    symbol, timeframe, trade_date, status, source, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(symbol, timeframe, trade_date) DO UPDATE SET
+                    status = excluded.status,
+                    source = excluded.source,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    symbol,
+                    timeframe,
+                    trade_date,
+                    status,
+                    source,
+                    updated_at,
+                ),
+            )
+
+    def get_replay_reliability(
+        self,
+        code: str,
+        trade_date: str,
+        *,
+        market: str | None = None,
+        timeframe: str,
+    ) -> str | None:
+        symbol = self.symbol(code, market)
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT status
+                FROM kline_replay_reliability
+                WHERE symbol = ? AND timeframe = ? AND trade_date = ?
+                """,
+                (symbol, timeframe, trade_date),
+            ).fetchone()
+        return str(row[0]) if row and row[0] else None
 
     def upsert_many(self, code: str, market: str | None, klines: list, source: str = "unknown", timeframe: str = "day") -> None:
         if not klines:
