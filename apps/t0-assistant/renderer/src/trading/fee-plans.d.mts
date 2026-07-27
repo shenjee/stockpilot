@@ -1,6 +1,11 @@
-import type { TransferFeeSideValue } from "./fee-policy.d.mts";
-
 export const DEFAULT_FEE_PLAN_ID: "shenwan-hongyuan";
+
+export const TransferFeeSide: Readonly<{
+  BUY: "buy";
+  SELL: "sell";
+  BOTH: "both";
+}>;
+export type TransferFeeSideValue = "buy" | "sell" | "both";
 
 export class FeePlanValidationError extends Error {
   field: string;

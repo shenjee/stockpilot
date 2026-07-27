@@ -8,6 +8,15 @@
  * either a result or a `TradeClientError` carrying the stable
  * `application_error`. The bridge methods themselves are frozen and are not
  * modified here.
+ *
+ * Response-shape contract note: the frozen `command_response.data` is only
+ * `object | null` - the per-command success `data` shapes are NOT frozen.
+ * create/update/delete therefore return only an acceptance signal
+ * (`{ accepted, operationId }`); the authoritative trade list arrives through
+ * the frozen `trades_changed` event (see `trade-state.mjs`), which the UI
+ * consumes separately. `listTrades` is retained for initial hydration; its
+ * `data.trades` / `data.trade_revision` shape is a provisional assumption
+ * pending a future `list_trades` response-shape freeze (out of scope here).
  */
 
 export class TradeClientError extends Error {
@@ -92,6 +101,10 @@ export function createTradeClient(bridge, options = {}) {
       }),
     );
     ensureAccepted(response);
+    // Provisional: command_response.data is only `object | null` in the frozen
+    // contract. The {trades, trade_revision} shape is assumed pending a
+    // list_trades response freeze. The authoritative list is the
+    // trades_changed event; this is only the initial hydration.
     const data = response.data ?? {};
     return {
       trades: Array.isArray(data.trades) ? data.trades : [],
@@ -106,8 +119,10 @@ export function createTradeClient(bridge, options = {}) {
       appRequest("create_trade", { trade: draft }),
     );
     ensureAccepted(response);
-    const data = response.data ?? {};
-    return data.trade ?? null;
+    // The accepted trade record arrives via the frozen trades_changed event;
+    // the sync response only signals acceptance (and an optional operation_id
+    // for the async failure path). Do not assume data.trade.
+    return { accepted: true, operationId: extractOperationId(response) };
   }
 
   async function updateTrade(tradeId, draft) {
@@ -115,8 +130,7 @@ export function createTradeClient(bridge, options = {}) {
       appRequest("update_trade", { trade_id: tradeId, trade: draft }),
     );
     ensureAccepted(response);
-    const data = response.data ?? {};
-    return data.trade ?? null;
+    return { accepted: true, operationId: extractOperationId(response) };
   }
 
   async function deleteTrade(tradeId) {
@@ -124,8 +138,15 @@ export function createTradeClient(bridge, options = {}) {
       appRequest("delete_trade", { trade_id: tradeId, trade_scope: "real" }),
     );
     ensureAccepted(response);
-    return true;
+    return { accepted: true, operationId: extractOperationId(response) };
   }
 
   return Object.freeze({ listTrades, createTrade, updateTrade, deleteTrade });
+}
+
+function extractOperationId(response) {
+  const operationId = response?.operation_id;
+  return typeof operationId === "string" && operationId.length > 0
+    ? operationId
+    : null;
 }

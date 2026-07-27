@@ -1,6 +1,3 @@
-import type { FeePlan } from "./fee-plans.d.mts";
-import type { SecurityTypeValue } from "./fee-policy.d.mts";
-
 export class TradeFormValidationError extends Error {
   field: string;
   message: string;
@@ -31,16 +28,5 @@ export interface TradeDraft {
   fee_plan_id: string | null;
 }
 
-export interface SuggestFeeInput {
-  securityType: SecurityTypeValue;
-  side: "buy" | "sell";
-  price: number | string;
-  quantity: number | string;
-}
-
 export function normalizeExecutedAt(value: string): string;
 export function buildTradeDraft(fields: TradeFormFields): TradeDraft;
-export function suggestDefaultFee(
-  plan: FeePlan | null,
-  input: SuggestFeeInput,
-): number | null;

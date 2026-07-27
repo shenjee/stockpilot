@@ -6,8 +6,8 @@ import {
   defaultFeePlan,
   DEFAULT_FEE_PLAN_ID,
   FeePlanValidationError,
+  TransferFeeSide,
 } from "../renderer/src/trading/fee-plans.mjs";
-import { TransferFeeSide } from "../renderer/src/trading/fee-policy.mjs";
 
 function planInput(overrides = {}) {
   return {

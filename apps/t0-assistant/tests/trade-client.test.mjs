@@ -37,16 +37,16 @@ function fakeBridge(handlers = {}) {
       schema_version: "t0_app_v1",
       request_id: request.request_id,
       accepted: true,
-      operation_id: null,
-      data: { trade: { ...request.payload.trade, trade_id: "trade-2", bucket_start: "2026-07-24 10:00:00" } },
+      operation_id: "op-create-1",
+      data: null,
       error: null,
     }),
     update_trade: (request) => ({
       schema_version: "t0_app_v1",
       request_id: request.request_id,
       accepted: true,
-      operation_id: null,
-      data: { trade: { ...request.payload.trade, trade_id: request.payload.trade_id, bucket_start: "2026-07-24 10:00:00" } },
+      operation_id: "op-update-1",
+      data: null,
       error: null,
     }),
     delete_trade: (request) => ({
@@ -134,11 +134,14 @@ test("listTrades maps an accepted response into trades and revision", async () =
   });
 });
 
-test("createTrade sends create_trade payload and returns the created record", async () => {
+test("createTrade sends create_trade payload and returns an acceptance signal", async () => {
   const bridge = fakeBridge();
   const client = createTradeClient(bridge, { makeRequestId: idFactory });
-  const record = await client.createTrade(draft());
-  assert.equal(record.trade_id, "trade-2");
+  const result = await client.createTrade(draft());
+  // The accepted trade record arrives via the frozen trades_changed event,
+  // not the sync response data (which is unfrozen). The client only signals
+  // acceptance + the optional operation_id for the async failure path.
+  assert.deepEqual(result, { accepted: true, operationId: "op-create-1" });
   const [, request] = bridge.calls[0];
   assert.equal(request.command, "create_trade");
   assert.deepEqual(request.payload, { trade: draft() });
@@ -147,13 +150,14 @@ test("createTrade sends create_trade payload and returns the created record", as
 test("updateTrade sends trade_id and trade; deleteTrade sends trade_scope real", async () => {
   const bridge = fakeBridge();
   const client = createTradeClient(bridge, { makeRequestId: idFactory });
-  await client.updateTrade("trade-1", draft());
+  const updateResult = await client.updateTrade("trade-1", draft());
+  assert.deepEqual(updateResult, { accepted: true, operationId: "op-update-1" });
   assert.deepEqual(bridge.calls[0][1].payload, {
     trade_id: "trade-1",
     trade: draft(),
   });
-  const ok = await client.deleteTrade("trade-1");
-  assert.equal(ok, true);
+  const deleteResult = await client.deleteTrade("trade-1");
+  assert.deepEqual(deleteResult, { accepted: true, operationId: null });
   assert.deepEqual(bridge.calls[1][1].payload, {
     trade_id: "trade-1",
     trade_scope: "real",

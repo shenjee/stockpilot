@@ -35,9 +35,16 @@ export interface TradeClient {
     tradeDate: string;
     tradeScope?: "real" | "simulated";
   }): Promise<{ trades: TradeRecord[]; tradeRevision: number }>;
-  createTrade(draft: TradeDraft): Promise<TradeRecord | null>;
-  updateTrade(tradeId: string, draft: TradeDraft): Promise<TradeRecord | null>;
-  deleteTrade(tradeId: string): Promise<boolean>;
+  createTrade(
+    draft: TradeDraft,
+  ): Promise<{ accepted: true; operationId: string | null }>;
+  updateTrade(
+    tradeId: string,
+    draft: TradeDraft,
+  ): Promise<{ accepted: true; operationId: string | null }>;
+  deleteTrade(
+    tradeId: string,
+  ): Promise<{ accepted: true; operationId: string | null }>;
 }
 
 export interface TradeBridge {

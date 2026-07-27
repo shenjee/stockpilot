@@ -2,11 +2,12 @@ import { useState, type ReactNode } from "react";
 import {
   createFeePlan,
   FeePlanValidationError,
+  TransferFeeSide,
   type FeePlan,
   type FeePlanClient,
   type FeePlanInput,
+  type TransferFeeSideValue,
 } from "./fee-plans.mjs";
-import { TransferFeeSide, type TransferFeeSideValue } from "./fee-policy.mjs";
 
 interface PlanFormState {
   fee_plan_id: string;

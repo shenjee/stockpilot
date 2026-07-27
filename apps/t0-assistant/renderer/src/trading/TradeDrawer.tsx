@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   createTradeClient,
   TradeClientError,
@@ -10,7 +10,13 @@ import {
   type FeePlan,
   type FeePlanClient,
 } from "./fee-plans.mjs";
+import type { FeeAdvisor } from "./fee-advisor.mjs";
 import type { TradeDraft } from "./trade-form.mjs";
+import {
+  applyTradesChanged,
+  isRealTradesChangedEvent,
+  matchTradeOperationFailed,
+} from "./trade-state.mjs";
 import type { SecurityIdentity } from "../workbench-layout.mjs";
 import { TradeFormDialog } from "./TradeFormDialog";
 import { FeePlanSettingsDialog } from "./FeePlanSettingsDialog";
@@ -24,23 +30,41 @@ function localToday() {
 function errorMessage(error: unknown, fallback: string) {
   if (error instanceof TradeClientError) return error.message;
   if (error instanceof Error) return error.message;
+  if (
+    error &&
+    typeof error === "object" &&
+    typeof (error as { message?: unknown }).message === "string"
+  ) {
+    return (error as { message: string }).message;
+  }
   return fallback;
 }
+
+type AppEventSubscriber =
+  | ((listener: (event: unknown) => void) => () => void)
+  | null;
 
 export function TradeDrawer({
   security,
   tradeClient,
   feePlanClient,
+  feeAdvisor,
   serviceReady,
+  subscribeAppEvent,
+  serviceGeneration,
 }: {
   security: SecurityIdentity | null;
   tradeClient: TradeClient | null;
-  feePlanClient: FeePlanClient;
+  feePlanClient: FeePlanClient | null;
+  feeAdvisor: FeeAdvisor;
   serviceReady: boolean;
+  subscribeAppEvent: AppEventSubscriber;
+  serviceGeneration: number;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const [trades, setTrades] = useState<TradeRecord[]>([]);
+  const [expanded, setExpanded] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
+  const [eventError, setEventError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [formOpen, setFormOpen] = useState<
     | { mode: "create" }
@@ -49,55 +73,125 @@ export function TradeDrawer({
   >(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [feePlans, setFeePlans] = useState<FeePlan[]>(() =>
-    feePlanClient.listPlans(),
+    feePlanClient ? feePlanClient.listPlans() : [],
   );
   const [pendingDelete, setPendingDelete] = useState<TradeRecord | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
 
-  const canList = Boolean(security && tradeClient && serviceReady);
+  // Mirror of {trades, tradeRevision} for use inside the event handler, which
+  // must read the latest state without re-subscribing on every change.
+  const tradeListRef = useRef<{ trades: TradeRecord[]; tradeRevision: number }>(
+    { trades: [], tradeRevision: -1 },
+  );
+  const loadedSymbolRef = useRef<string | null>(null);
+  const pendingOpsRef = useRef<Set<string>>(new Set());
 
+  function commitTradeList(next: { trades: TradeRecord[]; tradeRevision: number }) {
+    tradeListRef.current = next;
+    setTrades(next.trades);
+  }
+
+  // Initial hydration via list_trades. P2: a read failure keeps the last
+  // successful trades; the list is cleared only when the symbol changes.
   useEffect(() => {
-    if (!canList || !tradeClient || !security) {
-      setTrades([]);
+    if (!security) {
+      loadedSymbolRef.current = null;
+      commitTradeList({ trades: [], tradeRevision: -1 });
       setListError(null);
       return;
     }
+    if (!tradeClient || !serviceReady) {
+      // Service unavailable is a failure state: keep the last successful list.
+      return;
+    }
+    const symbol = security.symbol;
+    const symbolChanged = loadedSymbolRef.current !== symbol;
+    loadedSymbolRef.current = symbol;
+    if (symbolChanged) {
+      commitTradeList({ trades: [], tradeRevision: -1 });
+      setListError(null);
+    }
     let cancelled = false;
-    setListError(null);
+    const tradeDate = localToday();
     tradeClient
-      .listTrades({ symbol: security.symbol, tradeDate: localToday() })
-      .then(({ trades: next }) => {
-        if (!cancelled) setTrades(next);
+      .listTrades({ symbol, tradeDate })
+      .then(({ trades: next, tradeRevision: revision }) => {
+        if (cancelled) return;
+        // Don't clobber a newer event-driven state with a stale query result.
+        if (revision >= tradeListRef.current.tradeRevision) {
+          commitTradeList({ trades: next, tradeRevision: revision });
+        }
+        setListError(null);
       })
       .catch((error) => {
-        if (!cancelled) {
-          setTrades([]);
-          setListError(errorMessage(error, "成交记录读取失败"));
-        }
+        if (cancelled) return;
+        setListError(errorMessage(error, "成交记录读取失败"));
       });
     return () => {
       cancelled = true;
     };
-  }, [canList, tradeClient, security, reloadKey]);
+  }, [security, tradeClient, serviceReady, reloadKey]);
+
+  // Authoritative updates via the frozen trades_changed event (P1#3). Also
+  // surfaces operation_failed for tracked trade operations.
+  useEffect(() => {
+    if (!subscribeAppEvent) return;
+    return subscribeAppEvent((event) => {
+      if (
+        typeof serviceGeneration === "number" &&
+        serviceGeneration > 0 &&
+        event &&
+        typeof event === "object" &&
+        typeof (event as { service_generation?: unknown }).service_generation ===
+          "number" &&
+        (event as { service_generation: number }).service_generation !==
+          serviceGeneration
+      ) {
+        return;
+      }
+      if (!security) return;
+      const scope = { symbol: security.symbol, tradeDate: localToday() };
+      if (isRealTradesChangedEvent(event)) {
+        const next = applyTradesChanged(tradeListRef.current, event, scope);
+        if (next !== tradeListRef.current) {
+          commitTradeList(next);
+        }
+        pendingOpsRef.current.clear();
+        setEventError(null);
+        return;
+      }
+      const failed = matchTradeOperationFailed(event, pendingOpsRef.current);
+      if (failed) {
+        pendingOpsRef.current.delete(failed.operationId);
+        setEventError(errorMessage(failed.error, "成交操作未完成"));
+      }
+    });
+  }, [subscribeAppEvent, security, serviceGeneration]);
 
   function reload() {
     setReloadKey((k) => k + 1);
   }
 
   function refreshFeePlans() {
-    setFeePlans(feePlanClient.listPlans());
+    if (feePlanClient) setFeePlans(feePlanClient.listPlans());
   }
 
   async function handleSubmit(draft: TradeDraft) {
     if (!tradeClient) throw new Error("成交服务不可用");
-    if (formOpen?.mode === "edit") {
-      await tradeClient.updateTrade(formOpen.trade.trade_id, draft);
-    } else {
-      await tradeClient.createTrade(draft);
-    }
+    const result =
+      formOpen?.mode === "edit"
+        ? await tradeClient.updateTrade(formOpen.trade.trade_id, draft)
+        : await tradeClient.createTrade(draft);
     setFormOpen(null);
-    reload();
+    if (result.operationId) {
+      // Async path: the authoritative list arrives via trades_changed, and an
+      // operation_failed may follow. Track the id so the event is actionable.
+      pendingOpsRef.current.add(result.operationId);
+    } else {
+      // Synchronous completion with no operation_failed path: refresh the list.
+      reload();
+    }
   }
 
   async function confirmDelete() {
@@ -105,20 +199,24 @@ export function TradeDrawer({
     setDeleteBusy(true);
     setDeleteError(null);
     try {
-      await tradeClient.deleteTrade(pendingDelete.trade_id);
+      const result = await tradeClient.deleteTrade(pendingDelete.trade_id);
+      setPendingDelete(null);
+      if (result.operationId) {
+        pendingOpsRef.current.add(result.operationId);
+      } else {
+        reload();
+      }
     } catch (error) {
-      setDeleteBusy(false);
       setDeleteError(errorMessage(error, "成交记录删除失败"));
-      return;
+    } finally {
+      setDeleteBusy(false);
     }
-    setDeleteBusy(false);
-    setPendingDelete(null);
-    reload();
   }
 
   const todayCount = trades.length;
   const buyCount = trades.filter((t) => t.side === "buy").length;
   const sellCount = todayCount - buyCount;
+  const feePlanUnavailable = feePlanClient === null;
 
   return (
     <footer className="trade-drawer" aria-label="T+0 成交折叠栏">
@@ -149,9 +247,11 @@ export function TradeDrawer({
           </button>
           <button
             type="button"
-            onClick={() => {
-              setSettingsOpen(true);
-            }}
+            disabled={feePlanUnavailable}
+            title={
+              feePlanUnavailable ? "收费方案持久化尚未接入" : undefined
+            }
+            onClick={() => setSettingsOpen(true)}
           >
             收费方案设置
           </button>
@@ -164,6 +264,14 @@ export function TradeDrawer({
           role="region"
           aria-label="当日成交记录"
         >
+          {eventError && (
+            <div className="inline-error" role="status">
+              <span>{eventError}</span>
+              <button type="button" onClick={() => setEventError(null)}>
+                关闭
+              </button>
+            </div>
+          )}
           {listError ? (
             <div className="inline-error" role="status">
               <span>{listError}</span>
@@ -230,17 +338,20 @@ export function TradeDrawer({
           initial={formOpen.mode === "edit" ? formOpen.trade : null}
           security={security}
           feePlans={feePlans}
+          feeAdvisor={feeAdvisor}
           onSubmit={handleSubmit}
           onClose={() => setFormOpen(null)}
         />
       )}
 
-      <FeePlanSettingsDialog
-        open={settingsOpen}
-        client={feePlanClient}
-        onClose={() => setSettingsOpen(false)}
-        onChanged={refreshFeePlans}
-      />
+      {!feePlanUnavailable && (
+        <FeePlanSettingsDialog
+          open={settingsOpen}
+          client={feePlanClient}
+          onClose={() => setSettingsOpen(false)}
+          onChanged={refreshFeePlans}
+        />
+      )}
 
       {pendingDelete && (
         <div className="dialog-backdrop" role="presentation">
@@ -251,9 +362,7 @@ export function TradeDrawer({
             aria-labelledby="delete-trade-title"
           >
             <h2 id="delete-trade-title">删除成交记录</h2>
-            <p>
-              确认删除该成交记录？删除后不可恢复。
-            </p>
+            <p>确认删除该成交记录？删除后不可恢复。</p>
             {deleteError && (
               <div className="inline-error" role="status">
                 <span>{deleteError}</span>

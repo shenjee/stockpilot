@@ -59,6 +59,7 @@ import {
   createBoundTradeClient,
   createInMemoryFeePlanClient,
 } from "./trading/TradeDrawer";
+import { createNullFeeAdvisor } from "./trading/fee-advisor.mjs";
 
 const initialStatus: ServiceStatus = {
   state: "starting",
@@ -170,13 +171,24 @@ export function App() {
     [replaySnapshot],
   );
   // T+0 成交与收费方案客户端。成交客户端绑定冻结的 Safe Bridge（后端 CRUD
-  // 尚未接入时 bridge 返回 service_unavailable，由成交 UI 主动失败重试）；
-  // 收费方案暂无冻结传输契约，使用 renderer 内存客户端，待契约 Issue 落地后替换。
+  // 尚未接入时 bridge 返回 service_unavailable，由成交 UI 主动失败重试）。
+  // 收费方案暂无冻结传输契约：内存客户端仅在 fixture 模式使用，正式环境为
+  // null（设置入口禁用），避免把会话内存伪装成持久化（architecture.md §5.6）。
+  // 费用建议通过 FeeAdvisor 端口取得；规则不在此重新实现，故生产用 null 顾问。
   const tradeClient = useMemo(
     () => (window.stockpilot ? createBoundTradeClient(window.stockpilot) : null),
     [],
   );
-  const feePlanClient = useMemo(() => createInMemoryFeePlanClient(), []);
+  const feePlanClient = useMemo(
+    () => (window.stockpilot ? null : createInMemoryFeePlanClient()),
+    [],
+  );
+  const feeAdvisor = useMemo(() => createNullFeeAdvisor(), []);
+  const subscribeAppEvent = useMemo(
+    () =>
+      window.stockpilot ? window.stockpilot.onAppEvent.bind(window.stockpilot) : null,
+    [],
+  );
 
   useEffect(() => {
     modeRef.current = workbench.mode;
@@ -373,6 +385,11 @@ export function App() {
       if (envelope.event_type === "preferences_changed") {
         // A persistence acknowledgement never replaces React's newer runtime UI.
         applyLiveEvent();
+        return;
+      }
+      if (envelope.event_type === "trades_changed") {
+        // Trade-list updates are consumed by the TradeDrawer; they are not
+        // chart events and must not be routed to the workbench projection.
         return;
       }
       const baseline = chartProjectionFromEvent(event);
@@ -1128,7 +1145,10 @@ export function App() {
           security={workbench.security}
           tradeClient={tradeClient}
           feePlanClient={feePlanClient}
+          feeAdvisor={feeAdvisor}
           serviceReady={status.state === "connected" || status.state === "ready"}
+          subscribeAppEvent={subscribeAppEvent}
+          serviceGeneration={status.service_generation}
         />
       )}
 

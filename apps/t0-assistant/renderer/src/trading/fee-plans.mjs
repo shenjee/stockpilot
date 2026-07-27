@@ -6,15 +6,28 @@
  * only). Per T0-041's non-goals, this issue does not add a public contract or
  * backend CRUD. The UI therefore talks to a `FeePlanClient` port backed by an
  * in-memory store seeded with the editable "申万宏源（示例）" default plan
- * (matching T0-039's `FeePlanService.DEFAULT_PLAN_ID`). When a fee-plan
- * transport contract lands, a bridge-backed client replaces this one without
- * touching the UI. Fee-plan values mirror `FeePlanRecord` in
+ * (matching T0-039's `FeePlanService.DEFAULT_PLAN_ID`). The in-memory client is
+ * a fixture/test stand-in only - it must not be wired as the production path,
+ * because fee plans are persisted by the Python config repository
+ * (`architecture.md` §5.6). When a fee-plan transport contract lands, a
+ * bridge-backed client replaces this one without touching the UI.
+ *
+ * This module owns the fee-plan *data model* (value + validation) only. The
+ * fee *calculation rule* is NOT reimplemented here - it belongs to
+ * `packages/t0assistant/trading/fee_policy.py`. The renderer obtains suggested
+ * fees through the `FeeAdvisor` port in `fee-advisor.mjs`.
+ *
+ * Fee-plan values mirror `FeePlanRecord` in
  * `packages/t0assistant/repositories/trading.py`.
  */
 
-import { TransferFeeSide } from "./fee-policy.mjs";
-
 export const DEFAULT_FEE_PLAN_ID = "shenwan-hongyuan";
+
+export const TransferFeeSide = Object.freeze({
+  BUY: "buy",
+  SELL: "sell",
+  BOTH: "both",
+});
 
 export class FeePlanValidationError extends Error {
   constructor(field, message) {

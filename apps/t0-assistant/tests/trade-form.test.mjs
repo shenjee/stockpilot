@@ -3,10 +3,8 @@ import assert from "node:assert/strict";
 import {
   buildTradeDraft,
   normalizeExecutedAt,
-  suggestDefaultFee,
   TradeFormValidationError,
 } from "../renderer/src/trading/trade-form.mjs";
-import { defaultFeePlan } from "../renderer/src/trading/fee-plans.mjs";
 
 function fields(overrides = {}) {
   return {
@@ -103,39 +101,5 @@ test("buildTradeDraft rejects negative fee", () => {
   assert.throws(
     () => buildTradeDraft(fields({ fee: "-1" })),
     (e) => e.field === "fee",
-  );
-});
-
-test("suggestDefaultFee returns a total fee for a plan", () => {
-  const fee = suggestDefaultFee(defaultFeePlan(), {
-    securityType: "a_share",
-    side: "buy",
-    price: "10.00",
-    quantity: 100,
-  });
-  assert.ok(Math.abs(fee - 5.01) < 1e-9, `got ${fee}`);
-});
-
-test("suggestDefaultFee returns null for 不计算 (no plan)", () => {
-  assert.equal(
-    suggestDefaultFee(null, {
-      securityType: "a_share",
-      side: "buy",
-      price: "10.00",
-      quantity: 100,
-    }),
-    null,
-  );
-});
-
-test("suggestDefaultFee returns null while inputs are incomplete", () => {
-  assert.equal(
-    suggestDefaultFee(defaultFeePlan(), {
-      securityType: "a_share",
-      side: "buy",
-      price: "",
-      quantity: "",
-    }),
-    null,
   );
 });

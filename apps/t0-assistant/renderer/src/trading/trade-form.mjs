@@ -2,16 +2,18 @@
  * Pure helpers for the real-trade entry/edit form.
  *
  * Builds a `trade_draft` (matching `app-v1.schema.json`) from form fields,
- * validates each field with stable field-level errors, normalizes a
- * minute-only execution time to seconds, and suggests a default fee from a
- * fee plan. Validation mirrors `TradeDraft.from_mapping` in
- * `packages/t0assistant/trading/models.py`; the renderer keeps its own copy
- * because the Python domain layer is not transport-accessible. Only real
- * trades are created here - Replay-simulated trades belong to the Replay
- * Session and never reach this form.
+ * validates each field with stable field-level errors, and normalizes a
+ * minute-only execution time to seconds. Validation mirrors
+ * `TradeDraft.from_mapping` in `packages/t0assistant/trading/models.py`; the
+ * renderer keeps its own copy because the Python domain layer is not
+ * transport-accessible. Only real trades are created here - Replay-simulated
+ * trades belong to the Replay Session and never reach this form.
+ *
+ * Fee suggestion is NOT part of this module: the fee-calculation rule belongs
+ * to `packages/t0assistant/trading/fee_policy.py` and the renderer obtains
+ * suggestions through the `FeeAdvisor` port. The form persists whichever fee
+ * the user confirms and never recomputes it.
  */
-
-import { calculateFee } from "./fee-policy.mjs";
 
 export class TradeFormValidationError extends Error {
   constructor(field, message) {
@@ -119,25 +121,4 @@ export function buildTradeDraft(fields) {
     note: optionalNote(fields.note),
     fee_plan_id: optionalFeePlanId(fields.feePlanId ?? fields.fee_plan_id),
   });
-}
-
-/**
- * Suggest a default total fee for the current form inputs, or `null` when no
- * plan applies (不计算) or the inputs are not yet computable. Never throws -
- * it is only a suggestion the user may override. The persisted fee is
- * authoritative and never recomputed.
- */
-export function suggestDefaultFee(plan, input) {
-  if (!plan) return null;
-  try {
-    const result = calculateFee(plan, {
-      securityType: input?.securityType,
-      side: input?.side,
-      price: input?.price,
-      quantity: input?.quantity,
-    });
-    return result.total_fee;
-  } catch {
-    return null;
-  }
 }

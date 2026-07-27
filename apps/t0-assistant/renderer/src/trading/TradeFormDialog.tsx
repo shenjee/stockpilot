@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   buildTradeDraft,
-  suggestDefaultFee,
   TradeFormValidationError,
   type TradeDraft,
 } from "./trade-form.mjs";
 import type { FeePlan } from "./fee-plans.mjs";
+import type { FeeAdvisor } from "./fee-advisor.mjs";
 import type { SecurityIdentity } from "../workbench-layout.mjs";
 import type { TradeRecord } from "./trade-client.mjs";
 
@@ -29,6 +29,7 @@ export function TradeFormDialog({
   initial,
   security,
   feePlans,
+  feeAdvisor,
   onSubmit,
   onClose,
 }: {
@@ -37,6 +38,7 @@ export function TradeFormDialog({
   initial: TradeRecord | null;
   security: SecurityIdentity;
   feePlans: FeePlan[];
+  feeAdvisor: FeeAdvisor;
   onSubmit: (draft: TradeDraft) => Promise<void>;
   onClose: () => void;
 }) {
@@ -86,19 +88,29 @@ export function TradeFormDialog({
   );
 
   // Suggest a default fee whenever the plan or computable inputs change, unless
-  // the user has manually edited the fee. The persisted fee is authoritative
-  // and never recomputed after save.
+  // the user has manually edited the fee. The suggestion comes from the
+  // FeeAdvisor port (backend fee rule, not reimplemented in the renderer); the
+  // null advisor returns no suggestion so the fee stays manual. The persisted
+  // fee is authoritative and never recomputed after save.
   useEffect(() => {
     if (!selectedPlan || feeTouched) return;
-    const suggested = suggestDefaultFee(selectedPlan, {
+    const suggested = feeAdvisor.suggestFee(selectedPlan, {
       securityType: security.security_type,
       side,
       price,
       quantity,
     });
-    if (suggested === null) return;
+    if (suggested === null || suggested === undefined) return;
     setFee(formatFee(suggested));
-  }, [selectedPlan, feeTouched, side, price, quantity, security.security_type]);
+  }, [
+    feeAdvisor,
+    selectedPlan,
+    feeTouched,
+    side,
+    price,
+    quantity,
+    security.security_type,
+  ]);
 
   if (!open) return null;
 
@@ -253,7 +265,7 @@ export function TradeFormDialog({
               <input
                 inputMode="decimal"
                 value={fee}
-                placeholder={selectedPlan ? "按方案自动计算" : "可手填或留空"}
+                placeholder="可手填或留空"
                 onChange={(e) => {
                   setFee(e.target.value);
                   setFeeTouched(true);
