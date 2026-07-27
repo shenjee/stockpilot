@@ -111,16 +111,18 @@ function draft() {
   };
 }
 
-test("listTrades maps an accepted response into trades and revision", async () => {
+test("listTrades sends the list_trades payload and returns an acceptance signal", async () => {
   const bridge = fakeBridge();
   const client = createTradeClient(bridge, { makeRequestId: idFactory });
   const result = await client.listTrades({
     symbol: "sh.600584",
     tradeDate: "2026-07-24",
   });
-  assert.equal(result.tradeRevision, 3);
-  assert.equal(result.trades.length, 1);
-  assert.equal(result.trades[0].trade_id, "trade-1");
+  // The trade list is NOT read from the sync response (its data shape is
+  // unfrozen); list_trades is a refresh trigger returning only acceptance +
+  // the optional operation_id. The authoritative list arrives via
+  // trades_changed.
+  assert.deepEqual(result, { accepted: true, operationId: null });
 
   const [command, request] = bridge.calls[0];
   assert.equal(command, "list_trades");
@@ -164,7 +166,9 @@ test("updateTrade sends trade_id and trade; deleteTrade sends trade_scope real",
   });
 });
 
-test("an accepted-but-empty list response yields an empty trade list", async () => {
+test("an accepted list_trades with data: null still returns a clean acceptance signal", async () => {
+  // data: null is legal (command_response.data is object|null). The client
+  // does not read data, so it must not break or fabricate an empty list.
   const bridge = fakeBridge({
     list_trades: (request) => ({
       schema_version: "t0_app_v1",
@@ -180,8 +184,7 @@ test("an accepted-but-empty list response yields an empty trade list", async () 
     symbol: "sh.600584",
     tradeDate: "2026-07-24",
   });
-  assert.deepEqual(result.trades, []);
-  assert.equal(result.tradeRevision, 0);
+  assert.deepEqual(result, { accepted: true, operationId: null });
 });
 
 test("service_unavailable response throws a retryable TradeClientError", async () => {

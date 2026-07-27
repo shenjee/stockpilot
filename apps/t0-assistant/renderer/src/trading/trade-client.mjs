@@ -101,17 +101,12 @@ export function createTradeClient(bridge, options = {}) {
       }),
     );
     ensureAccepted(response);
-    // Provisional: command_response.data is only `object | null` in the frozen
-    // contract. The {trades, trade_revision} shape is assumed pending a
-    // list_trades response freeze. The authoritative list is the
-    // trades_changed event; this is only the initial hydration.
-    const data = response.data ?? {};
-    return {
-      trades: Array.isArray(data.trades) ? data.trades : [],
-      tradeRevision: Number.isInteger(data.trade_revision)
-        ? data.trade_revision
-        : 0,
-    };
+    // The trade list is NOT read from the sync response: command_response.data
+    // is only `object | null` in the frozen contract, so its shape is unfrozen.
+    // list_trades is a refresh trigger; the authoritative list arrives through
+    // the frozen trades_changed event (see trade-state.mjs). Returning only an
+    // acceptance signal keeps the renderer off the unfrozen response shape.
+    return { accepted: true, operationId: extractOperationId(response) };
   }
 
   async function createTrade(draft) {

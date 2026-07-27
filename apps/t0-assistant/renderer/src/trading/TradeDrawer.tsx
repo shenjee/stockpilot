@@ -16,6 +16,8 @@ import {
   applyTradesChanged,
   isRealTradesChangedEvent,
   matchTradeOperationFailed,
+  pendingOpResolvedByTradesChanged,
+  type TradeListState,
 } from "./trade-state.mjs";
 import type { SecurityIdentity } from "../workbench-layout.mjs";
 import { TradeFormDialog } from "./TradeFormDialog";
@@ -39,6 +41,16 @@ function errorMessage(error: unknown, fallback: string) {
   }
   return fallback;
 }
+
+type PendingOp = {
+  command: "create" | "update" | "delete";
+  retry: () => Promise<void>;
+};
+
+type FailedOp = {
+  message: string;
+  retry: (() => Promise<void>) | null;
+};
 
 type AppEventSubscriber =
   | ((listener: (event: unknown) => void) => () => void)
@@ -64,7 +76,7 @@ export function TradeDrawer({
   const [trades, setTrades] = useState<TradeRecord[]>([]);
   const [expanded, setExpanded] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
-  const [eventError, setEventError] = useState<string | null>(null);
+  const [failedOp, setFailedOp] = useState<FailedOp | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [formOpen, setFormOpen] = useState<
     | { mode: "create" }
@@ -79,77 +91,92 @@ export function TradeDrawer({
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
 
-  // Mirror of {trades, tradeRevision} for use inside the event handler, which
+  // Mirror of the trade-list state for use inside the event handler, which
   // must read the latest state without re-subscribing on every change.
-  const tradeListRef = useRef<{ trades: TradeRecord[]; tradeRevision: number }>(
-    { trades: [], tradeRevision: -1 },
-  );
+  const tradeListRef = useRef<TradeListState>({
+    trades: [],
+    tradeRevision: -1,
+    serviceGeneration: null,
+  });
   const loadedSymbolRef = useRef<string | null>(null);
-  const pendingOpsRef = useRef<Set<string>>(new Set());
+  const prevGenRef = useRef<number>(serviceGeneration);
+  // Pending async trade operations, keyed by operation_id, with the retry
+  // context (captured draft/tradeId) so an operation_failed can be retried.
+  const pendingOpsRef = useRef<Map<string, PendingOp>>(new Map());
 
-  function commitTradeList(next: { trades: TradeRecord[]; tradeRevision: number }) {
+  function commitTradeList(next: TradeListState) {
     tradeListRef.current = next;
     setTrades(next.trades);
   }
 
-  // Initial hydration via list_trades. P2: a read failure keeps the last
-  // successful trades; the list is cleared only when the symbol changes.
+  // Refresh trigger via list_trades. The trade list itself is NOT read from
+  // the response (its data shape is unfrozen); the authoritative list arrives
+  // through trades_changed. A trigger failure surfaces a retry error but does
+  // not clear the last successful list.
   useEffect(() => {
     if (!security) {
       loadedSymbolRef.current = null;
-      commitTradeList({ trades: [], tradeRevision: -1 });
+      commitTradeList({
+        trades: [],
+        tradeRevision: -1,
+        serviceGeneration: tradeListRef.current.serviceGeneration,
+      });
       setListError(null);
       return;
     }
     if (!tradeClient || !serviceReady) {
-      // Service unavailable is a failure state: keep the last successful list.
+      // Service unavailable: keep the last successful list.
       return;
     }
     const symbol = security.symbol;
     const symbolChanged = loadedSymbolRef.current !== symbol;
     loadedSymbolRef.current = symbol;
     if (symbolChanged) {
-      commitTradeList({ trades: [], tradeRevision: -1 });
+      commitTradeList({
+        trades: [],
+        tradeRevision: -1,
+        serviceGeneration: tradeListRef.current.serviceGeneration,
+      });
       setListError(null);
     }
     let cancelled = false;
-    const tradeDate = localToday();
     tradeClient
-      .listTrades({ symbol, tradeDate })
-      .then(({ trades: next, tradeRevision: revision }) => {
-        if (cancelled) return;
-        // Don't clobber a newer event-driven state with a stale query result.
-        if (revision >= tradeListRef.current.tradeRevision) {
-          commitTradeList({ trades: next, tradeRevision: revision });
-        }
-        setListError(null);
+      .listTrades({ symbol, tradeDate: localToday() })
+      .then(() => {
+        if (!cancelled) setListError(null);
       })
       .catch((error) => {
-        if (cancelled) return;
-        setListError(errorMessage(error, "成交记录读取失败"));
+        if (!cancelled) setListError(errorMessage(error, "成交记录读取失败"));
       });
     return () => {
       cancelled = true;
     };
   }, [security, tradeClient, serviceReady, reloadKey]);
 
-  // Authoritative updates via the frozen trades_changed event (P1#3). Also
-  // surfaces operation_failed for tracked trade operations.
+  // Reset the revision gate on a service_generation change (Python restart).
+  // Keep the last successful trades, reset the gate so the new generation's
+  // low revisions are accepted, drop stale pending operations, and re-trigger
+  // hydration.
+  useEffect(() => {
+    const prev = prevGenRef.current;
+    prevGenRef.current = serviceGeneration;
+    if (prev === serviceGeneration || serviceGeneration <= 0) return;
+    tradeListRef.current = {
+      ...tradeListRef.current,
+      tradeRevision: -1,
+      serviceGeneration,
+    };
+    pendingOpsRef.current.clear();
+    setFailedOp(null);
+    setListError(null);
+    setReloadKey((k) => k + 1);
+  }, [serviceGeneration]);
+
+  // Authoritative updates via the frozen trades_changed event, plus
+  // operation_failed for tracked async trade operations.
   useEffect(() => {
     if (!subscribeAppEvent) return;
     return subscribeAppEvent((event) => {
-      if (
-        typeof serviceGeneration === "number" &&
-        serviceGeneration > 0 &&
-        event &&
-        typeof event === "object" &&
-        typeof (event as { service_generation?: unknown }).service_generation ===
-          "number" &&
-        (event as { service_generation: number }).service_generation !==
-          serviceGeneration
-      ) {
-        return;
-      }
       if (!security) return;
       const scope = { symbol: security.symbol, tradeDate: localToday() };
       if (isRealTradesChangedEvent(event)) {
@@ -157,54 +184,133 @@ export function TradeDrawer({
         if (next !== tradeListRef.current) {
           commitTradeList(next);
         }
-        pendingOpsRef.current.clear();
-        setEventError(null);
+        // Clear only the pending op this event resolves (by operation_id).
+        // Never blanket-clear: other in-flight ops must keep their tracking.
+        const resolved = pendingOpResolvedByTradesChanged(
+          event,
+          pendingOpsRef.current,
+        );
+        if (resolved) pendingOpsRef.current.delete(resolved);
         return;
       }
       const failed = matchTradeOperationFailed(event, pendingOpsRef.current);
       if (failed) {
+        const op = pendingOpsRef.current.get(failed.operationId);
         pendingOpsRef.current.delete(failed.operationId);
-        setEventError(errorMessage(failed.error, "成交操作未完成"));
+        setFailedOp({
+          message: errorMessage(failed.error, "成交操作未完成"),
+          retry: op ? op.retry : null,
+        });
       }
     });
-  }, [subscribeAppEvent, security, serviceGeneration]);
-
-  function reload() {
-    setReloadKey((k) => k + 1);
-  }
+  }, [subscribeAppEvent, security]);
 
   function refreshFeePlans() {
     if (feePlanClient) setFeePlans(feePlanClient.listPlans());
   }
 
+  // Re-run a create, capturing sync failures into the failed-op banner.
+  async function reRunCreate(draft: TradeDraft) {
+    if (!tradeClient) return;
+    try {
+      const result = await tradeClient.createTrade(draft);
+      if (result.operationId) {
+        pendingOpsRef.current.set(result.operationId, {
+          command: "create",
+          retry: () => reRunCreate(draft),
+        });
+      } else {
+        setReloadKey((k) => k + 1);
+      }
+    } catch (error) {
+      setFailedOp({
+        message: errorMessage(error, "成交保存失败"),
+        retry: () => reRunCreate(draft),
+      });
+    }
+  }
+
+  async function reRunUpdate(tradeId: string, draft: TradeDraft) {
+    if (!tradeClient) return;
+    try {
+      const result = await tradeClient.updateTrade(tradeId, draft);
+      if (result.operationId) {
+        pendingOpsRef.current.set(result.operationId, {
+          command: "update",
+          retry: () => reRunUpdate(tradeId, draft),
+        });
+      } else {
+        setReloadKey((k) => k + 1);
+      }
+    } catch (error) {
+      setFailedOp({
+        message: errorMessage(error, "成交保存失败"),
+        retry: () => reRunUpdate(tradeId, draft),
+      });
+    }
+  }
+
+  async function reRunDelete(tradeId: string) {
+    if (!tradeClient) return;
+    try {
+      const result = await tradeClient.deleteTrade(tradeId);
+      if (result.operationId) {
+        pendingOpsRef.current.set(result.operationId, {
+          command: "delete",
+          retry: () => reRunDelete(tradeId),
+        });
+      } else {
+        setReloadKey((k) => k + 1);
+      }
+    } catch (error) {
+      setFailedOp({
+        message: errorMessage(error, "成交记录删除失败"),
+        retry: () => reRunDelete(tradeId),
+      });
+    }
+  }
+
   async function handleSubmit(draft: TradeDraft) {
     if (!tradeClient) throw new Error("成交服务不可用");
+    if (!formOpen) return;
+    const mode = formOpen.mode;
+    const tradeId = mode === "edit" ? formOpen.trade.trade_id : null;
+    // A sync rejection throws here and the form surfaces an inline retry; an
+    // accepted async op is tracked for a later operation_failed retry.
     const result =
-      formOpen?.mode === "edit"
-        ? await tradeClient.updateTrade(formOpen.trade.trade_id, draft)
+      mode === "edit"
+        ? await tradeClient.updateTrade(tradeId as string, draft)
         : await tradeClient.createTrade(draft);
     setFormOpen(null);
     if (result.operationId) {
-      // Async path: the authoritative list arrives via trades_changed, and an
-      // operation_failed may follow. Track the id so the event is actionable.
-      pendingOpsRef.current.add(result.operationId);
+      const retry =
+        mode === "edit"
+          ? () => reRunUpdate(tradeId as string, draft)
+          : () => reRunCreate(draft);
+      pendingOpsRef.current.set(result.operationId, {
+        command: mode === "edit" ? "update" : "create",
+        retry,
+      });
     } else {
-      // Synchronous completion with no operation_failed path: refresh the list.
-      reload();
+      setReloadKey((k) => k + 1);
     }
   }
 
   async function confirmDelete() {
     if (!pendingDelete || !tradeClient) return;
+    const tradeId = pendingDelete.trade_id;
     setDeleteBusy(true);
     setDeleteError(null);
     try {
-      const result = await tradeClient.deleteTrade(pendingDelete.trade_id);
+      const result = await tradeClient.deleteTrade(tradeId);
       setPendingDelete(null);
       if (result.operationId) {
-        pendingOpsRef.current.add(result.operationId);
+        pendingOpsRef.current.set(result.operationId, {
+          command: "delete",
+          retry: () => reRunDelete(tradeId),
+        });
       } else {
-        reload();
+        setReloadKey((k) => k + 1);
       }
     } catch (error) {
       setDeleteError(errorMessage(error, "成交记录删除失败"));
@@ -248,9 +354,7 @@ export function TradeDrawer({
           <button
             type="button"
             disabled={feePlanUnavailable}
-            title={
-              feePlanUnavailable ? "收费方案持久化尚未接入" : undefined
-            }
+            title={feePlanUnavailable ? "收费方案持久化尚未接入" : undefined}
             onClick={() => setSettingsOpen(true)}
           >
             收费方案设置
@@ -264,10 +368,23 @@ export function TradeDrawer({
           role="region"
           aria-label="当日成交记录"
         >
-          {eventError && (
+          {failedOp && (
             <div className="inline-error" role="status">
-              <span>{eventError}</span>
-              <button type="button" onClick={() => setEventError(null)}>
+              <span>{failedOp.message}</span>
+              {failedOp.retry && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const retry = failedOp.retry;
+                    if (!retry) return;
+                    setFailedOp(null);
+                    void retry();
+                  }}
+                >
+                  重试
+                </button>
+              )}
+              <button type="button" onClick={() => setFailedOp(null)}>
                 关闭
               </button>
             </div>
@@ -275,7 +392,7 @@ export function TradeDrawer({
           {listError ? (
             <div className="inline-error" role="status">
               <span>{listError}</span>
-              <button type="button" onClick={reload}>
+              <button type="button" onClick={() => setReloadKey((k) => k + 1)}>
                 重试
               </button>
             </div>

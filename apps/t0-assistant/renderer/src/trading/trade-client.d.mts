@@ -34,7 +34,7 @@ export interface TradeClient {
     symbol: string;
     tradeDate: string;
     tradeScope?: "real" | "simulated";
-  }): Promise<{ trades: TradeRecord[]; tradeRevision: number }>;
+  }): Promise<{ accepted: true; operationId: string | null }>;
   createTrade(
     draft: TradeDraft,
   ): Promise<{ accepted: true; operationId: string | null }>;
