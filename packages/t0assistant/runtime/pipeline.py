@@ -191,17 +191,18 @@ class WorkbenchPipeline:
         # failures are wrapped into WorkbenchPipelineError.
         return self.compute()
 
-    def compute(self, target_time: datetime | str | None = None) -> PipelineResult:
-        """Compute the deterministic result for ``target_time``.
+    def preview(self, target_time: datetime | str | None = None) -> PipelineResult:
+        """Compute the deterministic result for ``target_time`` without mutating state.
 
         When ``target_time`` is omitted, the injected clock is used.  The
         pipeline reconstructs its internal aggregator from the supplied input
         prefix so that backward Replay seeks and forward Live advances share
         exactly the same deterministic path.
 
-        ``_target_time`` and ``_last_result`` are updated atomically only after
-        the full computation succeeds, so a failure never leaves the pipeline in
-        a torn state.
+        The returned :class:`PipelineResult` is an isolated preview.  Call
+        :meth:`commit_preview` to publish it into ``_target_time`` and
+        ``_last_result``.  This is what lets the executor reject a late or
+        superseded result without first polluting pipeline state.
         """
 
         try:
@@ -214,8 +215,21 @@ class WorkbenchPipeline:
                 f"pipeline computation failed: {exc}"
             ) from exc
 
-        self._target_time = resolved_target
+        return result
+
+    def commit_preview(self, result: PipelineResult) -> None:
+        """Publish a previously computed preview into pipeline state."""
+
+        if not isinstance(result, PipelineResult):
+            raise TypeError("result must be a PipelineResult")
+        self._target_time = result.target_time
         self._last_result = result
+
+    def compute(self, target_time: datetime | str | None = None) -> PipelineResult:
+        """Compute the deterministic result for ``target_time`` and commit it."""
+
+        result = self.preview(target_time)
+        self.commit_preview(result)
         return result
 
     def _compute_unlocked(self, resolved_target: datetime) -> PipelineResult:
@@ -257,6 +271,7 @@ class WorkbenchPipeline:
             target_time=resolved_target,
             previous_close=market_input.previous_close,
             quote_snapshots=market_input.quote_snapshots,
+            official_5m_bars=official_5m,
         )
 
         daily_bars = _build_daily_bars(
