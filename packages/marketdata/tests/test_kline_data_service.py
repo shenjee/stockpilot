@@ -636,6 +636,67 @@ class KLineDataServiceTests(unittest.TestCase):
                 )
             )
 
+    def test_active_minute_day_complete_evidence_does_not_suppress_refresh(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = KLineStore(Path(tmpdir) / "market_data.sqlite")
+            provider = FakeResultProvider(
+                MarketDataResult(
+                    success=True,
+                    data=[self._minute_row("2026-06-11 10:00:00")],
+                    issues=[
+                        self._reliability_issue(
+                            default_status="no_data",
+                            trade_date_statuses={"2026-06-11": "complete"},
+                        )
+                    ],
+                )
+            )
+            calendar = MarketContextService(["2026-06-11"])
+            service = KLineDataService(
+                provider,
+                store,
+                market_context=calendar,
+                clock=lambda: datetime(2026, 6, 11, 10, 5),
+            )
+
+            for _ in range(2):
+                service.ensure_local_klines_result(
+                    code="600519",
+                    market="sh",
+                    timeframe="5m",
+                    start_date="2026-06-11",
+                    end_date="2026-06-11",
+                )
+
+            self.assertEqual(len(provider.calls), 2)
+            self.assertEqual(
+                store.get_replay_reliability(
+                    "600519",
+                    "2026-06-11",
+                    market="sh",
+                    timeframe="5m",
+                ),
+                "unknown",
+            )
+            self.assertEqual(
+                service.identify_missing_ranges(
+                    code="600519",
+                    market="sh",
+                    timeframe="5m",
+                    start_date="2026-06-11",
+                    end_date="2026-06-11",
+                ),
+                [("2026-06-11", "2026-06-11")],
+            )
+            self.assertFalse(
+                service.replay_reliability_evidence(
+                    code="600519",
+                    trade_date="2026-06-11",
+                    market="sh",
+                    timeframe="5m",
+                )
+            )
+
     def test_successful_no_data_marks_minute_day_unreliable_for_replay(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             store = KLineStore(Path(tmpdir) / "market_data.sqlite")

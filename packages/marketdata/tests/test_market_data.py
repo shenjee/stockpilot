@@ -187,10 +187,18 @@ class TencentStockDataProviderTests(unittest.TestCase):
                 }
             },
         }
+        empty_page = {
+            "code": 0,
+            "data": {"sh600519": {"m5": []}},
+        }
         with patch.object(
             TencentStockDataProvider,
             "_fetch_with_retry",
-            side_effect=[json.dumps(kline_payload), json.dumps(amount_payload)],
+            side_effect=[
+                json.dumps(kline_payload),
+                json.dumps(empty_page),
+                json.dumps(amount_payload),
+            ],
         ) as fetch:
             result = TencentStockDataProvider.get_minute_kline_result(
                 code="600519",
@@ -201,8 +209,8 @@ class TencentStockDataProviderTests(unittest.TestCase):
             )
 
         self.assertTrue(result.success)
-        self.assertEqual(fetch.call_count, 2)
-        self.assertIn("/day/query", fetch.call_args_list[1].args[0])
+        self.assertEqual(fetch.call_count, 3)
+        self.assertIn("/day/query", fetch.call_args_list[2].args[0])
         self.assertEqual([row["amount"] for row in result.data], [1.5, 1.5])
         self.assertTrue(all(row["closed"] for row in result.data))
 
@@ -283,6 +291,10 @@ class TencentStockDataProviderTests(unittest.TestCase):
             "code": 0,
             "data": {"sh600519": {"data": []}},
         }
+        page3 = {
+            "code": 0,
+            "data": {"sh600519": {"m60": []}},
+        }
 
         with patch.object(
             TencentStockDataProvider,
@@ -290,6 +302,7 @@ class TencentStockDataProviderTests(unittest.TestCase):
             side_effect=[
                 json.dumps(page1),
                 json.dumps(page2),
+                json.dumps(page3),
                 json.dumps(amount_payload),
             ],
         ) as fetch:
@@ -301,12 +314,15 @@ class TencentStockDataProviderTests(unittest.TestCase):
                 ktype="60m",
             )
 
-        # Two K-line pages plus one optional amount enrichment request.
-        self.assertEqual(fetch.call_count, 3)
+        # Three K-line pages (the last confirms the historical boundary) plus
+        # one optional amount enrichment request.
+        self.assertEqual(fetch.call_count, 4)
         first_url = fetch.call_args_list[0].args[0]
         second_url = fetch.call_args_list[1].args[0]
+        third_url = fetch.call_args_list[2].args[0]
         self.assertIn(",m60,,800", first_url)
         self.assertIn("202603101500", second_url)
+        self.assertIn("202510211030", third_url)
 
         # All 5 bars from both pages, filtered to the date range, sorted ascending
         self.assertEqual(len(rows), 5)
@@ -314,7 +330,7 @@ class TencentStockDataProviderTests(unittest.TestCase):
         self.assertEqual(rows[-1]["date"], "2026-03-16 10:30:00")
 
     def test_get_minute_kline_emits_complete_evidence_for_sparse_day(self):
-        payload = {
+        first_page = {
             "code": 0,
             "data": {
                 "sh600519": {
@@ -325,6 +341,10 @@ class TencentStockDataProviderTests(unittest.TestCase):
                 }
             },
         }
+        empty_page = {
+            "code": 0,
+            "data": {"sh600519": {"m5": []}},
+        }
         amount_payload = {
             "code": 0,
             "data": {"sh600519": {"data": []}},
@@ -333,7 +353,11 @@ class TencentStockDataProviderTests(unittest.TestCase):
         with patch.object(
             TencentStockDataProvider,
             "_fetch_with_retry",
-            side_effect=[json.dumps(payload), json.dumps(amount_payload)],
+            side_effect=[
+                json.dumps(first_page),
+                json.dumps(empty_page),
+                json.dumps(amount_payload),
+            ],
         ):
             result = TencentStockDataProvider.get_minute_kline_result(
                 code="600519",
@@ -348,8 +372,75 @@ class TencentStockDataProviderTests(unittest.TestCase):
             for issue in result.warnings()
             if issue.reason_code == TencentStockDataProvider.REPLAY_RELIABILITY_EVIDENCE_REASON
         )
-        self.assertEqual(evidence.context["termination_reason"], "covered_start_date")
+        self.assertEqual(evidence.context["termination_reason"], "empty_page")
         self.assertEqual(evidence.context["default_status"], "no_data")
+        self.assertEqual(
+            evidence.context["trade_date_statuses"]["2026-06-11"],
+            "complete",
+        )
+
+    def test_get_minute_kline_keeps_paging_when_first_page_only_reaches_start_day_mid_session(self):
+        first_page = {
+            "code": 0,
+            "data": {
+                "sh600519": {
+                    "m5": [
+                        ["202606111330", "10.10", "10.20", "10.30", "10.00", "120", {}, "0.1"],
+                        ["202606111300", "10.00", "10.10", "10.20", "9.90", "100", {}, "0.1"],
+                    ],
+                }
+            },
+        }
+        second_page = {
+            "code": 0,
+            "data": {
+                "sh600519": {
+                    "m5": [
+                        ["202606111000", "9.90", "10.00", "10.10", "9.80", "90", {}, "0.1"],
+                        ["202606110935", "9.80", "9.90", "10.00", "9.70", "80", {}, "0.1"],
+                        ["202606101500", "9.70", "9.80", "9.90", "9.60", "70", {}, "0.1"],
+                    ],
+                }
+            },
+        }
+        amount_payload = {
+            "code": 0,
+            "data": {"sh600519": {"data": []}},
+        }
+
+        with patch.object(
+            TencentStockDataProvider,
+            "_fetch_with_retry",
+            side_effect=[
+                json.dumps(first_page),
+                json.dumps(second_page),
+                json.dumps(amount_payload),
+            ],
+        ) as fetch:
+            result = TencentStockDataProvider.get_minute_kline_result(
+                code="600519",
+                market="sh",
+                start_date="2026-06-11",
+                end_date="2026-06-11",
+                ktype="5m",
+            )
+
+        evidence = next(
+            issue
+            for issue in result.warnings()
+            if issue.reason_code == TencentStockDataProvider.REPLAY_RELIABILITY_EVIDENCE_REASON
+        )
+        self.assertEqual(fetch.call_count, 3)
+        self.assertEqual(evidence.context["termination_reason"], "covered_start_date")
+        self.assertEqual(
+            [row["date"] for row in result.data],
+            [
+                "2026-06-11 09:35:00",
+                "2026-06-11 10:00:00",
+                "2026-06-11 13:00:00",
+                "2026-06-11 13:30:00",
+            ],
+        )
         self.assertEqual(
             evidence.context["trade_date_statuses"]["2026-06-11"],
             "complete",

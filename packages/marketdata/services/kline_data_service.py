@@ -290,6 +290,11 @@ class KLineDataService:
         market: str | None,
         timeframe: str,
     ) -> bool | None:
+        if (
+            timeframe in MINUTE_TIMEFRAMES
+            and trade_date == self.clock().date().isoformat()
+        ):
+            return False
         status = self.store.get_replay_reliability(
             code,
             trade_date,
@@ -376,6 +381,7 @@ class KLineDataService:
                 for trade_date, status in reliability.items()
                 if status in {_RELIABILITY_INCOMPLETE, _RELIABILITY_UNKNOWN}
             )
+            covered_dates.discard(active_date)
         covered_dates.difference_update(invalid_dates)
 
         required_dates = self._required_dates(
@@ -590,10 +596,17 @@ class KLineDataService:
             return {trade_date: fallback for trade_date in requested_dates}
         default_status = evidence.get("default_status", _RELIABILITY_UNKNOWN)
         explicit_statuses = evidence.get("trade_date_statuses", {})
-        return {
+        statuses = {
             trade_date: explicit_statuses.get(trade_date, default_status)
             for trade_date in requested_dates
         }
+        active_date = self.clock().date().isoformat()
+        if statuses.get(active_date) in {
+            _RELIABILITY_COMPLETE,
+            _RELIABILITY_NO_DATA,
+        }:
+            statuses[active_date] = _RELIABILITY_UNKNOWN
+        return statuses
 
     @staticmethod
     def _extract_minute_reliability_evidence(

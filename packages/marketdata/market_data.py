@@ -916,7 +916,10 @@ class TencentStockDataProvider(MarketDataProvider):
                 break
 
             oldest_day = datetime.strptime(page_oldest_raw[:8], "%Y%m%d").date()
-            if oldest_day <= start_day:
+            # Reaching the requested trade_date is not enough: Tencent pages can
+            # split one day's bars across multiple pages, so we only know the
+            # boundary is covered once the oldest bar is strictly earlier.
+            if oldest_day < start_day:
                 termination_reason = "covered_start_date"
                 break
 
