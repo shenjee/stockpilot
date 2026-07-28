@@ -54,6 +54,17 @@ import {
   replaySessionMatches,
   type ReplayFacts,
 } from "./replay-controls.mjs";
+import {
+  TradeDrawer,
+  createBoundTradeClient,
+  createInMemoryFeePlanClient,
+} from "./trading/TradeDrawer";
+import { createNullFeeAdvisor } from "./trading/fee-advisor.mjs";
+import { isTradeScopedError } from "./trading/app-event-ownership.mjs";
+import {
+  TradeOperationController,
+  type TradeOperationFailure,
+} from "./trading/trade-operation-controller.mjs";
 
 const initialStatus: ServiceStatus = {
   state: "starting",
@@ -164,6 +175,45 @@ export function App() {
     () => replayFactsFromSnapshot(replaySnapshot),
     [replaySnapshot],
   );
+  // T+0 成交与收费方案客户端。成交客户端绑定冻结的 Safe Bridge（后端 CRUD
+  // 尚未接入时 bridge 返回 service_unavailable，由成交 UI 主动失败重试）。
+  // 收费方案暂无冻结传输契约：内存客户端仅在 fixture 模式使用，正式环境为
+  // null（设置入口禁用），避免把会话内存伪装成持久化（architecture.md §5.6）。
+  // 费用建议通过 FeeAdvisor 端口取得；规则不在此重新实现，故生产用 null 顾问。
+  const tradeClient = useMemo(
+    () => (window.stockpilot ? createBoundTradeClient(window.stockpilot) : null),
+    [],
+  );
+  const feePlanClient = useMemo(
+    () => (window.stockpilot ? null : createInMemoryFeePlanClient()),
+    [],
+  );
+  const feeAdvisor = useMemo(() => createNullFeeAdvisor(), []);
+  const subscribeAppEvent = useMemo(
+    () =>
+      window.stockpilot ? window.stockpilot.onAppEvent.bind(window.stockpilot) : null,
+    [],
+  );
+  // Persistent trade-operation registry + failure surface. Owned at the App
+  // level (always mounted) so a trade op started in Live that fails after the
+  // user switches to Replay is still surfaced with the correct CRUD retry, and
+  // the App never silently drops a trades-scoped operation_failed. The
+  // TradeDrawer delegates its track/resolve/fail to this controller.
+  const tradeOpController = useRef<TradeOperationController | null>(null);
+  if (tradeOpController.current === null) {
+    tradeOpController.current = new TradeOperationController();
+  }
+  // Multiple trade operations may fail concurrently; the controller keeps them
+  // all (keyed by operation id) so a later failure never overwrites an earlier
+  // one's retry. The App renders every failure, each with its own retry/dismiss.
+  const [tradeFailures, setTradeFailures] = useState<TradeOperationFailure[]>(
+    [],
+  );
+  useEffect(() => {
+    const controller = tradeOpController.current;
+    if (!controller) return;
+    return controller.subscribe((failures) => setTradeFailures(failures));
+  }, []);
 
   useEffect(() => {
     modeRef.current = workbench.mode;
@@ -206,6 +256,10 @@ export function App() {
       if (next.service_generation <= 0) return;
       if (generationChanged) {
         activeOperations.current.clear();
+        // Drop stale pending trade operations from the previous generation;
+        // the new generation's revisions restart. The controller itself stays
+        // mounted (it only clears its pending map, not its failure surface).
+        tradeOpController.current?.clearPending();
         const replacement = createChartProjection(emptyChartSnapshot, {
           service_generation: next.service_generation,
         });
@@ -335,6 +389,34 @@ export function App() {
       if (envelope.event_type === "operation_failed") {
         const error = applicationErrorFrom(envelope.payload);
         if (!error) return;
+        if (isTradeScopedError(error)) {
+          // Trade operation failures are owned by the persistent
+          // TradeOperationController (not the generic retryLive/retryService
+          // path). The controller survives Live/Replay mode switches, so a
+          // trade op started in Live that fails after the user switched to
+          // Replay is still surfaced with the correct CRUD retry and never
+          // silently dropped.
+          const opId =
+            typeof envelope.operation_id === "string"
+              ? envelope.operation_id
+              : null;
+          const message = error.message;
+          const controller = tradeOpController.current;
+          if (controller) {
+            if (opId && controller.has(opId)) {
+              controller.fail(opId, message, error);
+            } else {
+              // Untracked (e.g. event arrived before the op was registered, or
+              // the Drawer unmounted and dropped tracking). Pass the opId so a
+              // later track() for the same id can merge in the retry; until
+              // then the failure is visible with a null retry. Never silently
+              // dropped.
+              controller.failUntracked(opId, message, error);
+            }
+          }
+          applyLiveEvent();
+          return;
+        }
         const candidate = envelope.operation_id
           ? activeOperations.current.get(envelope.operation_id)
           : undefined;
@@ -359,6 +441,21 @@ export function App() {
       }
       if (envelope.event_type === "preferences_changed") {
         // A persistence acknowledgement never replaces React's newer runtime UI.
+        applyLiveEvent();
+        return;
+      }
+      if (envelope.event_type === "trades_changed") {
+        // Trade-list updates are consumed by the TradeDrawer; they are not
+        // chart events and must not be routed to the workbench projection.
+        // Resolve any pending trade operation the controller is tracking via
+        // the event's operation_id (the controller is always mounted, even in
+        // Replay, so an op started in Live is resolved here even if the Drawer
+        // unmounted).
+        const opId =
+          typeof envelope.operation_id === "string"
+            ? envelope.operation_id
+            : null;
+        if (opId) tradeOpController.current?.resolve(opId);
         applyLiveEvent();
         return;
       }
@@ -1007,6 +1104,44 @@ export function App() {
         </section>
       )}
 
+      {tradeFailures.length > 0 && (
+        <section
+          className="feedback-banner trade-feedback"
+          role="status"
+          aria-label="成交操作提示"
+        >
+          {tradeFailures.map((failure) => (
+            <div className="trade-feedback-item" key={failure.failureId}>
+              <span>{failure.message}</span>
+              {failure.retry && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const retry = failure.retry;
+                    // Dismiss before retrying so the banner doesn't persist
+                    // while the retry is in flight; a fresh failure is tracked
+                    // by the controller if it fails again.
+                    tradeOpController.current?.dismissFailure(failure.failureId);
+                    if (retry) void retry();
+                  }}
+                >
+                  重试
+                </button>
+              )}
+              <button
+                type="button"
+                aria-label="关闭提示"
+                onClick={() =>
+                  tradeOpController.current?.dismissFailure(failure.failureId)
+                }
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </section>
+      )}
+
       <section
         className="workspace"
         data-chart-split={workbench.layout.chartSplit}
@@ -1107,6 +1242,19 @@ export function App() {
           onStep={() => void stepReplay()}
           onSpeed={(speed) => void setReplaySpeed(speed)}
           onSeek={(targetTime) => void seekReplay(targetTime)}
+        />
+      )}
+
+      {!replayMode && (
+        <TradeDrawer
+          security={workbench.security}
+          tradeClient={tradeClient}
+          feePlanClient={feePlanClient}
+          feeAdvisor={feeAdvisor}
+          serviceReady={status.state === "connected" || status.state === "ready"}
+          subscribeAppEvent={subscribeAppEvent}
+          serviceGeneration={status.service_generation}
+          tradeOpController={tradeOpController.current as TradeOperationController}
         />
       )}
 

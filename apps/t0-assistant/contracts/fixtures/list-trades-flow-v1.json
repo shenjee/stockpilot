@@ -1,0 +1,114 @@
+{
+  "schema_version": "t0_app_v1",
+  "description": "Canonical list_trades -> trades_changed cause/effect flow (T0-041). list_trades is a fact-via-changed-event command: the accepted response carries operation_id:null and data:null; the renderer must not consume command_response.data.trades. After an accepted list_trades the backend publishes exactly one authoritative real trades_changed event (session_id:null), including when the repository is empty. real_trades_changed.payload.trades is a COMPLETE REPOSITORY SNAPSHOT (every symbol and trading date); consumers filter to a symbol/date themselves. See contracts/README.md (App v1 behavior).",
+  "service_generation": 3,
+  "existing_trades": {
+    "list_trades_request": {
+      "schema_version": "t0_app_v1",
+      "request_id": "req-list-existing",
+      "command": "list_trades",
+      "session_id": null,
+      "payload": {
+        "trade_scope": "real",
+        "symbol": "sh.600584",
+        "trade_date": "2026-07-24"
+      }
+    },
+    "list_trades_response": {
+      "schema_version": "t0_app_v1",
+      "request_id": "req-list-existing",
+      "accepted": true,
+      "operation_id": null,
+      "data": null,
+      "error": null
+    },
+    "trades_changed_event": {
+      "schema_version": "t0_app_v1",
+      "service_generation": 3,
+      "session_id": null,
+      "revision": 5,
+      "event_type": "trades_changed",
+      "payload": {
+        "trade_revision": 5,
+        "trades": [
+          {
+            "trade_id": "trade-1",
+            "bucket_start": "2026-07-24 10:00:00",
+            "trade_scope": "real",
+            "symbol": "sh.600584",
+            "side": "buy",
+            "executed_at": "2026-07-24 10:03:00",
+            "price": 38.25,
+            "quantity": 200,
+            "fee": 5.01,
+            "note": "",
+            "fee_plan_id": "shenwan-hongyuan"
+          },
+          {
+            "trade_id": "trade-2",
+            "bucket_start": "2026-07-25 10:00:00",
+            "trade_scope": "real",
+            "symbol": "sh.600584",
+            "side": "sell",
+            "executed_at": "2026-07-25 14:10:00",
+            "price": 38.80,
+            "quantity": 200,
+            "fee": 8.10,
+            "note": "",
+            "fee_plan_id": "shenwan-hongyuan"
+          },
+          {
+            "trade_id": "trade-3",
+            "bucket_start": "2026-07-24 10:00:00",
+            "trade_scope": "real",
+            "symbol": "sz.000001",
+            "side": "buy",
+            "executed_at": "2026-07-24 10:05:00",
+            "price": 12.40,
+            "quantity": 500,
+            "fee": 5.00,
+            "note": "",
+            "fee_plan_id": "shenwan-hongyuan"
+          }
+        ]
+      }
+    },
+    "expected_scope_filter": {
+      "symbol": "sh.600584",
+      "trade_date": "2026-07-24",
+      "matched_trade_ids": ["trade-1"]
+    }
+  },
+  "empty_repository": {
+    "list_trades_request": {
+      "schema_version": "t0_app_v1",
+      "request_id": "req-list-empty",
+      "command": "list_trades",
+      "session_id": null,
+      "payload": {
+        "trade_scope": "real",
+        "symbol": "sh.600584",
+        "trade_date": "2026-07-24"
+      }
+    },
+    "list_trades_response": {
+      "schema_version": "t0_app_v1",
+      "request_id": "req-list-empty",
+      "accepted": true,
+      "operation_id": null,
+      "data": null,
+      "error": null
+    },
+    "trades_changed_event": {
+      "schema_version": "t0_app_v1",
+      "service_generation": 3,
+      "session_id": null,
+      "revision": 0,
+      "event_type": "trades_changed",
+      "payload": {
+        "trade_revision": 0,
+        "trades": []
+      }
+    }
+  }
+}
