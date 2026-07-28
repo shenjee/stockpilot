@@ -290,6 +290,93 @@ class AppCoordinatorTests(unittest.TestCase):
         assert live is not None
         self.assertEqual(self.factory.created[0].activate_count, 1)
 
+    def test_activate_may_call_accepts_result_without_deadlock(self) -> None:
+        original_create_live = self.factory.create_live
+        observed: list[bool] = []
+
+        def create_live(spec: SessionSpec) -> _FakeSession:
+            session = original_create_live(spec)
+
+            def on_activate() -> None:
+                completion = Event()
+
+                def worker() -> None:
+                    observed.append(
+                        self.coordinator.accepts_result(
+                            session_type="live",
+                            session_id=spec.session_id,
+                            generation=spec.generation,
+                        )
+                    )
+                    completion.set()
+
+                Thread(target=worker).start()
+                if not completion.wait(timeout=0.5):
+                    raise RuntimeError("deadlock detected")
+
+            session.on_activate = on_activate
+            return session
+
+        self.factory.create_live = create_live
+
+        snapshot = self.coordinator.select_symbol("sh.600000")
+        self.assertIsNotNone(snapshot.live_session)
+        self.assertEqual(observed, [True])
+
+    def test_activation_failure_after_mode_change_removes_replacement_from_boundary(self) -> None:
+        class _BlockingActivationFactory(_FakeSessionFactory):
+            def __init__(self) -> None:
+                super().__init__()
+                self.started = Event()
+                self.allow_fail = Event()
+
+            def create_live(self, spec: SessionSpec) -> _FakeSession:
+                session = super().create_live(spec)
+
+                def on_activate() -> None:
+                    self.started.set()
+                    self.allow_fail.wait(timeout=1)
+                    raise RuntimeError("fake activation failed")
+
+                session.on_activate = on_activate
+                return session
+
+        factory = _BlockingActivationFactory()
+        coordinator = AppCoordinator(factory, session_id_factory=_session_id)
+        errors: list[Exception] = []
+
+        def select_symbol() -> None:
+            try:
+                coordinator.select_symbol("sh.600000")
+            except Exception as exc:
+                errors.append(exc)
+
+        thread = Thread(target=select_symbol)
+        thread.start()
+        self.assertTrue(factory.started.wait(timeout=1))
+
+        coordinator.set_mode("replay")
+        factory.allow_fail.set()
+        thread.join(timeout=1)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], CoordinatorStateError)
+
+        snapshot = coordinator.snapshot
+        self.assertIs(snapshot.mode, AppMode.REPLAY)
+        self.assertIsNone(snapshot.current_symbol)
+        self.assertIsNone(snapshot.live_session)
+        self.assertFalse(
+            coordinator.accepts_result(
+                session_type="live",
+                session_id="live-1",
+                generation=1,
+            )
+        )
+        self.assertEqual(len(factory.created), 1)
+        self.assertTrue(factory.created[0].retired)
+        self.assertEqual(factory.created[0].retire_count, 1)
+
     def test_factory_failures_preserve_previous_sessions_and_selection(self) -> None:
         initial = self.coordinator.select_symbol("sh.600000")
         old_live = initial.live_session
@@ -321,6 +408,88 @@ class AppCoordinatorTests(unittest.TestCase):
         self.assertEqual(self.coordinator.snapshot.replay_session, old_replay)
         self.assertFalse(self.factory.created[1].retired)
         self.assertEqual(self.coordinator.snapshot.session_generation, 5)
+
+    def test_activation_failure_on_first_select_symbol_rolls_back_state(self) -> None:
+        class _ActivationFailingFactory(_FakeSessionFactory):
+            def create_live(self, spec: SessionSpec) -> _FakeSession:
+                session = super().create_live(spec)
+                session.on_activate = lambda: (_ for _ in ()).throw(
+                    RuntimeError("fake activation failed")
+                )
+                return session
+
+        factory = _ActivationFailingFactory()
+        coordinator = AppCoordinator(factory, session_id_factory=_session_id)
+
+        with self.assertRaises(CoordinatorStateError):
+            coordinator.select_symbol("sh.600000")
+
+        snapshot = coordinator.snapshot
+        self.assertIsNone(snapshot.current_symbol)
+        self.assertIsNone(snapshot.live_session)
+        self.assertIsNone(snapshot.replay_session)
+        self.assertIsNone(snapshot.visible_session)
+        self.assertEqual(snapshot.session_generation, 1)
+        self.assertEqual(len(factory.created), 1)
+        self.assertTrue(factory.created[0].retired)
+        self.assertEqual(factory.created[0].retire_count, 1)
+
+    def test_activation_failure_on_retry_live_keeps_previous_live(self) -> None:
+        class _ActivationFailingFactory(_FakeSessionFactory):
+            def create_live(self, spec: SessionSpec) -> _FakeSession:
+                session = super().create_live(spec)
+                if spec.generation == 2:
+                    session.on_activate = lambda: (_ for _ in ()).throw(
+                        RuntimeError("fake activation failed")
+                    )
+                return session
+
+        factory = _ActivationFailingFactory()
+        coordinator = AppCoordinator(factory, session_id_factory=_session_id)
+
+        first = coordinator.select_symbol("sh.600000")
+        old_live = first.live_session
+        assert old_live is not None
+        old_session = factory.created[0]
+
+        with self.assertRaises(CoordinatorStateError):
+            coordinator.retry_live()
+
+        snapshot = coordinator.snapshot
+        self.assertEqual(snapshot.live_session, old_live)
+        self.assertFalse(old_session.retired)
+        self.assertEqual(old_session.retire_count, 0)
+        self.assertEqual(len(factory.created), 2)
+        self.assertTrue(factory.created[1].retired)
+        self.assertEqual(factory.created[1].retire_count, 1)
+
+    def test_activation_failure_on_begin_replay_keeps_existing_state(self) -> None:
+        class _ActivationFailingFactory(_FakeSessionFactory):
+            def create_replay(self, spec: SessionSpec) -> _FakeSession:
+                session = super().create_replay(spec)
+                session.on_activate = lambda: (_ for _ in ()).throw(
+                    RuntimeError("fake activation failed")
+                )
+                return session
+
+        factory = _ActivationFailingFactory()
+        coordinator = AppCoordinator(factory, session_id_factory=_session_id)
+
+        selected = coordinator.select_symbol("sh.600000")
+        live = selected.live_session
+        assert live is not None
+        live_session = factory.created[0]
+        coordinator.set_mode("replay")
+
+        with self.assertRaises(CoordinatorStateError):
+            coordinator.begin_replay("2026-07-23")
+
+        snapshot = coordinator.snapshot
+        self.assertEqual(snapshot.live_session, live)
+        self.assertIsNone(snapshot.replay_session)
+        self.assertFalse(live_session.retired)
+        self.assertTrue(factory.created[1].retired)
+        self.assertEqual(factory.created[1].retire_count, 1)
 
     def test_retirement_runs_outside_state_lock(self) -> None:
         selected = self.coordinator.select_symbol("sh.600000")

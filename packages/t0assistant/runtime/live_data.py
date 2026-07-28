@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Protocol
 
 from packages.marketdata.provider_request_queue import ProviderRequestPriority
@@ -151,6 +151,7 @@ class LiveDataPreparator(LiveInitialInputPort):
         previous_close = _derive_previous_close(daily_history, preheat_bars)
         target_time = _select_target_time(
             observed_now=observed_now,
+            trade_date=session.trade_date,
             bars_1m=bars_1m,
             official_5m=official_5m,
             quote_snapshots=quote_snapshots,
@@ -292,6 +293,7 @@ class LiveDataPreparator(LiveInitialInputPort):
 def _select_target_time(
     *,
     observed_now: datetime,
+    trade_date: date,
     bars_1m: Sequence[Mapping[str, Any]],
     official_5m: Sequence[Mapping[str, Any]],
     quote_snapshots: Sequence[Mapping[str, Any]],
@@ -308,7 +310,9 @@ def _select_target_time(
     for row in quote_snapshots:
         timestamp = row.get("timestamp")
         if isinstance(timestamp, str):
-            candidates.append(parse_market_timestamp(timestamp))
+            parsed = parse_market_timestamp(timestamp)
+            if parsed.date() == trade_date:
+                candidates.append(parsed)
     if not candidates:
         return None
     latest = max(candidates)

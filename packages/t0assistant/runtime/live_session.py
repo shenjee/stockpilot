@@ -182,60 +182,64 @@ class LiveSession:
             if current_thread() is not self._thread:
                 while self._publishing_candidates:
                     self._publish_cond.wait()
-        self._emit_state("retired", "session_retired")
-        self._completed.set()
-
-    def _run_initial_load(self) -> None:
-        if self._retired.is_set():
-            return
-        self._emit_state("loading", "load_started")
         try:
-            prepared = self._initial_input_port.prepare(
-                self._spec,
-                minimum_preheat_5m=self.MINIMUM_PREHEAT_5M,
-            )
-            self._validate_prepared(prepared)
-            if self._retired.is_set():
-                return
-
-            pipeline = WorkbenchPipeline(
-                session=prepared.market_session,
-                market_input_port=prepared.market_input_port,
-                analyzer=self._analyzer,
-            )
-            result = pipeline.preview(prepared.target_time)
-            candidate = LiveSnapshotCandidate(
-                session_id=self._spec.session_id,
-                generation=self._spec.generation,
-                symbol=self._spec.symbol,
-                pipeline_result=result,
-            )
-            if self._retired.is_set():
-                return
-            hook = getattr(self, "_before_candidate_hook", None)
-            if callable(hook):
-                hook()
-            if self._retired.is_set():
-                return
-            if not self._begin_publish_candidate():
-                return
-            try:
-                self._on_snapshot_candidate(candidate)
-            finally:
-                self._end_publish_candidate()
-            if self._retired.is_set():
-                return
-            with self._lock:
-                self._last_candidate = candidate
-            self._emit_state("ready", "load_completed")
-        except BaseException as exc:
-            if self._retired.is_set():
-                return
-            with self._lock:
-                self._failure = exc
-            self._emit_state("failed", "operation_failed")
+            self._emit_state("retired", "session_retired")
         finally:
             self._completed.set()
+
+    def _run_initial_load(self) -> None:
+        try:
+            if self._retired.is_set():
+                return
+            self._emit_state("loading", "load_started")
+            try:
+                prepared = self._initial_input_port.prepare(
+                    self._spec,
+                    minimum_preheat_5m=self.MINIMUM_PREHEAT_5M,
+                )
+                self._validate_prepared(prepared)
+                if self._retired.is_set():
+                    return
+
+                pipeline = WorkbenchPipeline(
+                    session=prepared.market_session,
+                    market_input_port=prepared.market_input_port,
+                    analyzer=self._analyzer,
+                )
+                result = pipeline.preview(prepared.target_time)
+                candidate = LiveSnapshotCandidate(
+                    session_id=self._spec.session_id,
+                    generation=self._spec.generation,
+                    symbol=self._spec.symbol,
+                    pipeline_result=result,
+                )
+                if self._retired.is_set():
+                    return
+                self._before_publish_candidate()
+                if self._retired.is_set():
+                    return
+                if not self._begin_publish_candidate():
+                    return
+                try:
+                    self._on_snapshot_candidate(candidate)
+                finally:
+                    self._end_publish_candidate()
+                if self._retired.is_set():
+                    return
+                with self._lock:
+                    self._last_candidate = candidate
+                self._emit_state("ready", "load_completed")
+            except BaseException as exc:
+                if self._retired.is_set():
+                    return
+                with self._lock:
+                    self._failure = exc
+                self._emit_state("failed", "operation_failed")
+        finally:
+            self._completed.set()
+
+    def _before_publish_candidate(self) -> None:
+        return
 
     def _emit_state(self, state: str, reason: str) -> None:
         callback = self._on_state_change
@@ -244,7 +248,10 @@ class LiveSession:
                 return
             self._state = state
         if callback is not None:
-            callback(state, reason)
+            try:
+                callback(state, reason)
+            except Exception:
+                return
 
     def _begin_publish_candidate(self) -> bool:
         with self._publish_lock:

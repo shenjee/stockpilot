@@ -253,6 +253,49 @@ class LiveDataPreparatorTests(unittest.TestCase):
         ):
             preparator.prepare(self.spec, minimum_preheat_5m=2)
 
+    def test_prepare_ignores_quote_outside_current_trade_date(self) -> None:
+        market_data = _FakeMarketData(
+            {
+                ("5m", "2026-07-23"): [
+                    _bar("2026-07-23 14:55:00", 10.0, 10.1, 9.9, 10.02, 100, 1002),
+                ],
+                ("5m", "2026-07-22"): [
+                    _bar("2026-07-22 15:00:00", 9.96, 10.0, 9.94, 10.0, 160, 1600),
+                ],
+                ("day", None): [
+                    _bar("2026-07-23", 10.0, 10.1, 9.9, 10.1, 5400, 54540),
+                ],
+            }
+        )
+        quote_reader = _FakeQuoteReader(
+            {
+                "timestamp": "2026-07-23 15:00:00",
+                "latest_price": 10.13,
+                "change_percent": 0.297,
+                "open": 10.1,
+                "high": 10.13,
+                "low": 10.05,
+                "previous_close": 10.1,
+                "volume": 120.0,
+                "amount": 1215.6,
+                "volume_ratio": 1.2,
+                "order_imbalance": None,
+                "turnover_rate": 0.03,
+            }
+        )
+        preparator = LiveDataPreparator(
+            market_data,
+            self.market_context,
+            quote_reader=quote_reader,
+            clock=lambda: datetime(2026, 7, 24, 9, 0, 0),
+        )
+
+        with self.assertRaisesRegex(
+            LiveDataUnavailableError,
+            "requires a quote or intraday bars",
+        ):
+            preparator.prepare(self.spec, minimum_preheat_5m=2)
+
     def test_prepare_skips_calendar_days_without_market_data(self) -> None:
         market_context = MarketContextService(
             ["2026-07-21", "2026-07-22", "2026-07-23", "2026-07-24"],
@@ -328,6 +371,55 @@ class LiveDataPreparatorTests(unittest.TestCase):
                 "2026-07-22 15:00:00",
                 "2026-07-23 14:55:00",
             ],
+        )
+        requested_days = [
+            call["start_date"]
+            for call in market_data.calls
+            if call["timeframe"] == "5m"
+        ]
+        self.assertEqual(requested_days[:2], ["2026-07-23", "2026-07-22"])
+
+    def test_prepare_skips_non_closed_preheat_bars_when_counting_minimum(self) -> None:
+        market_data = _FakeMarketData(
+            {
+                ("5m", "2026-07-23"): [
+                    _bar(
+                        "2026-07-23 14:50:00",
+                        10.0,
+                        10.1,
+                        9.9,
+                        10.02,
+                        100,
+                        1002,
+                        closed=False,
+                    ),
+                    _bar("2026-07-23 14:55:00", 10.02, 10.08, 10.0, 10.05, 120, 1206),
+                ],
+                ("5m", "2026-07-22"): [
+                    _bar("2026-07-22 14:55:00", 9.9, 10.0, 9.88, 9.96, 140, 1394.4),
+                    _bar("2026-07-22 15:00:00", 9.96, 10.0, 9.94, 10.0, 160, 1600),
+                ],
+                ("1m", "2026-07-24"): [
+                    _bar("2026-07-24 09:31:00", 10.1, 10.12, 10.05, 10.11, 80, 808.8),
+                ],
+                ("day", None): [
+                    _bar("2026-07-23", 10.0, 10.1, 9.9, 10.1, 5400, 54540),
+                ],
+            }
+        )
+        preparator = LiveDataPreparator(
+            market_data,
+            self.market_context,
+            quote_reader=_FakeQuoteReader(None),
+            clock=lambda: datetime(2026, 7, 24, 9, 31, 30),
+        )
+
+        prepared = preparator.prepare(self.spec, minimum_preheat_5m=2)
+        market_input = prepared.market_input_port.read(prepared.target_time)
+
+        self.assertEqual(
+            [bar["timestamp"] for bar in market_input.preheat_5m_bars],
+            ["2026-07-22 15:00:00", "2026-07-23 14:55:00"],
         )
         requested_days = [
             call["start_date"]

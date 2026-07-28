@@ -227,19 +227,25 @@ class LiveSessionTests(unittest.TestCase):
         release = Event()
         candidates = []
 
-        session = LiveSession(
+        def hook() -> None:
+            entered.set()
+            release.wait(timeout=1)
+
+        class _HookedLiveSession(LiveSession):
+            def __init__(self, *args, **kwargs) -> None:
+                super().__init__(*args, **kwargs)
+                self._hook = hook
+
+            def _before_publish_candidate(self) -> None:
+                self._hook()
+
+        session = _HookedLiveSession(
             self.spec,
             port,
             on_snapshot_candidate=candidates.append,
             analyzer=lambda bars, symbol: _chan(symbol),
             auto_start=False,
         )
-
-        def hook() -> None:
-            entered.set()
-            release.wait(timeout=1)
-
-        setattr(session, "_before_candidate_hook", hook)
         session.activate()
 
         self.assertTrue(entered.wait(timeout=1))
@@ -247,6 +253,45 @@ class LiveSessionTests(unittest.TestCase):
         release.set()
         self.assertTrue(session.wait_for_completion(timeout=1))
         self.assertEqual(candidates, [])
+
+    def test_state_callback_failure_does_not_block_completion(self) -> None:
+        port = _PreparedPort(self.prepared)
+        candidates = []
+
+        def bad_state(state: str, reason: str) -> None:
+            raise RuntimeError("state callback failed")
+
+        session = LiveSession(
+            self.spec,
+            port,
+            on_snapshot_candidate=candidates.append,
+            on_state_change=bad_state,
+            analyzer=lambda bars, symbol: _chan(symbol),
+        )
+
+        self.assertTrue(session.wait_for_completion(timeout=1))
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(session.state, "ready")
+        self.assertIsNone(session.failure)
+
+    def test_retire_state_callback_failure_still_completes(self) -> None:
+        port = _PreparedPort(self.prepared)
+
+        def bad_state(state: str, reason: str) -> None:
+            raise RuntimeError("state callback failed")
+
+        session = LiveSession(
+            self.spec,
+            port,
+            on_snapshot_candidate=lambda candidate: None,
+            on_state_change=bad_state,
+            analyzer=lambda bars, symbol: _chan(symbol),
+            auto_start=False,
+        )
+        session.retire()
+        self.assertTrue(session.wait_for_completion(timeout=0.2))
+        self.assertEqual(session.state, "retired")
+        self.assertIsNone(session.failure)
 
     def test_candidate_is_not_published_until_data_preparation_finishes(self) -> None:
         port = _BlockingPort(self.prepared)

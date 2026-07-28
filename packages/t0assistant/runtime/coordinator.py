@@ -207,12 +207,18 @@ class AppCoordinator:
             generation=generation,
             trade_date=None,
         )
+        retired: tuple[_ManagedSession | None, ...] = ()
+        prior_symbol: str | None = None
+        prior_live: _ManagedSession | None = None
+        prior_replay: _ManagedSession | None = None
         with self._lock:
             if self._revision != expected_revision:
                 conflict = True
-                retired = ()
             else:
                 conflict = False
+                prior_symbol = self._current_symbol
+                prior_live = self._live
+                prior_replay = self._replay
                 retired = (self._detach_replay(), self._detach_live())
                 self._current_symbol = resolved_symbol
                 self._live = replacement
@@ -225,7 +231,24 @@ class AppCoordinator:
                 "App state changed while creating the Live Session"
             )
 
-        self._activate_session(replacement)
+        try:
+            self._activate_session(replacement)
+        except Exception as exc:
+            owns_replacement = False
+            with self._lock:
+                if self._live is replacement:
+                    owns_replacement = True
+                    self._live = prior_live
+                    if self._current_symbol == resolved_symbol:
+                        self._current_symbol = prior_symbol
+                    if self._replay is None:
+                        self._replay = prior_replay
+                    self._revision += 1
+            if owns_replacement:
+                self._retire_sessions((replacement,))
+            raise CoordinatorStateError(
+                "Live Session activation failed"
+            ) from exc
         self._retire_sessions(retired)
         return snapshot
 
@@ -269,12 +292,14 @@ class AppCoordinator:
             generation=generation,
             trade_date=resolved_date,
         )
+        retired: tuple[_ManagedSession | None, ...] = ()
+        prior_replay: _ManagedSession | None = None
         with self._lock:
             if self._revision != expected_revision:
                 conflict = True
-                retired = ()
             else:
                 conflict = False
+                prior_replay = self._replay
                 retired = (self._detach_replay(),)
                 self._replay = replacement
                 self._revision += 1
@@ -286,7 +311,20 @@ class AppCoordinator:
                 "App state changed while creating the Replay Session"
             )
 
-        self._activate_session(replacement)
+        try:
+            self._activate_session(replacement)
+        except Exception as exc:
+            owns_replacement = False
+            with self._lock:
+                if self._replay is replacement:
+                    owns_replacement = True
+                    self._replay = prior_replay
+                    self._revision += 1
+            if owns_replacement:
+                self._retire_sessions((replacement,))
+            raise CoordinatorStateError(
+                "Replay Session activation failed"
+            ) from exc
         self._retire_sessions(retired)
         return snapshot
 
@@ -308,12 +346,14 @@ class AppCoordinator:
             generation=generation,
             trade_date=None,
         )
+        retired: tuple[_ManagedSession | None, ...] = ()
+        prior_live: _ManagedSession | None = None
         with self._lock:
             if self._revision != expected_revision:
                 conflict = True
-                retired = ()
             else:
                 conflict = False
+                prior_live = self._live
                 retired = (self._detach_live(),)
                 self._live = replacement
                 self._revision += 1
@@ -325,7 +365,20 @@ class AppCoordinator:
                 "App state changed while rebuilding the Live Session"
             )
 
-        self._activate_session(replacement)
+        try:
+            self._activate_session(replacement)
+        except Exception as exc:
+            owns_replacement = False
+            with self._lock:
+                if self._live is replacement:
+                    owns_replacement = True
+                    self._live = prior_live
+                    self._revision += 1
+            if owns_replacement:
+                self._retire_sessions((replacement,))
+            raise CoordinatorStateError(
+                "Live Session activation failed"
+            ) from exc
         self._retire_sessions(retired)
         return snapshot
 
