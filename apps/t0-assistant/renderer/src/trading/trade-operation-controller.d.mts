@@ -1,11 +1,13 @@
+export type TradeCommand = "create" | "update" | "delete";
+
 export interface TradePendingOp {
-  command: "create" | "update" | "delete";
+  command: TradeCommand;
   retry: () => Promise<void>;
 }
 
 export interface TradeOperationFailure {
   operationId: string | null;
-  command: "create" | "update" | "delete" | null;
+  command: TradeCommand | null;
   message: string;
   retry: (() => Promise<void>) | null;
   error: unknown;
@@ -20,10 +22,18 @@ export class TradeOperationController {
     message: string,
     error: unknown,
   ): boolean;
-  failUntracked(message: string, error: unknown): void;
+  failUntracked(
+    operationId: string | null,
+    message: string,
+    error: unknown,
+  ): void;
+  readonly failures: TradeOperationFailure[];
   readonly failure: TradeOperationFailure | null;
   hasPending(): boolean;
-  dismissFailure(): void;
+  dismissFailure(operationId: string): void;
+  dismissAllFailures(): void;
   clearPending(): void;
-  subscribe(listener: (failure: TradeOperationFailure | null) => void): () => void;
+  subscribe(
+    listener: (failures: TradeOperationFailure[]) => void,
+  ): () => void;
 }

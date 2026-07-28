@@ -196,7 +196,9 @@ export function TradeDrawer({
         setReloadKey((k) => k + 1);
       }
     } catch (error) {
-      tradeOpController.failUntracked(errorMessage(error, "成交保存失败"), error);
+      // Sync rejection: no operation_id (the command threw before returning
+      // one). Surface it as an untracked failure with a null retry.
+      tradeOpController.failUntracked(null, errorMessage(error, "成交保存失败"), error);
     }
   }
 
@@ -213,7 +215,7 @@ export function TradeDrawer({
         setReloadKey((k) => k + 1);
       }
     } catch (error) {
-      tradeOpController.failUntracked(errorMessage(error, "成交保存失败"), error);
+      tradeOpController.failUntracked(null, errorMessage(error, "成交保存失败"), error);
     }
   }
 
@@ -231,6 +233,7 @@ export function TradeDrawer({
       }
     } catch (error) {
       tradeOpController.failUntracked(
+        null,
         errorMessage(error, "成交记录删除失败"),
         error,
       );

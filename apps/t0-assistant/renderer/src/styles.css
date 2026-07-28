@@ -142,6 +142,17 @@ button { color: inherit; }
   font-size: 17px;
   line-height: 1;
 }
+.trade-feedback {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+.trade-feedback-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.trade-feedback-item span { flex: 1; }
 .workspace {
   position: relative;
   display: grid;

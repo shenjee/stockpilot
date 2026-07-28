@@ -203,13 +203,16 @@ export function App() {
   if (tradeOpController.current === null) {
     tradeOpController.current = new TradeOperationController();
   }
-  const [tradeFailure, setTradeFailure] = useState<TradeOperationFailure | null>(
-    null,
+  // Multiple trade operations may fail concurrently; the controller keeps them
+  // all (keyed by operation id) so a later failure never overwrites an earlier
+  // one's retry. The App renders every failure, each with its own retry/dismiss.
+  const [tradeFailures, setTradeFailures] = useState<TradeOperationFailure[]>(
+    [],
   );
   useEffect(() => {
     const controller = tradeOpController.current;
     if (!controller) return;
-    return controller.subscribe((failure) => setTradeFailure(failure));
+    return controller.subscribe((failures) => setTradeFailures(failures));
   }, []);
 
   useEffect(() => {
@@ -404,9 +407,11 @@ export function App() {
               controller.fail(opId, message, error);
             } else {
               // Untracked (e.g. event arrived before the op was registered, or
-              // the Drawer unmounted and dropped tracking): still surface it so
-              // it is not silently swallowed. Retry is null in this case.
-              controller.failUntracked(message, error);
+              // the Drawer unmounted and dropped tracking). Pass the opId so a
+              // later track() for the same id can merge in the retry; until
+              // then the failure is visible with a null retry. Never silently
+              // dropped.
+              controller.failUntracked(opId, message, error);
             }
           }
           applyLiveEvent();
@@ -1099,28 +1104,48 @@ export function App() {
         </section>
       )}
 
-      {tradeFailure && (
-        <section className="feedback-banner trade-feedback" role="status">
-          <span>{tradeFailure.message}</span>
-          {tradeFailure.retry && (
-            <button
-              type="button"
-              onClick={() => {
-                const retry = tradeFailure.retry;
-                tradeOpController.current?.dismissFailure();
-                if (retry) void retry();
-              }}
-            >
-              重试
-            </button>
-          )}
-          <button
-            type="button"
-            aria-label="关闭提示"
-            onClick={() => tradeOpController.current?.dismissFailure()}
-          >
-            ×
-          </button>
+      {tradeFailures.length > 0 && (
+        <section
+          className="feedback-banner trade-feedback"
+          role="status"
+          aria-label="成交操作提示"
+        >
+          {tradeFailures.map((failure) => {
+            const dismissKey = failure.operationId ?? "";
+            return (
+              <div className="trade-feedback-item" key={dismissKey}>
+                <span>{failure.message}</span>
+                {failure.retry && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const retry = failure.retry;
+                      // Dismiss before retrying so the banner doesn't persist
+                      // while the retry is in flight; a fresh failure is
+                      // tracked by the controller if it fails again.
+                      if (dismissKey) {
+                        tradeOpController.current?.dismissFailure(dismissKey);
+                      }
+                      if (retry) void retry();
+                    }}
+                  >
+                    重试
+                  </button>
+                )}
+                <button
+                  type="button"
+                  aria-label="关闭提示"
+                  onClick={() => {
+                    if (dismissKey) {
+                      tradeOpController.current?.dismissFailure(dismissKey);
+                    }
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
         </section>
       )}
 
