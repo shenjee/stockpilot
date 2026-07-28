@@ -83,12 +83,12 @@ test("a trade operation_failed is owned by the App-level controller, not the gen
   assert.equal(isTradeScopedError(event), true);
 
   // (2) The App routes the failure to the controller, which claims it.
-  const claimed = controller.fail(
+  const failureId = controller.fail(
     "op-create-1",
     event.payload.message,
     event.payload,
   );
-  assert.equal(claimed, true);
+  assert.equal(typeof failureId, "string");
   assert.equal(controller.failure !== null, true);
   assert.equal(controller.failure.command, "create");
 
@@ -116,7 +116,7 @@ test("a non-trade operation_failed is NOT claimed by the trade ownership path", 
   });
   assert.equal(
     controller.fail("op-live-1", "x", liveEvent.payload),
-    false,
+    null,
   );
   assert.equal(controller.failure, null);
 });

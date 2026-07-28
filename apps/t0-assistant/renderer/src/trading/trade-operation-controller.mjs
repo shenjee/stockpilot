@@ -21,9 +21,16 @@
  *     keyed by `operation_id` with a null retry; a later `track` for the same
  *     id MERGES the retry/command into the cached failure instead of re-adding
  *     the op to pending, so the user can retry once the context arrives.
+ *   - Dually, a `trades_changed` (success) may arrive before the accepted
+ *     response. `resolve` caches the resolved id; a later `track` for that id
+ *     consumes the cached resolution and does NOT add the op to pending (it
+ *     already succeeded) - no ghost pending.
  *   - Multiple trade operations may be pending concurrently. Failures are kept
- *     in a `Map<operationId, failure>` so a later failure never overwrites an
+ *     in a `Map<failureId, failure>` so a later failure never overwrites an
  *     earlier one's retry; the UI surfaces all of them.
+ *   - Every failure has a stable, unique `failureId` DISTINCT from
+ *     `operationId`, so an anonymous failure (no operation_id, e.g. a sync
+ *     rejection) can still be dismissed and given a distinct React key.
  *
  * The registry is plain JS (no React) so it is unit-testable without a DOM.
  * A small subscribe/notify lets an App-level React wrapper render a persistent
@@ -35,37 +42,59 @@ export class TradeOperationController {
     /** @type {Map<string, {command: string, retry: () => Promise<void>}>} */
     this._pending = new Map();
     /**
-     * Failures keyed by operation_id (null id for a truly anonymous failure).
-     * A Map (not a single slot) so concurrent failures all survive.
+     * Failures keyed by a stable `failureId` (NOT operationId). A Map so
+     * concurrent failures all survive.
      * @type {Map<string, TradeOperationFailure>}
      */
     this._failures = new Map();
+    /** operation_id -> failureId, for merging a later track() into an early failure. */
+    this._failureIdByOp = new Map();
+    /** Cached operation ids that resolved (success) before track() was called. */
+    this._resolved = new Set();
+    /** Monotonic counter for failureId generation. */
+    this._failureSeq = 0;
     /** @type {Set<(failures: TradeOperationFailure[]) => void>} */
     this._listeners = new Set();
-    /** Monotonic counter so each anonymous failure gets a distinct key. */
-    this._anonymousSeq = 0;
+  }
+
+  _nextFailureId() {
+    this._failureSeq += 1;
+    return `failure-${this._failureSeq}`;
   }
 
   /**
    * Track a pending async trade operation. The `retry` closure must re-run the
    * original create/update/delete and is invoked if the operation later fails.
    *
-   * If a failure for this `operation_id` is already cached (the
-   * `operation_failed` arrived before the accepted response), the retry/command
-   * are MERGED into that failure and the op is NOT added to pending - it has
-   * already failed, so it must not linger as in-flight.
+   * Reconciliation with early events:
+   *   - If a failure for this `operation_id` is already cached (the
+   *     `operation_failed` arrived first), the retry/command are MERGED into
+   *     that failure and the op is NOT added to pending (it already failed).
+   *   - If this `operation_id` was already resolved (a `trades_changed`
+   *     arrived first), the cached resolution is consumed and the op is NOT
+   *     added to pending (it already succeeded) - no ghost pending.
    */
   track(operationId, { command, retry }) {
     if (typeof operationId !== "string" || operationId.length === 0) return;
     if (typeof retry !== "function") return;
 
-    const cached = this._failures.get(operationId);
-    if (cached) {
+    if (this._resolved.has(operationId)) {
+      // Early success: the op already completed. Drop the cached resolution
+      // and do not add to pending.
+      this._resolved.delete(operationId);
+      return;
+    }
+
+    const failureId = this._failureIdByOp.get(operationId);
+    if (failureId) {
       // Early-fail merge: the op already failed before it was tracked. Fill in
       // the retry/command so the user can act, and keep it out of pending.
-      cached.command = command;
-      cached.retry = retry;
-      this._notify();
+      const cached = this._failures.get(failureId);
+      if (cached) {
+        cached.command = command;
+        cached.retry = retry;
+        this._notify();
+      }
       return;
     }
 
@@ -81,69 +110,96 @@ export class TradeOperationController {
   /**
    * Resolve (success) a pending operation by id - e.g. when `trades_changed`
    * carries the originating `operation_id`. Clears the pending op AND any
-   * cached failure for the same id (a success supersedes a stale failure).
-   * Returns true if a pending op or cached failure was resolved. Notifies
-   * listeners only when a failure was actually cleared (a pending-op success is
-   * not a failure event).
+   * cached failure for the same id (a success supersedes a stale failure). If
+   * the op is not yet tracked (the event arrived before the accepted
+   * response), the id is cached so a later `track` consumes it instead of
+   * adding a ghost pending. Returns true if a pending op or cached failure was
+   * resolved (or the id was newly cached as resolved).
    */
   resolve(operationId) {
     if (typeof operationId !== "string" || operationId.length === 0) {
       return false;
     }
     const hadPending = this._pending.delete(operationId);
-    const clearedFailure = this._failures.delete(operationId);
-    if (clearedFailure) this._notify();
+    const failureId = this._failureIdByOp.get(operationId);
+    let clearedFailure = false;
+    if (failureId) {
+      this._failures.delete(failureId);
+      this._failureIdByOp.delete(operationId);
+      clearedFailure = true;
+    }
+    if (clearedFailure) {
+      this._notify();
+    } else if (!hadPending) {
+      // Not yet tracked: cache the resolution so a later track() reconciles.
+      // Return true to signal the id was newly cached as resolved.
+      this._resolved.add(operationId);
+      return true;
+    }
     return hadPending || clearedFailure;
   }
 
   /**
    * Record a trade-operation failure for a tracked pending op. The op leaves
    * pending and its failure (with the captured retry) is published. Returns
-   * true if the op was tracked, false if it was untracked (use `failUntracked`
-   * to surface an untracked failure instead).
+   * the new failure's `failureId`, or `null` if the op was untracked (use
+   * `failUntracked` to surface an untracked failure instead).
    */
   fail(operationId, message, error) {
     if (typeof operationId !== "string" || operationId.length === 0) {
-      return false;
+      return null;
     }
     const op = this._pending.get(operationId);
-    if (!op) return false;
+    if (!op) return null;
     this._pending.delete(operationId);
-    this._failures.set(operationId, {
+    // A stale cached resolution is superseded by the failure.
+    this._resolved.delete(operationId);
+    const failureId = this._nextFailureId();
+    this._failures.set(failureId, {
+      failureId,
       operationId,
       command: op.command,
       message: typeof message === "string" ? message : "成交操作未完成",
       retry: op.retry,
       error,
     });
+    this._failureIdByOp.set(operationId, failureId);
     this._notify();
-    return true;
+    return failureId;
   }
 
   /**
-   * Surface a trade failure that has no tracked pending op. This covers the
-   * cross-channel timing case where `operation_failed` arrives before the
-   * accepted response is processed. The `operation_id` (when present) is kept
-   * so a later `track` for the same id can merge in the retry; until then the
-   * failure is visible with a null retry. The failure is never silently
-   * dropped.
+   * Surface a trade failure that has no tracked pending op. Covers:
+   *   - cross-channel timing: `operation_failed` arrives before the accepted
+   *     response. The `operation_id` (when present) is kept so a later `track`
+   *     for the same id can merge in the retry; until then the failure is
+   *     visible with a null retry.
+   *   - a sync rejection (no `operation_id`). `command`/`retry` may be supplied
+   *     so the user can retry the failed create/update/delete again.
+   * The failure is never silently dropped. Returns the new failure's
+   * `failureId`.
    */
-  failUntracked(operationId, message, error) {
-    const id =
-      typeof operationId === "string" && operationId.length > 0
-        ? operationId
-        : `__anonymous_${this._anonymousSeq++}`;
-    // If an op with this id is somehow still pending (defensive), drop it so
-    // the failure is the authoritative state for that id.
-    this._pending.delete(operationId ?? "");
-    this._failures.set(id, {
-      operationId: typeof operationId === "string" ? operationId : null,
-      command: null,
+  failUntracked(operationId, message, error, { command = null, retry = null } = {}) {
+    const failureId = this._nextFailureId();
+    const hasOpId =
+      typeof operationId === "string" && operationId.length > 0;
+    if (hasOpId) {
+      // If an op with this id is somehow still pending (defensive), drop it so
+      // the failure is the authoritative state for that id.
+      this._pending.delete(operationId);
+      this._resolved.delete(operationId);
+      this._failureIdByOp.set(operationId, failureId);
+    }
+    this._failures.set(failureId, {
+      failureId,
+      operationId: hasOpId ? operationId : null,
+      command: command,
       message: typeof message === "string" ? message : "成交操作未完成",
-      retry: null,
+      retry: typeof retry === "function" ? retry : null,
       error,
     });
     this._notify();
+    return failureId;
   }
 
   /** All current failures (oldest first), for the App banner. */
@@ -162,17 +218,23 @@ export class TradeOperationController {
     return this._pending.size > 0;
   }
 
-  /** Dismiss one failure by operation id (or anonymous key). */
-  dismissFailure(operationId) {
-    if (this._failures.delete(operationId)) {
-      this._notify();
+  /** Dismiss one failure by its stable `failureId`. */
+  dismissFailure(failureId) {
+    if (typeof failureId !== "string" || failureId.length === 0) return;
+    const removed = this._failures.get(failureId);
+    if (!removed) return;
+    this._failures.delete(failureId);
+    if (removed.operationId) {
+      this._failureIdByOp.delete(removed.operationId);
     }
+    this._notify();
   }
 
   /** Clear all failures (dismiss all). Pending ops are untouched. */
   dismissAllFailures() {
     if (this._failures.size === 0) return;
     this._failures.clear();
+    this._failureIdByOp.clear();
     this._notify();
   }
 
@@ -205,7 +267,8 @@ export class TradeOperationController {
 
 /**
  * @typedef {Object} TradeOperationFailure
- * @property {string | null} operationId
+ * @property {string} failureId - stable, unique id for UI keying/dismiss
+ * @property {string | null} operationId - backend operation_id, or null
  * @property {string | null} command
  * @property {string} message
  * @property {(() => Promise<void>) | null} retry

@@ -1110,42 +1110,35 @@ export function App() {
           role="status"
           aria-label="成交操作提示"
         >
-          {tradeFailures.map((failure) => {
-            const dismissKey = failure.operationId ?? "";
-            return (
-              <div className="trade-feedback-item" key={dismissKey}>
-                <span>{failure.message}</span>
-                {failure.retry && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const retry = failure.retry;
-                      // Dismiss before retrying so the banner doesn't persist
-                      // while the retry is in flight; a fresh failure is
-                      // tracked by the controller if it fails again.
-                      if (dismissKey) {
-                        tradeOpController.current?.dismissFailure(dismissKey);
-                      }
-                      if (retry) void retry();
-                    }}
-                  >
-                    重试
-                  </button>
-                )}
+          {tradeFailures.map((failure) => (
+            <div className="trade-feedback-item" key={failure.failureId}>
+              <span>{failure.message}</span>
+              {failure.retry && (
                 <button
                   type="button"
-                  aria-label="关闭提示"
                   onClick={() => {
-                    if (dismissKey) {
-                      tradeOpController.current?.dismissFailure(dismissKey);
-                    }
+                    const retry = failure.retry;
+                    // Dismiss before retrying so the banner doesn't persist
+                    // while the retry is in flight; a fresh failure is tracked
+                    // by the controller if it fails again.
+                    tradeOpController.current?.dismissFailure(failure.failureId);
+                    if (retry) void retry();
                   }}
                 >
-                  ×
+                  重试
                 </button>
-              </div>
-            );
-          })}
+              )}
+              <button
+                type="button"
+                aria-label="关闭提示"
+                onClick={() =>
+                  tradeOpController.current?.dismissFailure(failure.failureId)
+                }
+              >
+                ×
+              </button>
+            </div>
+          ))}
         </section>
       )}
 

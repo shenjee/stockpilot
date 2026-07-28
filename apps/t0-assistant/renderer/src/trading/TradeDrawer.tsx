@@ -197,8 +197,14 @@ export function TradeDrawer({
       }
     } catch (error) {
       // Sync rejection: no operation_id (the command threw before returning
-      // one). Surface it as an untracked failure with a null retry.
-      tradeOpController.failUntracked(null, errorMessage(error, "成交保存失败"), error);
+      // one). Surface it as an untracked failure, but carry command/retry so
+      // the user can retry the failed create again.
+      tradeOpController.failUntracked(
+        null,
+        errorMessage(error, "成交保存失败"),
+        error,
+        { command: "create", retry: () => reRunCreate(draft) },
+      );
     }
   }
 
@@ -215,7 +221,12 @@ export function TradeDrawer({
         setReloadKey((k) => k + 1);
       }
     } catch (error) {
-      tradeOpController.failUntracked(null, errorMessage(error, "成交保存失败"), error);
+      tradeOpController.failUntracked(
+        null,
+        errorMessage(error, "成交保存失败"),
+        error,
+        { command: "update", retry: () => reRunUpdate(tradeId, draft) },
+      );
     }
   }
 
@@ -236,6 +247,7 @@ export function TradeDrawer({
         null,
         errorMessage(error, "成交记录删除失败"),
         error,
+        { command: "delete", retry: () => reRunDelete(tradeId) },
       );
     }
   }

@@ -6,6 +6,8 @@ export interface TradePendingOp {
 }
 
 export interface TradeOperationFailure {
+  /** Stable, unique id for UI keying/dismiss (distinct from operationId). */
+  failureId: string;
   operationId: string | null;
   command: TradeCommand | null;
   message: string;
@@ -21,16 +23,17 @@ export class TradeOperationController {
     operationId: string,
     message: string,
     error: unknown,
-  ): boolean;
+  ): string | null;
   failUntracked(
     operationId: string | null,
     message: string,
     error: unknown,
-  ): void;
+    options?: { command?: TradeCommand | null; retry?: (() => Promise<void>) | null },
+  ): string;
   readonly failures: TradeOperationFailure[];
   readonly failure: TradeOperationFailure | null;
   hasPending(): boolean;
-  dismissFailure(operationId: string): void;
+  dismissFailure(failureId: string): void;
   dismissAllFailures(): void;
   clearPending(): void;
   subscribe(
