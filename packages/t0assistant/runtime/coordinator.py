@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from enum import Enum
 import re
-from threading import RLock
+from threading import Lock, RLock
 from typing import Callable, Protocol
 from uuid import uuid4
 
@@ -178,6 +178,7 @@ class AppCoordinator:
         self._session_factory = session_factory
         self._session_id_factory = session_id_factory
         self._lock = RLock()
+        self._transition_lock = Lock()
         self._current_symbol: str | None = None
         self._mode = AppMode.LIVE
         self._generation = 0
@@ -195,11 +196,12 @@ class AppCoordinator:
         """Select the App stock and create its background Live Session."""
 
         resolved_symbol = _validate_symbol(symbol)
-        with self._lock:
-            if resolved_symbol == self._current_symbol:
-                return self._snapshot_unlocked()
-            expected_revision = self._revision
-            generation = self._reserve_generation_unlocked()
+        with self._transition_lock:
+            with self._lock:
+                if resolved_symbol == self._current_symbol:
+                    return self._snapshot_unlocked()
+                expected_revision = self._revision
+                generation = self._reserve_generation_unlocked()
 
         replacement = self._create_session(
             SessionType.LIVE,
@@ -207,90 +209,92 @@ class AppCoordinator:
             generation=generation,
             trade_date=None,
         )
-        retired: tuple[_ManagedSession | None, ...] = ()
-        prior_symbol: str | None = None
-        prior_live: _ManagedSession | None = None
-        prior_replay: _ManagedSession | None = None
-        with self._lock:
-            if self._revision != expected_revision:
-                conflict = True
-            else:
-                conflict = False
-                prior_symbol = self._current_symbol
-                prior_live = self._live
-                prior_replay = self._replay
-                retired = (self._detach_replay(), self._detach_live())
-                self._current_symbol = resolved_symbol
-                self._live = replacement
-                self._revision += 1
-                snapshot = self._snapshot_unlocked()
-
-        if conflict:
-            self._retire_sessions((replacement,))
-            raise CoordinatorStateError(
-                "App state changed while creating the Live Session"
-            )
-
-        try:
-            self._activate_session(replacement)
-        except Exception as exc:
-            cleanup: tuple[_ManagedSession | None, ...] = ()
+        with self._transition_lock:
+            retired: tuple[_ManagedSession | None, ...] = ()
+            prior_symbol: str | None = None
+            prior_live: _ManagedSession | None = None
+            prior_replay: _ManagedSession | None = None
             with self._lock:
-                if self._live is replacement:
-                    self._live = prior_live
-                    if self._current_symbol == resolved_symbol:
-                        self._current_symbol = prior_symbol
-
-                    removed_replay: _ManagedSession | None = None
-                    if self._replay is not None:
-                        replay_symbol = self._replay.spec.symbol
-                        current_symbol = self._current_symbol
-                        replay_matches_symbol = (
-                            current_symbol is not None
-                            and replay_symbol == current_symbol
-                        )
-                        if self._mode is AppMode.LIVE or not replay_matches_symbol:
-                            removed_replay = self._detach_replay()
-
-                    restored_prior_replay = False
-                    if (
-                        self._replay is None
-                        and prior_replay is not None
-                        and self._mode is AppMode.REPLAY
-                        and self._current_symbol == prior_symbol
-                    ):
-                        self._replay = prior_replay
-                        restored_prior_replay = True
-
+                if self._revision != expected_revision:
+                    conflict = True
+                else:
+                    conflict = False
+                    prior_symbol = self._current_symbol
+                    prior_live = self._live
+                    prior_replay = self._replay
+                    retired = (self._detach_replay(), self._detach_live())
+                    self._current_symbol = resolved_symbol
+                    self._live = replacement
                     self._revision += 1
-                    cleanup = (
-                        replacement,
-                        removed_replay,
-                        None if restored_prior_replay else prior_replay,
-                    )
-            self._retire_sessions(self._unique_sessions(cleanup))
-            raise CoordinatorStateError(
-                "Live Session activation failed"
-            ) from exc
-        self._retire_sessions(retired)
-        return snapshot
+                    snapshot = self._snapshot_unlocked()
+
+            if conflict:
+                self._retire_sessions((replacement,))
+                raise CoordinatorStateError(
+                    "App state changed while creating the Live Session"
+                )
+
+            try:
+                self._activate_session(replacement)
+            except Exception as exc:
+                cleanup: tuple[_ManagedSession | None, ...] = ()
+                with self._lock:
+                    if self._live is replacement:
+                        self._live = prior_live
+                        if self._current_symbol == resolved_symbol:
+                            self._current_symbol = prior_symbol
+
+                        removed_replay: _ManagedSession | None = None
+                        if self._replay is not None:
+                            replay_symbol = self._replay.spec.symbol
+                            current_symbol = self._current_symbol
+                            replay_matches_symbol = (
+                                current_symbol is not None
+                                and replay_symbol == current_symbol
+                            )
+                            if self._mode is AppMode.LIVE or not replay_matches_symbol:
+                                removed_replay = self._detach_replay()
+
+                        restored_prior_replay = False
+                        if (
+                            self._replay is None
+                            and prior_replay is not None
+                            and self._mode is AppMode.REPLAY
+                            and self._current_symbol == prior_symbol
+                        ):
+                            self._replay = prior_replay
+                            restored_prior_replay = True
+
+                        self._revision += 1
+                        cleanup = (
+                            replacement,
+                            removed_replay,
+                            None if restored_prior_replay else prior_replay,
+                        )
+                self._retire_sessions(self._unique_sessions(cleanup))
+                raise CoordinatorStateError(
+                    "Live Session activation failed"
+                ) from exc
+            self._retire_sessions(retired)
+            return snapshot
 
     def set_mode(self, mode: AppMode | str) -> CoordinatorSnapshot:
         """Switch the visible App mode without stopping background Live."""
 
         resolved_mode = _validate_mode(mode)
-        with self._lock:
-            if resolved_mode is self._mode:
-                return self._snapshot_unlocked()
-            retired: tuple[_ManagedSession | None, ...] = ()
-            if resolved_mode is AppMode.LIVE:
-                retired = (self._detach_replay(),)
-            self._mode = resolved_mode
-            self._revision += 1
-            snapshot = self._snapshot_unlocked()
+        with self._transition_lock:
+            with self._lock:
+                if resolved_mode is self._mode:
+                    return self._snapshot_unlocked()
+                retired: tuple[_ManagedSession | None, ...] = ()
+                if resolved_mode is AppMode.LIVE:
+                    retired = (self._detach_replay(),)
+                self._mode = resolved_mode
+                self._revision += 1
+                snapshot = self._snapshot_unlocked()
 
-        self._retire_sessions(retired)
-        return snapshot
+            self._retire_sessions(retired)
+            return snapshot
 
     def begin_replay(self, trade_date: date | str) -> CoordinatorSnapshot:
         """Create a fresh one-shot Replay for the current stock and date."""
@@ -315,41 +319,42 @@ class AppCoordinator:
             generation=generation,
             trade_date=resolved_date,
         )
-        retired: tuple[_ManagedSession | None, ...] = ()
-        prior_replay: _ManagedSession | None = None
-        with self._lock:
-            if self._revision != expected_revision:
-                conflict = True
-            else:
-                conflict = False
-                prior_replay = self._replay
-                retired = (self._detach_replay(),)
-                self._replay = replacement
-                self._revision += 1
-                snapshot = self._snapshot_unlocked()
-
-        if conflict:
-            self._retire_sessions((replacement,))
-            raise CoordinatorStateError(
-                "App state changed while creating the Replay Session"
-            )
-
-        try:
-            self._activate_session(replacement)
-        except Exception as exc:
-            owns_replacement = False
+        with self._transition_lock:
+            retired: tuple[_ManagedSession | None, ...] = ()
+            prior_replay: _ManagedSession | None = None
             with self._lock:
-                if self._replay is replacement:
-                    owns_replacement = True
-                    self._replay = prior_replay
+                if self._revision != expected_revision:
+                    conflict = True
+                else:
+                    conflict = False
+                    prior_replay = self._replay
+                    retired = (self._detach_replay(),)
+                    self._replay = replacement
                     self._revision += 1
-            if owns_replacement:
+                    snapshot = self._snapshot_unlocked()
+
+            if conflict:
                 self._retire_sessions((replacement,))
-            raise CoordinatorStateError(
-                "Replay Session activation failed"
-            ) from exc
-        self._retire_sessions(retired)
-        return snapshot
+                raise CoordinatorStateError(
+                    "App state changed while creating the Replay Session"
+                )
+
+            try:
+                self._activate_session(replacement)
+            except Exception as exc:
+                owns_replacement = False
+                with self._lock:
+                    if self._replay is replacement:
+                        owns_replacement = True
+                        self._replay = prior_replay
+                        self._revision += 1
+                if owns_replacement:
+                    self._retire_sessions((replacement,))
+                raise CoordinatorStateError(
+                    "Replay Session activation failed"
+                ) from exc
+            self._retire_sessions(retired)
+            return snapshot
 
     def retry_live(self) -> CoordinatorSnapshot:
         """Retire and rebuild Live for the same stock with a new generation."""
@@ -369,54 +374,56 @@ class AppCoordinator:
             generation=generation,
             trade_date=None,
         )
-        retired: tuple[_ManagedSession | None, ...] = ()
-        prior_live: _ManagedSession | None = None
-        with self._lock:
-            if self._revision != expected_revision:
-                conflict = True
-            else:
-                conflict = False
-                prior_live = self._live
-                retired = (self._detach_live(),)
-                self._live = replacement
-                self._revision += 1
-                snapshot = self._snapshot_unlocked()
-
-        if conflict:
-            self._retire_sessions((replacement,))
-            raise CoordinatorStateError(
-                "App state changed while rebuilding the Live Session"
-            )
-
-        try:
-            self._activate_session(replacement)
-        except Exception as exc:
-            owns_replacement = False
+        with self._transition_lock:
+            retired: tuple[_ManagedSession | None, ...] = ()
+            prior_live: _ManagedSession | None = None
             with self._lock:
-                if self._live is replacement:
-                    owns_replacement = True
-                    self._live = prior_live
+                if self._revision != expected_revision:
+                    conflict = True
+                else:
+                    conflict = False
+                    prior_live = self._live
+                    retired = (self._detach_live(),)
+                    self._live = replacement
                     self._revision += 1
-            if owns_replacement:
+                    snapshot = self._snapshot_unlocked()
+
+            if conflict:
                 self._retire_sessions((replacement,))
-            raise CoordinatorStateError(
-                "Live Session activation failed"
-            ) from exc
-        self._retire_sessions(retired)
-        return snapshot
+                raise CoordinatorStateError(
+                    "App state changed while rebuilding the Live Session"
+                )
+
+            try:
+                self._activate_session(replacement)
+            except Exception as exc:
+                owns_replacement = False
+                with self._lock:
+                    if self._live is replacement:
+                        owns_replacement = True
+                        self._live = prior_live
+                        self._revision += 1
+                if owns_replacement:
+                    self._retire_sessions((replacement,))
+                raise CoordinatorStateError(
+                    "Live Session activation failed"
+                ) from exc
+            self._retire_sessions(retired)
+            return snapshot
 
     def retire_all(self) -> CoordinatorSnapshot:
         """Retire all Sessions and retry prior retirement failures."""
 
-        with self._lock:
-            retired = (self._detach_replay(), self._detach_live())
-            self._revision += 1
-            snapshot = self._snapshot_unlocked()
+        with self._transition_lock:
+            with self._lock:
+                retired = (self._detach_replay(), self._detach_live())
+                self._revision += 1
+                snapshot = self._snapshot_unlocked()
 
-        failures = self._retire_sessions(retired, include_pending=True)
-        if failures:
-            raise CoordinatorRetirementError(failures)
-        return snapshot
+            failures = self._retire_sessions(retired, include_pending=True)
+            if failures:
+                raise CoordinatorRetirementError(failures)
+            return snapshot
 
     def accepts_result(
         self,
