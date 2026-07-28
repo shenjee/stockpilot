@@ -234,18 +234,41 @@ class AppCoordinator:
         try:
             self._activate_session(replacement)
         except Exception as exc:
-            owns_replacement = False
+            cleanup: tuple[_ManagedSession | None, ...] = ()
             with self._lock:
                 if self._live is replacement:
-                    owns_replacement = True
                     self._live = prior_live
                     if self._current_symbol == resolved_symbol:
                         self._current_symbol = prior_symbol
-                    if self._replay is None:
+
+                    removed_replay: _ManagedSession | None = None
+                    if self._replay is not None:
+                        replay_symbol = self._replay.spec.symbol
+                        current_symbol = self._current_symbol
+                        replay_matches_symbol = (
+                            current_symbol is not None
+                            and replay_symbol == current_symbol
+                        )
+                        if self._mode is AppMode.LIVE or not replay_matches_symbol:
+                            removed_replay = self._detach_replay()
+
+                    restored_prior_replay = False
+                    if (
+                        self._replay is None
+                        and prior_replay is not None
+                        and self._mode is AppMode.REPLAY
+                        and self._current_symbol == prior_symbol
+                    ):
                         self._replay = prior_replay
+                        restored_prior_replay = True
+
                     self._revision += 1
-            if owns_replacement:
-                self._retire_sessions((replacement,))
+                    cleanup = (
+                        replacement,
+                        removed_replay,
+                        None if restored_prior_replay else prior_replay,
+                    )
+            self._retire_sessions(self._unique_sessions(cleanup))
             raise CoordinatorStateError(
                 "Live Session activation failed"
             ) from exc
@@ -524,6 +547,22 @@ class AppCoordinator:
                     managed for managed, _ in failures
                 )
         return tuple(exc for _, exc in failures)
+
+    @staticmethod
+    def _unique_sessions(
+        sessions: tuple[_ManagedSession | None, ...],
+    ) -> tuple[_ManagedSession | None, ...]:
+        unique: list[_ManagedSession | None] = []
+        seen: set[int] = set()
+        for managed in sessions:
+            if managed is None:
+                continue
+            identity = id(managed)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            unique.append(managed)
+        return tuple(unique)
 
 
 def _validate_symbol(symbol: str) -> str:

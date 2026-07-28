@@ -377,6 +377,134 @@ class AppCoordinatorTests(unittest.TestCase):
         self.assertTrue(factory.created[0].retired)
         self.assertEqual(factory.created[0].retire_count, 1)
 
+    def test_select_symbol_activation_failure_drops_derived_replay_for_new_symbol(self) -> None:
+        initial = self.coordinator.select_symbol("sh.600000")
+        old_live = initial.live_session
+        assert old_live is not None
+        self.coordinator.set_mode("replay")
+        replay_snapshot = self.coordinator.begin_replay("2026-07-23")
+        old_replay = replay_snapshot.replay_session
+        assert old_replay is not None
+
+        started = Event()
+        allow_fail = Event()
+        select_errors: list[Exception] = []
+
+        original_create_live = self.factory.create_live
+
+        def create_live(spec: SessionSpec) -> _FakeSession:
+            session = original_create_live(spec)
+
+            def on_activate() -> None:
+                started.set()
+                allow_fail.wait(timeout=1)
+                raise RuntimeError("fake activation failed")
+
+            session.on_activate = on_activate
+            return session
+
+        self.factory.create_live = create_live
+
+        def select_symbol() -> None:
+            try:
+                self.coordinator.select_symbol("sz.000001")
+            except Exception as exc:
+                select_errors.append(exc)
+
+        thread = Thread(target=select_symbol)
+        thread.start()
+        self.assertTrue(started.wait(timeout=1))
+
+        replay_started = self.coordinator.begin_replay("2026-07-24")
+        new_replay = replay_started.replay_session
+        assert new_replay is not None
+        self.assertEqual(new_replay.symbol, "sz.000001")
+
+        allow_fail.set()
+        thread.join(timeout=1)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(len(select_errors), 1)
+        self.assertIsInstance(select_errors[0], CoordinatorStateError)
+
+        snapshot = self.coordinator.snapshot
+        self.assertEqual(snapshot.current_symbol, "sh.600000")
+        self.assertEqual(snapshot.live_session, old_live)
+        self.assertEqual(snapshot.replay_session, old_replay)
+        self.assertIs(snapshot.mode, AppMode.REPLAY)
+        assert snapshot.live_session is not None and snapshot.replay_session is not None
+        self.assertEqual(snapshot.live_session.symbol, snapshot.current_symbol)
+        self.assertEqual(snapshot.replay_session.symbol, snapshot.current_symbol)
+        self.assertFalse(
+            self.coordinator.accepts_result(
+                session_type="live",
+                session_id=self.factory.created[2].spec.session_id,
+                generation=self.factory.created[2].spec.generation,
+            )
+        )
+        self.assertTrue(self.factory.created[2].retired)
+        self.assertEqual(self.factory.created[2].retire_count, 1)
+        self.assertTrue(self.factory.created[3].retired)
+        self.assertEqual(self.factory.created[3].retire_count, 1)
+        self.assertFalse(self.factory.created[1].retired)
+
+    def test_select_symbol_activation_failure_does_not_revive_replay_after_mode_live(self) -> None:
+        self.coordinator.select_symbol("sh.600000")
+        self.coordinator.set_mode("replay")
+        replay_snapshot = self.coordinator.begin_replay("2026-07-23")
+        old_replay = replay_snapshot.replay_session
+        assert old_replay is not None
+
+        started = Event()
+        allow_fail = Event()
+        select_errors: list[Exception] = []
+
+        original_create_live = self.factory.create_live
+
+        def create_live(spec: SessionSpec) -> _FakeSession:
+            session = original_create_live(spec)
+
+            def on_activate() -> None:
+                started.set()
+                allow_fail.wait(timeout=1)
+                raise RuntimeError("fake activation failed")
+
+            session.on_activate = on_activate
+            return session
+
+        self.factory.create_live = create_live
+
+        def select_symbol() -> None:
+            try:
+                self.coordinator.select_symbol("sz.000001")
+            except Exception as exc:
+                select_errors.append(exc)
+
+        thread = Thread(target=select_symbol)
+        thread.start()
+        self.assertTrue(started.wait(timeout=1))
+
+        live_mode_snapshot = self.coordinator.set_mode("live")
+        self.assertIs(live_mode_snapshot.mode, AppMode.LIVE)
+        self.assertIsNone(live_mode_snapshot.replay_session)
+
+        allow_fail.set()
+        thread.join(timeout=1)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(len(select_errors), 1)
+        self.assertIsInstance(select_errors[0], CoordinatorStateError)
+
+        snapshot = self.coordinator.snapshot
+        self.assertIs(snapshot.mode, AppMode.LIVE)
+        self.assertEqual(snapshot.current_symbol, "sh.600000")
+        self.assertIsNotNone(snapshot.live_session)
+        self.assertIsNone(snapshot.replay_session)
+        assert snapshot.live_session is not None
+        self.assertEqual(snapshot.live_session.symbol, snapshot.current_symbol)
+        self.assertTrue(self.factory.created[1].retired)
+        self.assertEqual(self.factory.created[1].retire_count, 1)
+        self.assertTrue(self.factory.created[2].retired)
+        self.assertEqual(self.factory.created[2].retire_count, 1)
+
     def test_factory_failures_preserve_previous_sessions_and_selection(self) -> None:
         initial = self.coordinator.select_symbol("sh.600000")
         old_live = initial.live_session
