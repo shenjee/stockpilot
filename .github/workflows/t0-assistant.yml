@@ -69,6 +69,8 @@ jobs:
           cache-dependency-path: apps/t0-assistant/package-lock.json
       - run: npm ci
       - run: npm run smoke:electron
+        env:
+          T0_PYTHON: python
 
   contract-smoke:
     name: Contract smoke
