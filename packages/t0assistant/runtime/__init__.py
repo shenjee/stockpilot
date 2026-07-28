@@ -54,6 +54,13 @@ from .live_data import (
     LivePreparationConfig,
     LiveQuotePort,
 )
+from .live_projection_store import (
+    LiveAcceptedEvent,
+    LiveIncrementalUpdate,
+    LiveProjectionSnapshotUnavailable,
+    LiveProjectionStore,
+    LiveProjectionStoreError,
+)
 from .live_session import (
     LiveInitialInputPort,
     LiveSession,
@@ -107,9 +114,14 @@ __all__ = [
     "LiveDataError",
     "LiveDataPreparator",
     "LiveDataUnavailableError",
+    "LiveAcceptedEvent",
+    "LiveIncrementalUpdate",
     "LiveInitialInputPort",
     "LiveMarketDataPort",
     "LivePreparationConfig",
+    "LiveProjectionSnapshotUnavailable",
+    "LiveProjectionStore",
+    "LiveProjectionStoreError",
     "LiveQuotePort",
     "LiveSession",
     "LiveSessionError",
