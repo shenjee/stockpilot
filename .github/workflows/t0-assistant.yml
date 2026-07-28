@@ -67,8 +67,13 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: apps/t0-assistant/package-lock.json
+      - name: Install project
+        run: python -m pip install -e .
+        working-directory: .
       - run: npm ci
       - run: npm run smoke:electron
+        env:
+          T0_PYTHON: python
 
   contract-smoke:
     name: Contract smoke

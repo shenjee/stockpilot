@@ -3,6 +3,8 @@
 from .api import (
     DEFAULT_ERROR_DELIVERY,
     REPLAY_COMMANDS,
+    map_computation_outcome_to_replay_error,
+    map_replay_prepare_error_to_replay_error,
     ReplayAccepted,
     ReplayApiError,
     ReplayCommandApi,
@@ -14,6 +16,8 @@ from .api import (
 __all__ = [
     "DEFAULT_ERROR_DELIVERY",
     "REPLAY_COMMANDS",
+    "map_computation_outcome_to_replay_error",
+    "map_replay_prepare_error_to_replay_error",
     "ReplayAccepted",
     "ReplayApiError",
     "ReplayCommandApi",

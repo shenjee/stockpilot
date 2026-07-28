@@ -664,6 +664,17 @@ class PreheatFutureDataTests(_BasePipelineTests):
 
 
 class AtomicStateUpdateTests(_BasePipelineTests):
+    def test_preview_does_not_update_target_time_or_result_until_commit(self) -> None:
+        pipeline = self._make_pipeline()
+
+        preview = pipeline.preview()
+        self.assertIsNone(pipeline.target_time)
+        self.assertIsNone(pipeline.last_result)
+
+        pipeline.commit_preview(preview)
+        self.assertEqual(pipeline.target_time, self.target_time)
+        self.assertEqual(pipeline.last_result, preview)
+
     def test_failed_compute_does_not_update_target_time_or_result(self) -> None:
         good_input = PipelineMarketInput(
             symbol=_SYMBOL,

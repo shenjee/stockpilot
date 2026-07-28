@@ -15,6 +15,16 @@ from threading import RLock
 from types import MappingProxyType
 from typing import Any, Callable, Mapping, Protocol
 
+from packages.t0assistant.runtime.computation_contract import (
+    CancelReason,
+    ComputationOutcome,
+    ComputationStatus,
+)
+from packages.t0assistant.runtime.replay_data import (
+    ReplayDataTimeoutError,
+    ReplayDataUnavailableError,
+)
+
 from .validation import validate_replay_snapshot
 
 
@@ -155,6 +165,75 @@ class ReplayApiError(RuntimeError):
         self.details = dict(details or {})
         self.affected_capability = affected_capability
         super().__init__(message or error_code)
+
+
+def map_computation_outcome_to_replay_error(
+    outcome: ComputationOutcome,
+) -> tuple[ReplayApiError | None, ReplayDeliveryChannel | None]:
+    """Map a runtime computation outcome onto a stable Replay error contract.
+
+    Returns ``(None, None)`` when the outcome must be silently dropped instead
+    of being exposed to the transport layer, for example when the caller
+    explicitly cancelled the task or the owning Session/generation has already
+    retired.
+    """
+
+    if not isinstance(outcome, ComputationOutcome):
+        raise TypeError("outcome must be a ComputationOutcome")
+    if outcome.status is ComputationStatus.COMPLETED:
+        return None, None
+    if outcome.status is ComputationStatus.FAILED:
+        return (
+            ReplayApiError("calculation_failed"),
+            ReplayDeliveryChannel.ASYNCHRONOUS,
+        )
+    if outcome.status is not ComputationStatus.CANCELLED:
+        raise ValueError(f"unsupported computation status: {outcome.status}")
+
+    if outcome.cancel_reason in {
+        CancelReason.CANCELLED,
+        CancelReason.SESSION_INVALID,
+    }:
+        return None, None
+    if outcome.cancel_reason is CancelReason.SUPERSEDED:
+        return (
+            ReplayApiError("operation_superseded"),
+            ReplayDeliveryChannel.ASYNCHRONOUS,
+        )
+    if outcome.cancel_reason is CancelReason.DEADLINE_EXCEEDED:
+        return (
+            ReplayApiError(
+                "calculation_failed",
+                details={"cancel_reason": outcome.cancel_reason.value},
+            ),
+            ReplayDeliveryChannel.ASYNCHRONOUS,
+        )
+    if outcome.cancel_reason is CancelReason.EXECUTOR_CLOSED:
+        return (
+            ReplayApiError("service_unavailable"),
+            ReplayDeliveryChannel.ASYNCHRONOUS,
+        )
+    raise ValueError(f"unsupported cancel_reason: {outcome.cancel_reason}")
+
+
+def map_replay_prepare_error_to_replay_error(
+    error: Exception,
+) -> tuple[ReplayApiError, ReplayDeliveryChannel]:
+    """Map Replay preparation failures onto stable Replay errors."""
+
+    if isinstance(error, ReplayDataUnavailableError):
+        return (
+            ReplayApiError("replay_data_unavailable"),
+            ReplayDeliveryChannel.ASYNCHRONOUS,
+        )
+    if isinstance(error, ReplayDataTimeoutError):
+        return (
+            ReplayApiError("service_unavailable"),
+            ReplayDeliveryChannel.ASYNCHRONOUS,
+        )
+    if isinstance(error, ReplayApiError):
+        return error, DEFAULT_ERROR_DELIVERY[error.error_code]
+    return ReplayApiError("service_unavailable"), ReplayDeliveryChannel.ASYNCHRONOUS
 
 
 @dataclass(slots=True)

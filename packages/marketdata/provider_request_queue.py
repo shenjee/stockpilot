@@ -9,12 +9,13 @@ coordinated retries, and late-result isolation for retired sessions.
 from __future__ import annotations
 
 import atexit
-from concurrent.futures import Future
+from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field
 from enum import IntEnum
 import heapq
 import itertools
 import threading
+import time
 from typing import Any, Callable, Hashable
 
 from .provider_result import MarketDataResult
@@ -40,6 +41,10 @@ class ProviderQueueClosedError(ProviderQueueError):
     """Raised after the queue stops accepting requests."""
 
 
+class ProviderWaitTimeoutError(FutureTimeoutError):
+    """Raised when one subscriber stops waiting for a shared request."""
+
+
 @dataclass(frozen=True)
 class ProviderQueueOutcome:
     """One subscriber's view of a coordinated provider operation.
@@ -47,13 +52,17 @@ class ProviderQueueOutcome:
     ``result`` is the provider's unchanged return value.  A caller may persist
     it even when ``session_valid`` is false, but must not publish it into that
     retired Session.  ``executed`` is false when every subscriber became
-    invalid before the provider operation started.
+    invalid before the provider operation started.  ``subscriber_detached`` is
+    true when this caller stopped waiting before the shared provider request
+    finished; the provider request itself may still continue for cache/share
+    purposes.
     """
 
     result: Any
     session_valid: bool
     coalesced: bool
     executed: bool = True
+    subscriber_detached: bool = False
 
 
 @dataclass
@@ -61,6 +70,7 @@ class _Subscriber:
     future: Future
     session_validator: Callable[[], bool] | None
     coalesced: bool
+    detached: bool = False
 
     def is_valid(self) -> bool:
         if self.session_validator is None:
@@ -87,6 +97,15 @@ class _QueuedRequest:
 
 def _default_retry_predicate(result: Any) -> bool:
     return isinstance(result, MarketDataResult) and not result.success
+
+
+def _safe_session_validator(
+    session_validator: Callable[[], bool],
+) -> bool:
+    try:
+        return bool(session_validator())
+    except Exception:
+        return False
 
 
 class ProviderRequestQueue:
@@ -147,6 +166,7 @@ class ProviderRequestQueue:
 
             existing = self._requests.get(key)
             if existing is not None:
+                setattr(future, "_stockpilot_coalesced", True)
                 existing.subscribers.append(
                     _Subscriber(future, session_validator, coalesced=True)
                 )
@@ -181,6 +201,7 @@ class ProviderRequestQueue:
                     _Subscriber(future, session_validator, coalesced=False)
                 ],
             )
+            setattr(future, "_stockpilot_coalesced", False)
             self._requests[key] = request
             heapq.heappush(
                 self._heap,
@@ -198,7 +219,46 @@ class ProviderRequestQueue:
         """Submit and block until this subscriber receives its outcome."""
 
         timeout = kwargs.pop("timeout", None)
-        return self.submit(key, operation, **kwargs).result(timeout=timeout)
+        session_validator = kwargs.get("session_validator")
+        future = self.submit(key, operation, **kwargs)
+        coalesced = bool(getattr(future, "_stockpilot_coalesced", False))
+        if timeout is None and session_validator is None:
+            return future.result()
+
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while True:
+            if future.done():
+                return future.result()
+            if (
+                session_validator is not None
+                and not _safe_session_validator(session_validator)
+            ):
+                return self._detach_subscriber(
+                    key,
+                    future,
+                    coalesced=coalesced,
+                    session_valid=False,
+                )
+            wait_timeout = 0.05
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    if future.done():
+                        return future.result()
+                    self._detach_subscriber(
+                        key,
+                        future,
+                        coalesced=coalesced,
+                        session_valid=True,
+                    )
+                    raise ProviderWaitTimeoutError()
+                wait_timeout = min(wait_timeout, remaining)
+            try:
+                return future.result(timeout=wait_timeout)
+            except FutureTimeoutError:
+                if future.done():
+                    return future.result()
+                continue
 
     def shutdown(self, *, wait: bool = True, cancel_pending: bool = False) -> None:
         """Stop accepting work and optionally cancel operations not yet started."""
@@ -242,7 +302,11 @@ class ProviderRequestQueue:
             active = [
                 subscriber
                 for subscriber in request.subscribers
-                if not subscriber.future.cancelled() and subscriber.is_valid()
+                if (
+                    not subscriber.detached
+                    and not subscriber.future.cancelled()
+                    and subscriber.is_valid()
+                )
             ]
             if not active:
                 self._finish(request, result=None, executed=False)
@@ -277,17 +341,20 @@ class ProviderRequestQueue:
             subscribers = tuple(request.subscribers)
             self._condition.notify_all()
         for subscriber in subscribers:
-            if subscriber.future.cancelled():
+            if subscriber.detached or subscriber.future.cancelled():
                 continue
             valid = subscriber.is_valid()
-            subscriber.future.set_result(
-                ProviderQueueOutcome(
-                    result=result,
-                    session_valid=valid,
-                    coalesced=subscriber.coalesced,
-                    executed=executed,
+            try:
+                subscriber.future.set_result(
+                    ProviderQueueOutcome(
+                        result=result,
+                        session_valid=valid,
+                        coalesced=subscriber.coalesced,
+                        executed=executed,
+                    )
                 )
-            )
+            except Exception:
+                continue
 
     def _finish_with_exception(
         self,
@@ -299,8 +366,39 @@ class ProviderRequestQueue:
             subscribers = tuple(request.subscribers)
             self._condition.notify_all()
         for subscriber in subscribers:
-            if not subscriber.future.cancelled():
+            if subscriber.detached or subscriber.future.cancelled():
+                continue
+            try:
                 subscriber.future.set_exception(exc)
+            except Exception:
+                continue
+
+    def _detach_subscriber(
+        self,
+        key: Hashable,
+        future: Future,
+        *,
+        coalesced: bool,
+        session_valid: bool,
+    ) -> ProviderQueueOutcome:
+        with self._condition:
+            request = self._requests.get(key)
+            executed = False
+            if request is not None:
+                executed = request.started
+                for subscriber in request.subscribers:
+                    if subscriber.future is future:
+                        subscriber.detached = True
+                        break
+            elif future.done():
+                executed = True
+        return ProviderQueueOutcome(
+            result=None,
+            session_valid=session_valid,
+            coalesced=coalesced,
+            executed=executed,
+            subscriber_detached=True,
+        )
 
 
 _SHARED_QUEUE: ProviderRequestQueue | None = None

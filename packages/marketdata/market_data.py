@@ -12,7 +12,7 @@ import logging
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from .provider_result import MarketDataResult, ProviderIssue
 
@@ -104,6 +104,7 @@ class TencentStockDataProvider(MarketDataProvider):
     MINUTE_KLINE_PAGE_SIZE = 800
     MINUTE_KLINE_MAX_PAGES = 100
     KLINE_AMOUNT_INDEX = 8
+    REPLAY_RELIABILITY_EVIDENCE_REASON = "replay_reliability_evidence"
 
     @staticmethod
     def _make_issue(
@@ -132,6 +133,42 @@ class TencentStockDataProvider(MarketDataProvider):
             message=issue.message,
             context=merged,
             exception_type=issue.exception_type,
+        )
+
+    @classmethod
+    def _minute_reliability_evidence_issue(
+        cls,
+        *,
+        start_day: date,
+        end_day: date,
+        observed_days: set[date],
+        termination_reason: str,
+        parse_failures: int,
+        has_error: bool,
+    ) -> ProviderIssue:
+        completed = termination_reason in {"covered_start_date", "empty_page"}
+        default_status = "no_data" if completed and not parse_failures and not has_error else "incomplete"
+        trade_date_statuses = {
+            day.isoformat(): (
+                "complete" if completed and not parse_failures and not has_error else "incomplete"
+            )
+            for day in sorted(observed_days)
+            if start_day <= day <= end_day
+        }
+        return cls._make_issue(
+            level="warning",
+            reason_code=cls.REPLAY_RELIABILITY_EVIDENCE_REASON,
+            message="tencent minute kline replay reliability evidence",
+            context={
+                "operation": "get_minute_kline",
+                "start_date": start_day.isoformat(),
+                "end_date": end_day.isoformat(),
+                "termination_reason": termination_reason,
+                "request_completed": completed and not has_error,
+                "default_status": default_status,
+                "trade_date_statuses": trade_date_statuses,
+                "parse_failures": parse_failures,
+            },
         )
 
     @classmethod
@@ -706,11 +743,14 @@ class TencentStockDataProvider(MarketDataProvider):
         issues: list[ProviderIssue] = []
         parse_failures = 0
         first_page = True
+        observed_days: set[date] = set()
+        termination_reason = "max_pages_reached"
         for _ in range(cls.MINUTE_KLINE_MAX_PAGES):
             url = f"https://ifzq.gtimg.cn/appstock/app/kline/mkline?param={prefix}{norm},{tx_ktype},{ref},{cls.MINUTE_KLINE_PAGE_SIZE}"
             try:
                 data = json.loads(cls._fetch_with_retry(url, decode="utf-8"))
             except Exception as exc:
+                termination_reason = "request_failed"
                 issues.append(
                     cls._make_issue(
                         level="error",
@@ -729,6 +769,7 @@ class TencentStockDataProvider(MarketDataProvider):
                 break
 
             if not isinstance(data, dict):
+                termination_reason = "unexpected_response_shape"
                 issues.append(
                     cls._make_issue(
                         level="error",
@@ -748,6 +789,7 @@ class TencentStockDataProvider(MarketDataProvider):
 
             provider_code = data.get("code")
             if provider_code != 0:
+                termination_reason = "provider_nonzero_code"
                 issues.append(
                     cls._make_issue(
                         level="error",
@@ -766,6 +808,7 @@ class TencentStockDataProvider(MarketDataProvider):
 
             payload = data.get("data", {})
             if not isinstance(payload, dict):
+                termination_reason = "unexpected_payload"
                 issues.append(
                     cls._make_issue(
                         level="error",
@@ -782,6 +825,7 @@ class TencentStockDataProvider(MarketDataProvider):
                 break
             symbol_payload = payload.get(f"{prefix}{norm}", {})
             if not isinstance(symbol_payload, dict):
+                termination_reason = "unexpected_symbol_payload"
                 issues.append(
                     cls._make_issue(
                         level="error",
@@ -798,6 +842,7 @@ class TencentStockDataProvider(MarketDataProvider):
                 break
             raw_items = symbol_payload.get(tx_ktype, [])
             if not isinstance(raw_items, list):
+                termination_reason = "unexpected_series"
                 issues.append(
                     cls._make_issue(
                         level="error",
@@ -813,6 +858,7 @@ class TencentStockDataProvider(MarketDataProvider):
                 )
                 break
             if not raw_items:
+                termination_reason = "empty_page"
                 if first_page and not merged:
                     issues.append(
                         cls._make_issue(
@@ -846,6 +892,7 @@ class TencentStockDataProvider(MarketDataProvider):
                         amount = cls._kline_amount(item)
                     except (TypeError, ValueError):
                         amount = None
+                    observed_days.add(datetime.strptime(timestamp[:10], "%Y-%m-%d").date())
                     merged[timestamp] = {
                         "date": timestamp,
                         "timestamp": timestamp,
@@ -865,10 +912,15 @@ class TencentStockDataProvider(MarketDataProvider):
                     page_oldest_raw = raw_ts
 
             if added_in_page == 0 or page_oldest_raw is None:
+                termination_reason = "page_parse_exhausted"
                 break
 
             oldest_day = datetime.strptime(page_oldest_raw[:8], "%Y%m%d").date()
-            if oldest_day <= start_day:
+            # Reaching the requested trade_date is not enough: Tencent pages can
+            # split one day's bars across multiple pages, so we only know the
+            # boundary is covered once the oldest bar is strictly earlier.
+            if oldest_day < start_day:
+                termination_reason = "covered_start_date"
                 break
 
             ref = page_oldest_raw
@@ -934,6 +986,17 @@ class TencentStockDataProvider(MarketDataProvider):
                     },
                 )
             )
+
+        issues.append(
+            cls._minute_reliability_evidence_issue(
+                start_day=start_day,
+                end_day=end_day,
+                observed_days=observed_days,
+                termination_reason=termination_reason,
+                parse_failures=parse_failures,
+                has_error=any(issue.level == "error" for issue in issues),
+            )
+        )
 
         success = not any(issue.level == "error" for issue in issues)
         if not success:

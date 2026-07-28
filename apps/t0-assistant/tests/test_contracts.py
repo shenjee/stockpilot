@@ -4,8 +4,16 @@ import json
 import unittest
 from pathlib import Path
 
+from datetime import date, datetime
+
 from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
+
+from packages.t0assistant.runtime import (
+    PipelineResult,
+    SessionProjectionInput,
+    build_workbench_projection,
+)
 
 
 APP_ROOT = Path(__file__).resolve().parents[1]
@@ -40,6 +48,10 @@ class ContractTest(unittest.TestCase):
 
     def app_validator(self, definition: str) -> Draft202012Validator:
         schema = {"$ref": f"{self.app['$id']}#/$defs/{definition}"}
+        return Draft202012Validator(schema, registry=self.registry)
+
+    def logical_validator(self, definition: str) -> Draft202012Validator:
+        schema = {"$ref": f"{self.logical['$id']}#/$defs/{definition}"}
         return Draft202012Validator(schema, registry=self.registry)
 
     def test_logical_schema_is_not_storage_schema(self) -> None:
@@ -284,6 +296,91 @@ class ContractTest(unittest.TestCase):
             flow["operation_failed_event"]["operation_id"],
             flow["operation_failed_event"]["payload"]["operation_id"],
         )
+
+    def test_workbench_projection_output_validates_against_logical_schema(self) -> None:
+        """A fake PipelineResult produces a snapshot that satisfies the frozen contract."""
+        result = PipelineResult(
+            target_time=datetime(2026, 7, 22, 10, 0, 0),
+            symbol="sh.600000",
+            trade_date=date(2026, 7, 22),
+            bars_1m=tuple(),
+            bars_5m=tuple(),
+            closed_5m_prefix=tuple(),
+            daily_bars=tuple(),
+            daily_bar=None,
+            quote=None,
+            indicators_1m={
+                "vwap": [],
+                "volume": {"values": []},
+                "macd": {
+                    "fast_period": 12,
+                    "slow_period": 26,
+                    "signal_period": 9,
+                    "dif": [],
+                    "dea": [],
+                    "histogram": [],
+                },
+            },
+            indicators_5m={
+                "ma": {f"ma{period}": [] for period in (5, 10, 20, 30, 60)},
+                "boll": {
+                    "period": 20,
+                    "stddev": 2.0,
+                    "upper": [],
+                    "middle": [],
+                    "lower": [],
+                },
+                "volume": {"values": [], "ma5": [], "ma10": []},
+                "macd": {
+                    "fast_period": 12,
+                    "slow_period": 26,
+                    "signal_period": 9,
+                    "dif": [],
+                    "dea": [],
+                    "histogram": [],
+                },
+            },
+            chan_analysis={
+                "symbol": "sh.600000",
+                "timeframe": "5m",
+                "source": "fixture",
+                "engine": "czsc",
+                "engine_version": "0.10.12",
+                "parameters": {},
+                "fractals": [],
+                "strokes": [],
+                "segments": [],
+                "pivot_zones": [],
+                "divergences": [],
+                "structure_alerts": [],
+                "signal_series": [],
+                "signal_events": [],
+                "signal_snapshots": [],
+                "candidate_point_events": [],
+                "candidate_buy_points": [],
+                "candidate_sell_points": [],
+                "plot_primitives": [],
+                "summary": [],
+                "warnings": [],
+                "meta": {},
+            },
+            warnings=[],
+        )
+        session = SessionProjectionInput(
+            session_id="live-contract-1",
+            session_type="live",
+            symbol="sh.600000",
+            trade_date=None,
+            state="ready",
+            revision=1,
+        )
+        snapshot = build_workbench_projection(result, session).to_dict()
+
+        self.logical_validator("workbench_snapshot").validate(snapshot)
+        self.assertEqual(snapshot["session"]["trade_date"], None)
+        self.assertEqual(snapshot["replay"], None)
+        self.assertNotIn("closed_5m_prefix", snapshot)
+        self.assertNotIn("daily_bar", snapshot)
 
 
     def test_list_trades_is_fact_via_changed_event(self) -> None:
