@@ -225,6 +225,7 @@ class AppCoordinator:
                 "App state changed while creating the Live Session"
             )
 
+        self._activate_session(replacement)
         self._retire_sessions(retired)
         return snapshot
 
@@ -285,6 +286,7 @@ class AppCoordinator:
                 "App state changed while creating the Replay Session"
             )
 
+        self._activate_session(replacement)
         self._retire_sessions(retired)
         return snapshot
 
@@ -323,6 +325,7 @@ class AppCoordinator:
                 "App state changed while rebuilding the Live Session"
             )
 
+        self._activate_session(replacement)
         self._retire_sessions(retired)
         return snapshot
 
@@ -428,6 +431,12 @@ class AppCoordinator:
             live_session=None if self._live is None else self._live.identity,
             replay_session=None if self._replay is None else self._replay.identity,
         )
+
+    @staticmethod
+    def _activate_session(managed: _ManagedSession) -> None:
+        activate = getattr(managed.port, "activate", None)
+        if callable(activate):
+            activate()
 
     def _detach_live(self) -> _ManagedSession | None:
         managed, self._live = self._live, None

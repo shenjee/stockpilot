@@ -24,8 +24,15 @@ class _FakeSession:
     spec: SessionSpec
     retired: bool = False
     retire_count: int = 0
+    activate_count: int = 0
     on_retire: Callable[[], None] | None = None
+    on_activate: Callable[[], None] | None = None
     retire_failures_remaining: int = 0
+
+    def activate(self) -> None:
+        self.activate_count += 1
+        if self.on_activate is not None:
+            self.on_activate()
 
     def retire(self) -> None:
         self.retire_count += 1
@@ -257,8 +264,31 @@ class AppCoordinatorTests(unittest.TestCase):
         )
 
         self.coordinator.retry_live()
-
         self.assertEqual(accepted_during_retirement, [False])
+
+    def test_optional_activate_runs_after_session_enters_acceptance_boundary(self) -> None:
+        seen: list[bool] = []
+        original_create_live = self.factory.create_live
+
+        def create_live(spec: SessionSpec) -> _FakeSession:
+            session = original_create_live(spec)
+            session.on_activate = lambda: seen.append(
+                self.coordinator.accepts_result(
+                    session_type="live",
+                    session_id=spec.session_id,
+                    generation=spec.generation,
+                )
+            )
+            return session
+
+        self.factory.create_live = create_live
+
+        snapshot = self.coordinator.select_symbol("sh.600000")
+
+        self.assertEqual(seen, [True])
+        live = snapshot.live_session
+        assert live is not None
+        self.assertEqual(self.factory.created[0].activate_count, 1)
 
     def test_factory_failures_preserve_previous_sessions_and_selection(self) -> None:
         initial = self.coordinator.select_symbol("sh.600000")
