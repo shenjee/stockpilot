@@ -19,7 +19,7 @@ import threading
 import traceback
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any
+from typing import Any, Protocol
 from pathlib import Path
 
 
@@ -31,6 +31,9 @@ from packages.marketdata.repositories.securities_store import SecuritiesStore
 from packages.marketdata.runtime_paths import RuntimePaths
 from packages.marketdata.services import SecuritiesSearchService
 from packages.t0assistant.replay import REPLAY_COMMANDS, ReplayCommandApi
+from packages.t0assistant.runtime.live_projection_store import (
+    LiveProjectionSnapshotUnavailable as _LiveSnapshotUnavailable,
+)
 
 
 APP_COMMANDS = {
@@ -45,6 +48,144 @@ APP_COMMANDS = {
     "get_preferences",
     "save_preferences",
 }
+
+_LIVE_COMMANDS = frozenset({"get_live_snapshot"})
+
+
+class LiveSnapshotApiPort(Protocol):
+    """Transport-independent Live snapshot command boundary."""
+
+    def get_live_snapshot(
+        self,
+        *,
+        request_id: str,
+        session_id: str,
+    ) -> dict[str, Any]:
+        """Return a ``command_response`` payload for ``get_live_snapshot``."""
+
+
+class LiveSnapshotApiError(RuntimeError):
+    """Stable Live snapshot command rejection."""
+
+    def __init__(
+        self,
+        error_code: str,
+        *,
+        message: str,
+        retryable: bool = True,
+    ) -> None:
+        self.error_code = error_code
+        self.user_message = message
+        self.retryable = retryable
+        super().__init__(message)
+
+
+class LiveSnapshotApi:
+    """Concrete Live snapshot API backed by a LiveProjectionStore.
+
+    Validates the requested ``session_id`` against the store's current
+    authoritative Session and returns a complete ``workbench_snapshot`` as the
+    synchronous ``command_response.data`` payload.  Wrong Session, retired
+    Session, or no baseline are rejected with structured ``application_error``.
+    """
+
+    def __init__(
+        self,
+        store: Any,
+        *,
+        service_generation: int,
+    ) -> None:
+        if not callable(getattr(store, "get_live_snapshot", None)):
+            raise TypeError("store must implement get_live_snapshot")
+        if (
+            isinstance(service_generation, bool)
+            or not isinstance(service_generation, int)
+            or service_generation < 1
+        ):
+            raise ValueError("service_generation must be a positive integer")
+        self._store = store
+        self._service_generation = service_generation
+
+    @property
+    def service_generation(self) -> int:
+        return self._service_generation
+
+    def get_live_snapshot(
+        self,
+        *,
+        request_id: str,
+        session_id: str,
+    ) -> dict[str, Any]:
+        if not isinstance(request_id, str) or not request_id:
+            raise TypeError("request_id must be a non-empty string")
+        if not isinstance(session_id, str) or not session_id:
+            return self._reject(
+                request_id, "invalid_request", "session_id is required", retryable=False
+            )
+
+        current = self._store.current_session
+        if current is None or current[0] != session_id:
+            return self._reject(
+                request_id,
+                "session_not_found",
+                "Live Session not found or retired",
+                retryable=False,
+            )
+        try:
+            snapshot = self._store.get_live_snapshot(
+                session_id=session_id,
+                generation=current[1],
+            )
+        except _LiveSnapshotUnavailable:
+            return self._reject(
+                request_id,
+                "session_not_found",
+                "Live Session not found or retired",
+                retryable=False,
+            )
+        except Exception:
+            return self._reject(
+                request_id,
+                "service_unavailable",
+                "Live snapshot is not available",
+                retryable=True,
+            )
+        return {
+            "schema_version": "t0_app_v1",
+            "request_id": request_id,
+            "accepted": True,
+            "operation_id": None,
+            "data": snapshot,
+            "error": None,
+        }
+
+    @staticmethod
+    def _reject(
+        request_id: str,
+        error_code: str,
+        message: str,
+        *,
+        retryable: bool,
+    ) -> dict[str, Any]:
+        return {
+            "schema_version": "t0_app_v1",
+            "request_id": request_id,
+            "accepted": False,
+            "operation_id": None,
+            "data": None,
+            "error": {
+                "error_code": error_code,
+                "category": "session" if "session" in error_code else "service",
+                "severity": "error",
+                "retryable": retryable,
+                "affected_capability": "live",
+                "message": message,
+                "request_id": request_id,
+                "details": {},
+            },
+        }
+
+
 class DesktopServiceServer(ThreadingHTTPServer):
     """Loopback-only transport server owned by one Electron App instance."""
 
@@ -57,6 +198,7 @@ class DesktopServiceServer(ThreadingHTTPServer):
         service_generation: int,
         search_service: SecuritiesSearchService | None = None,
         replay_api: ReplayCommandApi | None = None,
+        live_snapshot_api: LiveSnapshotApiPort | None = None,
     ) -> None:
         if (
             replay_api is not None
@@ -65,11 +207,20 @@ class DesktopServiceServer(ThreadingHTTPServer):
             raise ValueError(
                 "Replay API service_generation must match the desktop service"
             )
+        if (
+            live_snapshot_api is not None
+            and getattr(live_snapshot_api, "service_generation", service_generation)
+            != service_generation
+        ):
+            raise ValueError(
+                "Live snapshot API service_generation must match the desktop service"
+            )
         super().__init__(server_address, _Handler)
         self.token = token
         self.service_generation = service_generation
         self.search_service = search_service
         self.replay_api = replay_api
+        self.live_snapshot_api = live_snapshot_api
         self.shutdown_event = threading.Event()
         self._websocket_lock = threading.Lock()
         self._active_websockets = 0
@@ -159,10 +310,77 @@ class _Handler(BaseHTTPRequestHandler):
         if command == "search_securities":
             self._search_securities(request)
             return
+        if command in _LIVE_COMMANDS:
+            self._live_command(command, request)
+            return
         if command in REPLAY_COMMANDS:
             self._replay_command(command, request)
             return
         self._service_unavailable(command, request)
+
+    def _live_command(self, command: str, request: dict[str, Any]) -> None:
+        live_api = getattr(self.server, "live_snapshot_api", None)
+        if live_api is None:
+            self._service_unavailable(command, request)
+            return
+        request_id = request.get("request_id", "missing-request-id")
+        session_id = request.get("session_id")
+        if not isinstance(session_id, str) or not session_id:
+            payload = {
+                "schema_version": "t0_app_v1",
+                "request_id": request_id,
+                "accepted": False,
+                "operation_id": None,
+                "data": None,
+                "error": {
+                    "error_code": "invalid_request",
+                    "category": "validation",
+                    "severity": "error",
+                    "retryable": False,
+                    "affected_capability": "live",
+                    "message": "session_id is required",
+                    "request_id": request_id,
+                    "details": {},
+                },
+            }
+            self._json(HTTPStatus.BAD_REQUEST, payload)
+            return
+        try:
+            result = live_api.get_live_snapshot(
+                request_id=request_id,
+                session_id=session_id,
+            )
+        except Exception:
+            traceback.print_exc()
+            error = {
+                "error_code": "service_unavailable",
+                "category": "service",
+                "severity": "error",
+                "retryable": True,
+                "affected_capability": "live",
+                "message": "本地 Live 服务暂时不可用",
+                "request_id": request_id,
+                "details": {},
+            }
+            self._json(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                {
+                    "schema_version": "t0_app_v1",
+                    "request_id": request_id,
+                    "accepted": False,
+                    "operation_id": None,
+                    "data": None,
+                    "error": error,
+                },
+            )
+            return
+        status = HTTPStatus.OK if result.get("accepted") else HTTPStatus.NOT_FOUND
+        error = result.get("error")
+        if isinstance(error, dict) and error.get("error_code") == "service_unavailable":
+            status = HTTPStatus.SERVICE_UNAVAILABLE
+        elif not result.get("accepted"):
+            status = HTTPStatus.NOT_FOUND
+        self._json(status, result)
 
     def _replay_command(self, command: str, request: dict[str, Any]) -> None:
         replay_api = getattr(self.server, "replay_api", None)
@@ -375,6 +593,7 @@ def create_server(
     service_generation: int,
     search_service: SecuritiesSearchService | None = None,
     replay_api: ReplayCommandApi | None = None,
+    live_snapshot_api: LiveSnapshotApiPort | None = None,
 ) -> DesktopServiceServer:
     if host != "127.0.0.1":
         raise ValueError("desktop service must bind to 127.0.0.1")
@@ -386,6 +605,7 @@ def create_server(
         service_generation,
         search_service=search_service,
         replay_api=replay_api,
+        live_snapshot_api=live_snapshot_api,
     )
 
 

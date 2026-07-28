@@ -60,6 +60,7 @@ from .live_projection_store import (
     LiveProjectionSnapshotUnavailable,
     LiveProjectionStore,
     LiveProjectionStoreError,
+    LiveProjectionValidationError,
 )
 from .live_session import (
     LiveInitialInputPort,
@@ -122,6 +123,7 @@ __all__ = [
     "LiveProjectionSnapshotUnavailable",
     "LiveProjectionStore",
     "LiveProjectionStoreError",
+    "LiveProjectionValidationError",
     "LiveQuotePort",
     "LiveSession",
     "LiveSessionError",

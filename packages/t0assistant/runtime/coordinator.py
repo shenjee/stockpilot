@@ -13,7 +13,7 @@ from datetime import date, datetime
 from enum import Enum
 import re
 from threading import Lock, RLock
-from typing import Callable, Protocol
+from typing import Any, Callable, Protocol
 from uuid import uuid4
 
 
@@ -472,6 +472,51 @@ class AppCoordinator:
             and visible.session_id == session_id
             and visible.generation == generation
         )
+
+    def commit_if_accepted(
+        self,
+        *,
+        session_type: SessionType | str,
+        session_id: str,
+        generation: int,
+        commit: Callable[[], Any],
+    ) -> bool:
+        """Atomically verify acceptance and run ``commit`` under the state lock.
+
+        This provides a single linearization point for callers (such as the
+        Live projection store) that must publish authoritative state without
+        racing a concurrent Session retirement or replacement.  ``commit`` runs
+        while the state lock is held, so the acceptance boundary cannot change
+        between the check and the commit.  ``commit`` must not call back into
+        coordinator lifecycle methods that take ``_transition_lock``.
+        """
+
+        try:
+            resolved_type = SessionType(session_type)
+        except (TypeError, ValueError):
+            return False
+        if (
+            not isinstance(session_id, str)
+            or not session_id
+            or isinstance(generation, bool)
+            or not isinstance(generation, int)
+        ):
+            return False
+
+        with self._lock:
+            managed = (
+                self._live
+                if resolved_type is SessionType.LIVE
+                else self._replay
+            )
+            if not (
+                managed is not None
+                and managed.spec.session_id == session_id
+                and managed.spec.generation == generation
+            ):
+                return False
+            commit()
+            return True
 
     def _create_session(
         self,

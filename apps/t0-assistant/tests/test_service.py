@@ -15,7 +15,12 @@ APP_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(APP_ROOT))
 
 from backend.service import create_server  # noqa: E402
+from backend.service import LiveSnapshotApi  # noqa: E402
 from packages.t0assistant.replay import ReplayAccepted, ReplayCommandApi  # noqa: E402
+from packages.t0assistant.runtime import SessionType  # noqa: E402
+from packages.t0assistant.runtime.live_projection_store import (  # noqa: E402
+    LiveProjectionStore,
+)
 
 
 class _FakeSearchService:
@@ -251,6 +256,246 @@ class DesktopServiceTest(unittest.TestCase):
         while self.server.active_websockets and time.monotonic() < deadline:
             time.sleep(0.01)
         self.assertEqual(self.server.active_websockets, 0)
+
+
+class _FakeCoordinator:
+    """Minimal coordinator implementing commit_if_accepted for store tests."""
+
+    def __init__(self) -> None:
+        self._accepted: tuple[str, int] | None = None
+
+    def set_accepted(self, session_id: str, generation: int) -> None:
+        self._accepted = (session_id, generation)
+
+    def clear(self) -> None:
+        self._accepted = None
+
+    def commit_if_accepted(
+        self,
+        *,
+        session_type,
+        session_id: str,
+        generation: int,
+        commit,
+    ) -> bool:
+        if self._accepted is None:
+            return False
+        resolved = (
+            session_type if isinstance(session_type, SessionType) else SessionType(session_type)
+        )
+        if resolved is not SessionType.LIVE:
+            return False
+        if self._accepted != (session_id, generation):
+            return False
+        commit()
+        return True
+
+
+class _LiveSnapshotMixin:
+    """Builds a LiveProjectionStore with a schema-valid baseline snapshot."""
+
+    @staticmethod
+    def _build_store(coordinator: _FakeCoordinator) -> LiveProjectionStore:
+        from datetime import date, datetime
+        from packages.t0assistant.runtime import PipelineMarketInput
+        from packages.t0assistant.runtime.live_session import (
+            LiveSnapshotCandidate,
+            PreparedLiveWarmup,
+        )
+        from packages.marketdata.services.market_context_service import (
+            MarketContextService,
+        )
+        from packages.t0assistant.runtime.pipeline import WorkbenchPipeline
+
+        def _bar(ts, o, h, l, c, v, a):
+            return {
+                "timestamp": ts, "open": o, "high": h, "low": l,
+                "close": c, "volume": v, "amount": a, "closed": True,
+            }
+
+        def _chan(symbol):
+            return {
+                "symbol": symbol, "timeframe": "5m", "source": "fixture",
+                "engine": "czsc", "engine_version": "0.10.12", "parameters": {},
+                "fractals": [], "strokes": [], "segments": [], "pivot_zones": [],
+                "divergences": [], "structure_alerts": [], "signal_series": [],
+                "signal_events": [], "signal_snapshots": [],
+                "candidate_point_events": [], "candidate_buy_points": [],
+                "candidate_sell_points": [], "plot_primitives": [],
+                "summary": [], "warnings": [], "meta": {},
+            }
+
+        calendar = MarketContextService(["2026-07-24", "2026-07-23"])
+        market_session = calendar.require_session("2026-07-24", "sh")
+        target_time = datetime(2026, 7, 24, 9, 31, 0)
+        market_input = PipelineMarketInput(
+            symbol="sh.600000",
+            trade_date=date(2026, 7, 24),
+            previous_close=10.0,
+            preheat_5m_bars=[
+                _bar("2026-07-23 14:55:00", 10.0, 10.1, 9.9, 10.02, 1000, 10020),
+                _bar("2026-07-23 15:00:00", 10.02, 10.08, 10.0, 10.05, 1200, 12060),
+            ],
+            bars_1m=[_bar("2026-07-24 09:31:00", 10.05, 10.08, 10.0, 10.06, 800, 8048)],
+            official_5m_bars=[],
+            daily_bars_history=[],
+            quote_snapshots=[],
+        )
+
+        class _SinglePort:
+            def read(self, target_time):
+                return market_input
+
+        prepared = PreparedLiveWarmup(
+            market_session=market_session,
+            target_time=target_time,
+            market_input_port=_SinglePort(),
+        )
+        pipeline = WorkbenchPipeline(
+            session=market_session,
+            market_input_port=prepared.market_input_port,
+            analyzer=lambda bars, sym: _chan(sym),
+        )
+        result = pipeline.preview(prepared.target_time)
+        store = LiveProjectionStore(coordinator, service_generation=5)
+        coordinator.set_accepted("live-1", 1)
+        store.accept_candidate(
+            LiveSnapshotCandidate(
+                session_id="live-1",
+                generation=1,
+                symbol="sh.600000",
+                pipeline_result=result,
+            )
+        )
+        return store
+
+
+class LiveSnapshotServiceTest(unittest.TestCase, _LiveSnapshotMixin):
+    def setUp(self) -> None:
+        self.coordinator = _FakeCoordinator()
+        self.store = self._build_store(self.coordinator)
+        self.live_api = LiveSnapshotApi(self.store, service_generation=5)
+        self.server = create_server(
+            "127.0.0.1",
+            0,
+            "formal-token",
+            5,
+            live_snapshot_api=self.live_api,
+        )
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.base_url = f"http://127.0.0.1:{self.server.server_port}"
+
+    def tearDown(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=2)
+
+    def _post(self, command: str, body: dict) -> tuple[int, dict]:
+        request = Request(
+            f"{self.base_url}/api/commands/{command}",
+            data=json.dumps(body).encode(),
+            headers={
+                "Authorization": "Bearer formal-token",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=1) as response:
+                return response.status, json.load(response)
+        except HTTPError as exc:
+            return exc.code, json.load(exc)
+
+    def test_get_live_snapshot_returns_authoritative_snapshot(self) -> None:
+        status, payload = self._post(
+            "get_live_snapshot",
+            {
+                "schema_version": "t0_app_v1",
+                "request_id": "snap-1",
+                "command": "get_live_snapshot",
+                "session_id": "live-1",
+                "payload": {},
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["accepted"])
+        self.assertIsNone(payload["operation_id"])
+        self.assertIsNotNone(payload["data"])
+        self.assertEqual(payload["data"]["session"]["session_id"], "live-1")
+        self.assertEqual(payload["data"]["session"]["revision"], 0)
+
+    def test_get_live_snapshot_wrong_session_is_rejected(self) -> None:
+        status, payload = self._post(
+            "get_live_snapshot",
+            {
+                "schema_version": "t0_app_v1",
+                "request_id": "snap-2",
+                "command": "get_live_snapshot",
+                "session_id": "live-other",
+                "payload": {},
+            },
+        )
+        self.assertEqual(status, 404)
+        self.assertFalse(payload["accepted"])
+        self.assertEqual(payload["error"]["error_code"], "session_not_found")
+
+    def test_get_live_snapshot_retired_session_is_rejected(self) -> None:
+        self.coordinator.clear()
+        status, payload = self._post(
+            "get_live_snapshot",
+            {
+                "schema_version": "t0_app_v1",
+                "request_id": "snap-3",
+                "command": "get_live_snapshot",
+                "session_id": "live-1",
+                "payload": {},
+            },
+        )
+        self.assertEqual(status, 404)
+        self.assertFalse(payload["accepted"])
+        self.assertEqual(payload["error"]["error_code"], "session_not_found")
+
+    def test_get_live_snapshot_no_store_returns_service_unavailable(self) -> None:
+        """Without a live_snapshot_api injected, the command is unavailable."""
+
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=2)
+        self.server = create_server(
+            "127.0.0.1",
+            0,
+            "formal-token",
+            5,
+        )
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.base_url = f"http://127.0.0.1:{self.server.server_port}"
+
+        status, payload = self._post(
+            "get_live_snapshot",
+            {
+                "schema_version": "t0_app_v1",
+                "request_id": "snap-4",
+                "command": "get_live_snapshot",
+                "session_id": "live-1",
+                "payload": {},
+            },
+        )
+        self.assertEqual(status, 503)
+        self.assertFalse(payload["accepted"])
+        self.assertEqual(payload["error"]["error_code"], "service_unavailable")
+
+    def test_live_api_generation_must_match_server_generation(self) -> None:
+        bad_api = LiveSnapshotApi(self.store, service_generation=6)
+        with self.assertRaisesRegex(ValueError, "service_generation"):
+            create_server(
+                "127.0.0.1",
+                0,
+                "token",
+                5,
+                live_snapshot_api=bad_api,
+            )
 
 
 if __name__ == "__main__":

@@ -7,23 +7,24 @@ only component that assigns and advances a ``revision`` for a Live workbench.
 Responsibilities (minimal, transport-free):
 
 * Validate every publishable item against the Coordinator acceptance boundary
-  (``session_id`` + ``generation`` must still be the active Live Session).
-* Assign the next monotonic revision to an accepted full snapshot candidate.
-  The candidate itself never carries a revision (T0-023 contract).
-* Validate the proposed revision of a typed incremental update and apply it to
-  the authoritative state only when it is exactly ``current + 1``.
-* Reject old Session, old generation, duplicate, stale, and out-of-order
-  (gap) events without mutating authoritative state or reviving a retired
-  Session.
+  using ``commit_if_accepted`` so identity verification and authoritative state
+  commit share a single linearization point (no stale-Session race).
+* Assign the next monotonic revision to every accepted full snapshot candidate
+  **and** every accepted typed incremental update.  Producers never supply a
+  revision; the store is the sole authority.
+* Apply accepted increments to the authoritative state under the same atomic
+  boundary, after validating the typed payload against the frozen contracts so
+  invalid payloads can never contaminate the authoritative snapshot.
+* Reject old Session / retired Session items without mutating authoritative
+  state or reviving a retired Session.  Revision gap detection is a consumer
+  concern (transport layer); the store never discards a valid domain update to
+  manufacture a gap.
 * Expose ``get_live_snapshot`` so a consumer can re-baseline after a revision
   gap or reconnect by fetching the latest complete authoritative snapshot, with
   ``snapshot.session.revision`` equal to the latest accepted revision.
 
 The store emits ``t0_app_v1`` event envelopes but does not touch the backend
-HTTP/WebSocket transport, the Electron gateway, or any public schema.  Increment
-application uses whole-field replacement semantics for ``market_update``,
-``indicators_updated`` and ``chan_analysis_replaced``; richer merge behaviour is
-owned by the refresh layer (T0-024) and may refine this later.
+HTTP/WebSocket transport, the Electron gateway, or any public schema.
 """
 
 from __future__ import annotations
@@ -33,6 +34,10 @@ from dataclasses import dataclass
 from threading import RLock
 from typing import Any, Protocol
 
+from jsonschema import Draft202012Validator
+from referencing import Registry, Resource
+
+from ._market_bars import RuntimeMarketDataError
 from .coordinator import SessionType
 from .live_session import LiveSnapshotCandidate
 
@@ -45,7 +50,7 @@ _INCREMENTAL_EVENT_TYPES = frozenset(
 _MARKET_TARGETS = frozenset({"quote", "bars_1m", "bars_5m", "daily_bars"})
 
 
-class LiveProjectionStoreError(RuntimeError):
+class LiveProjectionStoreError(RuntimeMarketDataError):
     """Base class for Live projection store failures."""
 
 
@@ -53,15 +58,20 @@ class LiveProjectionSnapshotUnavailable(LiveProjectionStoreError):
     """Raised when a requested authoritative snapshot cannot be returned."""
 
 
+class LiveProjectionValidationError(LiveProjectionStoreError, ValueError):
+    """A typed incremental payload does not match the frozen contract."""
+
+
 class _CoordinatorAcceptancePort(Protocol):
     """The slice of AppCoordinator the store relies on."""
 
-    def accepts_result(
+    def commit_if_accepted(
         self,
         *,
         session_type: SessionType | str,
         session_id: str,
         generation: int,
+        commit: Any,
     ) -> bool: ...
 
 
@@ -95,16 +105,15 @@ class LiveAcceptedEvent:
 
 @dataclass(frozen=True, slots=True)
 class LiveIncrementalUpdate:
-    """A typed incremental update carrying a producer-proposed revision.
+    """A typed incremental update produced by the Live refresh layer.
 
-    The producer (e.g. the Live refresh layer) builds the update on top of a
-    known snapshot and proposes ``proposed_revision = that_snapshot.revision +
-    1``.  The store is the authority that accepts or rejects it.
+    The store is the sole revision authority, so the update carries no
+    revision.  The producer builds the update on top of the latest accepted
+    state; the store applies it and assigns ``current + 1`` atomically.
     """
 
     session_id: str
     generation: int
-    proposed_revision: int
     event_type: str
     payload: dict[str, Any]
 
@@ -112,9 +121,11 @@ class LiveIncrementalUpdate:
 class LiveProjectionStore:
     """Single revision authority for the Live workbench.
 
-    Thread-safe: every accept/apply/snapshot operation takes the internal lock
-    so concurrent publishes produce a unique, strictly ordered revision
-    sequence.
+    Thread-safe: ``accept_candidate`` and ``accept_incremental`` delegate to
+    ``coordinator.commit_if_accepted`` so identity verification and the
+    authoritative state commit run under the Coordinator state lock as one
+    linearization point.  The store's own ``_lock`` serializes access to the
+    authoritative payload/revision inside the commit callback.
     """
 
     def __init__(
@@ -123,8 +134,8 @@ class LiveProjectionStore:
         *,
         service_generation: int,
     ) -> None:
-        if not callable(getattr(coordinator, "accepts_result", None)):
-            raise TypeError("coordinator must implement accepts_result")
+        if not callable(getattr(coordinator, "commit_if_accepted", None)):
+            raise TypeError("coordinator must implement commit_if_accepted")
         if isinstance(service_generation, bool) or not isinstance(
             service_generation, int
         ):
@@ -167,47 +178,59 @@ class LiveProjectionStore:
 
         if not isinstance(candidate, LiveSnapshotCandidate):
             raise TypeError("candidate must be a LiveSnapshotCandidate")
-        if not self._accepts(candidate.session_id, candidate.generation):
+
+        event_box: list[LiveAcceptedEvent] = []
+
+        def commit() -> None:
+            with self._lock:
+                session_key = (candidate.session_id, candidate.generation)
+                if (
+                    self._current_session is None
+                    or self._current_session != session_key
+                ):
+                    revision = 0
+                else:
+                    assert self._current_revision is not None
+                    revision = self._current_revision + 1
+
+                projection = candidate.build_projection(revision)
+                payload = projection.to_dict()
+
+                self._current_session = session_key
+                self._current_revision = revision
+                self._current_payload = payload
+                event_box.append(
+                    LiveAcceptedEvent(
+                        schema_version=SCHEMA_VERSION,
+                        service_generation=self._service_generation,
+                        session_id=candidate.session_id,
+                        revision=revision,
+                        event_type="workbench_snapshot",
+                        payload=copy.deepcopy(payload),
+                    )
+                )
+
+        accepted = self._coordinator.commit_if_accepted(
+            session_type=SessionType.LIVE,
+            session_id=candidate.session_id,
+            generation=candidate.generation,
+            commit=commit,
+        )
+        if not accepted:
             return None
-
-        with self._lock:
-            # Re-check under the lock: the Session may have retired between
-            # the unlocked pre-check and here.
-            if not self._accepts(candidate.session_id, candidate.generation):
-                return None
-
-            session_key = (candidate.session_id, candidate.generation)
-            if self._current_session is None or self._current_session != session_key:
-                revision = 0
-            else:
-                assert self._current_revision is not None
-                revision = self._current_revision + 1
-
-            projection = candidate.build_projection(revision)
-            payload = projection.to_dict()
-
-            self._current_session = session_key
-            self._current_revision = revision
-            self._current_payload = payload
-
-            return LiveAcceptedEvent(
-                schema_version=SCHEMA_VERSION,
-                service_generation=self._service_generation,
-                session_id=candidate.session_id,
-                revision=revision,
-                event_type="workbench_snapshot",
-                payload=copy.deepcopy(payload),
-            )
+        return event_box[0] if event_box else None
 
     def accept_incremental(
         self,
         update: LiveIncrementalUpdate,
     ) -> LiveAcceptedEvent | None:
-        """Accept a typed incremental update with a producer-proposed revision.
+        """Accept a typed incremental update and assign the next revision.
 
-        Returns ``None`` for any rejected update (old Session, old generation,
-        no baseline, duplicate/stale revision, or a gap).  Rejected updates do
-        not advance revision, do not mutate the snapshot, and do not publish.
+        The store is the sole revision authority: the update carries no
+        revision, and the store assigns ``current + 1`` after applying the
+        payload.  Returns ``None`` for an old/retired Session.  An invalid
+        payload raises :class:`LiveProjectionValidationError` before any
+        authoritative state is touched.
         """
 
         if not isinstance(update, LiveIncrementalUpdate):
@@ -217,48 +240,53 @@ class LiveProjectionStore:
                 "update.event_type must be one of "
                 f"{sorted(_INCREMENTAL_EVENT_TYPES)}"
             )
-        if (
-            not isinstance(update.proposed_revision, int)
-            or isinstance(update.proposed_revision, bool)
-            or update.proposed_revision < 0
-        ):
-            raise ValueError("proposed_revision must be a non-negative integer")
-        if not self._accepts(update.session_id, update.generation):
+        # Validate the typed payload shape before touching authoritative state.
+        _validate_incremental_payload(update.event_type, update.payload)
+
+        event_box: list[LiveAcceptedEvent] = []
+
+        def commit() -> None:
+            with self._lock:
+                session_key = (update.session_id, update.generation)
+                if (
+                    self._current_session is None
+                    or self._current_session != session_key
+                    or self._current_payload is None
+                    or self._current_revision is None
+                ):
+                    # No baseline for this Session; an incremental cannot apply
+                    # without a prior full snapshot.  Drop silently.
+                    return
+                # Apply to a deep-copy staging area so a validation failure
+                # leaves the authoritative state untouched.
+                staged = copy.deepcopy(self._current_payload)
+                _apply_incremental(update.event_type, update.payload, staged)
+                _validate_full_snapshot(staged)
+
+                revision = self._current_revision + 1
+                staged["session"]["revision"] = revision
+                self._current_payload = staged
+                self._current_revision = revision
+                event_box.append(
+                    LiveAcceptedEvent(
+                        schema_version=SCHEMA_VERSION,
+                        service_generation=self._service_generation,
+                        session_id=update.session_id,
+                        revision=revision,
+                        event_type=update.event_type,
+                        payload=copy.deepcopy(update.payload),
+                    )
+                )
+
+        accepted = self._coordinator.commit_if_accepted(
+            session_type=SessionType.LIVE,
+            session_id=update.session_id,
+            generation=update.generation,
+            commit=commit,
+        )
+        if not accepted:
             return None
-
-        with self._lock:
-            if not self._accepts(update.session_id, update.generation):
-                return None
-            if (
-                self._current_session is None
-                or self._current_session != (update.session_id, update.generation)
-                or self._current_payload is None
-                or self._current_revision is None
-            ):
-                # No baseline for this Session yet; incremental cannot apply.
-                return None
-
-            if update.proposed_revision <= self._current_revision:
-                # Duplicate or stale revision.
-                return None
-            if update.proposed_revision > self._current_revision + 1:
-                # Gap / out-of-order: stop applying increments; the consumer
-                # must re-baseline via get_live_snapshot.
-                return None
-
-            # proposed_revision == current + 1
-            self._apply_incremental_unlocked(update.event_type, update.payload)
-            self._current_revision = update.proposed_revision
-            self._current_payload["session"]["revision"] = update.proposed_revision
-
-            return LiveAcceptedEvent(
-                schema_version=SCHEMA_VERSION,
-                service_generation=self._service_generation,
-                session_id=update.session_id,
-                revision=update.proposed_revision,
-                event_type=update.event_type,
-                payload=copy.deepcopy(update.payload),
-            )
+        return event_box[0] if event_box else None
 
     def get_live_snapshot(
         self,
@@ -270,61 +298,194 @@ class LiveProjectionStore:
 
         Raises :class:`LiveProjectionSnapshotUnavailable` when the requested
         Session is not the current authoritative Live Session (wrong Session,
-        retired, or no snapshot published yet).
+        retired, or no snapshot published yet).  Uses ``commit_if_accepted``
+        so the read is atomic with respect to a concurrent retirement.
         """
 
-        with self._lock:
-            if (
-                self._current_session is None
-                or self._current_session != (session_id, generation)
-                or self._current_payload is None
-                or not self._accepts(session_id, generation)
-            ):
-                raise LiveProjectionSnapshotUnavailable(
-                    "no authoritative Live snapshot available for the requested Session"
-                )
-            snapshot = copy.deepcopy(self._current_payload)
-            # Keep the published invariant even if a future code path leaves the
-            # stored payload's revision briefly behind.
-            snapshot["session"]["revision"] = self._current_revision
-            return snapshot
+        snapshot_box: list[dict[str, Any]] = []
 
-    def _accepts(self, session_id: str, generation: int) -> bool:
-        return self._coordinator.accepts_result(
+        def commit() -> None:
+            with self._lock:
+                if (
+                    self._current_session is None
+                    or self._current_session != (session_id, generation)
+                    or self._current_payload is None
+                    or self._current_revision is None
+                ):
+                    return
+                snapshot = copy.deepcopy(self._current_payload)
+                snapshot["session"]["revision"] = self._current_revision
+                snapshot_box.append(snapshot)
+
+        accepted = self._coordinator.commit_if_accepted(
             session_type=SessionType.LIVE,
             session_id=session_id,
             generation=generation,
+            commit=commit,
         )
+        if not accepted or not snapshot_box:
+            raise LiveProjectionSnapshotUnavailable(
+                "no authoritative Live snapshot available for the requested Session"
+            )
+        return snapshot_box[0]
 
-    def _apply_incremental_unlocked(
-        self,
-        event_type: str,
-        payload: dict[str, Any],
-    ) -> None:
-        """Apply an accepted increment to the authoritative payload in place.
 
-        Whole-field replacement is used; merge refinement is owned by T0-024.
-        """
+# ---------------------------------------------------------------------------
+# Payload validation and application
+# ---------------------------------------------------------------------------
 
-        assert self._current_payload is not None
-        if event_type == "market_update":
-            target = payload.get("target")
-            if target not in _MARKET_TARGETS:
-                raise ValueError(
-                    "market_update target must be one of "
-                    f"{sorted(_MARKET_TARGETS)}"
-                )
-            market = self._current_payload["market"]
-            if target == "quote":
-                market["quote"] = copy.deepcopy(payload.get("quote"))
-            else:
-                # Typed bar updates are incremental: the producer sends the new
-                # bars that extend the current series.  Ordering and dedup of the
-                # bar series remain the refresh layer's responsibility (T0-024).
-                market[target].extend(
-                    copy.deepcopy(bar) for bar in payload.get("bars", ())
-                )
-        elif event_type == "indicators_updated":
-            self._current_payload["indicators"] = copy.deepcopy(payload)
-        else:  # chan_analysis_replaced
-            self._current_payload["chan_analysis"] = copy.deepcopy(payload)
+
+def _validate_incremental_payload(event_type: str, payload: dict[str, Any]) -> None:
+    """Validate a typed incremental payload against the frozen app-v1 contract."""
+
+    validator = _INCREMENTAL_VALIDATORS.get(event_type)
+    if validator is None:  # pragma: no cover - guarded by caller
+        raise LiveProjectionValidationError(
+            f"no validator for event_type {event_type!r}"
+        )
+    errors = list(validator.iter_errors(payload))
+    if not errors:
+        return
+    messages = "; ".join(
+        f"{'/'.join(str(part) for part in error.absolute_path)}: {error.message}"
+        for error in errors
+    )
+    raise LiveProjectionValidationError(
+        f"incremental payload does not match frozen contract: {messages}"
+    )
+
+
+def _validate_full_snapshot(payload: dict[str, Any]) -> None:
+    """Validate the authoritative workbench snapshot after applying an increment."""
+
+    errors = list(_LOGICAL_SNAPSHOT_VALIDATOR.iter_errors(payload))
+    if not errors:
+        return
+    messages = "; ".join(
+        f"{'/'.join(str(part) for part in error.absolute_path)}: {error.message}"
+        for error in errors
+    )
+    raise LiveProjectionValidationError(
+        f"authoritative snapshot does not match frozen contract: {messages}"
+    )
+
+
+def _apply_incremental(
+    event_type: str,
+    payload: dict[str, Any],
+    target: dict[str, Any],
+) -> None:
+    """Apply an accepted increment to ``target`` in place.
+
+    Whole-field replacement is used for quote/indicators/chan_analysis.  Bar
+    arrays use timestamp-keyed upsert so a revision to an existing timestamp
+    replaces rather than duplicates, matching the Renderer's de-dup semantics.
+    """
+
+    if event_type == "market_update":
+        market = target["market"]
+        target_field = payload["target"]
+        if target_field == "quote":
+            market["quote"] = copy.deepcopy(payload["quote"])
+        else:
+            new_bars = copy.deepcopy(payload["bars"])
+            existing = market[target_field]
+            _upsert_bars_by_timestamp(existing, new_bars)
+    elif event_type == "indicators_updated":
+        target["indicators"] = copy.deepcopy(payload)
+    else:  # chan_analysis_replaced
+        target["chan_analysis"] = copy.deepcopy(payload)
+
+
+def _upsert_bars_by_timestamp(
+    existing: list[dict[str, Any]],
+    incoming: list[dict[str, Any]],
+) -> None:
+    """Replace bars with matching timestamps, append the rest, preserving order."""
+
+    index = {bar["timestamp"]: i for i, bar in enumerate(existing)}
+    for bar in incoming:
+        ts = bar["timestamp"]
+        if ts in index:
+            existing[index[ts]] = bar
+        else:
+            index[ts] = len(existing)
+            existing.append(bar)
+
+
+# ---------------------------------------------------------------------------
+# Contract loaders
+# ---------------------------------------------------------------------------
+
+
+def _load_contract(package: str, name: str) -> dict[str, Any]:
+    from importlib import resources
+
+    data_file = resources.files(package) / "contracts" / name
+    with data_file.open(encoding="utf-8") as stream:
+        import json
+
+        return json.load(stream)
+
+
+def _build_incremental_validators() -> dict[str, Draft202012Validator]:
+    logical = _load_contract("packages.t0assistant", "logical-schema.json")
+    registry = Registry().with_resource(
+        logical["$id"], Resource.from_contents(logical)
+    )
+    logic_id = logical["$id"]
+    # market_update_payload mirrors app-v1.schema.json#$defs/market_update_payload
+    # without taking a runtime dependency on the app contracts directory.
+    market_update_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["target", "bars", "quote"],
+        "properties": {
+            "target": {"enum": ["quote", "bars_1m", "bars_5m", "daily_bars"]},
+            "bars": {"type": "array", "items": {"$ref": f"{logic_id}#/$defs/bar"}},
+            "quote": {
+                "oneOf": [
+                    {"$ref": f"{logic_id}#/$defs/quote"},
+                    {"type": "null"},
+                ]
+            },
+        },
+        "allOf": [
+            {
+                "if": {"properties": {"target": {"const": "quote"}}},
+                "then": {
+                    "properties": {
+                        "bars": {"maxItems": 0},
+                        "quote": {"$ref": f"{logic_id}#/$defs/quote"},
+                    }
+                },
+            },
+            {
+                "if": {"properties": {"target": {"enum": ["bars_1m", "bars_5m", "daily_bars"]}}},
+                "then": {"properties": {"quote": {"type": "null"}}},
+            },
+        ],
+    }
+    validators: dict[str, Draft202012Validator] = {
+        "market_update": Draft202012Validator(market_update_schema, registry=registry),
+        "indicators_updated": Draft202012Validator(
+            {"$ref": f"{logic_id}#/$defs/indicators"}, registry=registry
+        ),
+        "chan_analysis_replaced": Draft202012Validator(
+            {"$ref": f"{logic_id}#/$defs/chan_analysis"}, registry=registry
+        ),
+    }
+    return validators
+
+
+def _build_logical_snapshot_validator() -> Draft202012Validator:
+    logical = _load_contract("packages.t0assistant", "logical-schema.json")
+    registry = Registry().with_resource(
+        logical["$id"], Resource.from_contents(logical)
+    )
+    schema = {"$ref": f"{logical['$id']}#/$defs/workbench_snapshot"}
+    return Draft202012Validator(schema, registry=registry)
+
+
+_INCREMENTAL_VALIDATORS = _build_incremental_validators()
+_LOGICAL_SNAPSHOT_VALIDATOR = _build_logical_snapshot_validator()

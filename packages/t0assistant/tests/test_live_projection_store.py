@@ -2,8 +2,9 @@
 
 Deterministic, network-free tests that drive the single revision authority
 through full snapshot candidates and typed incremental updates. They assert the
-monotonic revision, rejection of stale/duplicate/out-of-order events, the
-``get_live_snapshot`` rebaseline contract, and concurrency safety.
+monotonic revision (assigned solely by the store), rejection of stale-Session
+events via the atomic acceptance boundary, schema-valid payload enforcement,
+the ``get_live_snapshot`` rebaseline contract, and concurrency safety.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from packages.t0assistant.runtime.live_projection_store import (
     LiveIncrementalUpdate,
     LiveProjectionSnapshotUnavailable,
     LiveProjectionStore,
+    LiveProjectionValidationError,
 )
 from packages.t0assistant.runtime.live_session import (
     LiveSnapshotCandidate,
@@ -53,6 +55,23 @@ def _bar(
     }
 
 
+def _quote(timestamp: str, price: float) -> dict[str, Any]:
+    return {
+        "timestamp": timestamp,
+        "latest_price": price,
+        "change_percent": 1.23,
+        "open": 10.0,
+        "high": 10.5,
+        "low": 9.8,
+        "previous_close": 9.9,
+        "volume": 10000,
+        "amount": 100000.0,
+        "volume_ratio": 1.5,
+        "order_imbalance": None,
+        "turnover_rate": 0.3,
+    }
+
+
 def _chan(symbol: str) -> dict[str, Any]:
     return {
         "symbol": symbol,
@@ -80,8 +99,27 @@ def _chan(symbol: str) -> dict[str, Any]:
     }
 
 
+def _empty_indicators() -> dict[str, Any]:
+    """A minimal schema-valid indicators payload."""
+
+    point = {"timestamp": "2026-07-24 09:31:00", "value": 1.0}
+    return {
+        "five_minute": {
+            "ma": {"ma5": [point], "ma10": [point], "ma20": [point], "ma30": [point], "ma60": [point]},
+            "boll": {"period": 20, "stddev": 2.0, "upper": [point], "middle": [point], "lower": [point]},
+            "volume": {"values": [point], "ma5": [point], "ma10": [point]},
+            "macd": {"fast_period": 12, "slow_period": 26, "signal_period": 9, "dif": [point], "dea": [point], "histogram": [point]},
+        },
+        "one_minute": {
+            "vwap": [point],
+            "volume": {"values": [point]},
+            "macd": {"fast_period": 12, "slow_period": 26, "signal_period": 9, "dif": [point], "dea": [point], "histogram": [point]},
+        },
+    }
+
+
 class _FakeCoordinator:
-    """Minimal acceptance boundary backed by Coordinator.accepts_result shape."""
+    """Minimal acceptance boundary backed by commit_if_accepted semantics."""
 
     def __init__(self) -> None:
         self._accepted: tuple[str, int] | None = None
@@ -92,12 +130,13 @@ class _FakeCoordinator:
     def clear(self) -> None:
         self._accepted = None
 
-    def accepts_result(
+    def commit_if_accepted(
         self,
         *,
         session_type: SessionType | str,
         session_id: str,
         generation: int,
+        commit: Any,
     ) -> bool:
         if self._accepted is None:
             return False
@@ -106,7 +145,10 @@ class _FakeCoordinator:
         )
         if resolved is not SessionType.LIVE:
             return False
-        return self._accepted == (session_id, generation)
+        if self._accepted != (session_id, generation):
+            return False
+        commit()
+        return True
 
 
 class _StoreFixture:
@@ -197,7 +239,6 @@ class LiveProjectionStoreTests(unittest.TestCase):
         self.assertEqual(self.store.current_session, ("live-1", 1))
 
     def test_rejected_candidate_for_unaccepted_session_returns_none_and_keeps_state_empty(self) -> None:
-        # No session accepted yet.
         candidate = self.fixture.candidate(session_id="live-1", generation=1)
 
         event = self.store.accept_candidate(candidate)
@@ -219,13 +260,8 @@ class LiveProjectionStoreTests(unittest.TestCase):
             LiveIncrementalUpdate(
                 session_id="live-1",
                 generation=1,
-                proposed_revision=2,
                 event_type="market_update",
-                payload={
-                    "target": "quote",
-                    "bars": [],
-                    "quote": {"price": 10.20, "volume": 100, "amount": 1020.0},
-                },
+                payload={"target": "quote", "bars": [], "quote": _quote("2026-07-24 09:32:00", 10.20)},
             )
         )
 
@@ -236,77 +272,6 @@ class LiveProjectionStoreTests(unittest.TestCase):
         self.assertEqual([first.revision, second.revision, third.revision], [0, 1, 2])
         self.assertEqual(self.store.current_revision, 2)
 
-    # --- incremental rejection rules -------------------------------------
-
-    def test_duplicate_or_old_revision_incremental_is_rejected(self) -> None:
-        self.coordinator.set_accepted("live-1", 1)
-        self.store.accept_candidate(self.fixture.candidate(session_id="live-1", generation=1))
-        # current_revision == 0; propose 0 (duplicate) and a second propose 0 again.
-        dup = self.store.accept_incremental(
-            LiveIncrementalUpdate(
-                session_id="live-1",
-                generation=1,
-                proposed_revision=0,
-                event_type="market_update",
-                payload={"target": "quote", "bars": [], "quote": None},
-            )
-        )
-        again = self.store.accept_incremental(
-            LiveIncrementalUpdate(
-                session_id="live-1",
-                generation=1,
-                proposed_revision=0,
-                event_type="market_update",
-                payload={"target": "quote", "bars": [], "quote": None},
-            )
-        )
-
-        self.assertIsNone(dup)
-        self.assertIsNone(again)
-        self.assertEqual(self.store.current_revision, 0)
-
-    def test_out_of_order_gap_incremental_is_rejected(self) -> None:
-        self.coordinator.set_accepted("live-1", 1)
-        self.store.accept_candidate(self.fixture.candidate(session_id="live-1", generation=1))
-        # current_revision == 0; expected next is 1, propose 2 (gap).
-        gap = self.store.accept_incremental(
-            LiveIncrementalUpdate(
-                session_id="live-1",
-                generation=1,
-                proposed_revision=2,
-                event_type="market_update",
-                payload={"target": "quote", "bars": [], "quote": None},
-            )
-        )
-
-        self.assertIsNone(gap)
-        self.assertEqual(self.store.current_revision, 0)
-
-    def test_rejected_incremental_does_not_change_snapshot_or_revision(self) -> None:
-        self.coordinator.set_accepted("live-1", 1)
-        self.store.accept_candidate(self.fixture.candidate(session_id="live-1", generation=1))
-        snapshot_before = self.store.get_live_snapshot(
-            session_id="live-1", generation=1
-        )
-        revision_before = self.store.current_revision
-
-        rejected = self.store.accept_incremental(
-            LiveIncrementalUpdate(
-                session_id="live-1",
-                generation=1,
-                proposed_revision=5,  # gap
-                event_type="indicators_updated",
-                payload={"five_minute": {}, "one_minute": {}},
-            )
-        )
-
-        self.assertIsNone(rejected)
-        self.assertEqual(self.store.current_revision, revision_before)
-        self.assertEqual(
-            self.store.get_live_snapshot(session_id="live-1", generation=1),
-            snapshot_before,
-        )
-
     # --- stale session / generation rejection ----------------------------
 
     def test_old_session_id_incremental_is_rejected(self) -> None:
@@ -315,11 +280,10 @@ class LiveProjectionStoreTests(unittest.TestCase):
 
         rejected = self.store.accept_incremental(
             LiveIncrementalUpdate(
-                session_id="live-1",  # old session
+                session_id="live-1",
                 generation=2,
-                proposed_revision=1,
                 event_type="market_update",
-                payload={"target": "quote", "bars": [], "quote": None},
+                payload={"target": "quote", "bars": [], "quote": _quote("2026-07-24 09:32:00", 10.20)},
             )
         )
 
@@ -333,10 +297,9 @@ class LiveProjectionStoreTests(unittest.TestCase):
         rejected = self.store.accept_incremental(
             LiveIncrementalUpdate(
                 session_id="live-2",
-                generation=1,  # old generation
-                proposed_revision=1,
+                generation=1,
                 event_type="market_update",
-                payload={"target": "quote", "bars": [], "quote": None},
+                payload={"target": "quote", "bars": [], "quote": _quote("2026-07-24 09:32:00", 10.20)},
             )
         )
 
@@ -346,7 +309,6 @@ class LiveProjectionStoreTests(unittest.TestCase):
     def test_late_candidate_from_retired_session_is_dropped(self) -> None:
         self.coordinator.set_accepted("live-1", 1)
         self.store.accept_candidate(self.fixture.candidate(session_id="live-1", generation=1))
-        # Session retires / is superseded; coordinator no longer accepts it.
         self.coordinator.clear()
 
         event = self.store.accept_candidate(
@@ -354,7 +316,6 @@ class LiveProjectionStoreTests(unittest.TestCase):
         )
 
         self.assertIsNone(event)
-        # Authority keeps the last published state but will not advance it.
         self.assertEqual(self.store.current_revision, 0)
 
     def test_new_session_candidate_resets_revision_to_zero(self) -> None:
@@ -364,9 +325,8 @@ class LiveProjectionStoreTests(unittest.TestCase):
             LiveIncrementalUpdate(
                 session_id="live-1",
                 generation=1,
-                proposed_revision=1,
                 event_type="market_update",
-                payload={"target": "quote", "bars": [], "quote": None},
+                payload={"target": "quote", "bars": [], "quote": _quote("2026-07-24 09:32:00", 10.20)},
             )
         )
         self.assertEqual(self.store.current_revision, 1)
@@ -382,42 +342,51 @@ class LiveProjectionStoreTests(unittest.TestCase):
         self.assertEqual(self.store.current_session, ("live-2", 2))
         self.assertEqual(self.store.current_revision, 0)
 
-    # --- get_live_snapshot rebaseline contract ---------------------------
-
-    def test_get_live_snapshot_after_gap_returns_latest_complete_state(self) -> None:
+    def test_rejected_incremental_does_not_change_snapshot_or_revision(self) -> None:
         self.coordinator.set_accepted("live-1", 1)
         self.store.accept_candidate(self.fixture.candidate(session_id="live-1", generation=1))
-        # Apply one accepted increment so the snapshot advances past the baseline.
+        snapshot_before = self.store.get_live_snapshot(
+            session_id="live-1", generation=1
+        )
+        revision_before = self.store.current_revision
+
+        # Old-session incremental is rejected.
+        rejected = self.store.accept_incremental(
+            LiveIncrementalUpdate(
+                session_id="live-2",
+                generation=2,
+                event_type="market_update",
+                payload={"target": "quote", "bars": [], "quote": _quote("2026-07-24 09:32:00", 10.20)},
+            )
+        )
+
+        self.assertIsNone(rejected)
+        self.assertEqual(self.store.current_revision, revision_before)
+        self.assertEqual(
+            self.store.get_live_snapshot(session_id="live-1", generation=1),
+            snapshot_before,
+        )
+
+    # --- get_live_snapshot rebaseline contract ---------------------------
+
+    def test_get_live_snapshot_after_increment_returns_latest_complete_state(self) -> None:
+        self.coordinator.set_accepted("live-1", 1)
+        self.store.accept_candidate(self.fixture.candidate(session_id="live-1", generation=1))
         accepted = self.store.accept_incremental(
             LiveIncrementalUpdate(
                 session_id="live-1",
                 generation=1,
-                proposed_revision=1,
                 event_type="market_update",
-                payload={
-                    "target": "quote",
-                    "bars": [],
-                    "quote": {"price": 10.55, "volume": 200, "amount": 2110.0},
-                },
+                payload={"target": "quote", "bars": [], "quote": _quote("2026-07-24 09:32:00", 10.55)},
             )
         )
         self.assertIsNotNone(accepted)
-        # A gap event arrives and is rejected.
-        self.store.accept_incremental(
-            LiveIncrementalUpdate(
-                session_id="live-1",
-                generation=1,
-                proposed_revision=3,
-                event_type="market_update",
-                payload={"target": "quote", "bars": [], "quote": None},
-            )
-        )
 
         snapshot = self.store.get_live_snapshot(session_id="live-1", generation=1)
 
         self.assertEqual(snapshot["session"]["revision"], 1)
         self.assertEqual(snapshot["session"]["session_id"], "live-1")
-        self.assertEqual(snapshot["market"]["quote"]["price"], 10.55)
+        self.assertEqual(snapshot["market"]["quote"]["latest_price"], 10.55)
 
     def test_get_live_snapshot_for_wrong_session_raises(self) -> None:
         self.coordinator.set_accepted("live-1", 1)
@@ -461,17 +430,13 @@ class LiveProjectionStoreTests(unittest.TestCase):
     def test_incremental_envelope_carries_typed_payload_not_full_snapshot(self) -> None:
         self.coordinator.set_accepted("live-1", 1)
         self.store.accept_candidate(self.fixture.candidate(session_id="live-1", generation=1))
-        payload = {
-            "target": "bars_1m",
-            "bars": [_bar("2026-07-24 09:32:00", 10.06, 10.10, 10.04, 10.09, 700, 7063)],
-            "quote": None,
-        }
+        new_bar = _bar("2026-07-24 09:32:00", 10.06, 10.10, 10.04, 10.09, 700, 7063)
+        payload = {"target": "bars_1m", "bars": [new_bar], "quote": None}
 
         event = self.store.accept_incremental(
             LiveIncrementalUpdate(
                 session_id="live-1",
                 generation=1,
-                proposed_revision=1,
                 event_type="market_update",
                 payload=payload,
             )
@@ -480,7 +445,6 @@ class LiveProjectionStoreTests(unittest.TestCase):
         assert event is not None
         self.assertEqual(event.event_type, "market_update")
         self.assertEqual(event.payload, payload)
-        # Internal authoritative snapshot reflects the applied increment.
         snapshot = self.store.get_live_snapshot(session_id="live-1", generation=1)
         self.assertEqual(len(snapshot["market"]["bars_1m"]), 2)
         self.assertEqual(snapshot["market"]["bars_1m"][-1]["close"], 10.09)
@@ -489,14 +453,13 @@ class LiveProjectionStoreTests(unittest.TestCase):
     def test_indicators_and_chan_incremental_apply_to_authoritative_state(self) -> None:
         self.coordinator.set_accepted("live-1", 1)
         self.store.accept_candidate(self.fixture.candidate(session_id="live-1", generation=1))
-        indicators_payload = {"five_minute": {"ma5": [1.0]}, "one_minute": {"ma5": [2.0]}}
-        chan_payload = {"symbol": "sh.600000", "timeframe": "5m", "strokes": [{"a": 1}]}
+        indicators_payload = _empty_indicators()
+        chan_payload = _chan("sh.600000")
 
         ind_event = self.store.accept_incremental(
             LiveIncrementalUpdate(
                 session_id="live-1",
                 generation=1,
-                proposed_revision=1,
                 event_type="indicators_updated",
                 payload=indicators_payload,
             )
@@ -505,7 +468,6 @@ class LiveProjectionStoreTests(unittest.TestCase):
             LiveIncrementalUpdate(
                 session_id="live-1",
                 generation=1,
-                proposed_revision=2,
                 event_type="chan_analysis_replaced",
                 payload=chan_payload,
             )
@@ -517,6 +479,91 @@ class LiveProjectionStoreTests(unittest.TestCase):
         self.assertEqual(snapshot["indicators"], indicators_payload)
         self.assertEqual(snapshot["chan_analysis"], chan_payload)
         self.assertEqual(snapshot["session"]["revision"], 2)
+
+    # --- schema validation (P2) ------------------------------------------
+
+    def test_invalid_incremental_payload_raises_before_state_change(self) -> None:
+        self.coordinator.set_accepted("live-1", 1)
+        self.store.accept_candidate(self.fixture.candidate(session_id="live-1", generation=1))
+        revision_before = self.store.current_revision
+        snapshot_before = self.store.get_live_snapshot(session_id="live-1", generation=1)
+
+        with self.assertRaises(LiveProjectionValidationError):
+            self.store.accept_incremental(
+                LiveIncrementalUpdate(
+                    session_id="live-1",
+                    generation=1,
+                    event_type="market_update",
+                    payload={"target": "quote", "bars": [], "quote": {"bad": "quote"}},
+                )
+            )
+
+        # State untouched.
+        self.assertEqual(self.store.current_revision, revision_before)
+        self.assertEqual(
+            self.store.get_live_snapshot(session_id="live-1", generation=1),
+            snapshot_before,
+        )
+
+    def test_bar_upsert_replaces_existing_timestamp(self) -> None:
+        self.coordinator.set_accepted("live-1", 1)
+        self.store.accept_candidate(self.fixture.candidate(session_id="live-1", generation=1))
+        revised_bar = _bar("2026-07-24 09:31:00", 10.05, 10.12, 10.01, 10.11, 900, 9099)
+
+        event = self.store.accept_incremental(
+            LiveIncrementalUpdate(
+                session_id="live-1",
+                generation=1,
+                event_type="market_update",
+                payload={"target": "bars_1m", "bars": [revised_bar], "quote": None},
+            )
+        )
+
+        assert event is not None
+        snapshot = self.store.get_live_snapshot(session_id="live-1", generation=1)
+        bars_1m = snapshot["market"]["bars_1m"]
+        self.assertEqual(len(bars_1m), 1)
+        self.assertEqual(bars_1m[0]["close"], 10.11)
+
+    def test_accepted_envelope_and_snapshot_pass_frozen_schema(self) -> None:
+        from json import loads as json_loads
+        from jsonschema import Draft202012Validator
+        from referencing import Registry, Resource
+        from importlib import resources
+        from pathlib import Path
+
+        logical = json_loads(
+            (resources.files("packages.t0assistant") / "contracts" / "logical-schema.json")
+            .read_text(encoding="utf-8")
+        )
+        app_path = (
+            Path(__file__).resolve().parents[3]
+            / "apps" / "t0-assistant" / "contracts" / "app-v1.schema.json"
+        )
+        app = json_loads(app_path.read_text(encoding="utf-8"))
+        registry = Registry().with_resources(
+            [
+                (logical["$id"], Resource.from_contents(logical)),
+                (app["$id"], Resource.from_contents(app)),
+            ]
+        )
+        envelope_validator = Draft202012Validator(
+            {"$ref": f"{app['$id']}#/$defs/event_envelope"}, registry=registry
+        )
+        snapshot_validator = Draft202012Validator(
+            {"$ref": f"{logical['$id']}#/$defs/workbench_snapshot"}, registry=registry
+        )
+
+        self.coordinator.set_accepted("live-1", 1)
+        event = self.store.accept_candidate(
+            self.fixture.candidate(session_id="live-1", generation=1)
+        )
+        assert event is not None
+
+        envelope = event.to_envelope()
+        self.assertEqual(list(envelope_validator.iter_errors(envelope)), [])
+        snapshot = self.store.get_live_snapshot(session_id="live-1", generation=1)
+        self.assertEqual(list(snapshot_validator.iter_errors(snapshot)), [])
 
     # --- concurrency -----------------------------------------------------
 
@@ -543,7 +590,6 @@ class LiveProjectionStoreTests(unittest.TestCase):
 
         self.assertEqual(errors, [])
         revisions = [event.revision for event in accepted]
-        # No duplicates and strictly ascending overall sequence 0..N-1.
         self.assertEqual(sorted(revisions), list(range(len(revisions))))
         self.assertEqual(len(set(revisions)), len(revisions))
         self.assertEqual(self.store.current_revision, len(revisions) - 1)
