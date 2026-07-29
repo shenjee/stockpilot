@@ -183,8 +183,7 @@ export function App() {
   const activeReplayLoadOperation = useRef<string | null>(null);
   const activeReplayCursorOperation = useRef<string | null>(null);
   const searchRequests = useRef(createLatestRequestTracker());
-  const securitySelectionSequence = useRef(0);
-  const dayChartSequence = useRef(0);
+  const navigationRequests = useRef(createLatestRequestTracker());
   const preferenceHydrationInFlight = useRef(false);
   const userModifiedPreferences = useRef(false);
   const preferenceSaveQueue = useRef(
@@ -777,7 +776,7 @@ export function App() {
     security: SecurityIdentity,
     restoring = false,
   ) {
-    const selectionSequence = ++securitySelectionSequence.current;
+    const selectionSequence = navigationRequests.current.begin();
     if (!restoring) userModifiedPreferences.current = true;
     if (!window.stockpilot) {
       setWorkbench((current) =>
@@ -791,7 +790,7 @@ export function App() {
       const response = await window.stockpilot.selectSecurity(
         appRequest("select_security", null, { symbol: security.symbol }),
       );
-      if (selectionSequence !== securitySelectionSequence.current) return;
+      if (!navigationRequests.current.isCurrent(selectionSequence)) return;
       const error = applicationErrorFrom(response);
       if (error) {
         setLoading(false);
@@ -828,7 +827,7 @@ export function App() {
       setSuggestions([]);
       setSearchMessage("");
     } catch (error) {
-      if (selectionSequence !== securitySelectionSequence.current) return;
+      if (!navigationRequests.current.isCurrent(selectionSequence)) return;
       setLoading(false);
       const failure = clientError(error, "symbol_selection");
       if (restoring) setBackgroundError(failure);
@@ -848,7 +847,7 @@ export function App() {
   // static workbench snapshot via get_historical_snapshot and replaces the
   // current projection with it.
   async function handleEnterDayChart(symbol: string, tradeDate: string) {
-    const requestSequence = ++dayChartSequence.current;
+    const requestSequence = navigationRequests.current.begin();
     const today = localToday();
     const identity: SecurityIdentity =
       workbench.security && workbench.security.symbol === symbol
@@ -867,14 +866,14 @@ export function App() {
     }
 
     if (!window.stockpilot) {
-      if (requestSequence !== dayChartSequence.current) return;
+      if (!navigationRequests.current.isCurrent(requestSequence)) return;
       setDayChartNotice(
         `该交易日（${tradeDate}）的完整历史图形暂不可用，已保留当前图形。`,
       );
       return;
     }
 
-    if (requestSequence !== dayChartSequence.current) return;
+    if (!navigationRequests.current.isCurrent(requestSequence)) return;
     setLoading(true);
     setDayChartNotice(null);
     try {
@@ -884,7 +883,7 @@ export function App() {
           trade_date: tradeDate,
         }),
       );
-      if (requestSequence !== dayChartSequence.current) return;
+      if (!navigationRequests.current.isCurrent(requestSequence)) return;
       const error = applicationErrorFrom(response);
       if (error) {
         setLoading(false);
@@ -913,7 +912,7 @@ export function App() {
       );
       setLoading(false);
     } catch (error) {
-      if (requestSequence !== dayChartSequence.current) return;
+      if (!navigationRequests.current.isCurrent(requestSequence)) return;
       const appError = clientError(error, "historical_chart");
       setLoading(false);
       setDayChartNotice(

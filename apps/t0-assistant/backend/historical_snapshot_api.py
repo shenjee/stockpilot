@@ -9,9 +9,9 @@ and returns a frozen ``command_response`` payload.
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from packages.marketdata.market_data import TencentStockDataProvider
 from packages.marketdata.repositories.kline_store import KLineStore
@@ -27,6 +27,65 @@ from packages.t0assistant.runtime import (
 
 _SYMBOL_PATTERN = re.compile(r"^(sh|sz)\.[0-9]{6}$")
 _TRADE_DATE_PATTERN = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+
+_BENCHMARK_CODE = "000001"
+_BENCHMARK_MARKET = "sh"
+_BENCHMARK_LOOKBACK_DAYS = 730
+
+
+def _error_category(error_code: str) -> str:
+    """Map historical snapshot error codes to contract categories."""
+    if error_code == "invalid_request":
+        return "validation"
+    if error_code == "historical_data_unavailable":
+        return "data"
+    if error_code == "service_unavailable":
+        return "service"
+    # Unknown runtime failures should not be labelled as validation errors.
+    return "service"
+
+
+def _build_market_context(
+    provider: TencentStockDataProvider,
+    store: KLineStore,
+    today: date,
+) -> MarketContextService:
+    """Build a market-wide calendar that does not depend on any single security.
+
+    The preferred source is cached benchmark index (``sh.000001``) bars, because
+    the benchmark trades on nearly every open market day.  If the benchmark is
+    not cached, fall back to the union of all cached bars.  When the store is
+    completely empty, use a generated weekday calendar so the API remains
+    usable; holidays then degrade cleanly to ``historical_data_unavailable``
+    when the provider cannot supply bars.
+
+    This synchronous path intentionally avoids network I/O so service startup
+    stays fast and reliable.
+    """
+
+    coverage_end = today
+    coverage_start = today - timedelta(days=_BENCHMARK_LOOKBACK_DAYS)
+
+    dates = store.trade_dates(_BENCHMARK_CODE, market=_BENCHMARK_MARKET)
+    if not dates:
+        dates = store.all_trade_dates()
+    if dates:
+        return MarketContextService(
+            trading_days=dates,
+            coverage_start=dates[0],
+            coverage_end=coverage_end.isoformat(),
+        )
+
+    weekday_dates = [
+        (coverage_start + timedelta(days=offset)).isoformat()
+        for offset in range((coverage_end - coverage_start).days + 1)
+        if (coverage_start + timedelta(days=offset)).weekday() < 5
+    ]
+    return MarketContextService(
+        trading_days=weekday_dates,
+        coverage_start=weekday_dates[0],
+        coverage_end=coverage_end.isoformat(),
+    )
 
 
 class HistoricalSnapshotApiPort(Protocol):
@@ -155,9 +214,7 @@ class HistoricalSnapshotApi:
             "data": None,
             "error": {
                 "error_code": error_code,
-                "category": (
-                    "data" if error_code == "historical_data_unavailable" else "validation"
-                ),
+                "category": _error_category(error_code),
                 "severity": "error",
                 "retryable": retryable,
                 "affected_capability": "historical_chart",
@@ -172,23 +229,21 @@ def create_historical_snapshot_api(
     service_generation: int,
     *,
     db_path: Path | None = None,
+    provider: TencentStockDataProvider | None = None,
+    clock: Callable[[], date] | None = None,
 ) -> HistoricalSnapshotApi:
     """Factory for the real historical snapshot API used by ``service.py``."""
 
     paths = RuntimePaths()
     paths.ensure_dirs()
     store = KLineStore(db_path or paths.db_dir / "market_data.sqlite")
-    provider = TencentStockDataProvider()
-    dates = store.all_trade_dates()
-    market_context = MarketContextService(
-        trading_days=dates,
-        coverage_start=dates[0],
-        coverage_end=dates[-1],
-    )
+    resolved_provider = provider or TencentStockDataProvider()
+    today = (clock or date.today)()
+    market_context = _build_market_context(resolved_provider, store, today)
     return HistoricalSnapshotApi(
         service_generation=service_generation,
         store=store,
-        provider=provider,
+        provider=resolved_provider,
         market_context=market_context,
     )
 

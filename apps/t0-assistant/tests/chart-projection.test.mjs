@@ -216,4 +216,3 @@ test("historical snapshot replaces the current projection without starting a Ses
   assert.equal(projection.revision, 0);
   assert.equal(projection.rebaselineRequired, false);
 });
-
