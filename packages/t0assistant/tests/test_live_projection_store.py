@@ -118,6 +118,29 @@ def _empty_indicators() -> dict[str, Any]:
     }
 
 
+def _indicators_with_vwap(vwap_points: list[dict[str, Any]]) -> dict[str, Any]:
+    """A schema-valid indicators increment carrying only one_minute.vwap points.
+
+    All other series are empty arrays (preserved by the merge), and the
+    required scalar structure fields keep their canonical values.  This
+    mirrors the canonical ``workbench-flow-v1.json`` increment shape.
+    """
+
+    return {
+        "five_minute": {
+            "ma": {"ma5": [], "ma10": [], "ma20": [], "ma30": [], "ma60": []},
+            "boll": {"period": 20, "stddev": 2.0, "upper": [], "middle": [], "lower": []},
+            "volume": {"values": [], "ma5": [], "ma10": []},
+            "macd": {"fast_period": 12, "slow_period": 26, "signal_period": 9, "dif": [], "dea": [], "histogram": []},
+        },
+        "one_minute": {
+            "vwap": list(vwap_points),
+            "volume": {"values": []},
+            "macd": {"fast_period": 12, "slow_period": 26, "signal_period": 9, "dif": [], "dea": [], "histogram": []},
+        },
+    }
+
+
 class _FakeCoordinator:
     """Minimal acceptance boundary backed by commit_if_accepted semantics."""
 
@@ -450,10 +473,16 @@ class LiveProjectionStoreTests(unittest.TestCase):
         self.assertEqual(snapshot["market"]["bars_1m"][-1]["close"], 10.09)
         self.assertEqual(snapshot["session"]["revision"], 1)
 
-    def test_indicators_and_chan_incremental_apply_to_authoritative_state(self) -> None:
+    def test_indicators_merge_and_chan_replacement_apply_to_authoritative_state(self) -> None:
         self.coordinator.set_accepted("live-1", 1)
         self.store.accept_candidate(self.fixture.candidate(session_id="live-1", generation=1))
-        indicators_payload = _empty_indicators()
+        baseline = self.store.get_live_snapshot(session_id="live-1", generation=1)
+        baseline_vwap_ts = [
+            point["timestamp"]
+            for point in baseline["indicators"]["one_minute"]["vwap"]
+        ]
+        new_point = {"timestamp": "2026-07-24 09:32:00", "value": 10.08}
+        indicators_payload = _indicators_with_vwap([new_point])
         chan_payload = _chan("sh.600000")
 
         ind_event = self.store.accept_incremental(
@@ -476,9 +505,82 @@ class LiveProjectionStoreTests(unittest.TestCase):
         self.assertIsNotNone(ind_event)
         self.assertIsNotNone(chan_event)
         snapshot = self.store.get_live_snapshot(session_id="live-1", generation=1)
-        self.assertEqual(snapshot["indicators"], indicators_payload)
+        # Indicators are merged by timestamp: baseline history is preserved and
+        # the new point is present (not a whole-block replacement).
+        vwap_ts = [
+            point["timestamp"]
+            for point in snapshot["indicators"]["one_minute"]["vwap"]
+        ]
+        for ts in baseline_vwap_ts:
+            self.assertIn(ts, vwap_ts)
+        self.assertIn("2026-07-24 09:32:00", vwap_ts)
+        # Chan analysis is an authoritative full replacement.
         self.assertEqual(snapshot["chan_analysis"], chan_payload)
         self.assertEqual(snapshot["session"]["revision"], 2)
+
+    def test_indicator_increment_merges_by_timestamp_preserving_history(self) -> None:
+        self.coordinator.set_accepted("live-1", 1)
+        self.store.accept_candidate(self.fixture.candidate(session_id="live-1", generation=1))
+
+        first_point = {"timestamp": "2026-07-24 09:32:00", "value": 10.08}
+        second_point = {"timestamp": "2026-07-24 09:33:00", "value": 10.12}
+        self.store.accept_incremental(
+            LiveIncrementalUpdate(
+                session_id="live-1",
+                generation=1,
+                event_type="indicators_updated",
+                payload=_indicators_with_vwap([first_point]),
+            )
+        )
+        self.store.accept_incremental(
+            LiveIncrementalUpdate(
+                session_id="live-1",
+                generation=1,
+                event_type="indicators_updated",
+                payload=_indicators_with_vwap([second_point]),
+            )
+        )
+
+        snapshot = self.store.get_live_snapshot(session_id="live-1", generation=1)
+        vwap = snapshot["indicators"]["one_minute"]["vwap"]
+        timestamps = [point["timestamp"] for point in vwap]
+        # The first increment's point survives the second increment (merge, not
+        # replace), and the merged series stays in ascending timestamp order.
+        self.assertIn("2026-07-24 09:32:00", timestamps)
+        self.assertIn("2026-07-24 09:33:00", timestamps)
+        self.assertEqual(timestamps, sorted(timestamps))
+
+    def test_indicator_increment_upserts_existing_timestamp_value(self) -> None:
+        self.coordinator.set_accepted("live-1", 1)
+        self.store.accept_candidate(self.fixture.candidate(session_id="live-1", generation=1))
+
+        original = {"timestamp": "2026-07-24 09:32:00", "value": 10.08}
+        revised = {"timestamp": "2026-07-24 09:32:00", "value": 10.50}
+        self.store.accept_incremental(
+            LiveIncrementalUpdate(
+                session_id="live-1",
+                generation=1,
+                event_type="indicators_updated",
+                payload=_indicators_with_vwap([original]),
+            )
+        )
+        self.store.accept_incremental(
+            LiveIncrementalUpdate(
+                session_id="live-1",
+                generation=1,
+                event_type="indicators_updated",
+                payload=_indicators_with_vwap([revised]),
+            )
+        )
+
+        snapshot = self.store.get_live_snapshot(session_id="live-1", generation=1)
+        vwap = snapshot["indicators"]["one_minute"]["vwap"]
+        matching = [
+            point for point in vwap
+            if point["timestamp"] == "2026-07-24 09:32:00"
+        ]
+        self.assertEqual(len(matching), 1)
+        self.assertEqual(matching[0]["value"], 10.50)
 
     # --- schema validation (P2) ------------------------------------------
 
@@ -524,6 +626,29 @@ class LiveProjectionStoreTests(unittest.TestCase):
         bars_1m = snapshot["market"]["bars_1m"]
         self.assertEqual(len(bars_1m), 1)
         self.assertEqual(bars_1m[0]["close"], 10.11)
+
+    def test_bar_increment_sorts_late_bar_into_chronological_order(self) -> None:
+        self.coordinator.set_accepted("live-1", 1)
+        self.store.accept_candidate(self.fixture.candidate(session_id="live-1", generation=1))
+        # Baseline bars_1m carries the 09:31 bar.  Send a late, earlier bar so a
+        # plain append would leave the array out of order relative to Renderer.
+        late_bar = _bar("2026-07-24 09:30:00", 9.98, 10.0, 9.95, 10.0, 500, 4998)
+
+        event = self.store.accept_incremental(
+            LiveIncrementalUpdate(
+                session_id="live-1",
+                generation=1,
+                event_type="market_update",
+                payload={"target": "bars_1m", "bars": [late_bar], "quote": None},
+            )
+        )
+
+        assert event is not None
+        snapshot = self.store.get_live_snapshot(session_id="live-1", generation=1)
+        bars_1m = snapshot["market"]["bars_1m"]
+        timestamps = [bar["timestamp"] for bar in bars_1m]
+        self.assertEqual(timestamps, sorted(timestamps))
+        self.assertEqual(timestamps[0], "2026-07-24 09:30:00")
 
     def test_accepted_envelope_and_snapshot_pass_frozen_schema(self) -> None:
         from json import loads as json_loads

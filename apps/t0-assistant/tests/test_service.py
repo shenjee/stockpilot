@@ -401,11 +401,16 @@ class LiveSnapshotServiceTest(unittest.TestCase, _LiveSnapshotMixin):
             },
             method="POST",
         )
+        response = None
         try:
-            with urlopen(request, timeout=1) as response:
-                return response.status, json.load(response)
+            response = urlopen(request, timeout=1)
+            return response.status, json.load(response)
         except HTTPError as exc:
+            response = exc
             return exc.code, json.load(exc)
+        finally:
+            if response is not None:
+                response.close()
 
     def test_get_live_snapshot_returns_authoritative_snapshot(self) -> None:
         status, payload = self._post(
@@ -424,6 +429,75 @@ class LiveSnapshotServiceTest(unittest.TestCase, _LiveSnapshotMixin):
         self.assertIsNotNone(payload["data"])
         self.assertEqual(payload["data"]["session"]["session_id"], "live-1")
         self.assertEqual(payload["data"]["session"]["revision"], 0)
+
+    def test_get_live_snapshot_rejects_envelope_with_wrong_schema_version(self) -> None:
+        status, payload = self._post(
+            "get_live_snapshot",
+            {
+                "schema_version": "wrong",
+                "request_id": "snap-env-1",
+                "command": "get_live_snapshot",
+                "session_id": "live-1",
+                "payload": {},
+            },
+        )
+        self.assertEqual(status, 400)
+        self.assertFalse(payload["accepted"])
+        self.assertEqual(payload["error"]["error_code"], "invalid_request")
+        self.assertEqual(payload["error"]["request_id"], "snap-env-1")
+
+    def test_get_live_snapshot_rejects_envelope_with_mismatched_body_command(self) -> None:
+        # Body command differs from the URL command: must be rejected before the
+        # snapshot command runs, with HTTP 400 and structured invalid_request.
+        status, payload = self._post(
+            "get_live_snapshot",
+            {
+                "schema_version": "t0_app_v1",
+                "request_id": "snap-env-2",
+                "command": "retry_live",
+                "session_id": "live-1",
+                "payload": {},
+            },
+        )
+        self.assertEqual(status, 400)
+        self.assertFalse(payload["accepted"])
+        self.assertEqual(payload["error"]["error_code"], "invalid_request")
+
+    def test_get_live_snapshot_rejects_envelope_missing_request_id(self) -> None:
+        # Reviewer's exact invalid request: wrong schema_version, mismatched
+        # command, non-empty payload, and a missing request_id.  Must return
+        # HTTP 400 and never execute the snapshot command.
+        status, payload = self._post(
+            "get_live_snapshot",
+            {
+                "schema_version": "wrong",
+                "command": "retry_live",
+                "session_id": "live-1",
+                "payload": {"unexpected": True},
+            },
+        )
+        self.assertEqual(status, 400)
+        self.assertFalse(payload["accepted"])
+        self.assertEqual(payload["error"]["error_code"], "invalid_request")
+        self.assertEqual(payload["error"]["affected_capability"], "live")
+
+    def test_get_live_snapshot_rejects_envelope_with_non_empty_payload(self) -> None:
+        status, payload = self._post(
+            "get_live_snapshot",
+            {
+                "schema_version": "t0_app_v1",
+                "request_id": "snap-env-3",
+                "command": "get_live_snapshot",
+                "session_id": "live-1",
+                "payload": {"unexpected": True},
+            },
+        )
+        self.assertEqual(status, 400)
+        self.assertFalse(payload["accepted"])
+        self.assertEqual(payload["error"]["error_code"], "invalid_request")
+        # No snapshot command was executed: request_id is echoed back but no
+        # authoritative state was read.
+        self.assertEqual(payload["error"]["request_id"], "snap-env-3")
 
     def test_get_live_snapshot_wrong_session_is_rejected(self) -> None:
         status, payload = self._post(

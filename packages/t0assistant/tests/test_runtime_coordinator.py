@@ -988,5 +988,226 @@ class AppCoordinatorTests(unittest.TestCase):
             )
 
 
+class CommitIfAcceptedTests(unittest.TestCase):
+    """Regression tests for AppCoordinator.commit_if_accepted.
+
+    These exercises use the real AppCoordinator with its real state lock (not
+    a fake), so they cover the atomic acceptance + commit boundary that the
+    LiveProjectionStore relies on.
+    """
+
+    def setUp(self) -> None:
+        self.factory = _FakeSessionFactory()
+        self.coordinator = AppCoordinator(
+            self.factory,
+            session_id_factory=_session_id,
+        )
+        selected = self.coordinator.select_symbol("sh.600000")
+        self.live = selected.live_session
+        assert self.live is not None
+
+    def test_wrong_session_id_does_not_run_commit(self) -> None:
+        ran: list[bool] = []
+
+        def commit() -> None:
+            ran.append(True)
+
+        accepted = self.coordinator.commit_if_accepted(
+            session_type="live",
+            session_id="live-other",
+            generation=self.live.generation,
+            commit=commit,
+        )
+        self.assertFalse(accepted)
+        self.assertEqual(ran, [])
+
+    def test_wrong_generation_does_not_run_commit(self) -> None:
+        ran: list[bool] = []
+
+        def commit() -> None:
+            ran.append(True)
+
+        accepted = self.coordinator.commit_if_accepted(
+            session_type="live",
+            session_id=self.live.session_id,
+            generation=self.live.generation + 1,
+            commit=commit,
+        )
+        self.assertFalse(accepted)
+        self.assertEqual(ran, [])
+
+    def test_wrong_session_type_does_not_run_commit(self) -> None:
+        ran: list[bool] = []
+
+        def commit() -> None:
+            ran.append(True)
+
+        accepted = self.coordinator.commit_if_accepted(
+            session_type="replay",
+            session_id=self.live.session_id,
+            generation=self.live.generation,
+            commit=commit,
+        )
+        self.assertFalse(accepted)
+        self.assertEqual(ran, [])
+
+    def test_valid_identity_runs_commit_under_state_lock(self) -> None:
+        seen: list[bool] = []
+
+        def commit() -> None:
+            # Inside the commit the Session must still be accepted.
+            seen.append(
+                self.coordinator.accepts_result(
+                    session_type="live",
+                    session_id=self.live.session_id,
+                    generation=self.live.generation,
+                )
+            )
+
+        accepted = self.coordinator.commit_if_accepted(
+            session_type="live",
+            session_id=self.live.session_id,
+            generation=self.live.generation,
+            commit=commit,
+        )
+        self.assertTrue(accepted)
+        self.assertEqual(seen, [True])
+
+    def test_concurrent_session_switch_blocks_until_old_commit_completes(self) -> None:
+        # Deterministic interleaving: old Session's commit callback blocks, a
+        # concurrent select_symbol(new) must not cross the acceptance boundary
+        # until the old commit releases the state lock, and after the switch the
+        # old Session's commit must be rejected without running the callback.
+        old_live = self.live
+        commit_started = Event()
+        allow_commit = Event()
+        commit_completed: list[bool] = []
+
+        def blocking_commit() -> None:
+            commit_started.set()
+            allow_commit.wait(timeout=2)
+            commit_completed.append(True)
+
+        def old_commit() -> None:
+            self.coordinator.commit_if_accepted(
+                session_type="live",
+                session_id=old_live.session_id,
+                generation=old_live.generation,
+                commit=blocking_commit,
+            )
+
+        commit_thread = Thread(target=old_commit)
+        commit_thread.start()
+        self.assertTrue(commit_started.wait(timeout=1))
+
+        switch_results: list[Any] = []
+        switch_errors: list[Exception] = []
+
+        def switch_symbol() -> None:
+            try:
+                switch_results.append(self.coordinator.select_symbol("sz.000001"))
+            except Exception as exc:  # pragma: no cover - surfaced via switch_errors
+                switch_errors.append(exc)
+
+        switch_thread = Thread(target=switch_symbol)
+        switch_thread.start()
+        # While the old commit holds the state lock, the new transition cannot
+        # complete; give it a short window to prove it is still pending.
+        self.assertFalse(switch_thread.join(timeout=0.3))
+
+        allow_commit.set()
+        commit_thread.join(timeout=2)
+        switch_thread.join(timeout=2)
+        self.assertFalse(commit_thread.is_alive())
+        self.assertFalse(switch_thread.is_alive())
+        self.assertEqual(commit_completed, [True])
+        self.assertEqual(switch_errors, [])
+
+        # The new Live Session is now authoritative; the old Session is retired.
+        self.assertEqual(len(switch_results), 1)
+        new_live = switch_results[0].live_session
+        assert new_live is not None
+        self.assertNotEqual(new_live.session_id, old_live.session_id)
+
+        ran_after: list[bool] = []
+
+        def commit_after() -> None:
+            ran_after.append(True)
+
+        accepted = self.coordinator.commit_if_accepted(
+            session_type="live",
+            session_id=old_live.session_id,
+            generation=old_live.generation,
+            commit=commit_after,
+        )
+        self.assertFalse(accepted)
+        self.assertEqual(ran_after, [])
+
+    def test_callback_exception_releases_state_lock(self) -> None:
+        ran: list[bool] = []
+
+        def failing_commit() -> None:
+            ran.append(True)
+            raise RuntimeError("callback failed")
+
+        with self.assertRaises(RuntimeError):
+            self.coordinator.commit_if_accepted(
+                session_type="live",
+                session_id=self.live.session_id,
+                generation=self.live.generation,
+                commit=failing_commit,
+            )
+        self.assertEqual(ran, [True])
+
+        # The state lock must have been released: a snapshot read and a fresh
+        # commit on the still-current Session must succeed.
+        snapshot = self.coordinator.snapshot
+        self.assertEqual(snapshot.live_session, self.live)
+
+        ran2: list[bool] = []
+
+        def healthy_commit() -> None:
+            ran2.append(True)
+
+        accepted = self.coordinator.commit_if_accepted(
+            session_type="live",
+            session_id=self.live.session_id,
+            generation=self.live.generation,
+            commit=healthy_commit,
+        )
+        self.assertTrue(accepted)
+        self.assertEqual(ran2, [True])
+
+    def test_snapshot_is_readable_during_commit(self) -> None:
+        # A commit callback runs under the state lock (RLock), so a concurrent
+        # snapshot read (also under the same lock) must not deadlock and must
+        # observe the Session as still accepted.
+        snapshot_read: list[Any] = []
+        commit_started = Event()
+        allow_commit = Event()
+
+        def commit() -> None:
+            commit_started.set()
+            snapshot_read.append(self.coordinator.snapshot)
+            allow_commit.wait(timeout=2)
+
+        commit_thread = Thread(
+            target=lambda: self.coordinator.commit_if_accepted(
+                session_type="live",
+                session_id=self.live.session_id,
+                generation=self.live.generation,
+                commit=commit,
+            )
+        )
+        commit_thread.start()
+        self.assertTrue(commit_started.wait(timeout=1))
+        allow_commit.set()
+        commit_thread.join(timeout=2)
+        self.assertFalse(commit_thread.is_alive())
+
+        self.assertEqual(len(snapshot_read), 1)
+        self.assertEqual(snapshot_read[0].live_session, self.live)
+
+
 if __name__ == "__main__":
     unittest.main()

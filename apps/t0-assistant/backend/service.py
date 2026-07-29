@@ -323,28 +323,21 @@ class _Handler(BaseHTTPRequestHandler):
         if live_api is None:
             self._service_unavailable(command, request)
             return
-        request_id = request.get("request_id", "missing-request-id")
-        session_id = request.get("session_id")
-        if not isinstance(session_id, str) or not session_id:
+        error = _validate_live_snapshot_request(command, request)
+        if error is not None:
+            request_id = request.get("request_id", "missing-request-id")
             payload = {
                 "schema_version": "t0_app_v1",
                 "request_id": request_id,
                 "accepted": False,
                 "operation_id": None,
                 "data": None,
-                "error": {
-                    "error_code": "invalid_request",
-                    "category": "validation",
-                    "severity": "error",
-                    "retryable": False,
-                    "affected_capability": "live",
-                    "message": "session_id is required",
-                    "request_id": request_id,
-                    "details": {},
-                },
+                "error": error,
             }
             self._json(HTTPStatus.BAD_REQUEST, payload)
             return
+        request_id = request["request_id"]
+        session_id = request["session_id"]
         try:
             result = live_api.get_live_snapshot(
                 request_id=request_id,
@@ -375,8 +368,11 @@ class _Handler(BaseHTTPRequestHandler):
             )
             return
         status = HTTPStatus.OK if result.get("accepted") else HTTPStatus.NOT_FOUND
-        error = result.get("error")
-        if isinstance(error, dict) and error.get("error_code") == "service_unavailable":
+        result_error = result.get("error")
+        if (
+            isinstance(result_error, dict)
+            and result_error.get("error_code") == "service_unavailable"
+        ):
             status = HTTPStatus.SERVICE_UNAVAILABLE
         elif not result.get("accepted"):
             status = HTTPStatus.NOT_FOUND
@@ -584,6 +580,63 @@ class _Handler(BaseHTTPRequestHandler):
 
     def log_message(self, format: str, *args: object) -> None:
         return
+
+
+def _live_invalid_request(message: str, request_id: str) -> dict[str, Any]:
+    """Build a structured ``invalid_request`` application_error for live commands."""
+
+    return {
+        "error_code": "invalid_request",
+        "category": "validation",
+        "severity": "error",
+        "retryable": False,
+        "affected_capability": "live",
+        "message": message,
+        "request_id": request_id,
+        "details": {},
+    }
+
+
+def _validate_live_snapshot_request(
+    url_command: str,
+    request: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Validate a ``get_live_snapshot`` command envelope before dispatch.
+
+    Enforces the frozen ``command_request`` contract for the Live snapshot
+    command: ``schema_version == "t0_app_v1"``, a non-empty ``request_id``, the
+    body ``command`` matching the URL command, a non-empty ``session_id`` and an
+    empty ``payload``.  Returns a structured ``application_error`` dict when the
+    request is invalid, or ``None`` when it is accepted.  An invalid request
+    never reaches ``LiveSnapshotApi``.
+    """
+
+    request_id = request.get("request_id")
+    if not isinstance(request_id, str) or not request_id:
+        request_id_echo = (
+            request_id if isinstance(request_id, str) and request_id else "missing-request-id"
+        )
+        return _live_invalid_request("request_id is required", request_id_echo)
+
+    schema_version = request.get("schema_version")
+    if schema_version != "t0_app_v1":
+        return _live_invalid_request("schema_version must be t0_app_v1", request_id)
+
+    body_command = request.get("command")
+    if body_command != url_command:
+        return _live_invalid_request(
+            "body command must match the URL command", request_id
+        )
+
+    session_id = request.get("session_id")
+    if not isinstance(session_id, str) or not session_id:
+        return _live_invalid_request("session_id is required", request_id)
+
+    payload = request.get("payload")
+    if not isinstance(payload, dict) or payload:
+        return _live_invalid_request("payload must be an empty object", request_id)
+
+    return None
 
 
 def create_server(

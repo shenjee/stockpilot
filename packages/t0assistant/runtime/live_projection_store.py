@@ -377,9 +377,12 @@ def _apply_incremental(
 ) -> None:
     """Apply an accepted increment to ``target`` in place.
 
-    Whole-field replacement is used for quote/indicators/chan_analysis.  Bar
-    arrays use timestamp-keyed upsert so a revision to an existing timestamp
-    replaces rather than duplicates, matching the Renderer's de-dup semantics.
+    Bar arrays and indicator series use timestamp-keyed upsert with ascending
+    sort, mirroring the Renderer's ``mergeTimestampRows`` so a rebaseline
+    snapshot never loses history and stays chronologically ordered (a
+    late-arriving earlier row lands in order, not at the tail).  ``quote`` and
+    ``chan_analysis`` are authoritative full replacements.  Incoming rows are
+    deep-copied so the caller's payload can never alias the authoritative state.
     """
 
     if event_type == "market_update":
@@ -388,29 +391,109 @@ def _apply_incremental(
         if target_field == "quote":
             market["quote"] = copy.deepcopy(payload["quote"])
         else:
-            new_bars = copy.deepcopy(payload["bars"])
-            existing = market[target_field]
-            _upsert_bars_by_timestamp(existing, new_bars)
+            market[target_field] = _merge_rows_by_timestamp(
+                market[target_field], payload["bars"]
+            )
     elif event_type == "indicators_updated":
-        target["indicators"] = copy.deepcopy(payload)
+        _merge_indicators(target["indicators"], payload)
     else:  # chan_analysis_replaced
         target["chan_analysis"] = copy.deepcopy(payload)
 
 
-def _upsert_bars_by_timestamp(
-    existing: list[dict[str, Any]],
-    incoming: list[dict[str, Any]],
-) -> None:
-    """Replace bars with matching timestamps, append the rest, preserving order."""
+def _merge_rows_by_timestamp(
+    current: list[dict[str, Any]] | None,
+    incoming: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Timestamp-keyed upsert with ascending sort.
 
-    index = {bar["timestamp"]: i for i, bar in enumerate(existing)}
-    for bar in incoming:
-        ts = bar["timestamp"]
-        if ts in index:
-            existing[index[ts]] = bar
+    Mirrors the Renderer's ``mergeTimestampRows``: rows in ``incoming`` replace
+    rows with a matching ``timestamp`` in ``current``; new timestamps are
+    inserted; the result is sorted ascending by ``timestamp``.  Incoming rows
+    are deep-copied so the caller's payload stays detached from the
+    authoritative state; ``current`` rows are assumed already detached.
+    """
+
+    by_timestamp: dict[str, dict[str, Any]] = {}
+    for row in current or ():
+        by_timestamp[row["timestamp"]] = row
+    for row in incoming or ():
+        by_timestamp[row["timestamp"]] = copy.deepcopy(row)
+    return sorted(by_timestamp.values(), key=lambda row: row["timestamp"])
+
+
+def _merge_indicators(
+    current: dict[str, Any],
+    incoming: dict[str, Any],
+) -> None:
+    """Merge an indicators increment into ``current`` in place.
+
+    Mirrors the Renderer's ``applyIndicatorUpdate``: each indicator series is
+    merged by timestamp-keyed upsert with ascending sort, scalar structure
+    fields (``period``, ``stddev``, ``fast_period`` ...) are overwritten by the
+    increment, and historical points absent from the increment are preserved.
+    This keeps the authoritative snapshot consistent with the Renderer's
+    projection after a rebaseline.
+    """
+
+    for timeframe in ("five_minute", "one_minute"):
+        current_tf = current.get(timeframe) or {}
+        incoming_tf = incoming.get(timeframe) or {}
+        if not incoming_tf:
+            continue
+        merged: dict[str, Any] = {**current_tf, **incoming_tf}
+        if timeframe == "five_minute":
+            current_ma = current_tf.get("ma") or {}
+            incoming_ma = incoming_tf.get("ma") or {}
+            merged["ma"] = {
+                key: _merge_rows_by_timestamp(
+                    current_ma.get(key), incoming_ma.get(key)
+                )
+                for key in ("ma5", "ma10", "ma20", "ma30", "ma60")
+            }
+            current_boll = current_tf.get("boll") or {}
+            incoming_boll = incoming_tf.get("boll") or {}
+            merged["boll"] = {
+                **current_boll,
+                **incoming_boll,
+                **{
+                    key: _merge_rows_by_timestamp(
+                        current_boll.get(key), incoming_boll.get(key)
+                    )
+                    for key in ("upper", "middle", "lower")
+                },
+            }
+            volume_keys = ("values", "ma5", "ma10")
         else:
-            index[ts] = len(existing)
-            existing.append(bar)
+            volume_keys = ("values",)
+        current_volume = current_tf.get("volume") or {}
+        incoming_volume = incoming_tf.get("volume") or {}
+        merged["volume"] = {
+            **current_volume,
+            **incoming_volume,
+            **{
+                key: _merge_rows_by_timestamp(
+                    current_volume.get(key), incoming_volume.get(key)
+                )
+                for key in volume_keys
+            },
+        }
+        if timeframe == "one_minute":
+            merged["vwap"] = _merge_rows_by_timestamp(
+                current_tf.get("vwap"), incoming_tf.get("vwap")
+            )
+        current_macd = current_tf.get("macd") or {}
+        incoming_macd = incoming_tf.get("macd") or {}
+        merged["macd"] = {
+            **current_macd,
+            **incoming_macd,
+            **{
+                key: _merge_rows_by_timestamp(
+                    current_macd.get(key), incoming_macd.get(key)
+                )
+                for key in ("dif", "dea", "histogram")
+            },
+        }
+        current[timeframe] = merged
 
 
 # ---------------------------------------------------------------------------
