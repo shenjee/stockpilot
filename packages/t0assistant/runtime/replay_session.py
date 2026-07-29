@@ -105,6 +105,19 @@ class ReplayStepResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ReplayInitialResult:
+    """One-shot result of the initial Replay ready computation.
+
+    ``revision`` is owned by the Session.  For a failed initialization it is
+    reserved for the corresponding T0-044 ``operation_failed`` event; for a
+    successful initialization it is the emitted ready snapshot revision.
+    """
+
+    outcome: ComputationOutcome
+    revision: int
+
+
+@dataclass(frozen=True, slots=True)
 class PlaybackPumpResult:
     """Outcome of one :meth:`ReplaySession.pump_playback` call.
 
@@ -223,7 +236,10 @@ class ReplaySession:
 
         self._next_ticket = 1
         self._inflight_ticket: int | None = None
+        self._inflight_committed_ticket: int | None = None
         self._inflight_committed_value: PipelineResult | None = None
+        self._inflight_committed_revision: int | None = None
+        self._initial_result: ReplayInitialResult | None = None
         self._last_commit_mono: float = 0.0
 
         self._owns_scheduler = scheduler is None
@@ -320,6 +336,20 @@ class ReplaySession:
                     "no snapshot available before the ready computation"
                 )
             return self._build_snapshot_payload_locked()
+
+    def take_initial_result(self) -> ReplayInitialResult | None:
+        """Return and consume the initial ``ready`` computation result.
+
+        The result is available after construction when ``auto_ready`` is
+        ``True``. It can be retrieved only once; subsequent calls return
+        ``None``. The command adapter maps ``result.outcome`` through T0-044 and
+        uses ``result.revision`` for the resulting ``operation_failed`` event.
+        """
+
+        with self._lock:
+            result = self._initial_result
+            self._initial_result = None
+            return result
 
     # ------------------------------------------------------------------
     # Cursor operations
@@ -456,7 +486,9 @@ class ReplaySession:
             self._inflight_ticket = ticket
         outcome: ComputationOutcome | None = None
         try:
-            outcome = self._submit_advance(target, operation_id, None, ticket)
+            outcome = self._submit_advance(
+                target, operation_id, None, ticket, "step"
+            )
         finally:
             # If submit raised, we must release the ticket because the result
             # handler below will not run.  Otherwise the result handler keeps
@@ -478,15 +510,40 @@ class ReplaySession:
                     return ReplayStepResult(False, self.revision, operation_id, "failed")
                 revision = self.revision
                 if outcome.status is ComputationStatus.COMPLETED:
-                    if self._retired or self._state != "paused":
-                        return ReplayStepResult(False, revision, operation_id, "dropped", outcome)
-                    # commit_result already published the preview into the pipeline.
-                    # The Session cursor + snapshot advance atomically here.
-                    self._last_pipeline_result = outcome.value
-                    self._current_time = target
-                    self._next_bar_time = self._resolve_next_bar(target, consumed=True)
-                    self._publish_workbench_snapshot_locked(operation_id)
-                    return ReplayStepResult(True, self.revision, operation_id, "completed", outcome)
+                    # commit_result advances the cursor and pipeline atomically.
+                    # If it recorded a committed value, the operation succeeded
+                    # even if a later pause()/retire() changed the Session state.
+                    if self._inflight_committed_ticket == ticket:
+                        assert self._inflight_committed_revision is not None
+                        return ReplayStepResult(
+                            True,
+                            self._inflight_committed_revision,
+                            operation_id,
+                            "completed",
+                            outcome,
+                        )
+                    if not self._retired and self._state == "paused":
+                        # Minimal/fake executors may return COMPLETED without
+                        # invoking the task's commit callback.
+                        self._commit_advance_locked(
+                            outcome.value,
+                            target=target,
+                            operation_id=operation_id,
+                            ticket=ticket,
+                            commit_kind="step",
+                        )
+                        assert self._inflight_committed_revision is not None
+                        return ReplayStepResult(
+                            True,
+                            self._inflight_committed_revision,
+                            operation_id,
+                            "completed",
+                            outcome,
+                        )
+                    # The executor accepted the result but the Session-side
+                    # commit boundary rejected it (e.g. retired between accept
+                    # and commit). Drop without advancing.
+                    return ReplayStepResult(False, self.revision, operation_id, "dropped", outcome)
                 # Non-completed: never commit the cursor or pipeline state.
                 if self._retired:
                     return ReplayStepResult(False, revision, operation_id, "dropped", outcome)
@@ -531,7 +588,9 @@ class ReplaySession:
             self._inflight_ticket = ticket
         outcome: ComputationOutcome | None = None
         try:
-            outcome = self._submit_advance(target, None, "playing", ticket)
+            outcome = self._submit_advance(
+                target, None, "playing", ticket, "playback"
+            )
         finally:
             if outcome is None:
                 with self._lock:
@@ -547,15 +606,30 @@ class ReplaySession:
                         "failed", "operation_failed", None, None
                     )
                     return PlaybackPumpResult("failed", None)
-                if self._retired:
-                    return PlaybackPumpResult("dropped", None)
                 if outcome.status is ComputationStatus.COMPLETED:
-                    if self._state == "playing":
-                        self._last_pipeline_result = outcome.value
-                        self._current_time = target
-                        self._next_bar_time = self._resolve_next_bar(target, consumed=True)
-                        self._last_commit_mono = self._clock.now()
-                        self._publish_workbench_snapshot_locked(None)
+                    # commit_result advances the cursor and pipeline atomically.
+                    # If it recorded a committed value, the operation
+                    # succeeded even if a later pause()/retire() changed the
+                    # Session state.
+                    if self._inflight_committed_ticket == ticket:
+                        if self._state == "playing":
+                            if self._next_bar_time is None:
+                                next_due = self._clock.now()
+                            else:
+                                next_due = self._last_commit_mono + (
+                                    1.0 / self._playback_speed
+                                )
+                            self._scheduler.schedule(next_due)
+                            return PlaybackPumpResult("advanced", next_due)
+                        return PlaybackPumpResult("advanced", None)
+                    if self._state == "playing" and not self._retired:
+                        self._commit_advance_locked(
+                            outcome.value,
+                            target=target,
+                            operation_id=None,
+                            ticket=ticket,
+                            commit_kind="playback",
+                        )
                         if self._next_bar_time is None:
                             next_due = self._clock.now()
                         else:
@@ -564,12 +638,13 @@ class ReplaySession:
                             )
                         self._scheduler.schedule(next_due)
                         return PlaybackPumpResult("advanced", next_due)
-                    # Paused after accept: drop without advancing the cursor or
-                    # publishing.  The pipeline was not committed because
-                    # commit_result re-validated state; the cursor + last result
-                    # stay consistent with the published snapshot.
+                    # The executor accepted the result but the Session-side
+                    # commit boundary rejected it (e.g. retired between accept
+                    # and commit). Drop without advancing.
                     return PlaybackPumpResult("dropped", None)
                 # Non-completed: never advance.
+                if self._retired:
+                    return PlaybackPumpResult("dropped", None)
                 if _outcome_is_failure(outcome):
                     self._state = "failed"
                     self._publish_session_status_locked(
@@ -604,6 +679,7 @@ class ReplaySession:
         operation_id: str | None,
         expected_state: str | None,
         ticket: int,
+        commit_kind: str = "step",
     ) -> ComputationOutcome:
         """Submit one advance computation and block until it resolves."""
 
@@ -637,8 +713,13 @@ class ReplaySession:
                     return
                 if expected_state is not None and self._state != expected_state:
                     return
-                pipeline.commit_preview(value)
-                self._inflight_committed_value = value
+                self._commit_advance_locked(
+                    value,
+                    target=target,
+                    operation_id=operation_id,
+                    ticket=ticket,
+                    commit_kind=commit_kind,
+                )
 
         def accept_result(_value: Any) -> bool:
             if self._retired or _task_cancelled.is_set():
@@ -660,7 +741,9 @@ class ReplaySession:
             return self._retired or _task_cancelled.is_set()
 
         with self._lock:
+            self._inflight_committed_ticket = None
             self._inflight_committed_value = None
+            self._inflight_committed_revision = None
 
         task = ComputationTask(
             task_id=new_task_id(),
@@ -686,7 +769,10 @@ class ReplaySession:
             # cursor rather than failing with an inconsistent pipeline.
             with self._lock:
                 committed = self._inflight_committed_value
-                if committed is not None:
+                if (
+                    self._inflight_committed_ticket == ticket
+                    and committed is not None
+                ):
                     return ComputationOutcome(
                         task_id=task.task_id,
                         status=ComputationStatus.COMPLETED,
@@ -741,7 +827,13 @@ class ReplaySession:
             self._inflight_ticket = ticket
         outcome: ComputationOutcome | None = None
         try:
-            outcome = self._submit_advance(target, self._initial_operation_id, None, ticket)
+            outcome = self._submit_advance(
+                target,
+                self._initial_operation_id,
+                None,
+                ticket,
+                "initialize",
+            )
         finally:
             if outcome is None:
                 with self._lock:
@@ -749,29 +841,78 @@ class ReplaySession:
         with self._lock:
             self._inflight_ticket = None
             if outcome is None:
-                self._state = "failed"
-                self._publish_session_status_locked(
-                    "failed", "operation_failed", self._initial_operation_id, None
+                outcome = ComputationOutcome(
+                    task_id="",
+                    status=ComputationStatus.CANCELLED,
+                    cancel_reason=CancelReason.EXECUTOR_CLOSED,
                 )
-                return
             if (
                 outcome.status is ComputationStatus.COMPLETED
                 and not self._retired
             ):
-                self._last_pipeline_result = outcome.value
-                self._current_time = target
-                self._next_bar_time = self._resolve_next_bar(target, consumed=False)
-                self._state = "ready"
-                self._publish_workbench_snapshot_locked(self._initial_operation_id)
+                if self._inflight_committed_ticket != ticket:
+                    self._commit_advance_locked(
+                        outcome.value,
+                        target=target,
+                        operation_id=self._initial_operation_id,
+                        ticket=ticket,
+                        commit_kind="initialize",
+                    )
+                assert self._inflight_committed_revision is not None
+                result_revision = self._inflight_committed_revision
             else:
                 self._state = "failed"
                 self._publish_session_status_locked(
                     "failed", "operation_failed", self._initial_operation_id, None
                 )
+                # T0-044 publishes operation_failed outside this runtime layer.
+                # Reserve its revision now so later Session events (especially
+                # retire) cannot reuse the same number.
+                result_revision = self._allocate_revision_locked()
+            self._initial_result = ReplayInitialResult(
+                outcome=outcome,
+                revision=result_revision,
+            )
 
     # ------------------------------------------------------------------
     # Internal: state helpers (all called under self._lock)
     # ------------------------------------------------------------------
+
+    def _commit_advance_locked(
+        self,
+        value: PipelineResult,
+        *,
+        target: datetime,
+        operation_id: str | None,
+        ticket: int,
+        commit_kind: str,
+    ) -> None:
+        """Atomically publish one accepted preview into all Session state.
+
+        The pipeline, cursor, last result, state projection and snapshot share
+        this linearization point.  A concurrent pause/retire therefore happens
+        wholly before the commit (and rejects it) or wholly after the committed
+        snapshot; it cannot split pipeline state from the Replay cursor.
+        """
+
+        if commit_kind not in {"initialize", "step", "playback"}:
+            raise ValueError(f"unsupported commit_kind: {commit_kind}")
+
+        self._pipeline.commit_preview(value)
+        self._last_pipeline_result = value
+        self._current_time = target
+        self._next_bar_time = self._resolve_next_bar(
+            target,
+            consumed=(commit_kind != "initialize"),
+        )
+        if commit_kind == "initialize":
+            self._state = "ready"
+        elif commit_kind == "playback":
+            self._last_commit_mono = self._clock.now()
+        self._inflight_committed_ticket = ticket
+        self._inflight_committed_value = value
+        self._publish_workbench_snapshot_locked(operation_id)
+        self._inflight_committed_revision = self._revision
 
     def _resolve_next_bar(self, current: datetime, *, consumed: bool) -> datetime | None:
         if not self._actual_bar_times:
@@ -897,6 +1038,7 @@ def _outcome_is_failure(outcome: ComputationOutcome) -> bool:
 __all__ = [
     "EventPublisher",
     "PlaybackPumpResult",
+    "ReplayInitialResult",
     "ReplaySession",
     "ReplaySessionError",
     "ReplaySessionStateError",

@@ -92,6 +92,7 @@ from .replay_data import (
 )
 from .replay_session import (
     PlaybackPumpResult,
+    ReplayInitialResult,
     ReplaySession,
     ReplaySessionError,
     ReplaySessionStateError,
@@ -161,6 +162,7 @@ __all__ = [
     "ReplayPreparationConfig",
     "ReplayProjectionInput",
     "ReplayReliabilityAssessment",
+    "ReplayInitialResult",
     "ReplaySession",
     "ReplaySessionError",
     "ReplaySessionStateError",

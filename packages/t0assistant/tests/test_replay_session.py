@@ -275,26 +275,6 @@ class _TimeoutExecutor:
         return None
 
 
-class _TimeoutExecutor:
-    """Always raises TimeoutError on future.result(), simulating a wait timeout."""
-
-    def __init__(self) -> None:
-        self.submitted: list[ComputationTask] = []
-
-    def submit(self, task: ComputationTask) -> Any:
-        self.submitted.append(task)
-        return self
-
-    def result(self, *, timeout: float | None = None) -> ComputationOutcome:
-        raise TimeoutError("simulated timeout")
-
-    def done(self) -> bool:
-        return False
-
-    def shutdown(self, **kwargs: Any) -> None:
-        return None
-
-
 class _ReadyThenTimeoutExecutor:
     """Delegates the first N-1 submissions to a real executor, then times out."""
 
@@ -369,6 +349,66 @@ class _CommitThenTimeoutExecutor:
 
         threading.Thread(target=_run, daemon=True).start()
         return fut
+
+    def shutdown(self, **kwargs: Any) -> None:
+        return None
+
+
+class _CommitThenReleaseFuture:
+    """Hold future delivery after the task's commit callback has completed."""
+
+    def __init__(self) -> None:
+        self.committed = threading.Event()
+        self.release = threading.Event()
+        self.value: Any = None
+        self.task_id = ""
+
+    def result(self, *, timeout: float | None = None) -> ComputationOutcome:
+        if not self.release.wait(timeout=timeout):
+            raise TimeoutError("future delivery was not released")
+        return ComputationOutcome(
+            task_id=self.task_id,
+            status=ComputationStatus.COMPLETED,
+            value=self.value,
+        )
+
+    def done(self) -> bool:
+        return self.release.is_set()
+
+
+class _CommitThenReleaseExecutor:
+    """Resolve ready immediately, then hold a completed advance after commit."""
+
+    def __init__(self, ready_value: Any) -> None:
+        self._ready_value = ready_value
+        self._first = True
+        self.pending: _CommitThenReleaseFuture | None = None
+
+    def submit(self, task: ComputationTask) -> Any:
+        if self._first:
+            self._first = False
+            return _ResolvedFuture(
+                ComputationOutcome(
+                    task_id=task.task_id,
+                    status=ComputationStatus.COMPLETED,
+                    value=self._ready_value,
+                )
+            )
+        future = _CommitThenReleaseFuture()
+        future.task_id = task.task_id
+        self.pending = future
+
+        def _run() -> None:
+            value = task.callable(task)
+            if task.accept_result is not None and not task.accept_result(value):
+                return
+            if task.commit_result is not None:
+                task.commit_result(value)
+            future.value = value
+            future.committed.set()
+
+        threading.Thread(target=_run, daemon=True).start()
+        return future
 
     def shutdown(self, **kwargs: Any) -> None:
         return None
@@ -1467,6 +1507,145 @@ class RegressionTests(_SessionTestBase):
         self.assertEqual(s.current_time, prepared.actual_bar_times[0])
         self.assertEqual(s._pipeline.target_time, prepared.actual_bar_times[0])
 
+    def test_retire_after_commit_does_not_split_or_publish_late_snapshot(self) -> None:
+        prepared = _prepare("1m")
+        events: list = []
+        ex = _CommitThenReleaseExecutor(_ready_value(prepared))
+        s = ReplaySession(
+            "replay-test",
+            1,
+            prepared,
+            ex,
+            clock=SimulatedMonotonicClock(),
+            scheduler=NullPlaybackScheduler(),
+            on_event=events.append,
+            analyzer=_CachingAnalyzer(_default_analyze_5m),
+            initial_operation_id="op-begin",
+            computation_timeout=5.0,
+        )
+        results: list = []
+        thread = threading.Thread(
+            target=lambda: results.append(s.step("op-step")),
+            daemon=True,
+        )
+        thread.start()
+        while ex.pending is None:
+            threading.Event().wait(timeout=0.01)
+        self.assertTrue(ex.pending.committed.wait(timeout=5.0))
+
+        target = prepared.actual_bar_times[0]
+        self.assertEqual(s.current_time, target)
+        self.assertEqual(s._pipeline.target_time, target)
+        self.assertEqual(events[-1]["event_type"], "workbench_snapshot")
+        self.assertEqual(events[-1]["operation_id"], "op-step")
+        committed_revision = events[-1]["revision"]
+
+        s.retire()
+        revision_after_retire = s.revision
+        event_count_after_retire = len(events)
+        ex.pending.release.set()
+        thread.join(timeout=5.0)
+
+        self.assertFalse(thread.is_alive())
+        self.assertTrue(results[0].advanced)
+        self.assertEqual(results[0].revision, committed_revision)
+        self.assertLess(results[0].revision, revision_after_retire)
+        self.assertEqual(s.state, "retired")
+        self.assertEqual(s.current_time, s._pipeline.target_time)
+        self.assertEqual(s.revision, revision_after_retire)
+        self.assertEqual(len(events), event_count_after_retire)
+        self.assertEqual(events[-1]["payload"]["state"], "retired")
+
+    def test_pause_after_playback_commit_does_not_split_or_publish_late_snapshot(self) -> None:
+        prepared = _prepare("1m")
+        events: list = []
+        clock = SimulatedMonotonicClock()
+        ex = _CommitThenReleaseExecutor(_ready_value(prepared))
+        s = ReplaySession(
+            "replay-test",
+            1,
+            prepared,
+            ex,
+            clock=clock,
+            scheduler=NullPlaybackScheduler(),
+            on_event=events.append,
+            analyzer=_CachingAnalyzer(_default_analyze_5m),
+            initial_operation_id="op-begin",
+            computation_timeout=5.0,
+        )
+        s.play()
+        clock.set_now(1.0)
+        results: list = []
+        thread = threading.Thread(
+            target=lambda: results.append(s.pump_playback()),
+            daemon=True,
+        )
+        thread.start()
+        while ex.pending is None:
+            threading.Event().wait(timeout=0.01)
+        self.assertTrue(ex.pending.committed.wait(timeout=5.0))
+
+        target = prepared.actual_bar_times[0]
+        self.assertEqual(s.current_time, target)
+        self.assertEqual(s._pipeline.target_time, target)
+        self.assertEqual(events[-1]["event_type"], "workbench_snapshot")
+
+        s.pause()
+        revision_after_pause = s.revision
+        event_count_after_pause = len(events)
+        ex.pending.release.set()
+        thread.join(timeout=5.0)
+
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(results[0].action, "advanced")
+        self.assertIsNone(results[0].next_due_mono)
+        self.assertEqual(s.state, "paused")
+        self.assertEqual(s.current_time, s._pipeline.target_time)
+        self.assertEqual(s.revision, revision_after_pause)
+        self.assertEqual(len(events), event_count_after_pause)
+        self.assertEqual(events[-1]["payload"]["state"], "paused")
+
+    def test_initial_result_reserves_revision_for_t044_mapping(self) -> None:
+        prepared = _prepare("1m")
+        events: list = []
+        expected = ComputationOutcome(
+            task_id="ready-failed",
+            status=ComputationStatus.FAILED,
+            exception=RuntimeError("boom"),
+        )
+        s = ReplaySession(
+            "replay-test",
+            1,
+            prepared,
+            _ScriptedExecutor([expected]),
+            clock=SimulatedMonotonicClock(),
+            scheduler=NullPlaybackScheduler(),
+            on_event=events.append,
+            analyzer=_CachingAnalyzer(_default_analyze_5m),
+            initial_operation_id="op-begin",
+        )
+
+        self.assertEqual(events[-1]["event_type"], "session_status")
+        self.assertEqual(events[-1]["payload"]["state"], "failed")
+        failed_status_revision = events[-1]["revision"]
+
+        result = s.take_initial_result()
+        self.assertIsNotNone(result)
+        self.assertIs(result.outcome, expected)
+        self.assertEqual(result.revision, failed_status_revision + 1)
+        self.assertEqual(s.revision, result.revision)
+        error, channel = map_computation_outcome_to_replay_error(result.outcome)
+        self.assertEqual(error.error_code, "calculation_failed")
+        self.assertEqual(channel.value, "operation_failed")
+        self.assertIsNone(s.take_initial_result())
+
+        # A later Session event must advance beyond the revision reserved for
+        # operation_failed instead of reusing it.
+        s.retire()
+        self.assertEqual(events[-1]["event_type"], "session_status")
+        self.assertEqual(events[-1]["payload"]["state"], "retired")
+        self.assertEqual(events[-1]["revision"], result.revision + 1)
+
     def test_step_result_preserves_failed_outcome_for_t044_mapping(self) -> None:
         prepared = _prepare("1m")
         raising = _RaisingAnalyzer(_CachingAnalyzer(_default_analyze_5m))
@@ -1480,7 +1659,7 @@ class RegressionTests(_SessionTestBase):
         self.assertEqual(error.error_code, "calculation_failed")
         self.assertEqual(channel.value, "operation_failed")
 
-    def test_step_result_preserves_executor_closed_outcome(self) -> None:
+    def test_step_result_preserves_deadline_exceeded_outcome(self) -> None:
         prepared = _prepare("1m")
         ex = _FirstCompleteThenTimeoutExecutor(_ready_value(prepared))
         events: list = []
