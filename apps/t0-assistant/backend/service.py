@@ -13,6 +13,7 @@ import base64
 import hashlib
 import json
 import os
+import queue as _queue
 import select
 import sys
 import threading
@@ -36,9 +37,23 @@ from packages.marketdata.repositories.securities_store import SecuritiesStore
 from packages.marketdata.runtime_paths import RuntimePaths
 from packages.marketdata.services import SecuritiesSearchService
 from packages.t0assistant.replay import REPLAY_COMMANDS, ReplayCommandApi
+from packages.t0assistant.repositories import (
+    open_app_database,
+    SqliteTradeRepository,
+)
 from packages.t0assistant.runtime.live_projection_store import (
     LiveProjectionSnapshotUnavailable as _LiveSnapshotUnavailable,
 )
+from packages.t0assistant.trading import TradeCommandApi, TradeService
+
+# ``EventPublisher`` lives in this backend package. The import form depends on
+# whether this module is imported as ``backend.service`` (tests, with the app
+# root on ``sys.path``) or executed as a script (Electron, with the backend
+# directory on ``sys.path``); resolve both.
+try:  # package context: ``from backend.service import ...``
+    from backend.event_publisher import EventPublisher
+except ImportError:  # script context: ``python backend/service.py``
+    from event_publisher import EventPublisher
 
 
 APP_COMMANDS = {
@@ -55,6 +70,7 @@ APP_COMMANDS = {
 }
 
 _LIVE_COMMANDS = frozenset({"get_live_snapshot"})
+_TRADE_COMMANDS = frozenset({"list_trades", "create_trade", "update_trade", "delete_trade"})
 
 
 class LiveSnapshotApiPort(Protocol):
@@ -204,6 +220,8 @@ class DesktopServiceServer(ThreadingHTTPServer):
         search_service: SecuritiesSearchService | None = None,
         replay_api: ReplayCommandApi | None = None,
         live_snapshot_api: LiveSnapshotApiPort | None = None,
+        trade_api: TradeCommandApi | None = None,
+        event_publisher: "EventPublisher | None" = None,
     ) -> None:
         if (
             replay_api is not None
@@ -220,12 +238,30 @@ class DesktopServiceServer(ThreadingHTTPServer):
             raise ValueError(
                 "Live snapshot API service_generation must match the desktop service"
             )
+        if (
+            trade_api is not None
+            and getattr(trade_api, "service_generation", service_generation)
+            != service_generation
+        ):
+            raise ValueError(
+                "Trade API service_generation must match the desktop service"
+            )
+        if (
+            event_publisher is not None
+            and getattr(event_publisher, "service_generation", service_generation)
+            != service_generation
+        ):
+            raise ValueError(
+                "Event publisher service_generation must match the desktop service"
+            )
         super().__init__(server_address, _Handler)
         self.token = token
         self.service_generation = service_generation
         self.search_service = search_service
         self.replay_api = replay_api
         self.live_snapshot_api = live_snapshot_api
+        self.trade_api = trade_api
+        self.event_publisher = event_publisher
         self.shutdown_event = threading.Event()
         self._websocket_lock = threading.Lock()
         self._active_websockets = 0
@@ -318,6 +354,9 @@ class _Handler(BaseHTTPRequestHandler):
         if command in _LIVE_COMMANDS:
             self._live_command(command, request)
             return
+        if command in _TRADE_COMMANDS:
+            self._trade_command(command, request)
+            return
         if command in REPLAY_COMMANDS:
             self._replay_command(command, request)
             return
@@ -391,6 +430,35 @@ class _Handler(BaseHTTPRequestHandler):
         result = replay_api.dispatch(command, request)
         self._json(HTTPStatus(result.status), result.payload)
         result.response_delivered()
+
+    def _trade_command(self, command: str, request: dict[str, Any]) -> None:
+        trade_api = getattr(self.server, "trade_api", None)
+        if trade_api is None:
+            self._service_unavailable(command, request)
+            return
+        error = _validate_trade_request(command, request)
+        if error is not None:
+            request_id = request.get("request_id", "missing-request-id")
+            self._json(
+                HTTPStatus.BAD_REQUEST,
+                {
+                    "schema_version": "t0_app_v1",
+                    "request_id": request_id,
+                    "accepted": False,
+                    "operation_id": None,
+                    "data": None,
+                    "error": error,
+                },
+            )
+            return
+        # TradeCommandApi persists synchronously and publishes the authoritative
+        # trades_changed event itself (session_id: null) on success. The sync
+        # response only signals acceptance; the renderer never reads its data.
+        result = trade_api.dispatch(command, request)
+        status = (
+            HTTPStatus.OK if result.get("accepted") else _trade_error_status(result)
+        )
+        self._json(status, result)
 
     def _search_securities(self, request: dict[str, Any]) -> None:
         request_id = request.get("request_id", "missing-request-id")
@@ -534,6 +602,13 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Sec-WebSocket-Accept", accept)
         self.send_header("Sec-WebSocket-Protocol", protocol)
         self.end_headers()
+
+        publisher = getattr(self.server, "event_publisher", None)
+        # Claim the connect service_status revision from the publisher so the
+        # service-scoped (session_id: null) revision sequence is single-sourced
+        # and gap-free; fall back to 0 when no publisher is wired (contract-only
+        # tests). The renderer's gateway seeds its gate from this revision.
+        service_revision = publisher.claim() if publisher is not None else 0
         self._send_websocket_text(
             json.dumps(
                 {
@@ -542,7 +617,7 @@ class _Handler(BaseHTTPRequestHandler):
                         self.server, "service_generation", 1
                     ),
                     "session_id": None,
-                    "revision": 0,
+                    "revision": service_revision,
                     "event_type": "service_status",
                     "payload": {
                         "state": "connected",
@@ -552,9 +627,17 @@ class _Handler(BaseHTTPRequestHandler):
                 ensure_ascii=False,
             )
         )
+        # Subscribe before announcing readiness so no published event (e.g. an
+        # authoritative trades_changed) is lost between connect and subscribe.
+        subscriber = publisher.subscribe() if publisher is not None else None
         self.server.websocket_connected()
         try:
             while not self.server.shutdown_event.is_set():
+                if subscriber is not None and not self._drain_websocket_events(
+                    subscriber, publisher
+                ):
+                    # A write failure means the client is gone; let recv confirm.
+                    return
                 readable, _, _ = select.select([self.connection], [], [], 0.25)
                 if not readable:
                     continue
@@ -570,7 +653,26 @@ class _Handler(BaseHTTPRequestHandler):
             except OSError:
                 pass
         finally:
+            if subscriber is not None and publisher is not None:
+                publisher.unsubscribe(subscriber)
             self.server.websocket_disconnected()
+
+    def _drain_websocket_events(self, subscriber: Any, publisher: Any) -> bool:
+        """Send all currently-queued event envelopes to this WebSocket.
+
+        Returns ``False`` if a write failed (client likely gone) so the caller
+        can exit the connection loop; ``True`` otherwise.
+        """
+
+        while True:
+            try:
+                envelope = subscriber.get_nowait()
+            except _queue.Empty:
+                return True
+            try:
+                self._send_websocket_text(publisher.encode(envelope))
+            except OSError:
+                return False
 
     def _send_websocket_text(self, message: str) -> None:
         payload = message.encode("utf-8")
@@ -600,6 +702,68 @@ def _live_invalid_request(message: str, request_id: str) -> dict[str, Any]:
         "request_id": request_id,
         "details": {},
     }
+
+
+def _trade_invalid_request(message: str, request_id: str) -> dict[str, Any]:
+    """Build a structured ``invalid_trade_request`` error for trade commands."""
+
+    return {
+        "error_code": "invalid_trade_request",
+        "category": "validation",
+        "severity": "error",
+        "retryable": False,
+        "affected_capability": "trades",
+        "message": message,
+        "request_id": request_id,
+        "details": {},
+    }
+
+
+def _trade_error_status(result: dict[str, Any]) -> HTTPStatus:
+    """Map a rejected trade ``command_response`` to an HTTP status."""
+
+    error_code = (result.get("error") or {}).get("error_code")
+    if error_code == "trade_not_found":
+        return HTTPStatus.NOT_FOUND
+    if error_code == "trade_conflict":
+        return HTTPStatus.CONFLICT
+    if error_code == "invalid_trade_request":
+        return HTTPStatus.BAD_REQUEST
+    return HTTPStatus.SERVICE_UNAVAILABLE
+
+
+def _validate_trade_request(
+    url_command: str,
+    request: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Validate a trade ``command_request`` envelope before dispatch.
+
+    Mirrors :func:`_validate_live_snapshot_request`: enforce the frozen
+    ``command_request`` contract via the formal JSON Schema validator
+    (``additionalProperties: false``, required fields, and the per-command
+    ``if/then`` payload rules), plus the URL/body command match. Returns a
+    structured ``application_error`` dict when invalid, or ``None`` when
+    accepted. An invalid request never reaches ``TradeCommandApi``.
+    """
+
+    errors = list(_COMMAND_REQUEST_VALIDATOR.iter_errors(request))
+    if not errors:
+        request_id = request["request_id"]
+        if request.get("command") != url_command:
+            return _trade_invalid_request(
+                "body command must match the URL command", request_id
+            )
+        return None
+
+    request_id = request.get("request_id")
+    request_id_echo = (
+        request_id
+        if isinstance(request_id, str) and request_id
+        else "missing-request-id"
+    )
+    first = errors[0]
+    field = "/".join(str(part) for part in first.absolute_path) or "command_request"
+    return _trade_invalid_request(f"{field}: {first.message}", request_id_echo)
 
 
 def _build_command_request_validator() -> Draft202012Validator:
@@ -678,6 +842,8 @@ def create_server(
     search_service: SecuritiesSearchService | None = None,
     replay_api: ReplayCommandApi | None = None,
     live_snapshot_api: LiveSnapshotApiPort | None = None,
+    trade_api: TradeCommandApi | None = None,
+    event_publisher: "EventPublisher | None" = None,
 ) -> DesktopServiceServer:
     if host != "127.0.0.1":
         raise ValueError("desktop service must bind to 127.0.0.1")
@@ -690,7 +856,42 @@ def create_server(
         search_service=search_service,
         replay_api=replay_api,
         live_snapshot_api=live_snapshot_api,
+        trade_api=trade_api,
+        event_publisher=event_publisher,
     )
+
+
+def _build_trade_api(
+    service_generation: int,
+) -> tuple[TradeCommandApi | None, "EventPublisher | None"]:
+    """Construct the real-trade command API + event publisher for ``main()``.
+
+    Opens (or creates) the private App database under the runtime ``db`` dir,
+    wires the SQLite trade repository and :class:`TradeService`, and binds a
+    :class:`TradeCommandApi` to an :class:`EventPublisher` so accepted trade
+    commands publish authoritative ``trades_changed`` events. Returns
+    ``(None, None)`` only if the App database cannot be opened at all, in which
+    case trade commands fall back to ``service_unavailable`` rather than
+    crashing the service.
+    """
+
+    paths = RuntimePaths()
+    paths.ensure_dirs()
+    db_path = paths.db_dir / "t0_assistant.sqlite"
+    try:
+        database = open_app_database(db_path)
+    except Exception:  # pragma: no cover - degraded startup path
+        traceback.print_exc()
+        return None, None
+    repository = SqliteTradeRepository(database)
+    service = TradeService(repository)
+    publisher = EventPublisher(service_generation=service_generation)
+    trade_api = TradeCommandApi(
+        service,
+        service_generation=service_generation,
+        publisher=publisher,
+    )
+    return trade_api, publisher
 
 
 def main() -> None:
@@ -699,11 +900,14 @@ def main() -> None:
     parser.add_argument("--port", required=True, type=int)
     parser.add_argument("--service-generation", default=1, type=int)
     args = parser.parse_args()
+    trade_api, event_publisher = _build_trade_api(args.service_generation)
     server = create_server(
         args.host,
         args.port,
         os.environ.get("T0_SERVICE_TOKEN", ""),
         args.service_generation,
+        trade_api=trade_api,
+        event_publisher=event_publisher,
     )
     try:
         server.serve_forever(poll_interval=0.1)

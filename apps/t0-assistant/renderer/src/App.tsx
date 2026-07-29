@@ -148,6 +148,11 @@ export function App() {
   const [replayLoading, setReplayLoading] = useState(false);
   const [replayBusy, setReplayBusy] = useState(false);
   const [replayPlaybackPending, setReplayPlaybackPending] = useState(false);
+  // T0-043 "进入当天图形": a dismissible notice when a historical trade's full
+  // day chart cannot be restored (no frozen non-Replay command serves a static
+  // historical workbench; see the T0-043 contract gap). Never wipes the last
+  // successful chart.
+  const [dayChartNotice, setDayChartNotice] = useState<string | null>(null);
   const rebaselineRequest = useRef<string | null>(null);
   const activeOperations = useRef(new Map<string, ActiveOperation>());
   const modeRef = useRef(workbench.mode);
@@ -810,6 +815,37 @@ export function App() {
     }
   }
 
+  // T0-043 "进入当天图形": restore a historical trade's full trading-day chart
+  // without starting Replay playback. Today's trades reuse the Live workbench
+  // (switch security -> today's bars + today's real-trade markers, which the
+  // TradeDrawer already scopes). A historical trading day has no frozen
+  // non-Replay command that serves a complete static workbench (Live forbids
+  // trade_date; Replay is excluded by T0-043's no-T0-046 rule), so a clear,
+  // retryable notice is surfaced and the last successful chart is preserved.
+  function handleEnterDayChart(symbol: string, tradeDate: string) {
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    const identity: SecurityIdentity =
+      workbench.security && workbench.security.symbol === symbol
+        ? workbench.security
+        : {
+            symbol,
+            code: symbol.slice(3),
+            market: (symbol.slice(0, 2) === "sz" ? "sz" : "sh") as "sh" | "sz",
+            name: "",
+            security_type: "a_share",
+          };
+    if (tradeDate === today) {
+      setDayChartNotice(null);
+      void performSecuritySelection(identity);
+      return;
+    }
+    setDayChartNotice(
+      `该交易日（${tradeDate}）的完整历史图形暂不可用，已保留当前图形。`,
+    );
+  }
+
   async function retryLiveOrService() {
     const failure = activeFailure;
     const background = backgroundError;
@@ -1255,7 +1291,17 @@ export function App() {
           subscribeAppEvent={subscribeAppEvent}
           serviceGeneration={status.service_generation}
           tradeOpController={tradeOpController.current as TradeOperationController}
+          onEnterDayChart={handleEnterDayChart}
         />
+      )}
+
+      {dayChartNotice && (
+        <div className="inline-error" role="status" style={{ margin: "8px 12px" }}>
+          <span>{dayChartNotice}</span>
+          <button type="button" onClick={() => setDayChartNotice(null)}>
+            知道了
+          </button>
+        </div>
       )}
 
       {activeFailure && (

@@ -1,5 +1,6 @@
 """Shared trade value objects, fee rules, real-trade service and markers."""
 
+from .api import TradeCommandApi, TradeEventPublisher
 from .fee_policy import (
     FeeCalculation,
     FeePolicyValidationError,
@@ -40,7 +41,9 @@ __all__ = [
     "project_trade_marker",
     "project_trade_markers",
     "SecurityType",
+    "TradeCommandApi",
     "TradeDraft",
+    "TradeEventPublisher",
     "TradeMarker",
     "TradeMarkerProjection",
     "TradeMarkerProjector",

@@ -1,0 +1,144 @@
+"""Server-side event broadcast bus for the T+0 desktop service.
+
+The formal Python service pushes authoritative ``t0_app_v1`` event envelopes
+to connected renderers over the ``/events`` WebSocket. ``EventPublisher`` owns
+two distinct concerns:
+
+* **Delivery revision** (the envelope ``revision``): a single monotonic counter
+  for every ``session_id: null`` envelope published within one
+  ``service_generation``. The renderer's :class:`BackendGateway` gates
+  ``session_id: null`` envelopes by ``revision`` on the ``t0_app_v1:service``
+  key and *drops* an event whose revision is ``<=`` the last seen or has a gap
+  (``> last + 1``); service-scoped events cannot be re-baselined. The publisher
+  therefore claims revisions in strict ``+1`` order, starting at ``0`` for the
+  connect ``service_status`` and continuing ``1, 2, ...`` for each
+  ``trades_changed`` (and any future service-scoped event), so every published
+  envelope passes the gate. The counter never resets within a process; a Python
+  restart produces a new ``service_generation`` and a fresh counter.
+* **Trade revision** (``payload.trade_revision``): owned by
+  :class:`~packages.t0assistant.trading.api.TradeCommandApi`, not here. The
+  publisher only carries it through unchanged.
+
+The publisher is transport-owned (it feeds the WebSocket) and is the concrete
+implementation of the transport-agnostic
+:class:`~packages.t0assistant.trading.api.TradeEventPublisher` Protocol.
+"""
+
+from __future__ import annotations
+
+import json
+from queue import Queue
+from threading import Lock
+from typing import Any
+
+
+class EventPublisher:
+    """Broadcast ``t0_app_v1`` envelopes to WebSocket subscribers."""
+
+    def __init__(self, *, service_generation: int) -> None:
+        if (
+            isinstance(service_generation, bool)
+            or not isinstance(service_generation, int)
+            or service_generation < 1
+        ):
+            raise ValueError("service_generation must be a positive integer")
+        self._service_generation = service_generation
+        # Last claimed service-scoped revision. The first claim() returns 0
+        # (the connect service_status); subsequent claims are 1, 2, ...
+        self._last_revision = -1
+        self._subscribers: set[Queue] = set()
+        self._lock = Lock()
+
+    @property
+    def service_generation(self) -> int:
+        return self._service_generation
+
+    def claim(self) -> int:
+        """Claim and return the next monotonic service-scoped revision.
+
+        Used by the WebSocket handler for the connect ``service_status`` so the
+        service-scoped revision sequence stays single-sourced and gap-free.
+        """
+        with self._lock:
+            self._last_revision += 1
+            return self._last_revision
+
+    def subscribe(self) -> Queue:
+        """Register a new subscriber queue (one per WebSocket connection)."""
+        queue: Queue = Queue()
+        with self._lock:
+            self._subscribers.add(queue)
+        return queue
+
+    def unsubscribe(self, queue: Queue) -> None:
+        with self._lock:
+            self._subscribers.discard(queue)
+
+    def publish(
+        self,
+        *,
+        event_type: str,
+        payload: dict[str, Any],
+        session_id: str | None = None,
+        operation_id: str | None = None,
+    ) -> int:
+        """Claim a revision, build the envelope, and enqueue it to subscribers.
+
+        Returns the claimed envelope ``revision``. Envelopes are constructed
+        without ``operation_id`` when it is ``None`` so they satisfy the frozen
+        ``event_envelope`` schema (``additionalProperties: false``).
+        """
+        revision = self.claim()
+        envelope: dict[str, Any] = {
+            "schema_version": "t0_app_v1",
+            "service_generation": self._service_generation,
+            "session_id": session_id,
+            "revision": revision,
+            "event_type": event_type,
+            "payload": payload,
+        }
+        if operation_id is not None:
+            envelope["operation_id"] = operation_id
+        with self._lock:
+            subscribers = list(self._subscribers)
+        for queue in subscribers:
+            queue.put(envelope)
+        return revision
+
+    # -- TradeEventPublisher Protocol -----------------------------------
+
+    def publish_trades_changed(
+        self,
+        *,
+        service_generation: int,
+        trade_revision: int,
+        trades: list[dict[str, Any]],
+        operation_id: str | None = None,
+    ) -> None:
+        """Publish one authoritative real ``trades_changed`` envelope.
+
+        ``session_id`` is ``None`` because real trades are repository-scoped,
+        not Session-scoped. ``payload.trades`` is the complete repository
+        snapshot supplied by the command API.
+        """
+        if service_generation != self._service_generation:
+            raise ValueError(
+                "trade event service_generation must match the publisher"
+            )
+        self.publish(
+            event_type="trades_changed",
+            payload={
+                "trade_revision": trade_revision,
+                "trades": trades,
+            },
+            session_id=None,
+            operation_id=operation_id,
+        )
+
+    @staticmethod
+    def encode(envelope: dict[str, Any]) -> str:
+        """Serialize an envelope for a WebSocket text frame."""
+        return json.dumps(envelope, ensure_ascii=False)
+
+
+__all__ = ["EventPublisher"]

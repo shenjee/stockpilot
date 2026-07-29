@@ -21,6 +21,7 @@ import type { TradeOperationController } from "./trade-operation-controller.mjs"
 import type { SecurityIdentity } from "../workbench-layout.mjs";
 import { TradeFormDialog } from "./TradeFormDialog";
 import { FeePlanSettingsDialog } from "./FeePlanSettingsDialog";
+import { HistoryTradesDialog } from "./HistoryTradesDialog";
 
 function localToday() {
   const now = new Date();
@@ -54,6 +55,7 @@ export function TradeDrawer({
   subscribeAppEvent,
   serviceGeneration,
   tradeOpController,
+  onEnterDayChart,
 }: {
   security: SecurityIdentity | null;
   tradeClient: TradeClient | null;
@@ -69,6 +71,11 @@ export function TradeDrawer({
    * surfaced with the correct CRUD retry (the controller survives unmount).
    */
   tradeOpController: TradeOperationController;
+  /**
+   * Open the static workbench for a historical trade's symbol + trading date
+   * (T0-043 "进入当天图形"). Does not start Replay playback.
+   */
+  onEnterDayChart: (symbol: string, tradeDate: string) => void;
 }) {
   const [trades, setTrades] = useState<TradeRecord[]>([]);
   const [expanded, setExpanded] = useState(false);
@@ -80,6 +87,7 @@ export function TradeDrawer({
     | null
   >(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [feePlans, setFeePlans] = useState<FeePlan[]>(() =>
     feePlanClient ? feePlanClient.listPlans() : [],
   );
@@ -336,6 +344,14 @@ export function TradeDrawer({
           </button>
           <button
             type="button"
+            disabled={!tradeClient}
+            title={!tradeClient ? "本地成交服务不可用" : undefined}
+            onClick={() => setHistoryOpen(true)}
+          >
+            历史交易记录
+          </button>
+          <button
+            type="button"
             disabled={feePlanUnavailable}
             title={feePlanUnavailable ? "收费方案持久化尚未接入" : undefined}
             onClick={() => setSettingsOpen(true)}
@@ -431,6 +447,20 @@ export function TradeDrawer({
           onChanged={refreshFeePlans}
         />
       )}
+
+      <HistoryTradesDialog
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        tradeClient={tradeClient}
+        subscribeAppEvent={subscribeAppEvent}
+        serviceGeneration={serviceGeneration}
+        serviceReady={serviceReady}
+        selectedSecurity={security}
+        feePlans={feePlans}
+        feeAdvisor={feeAdvisor}
+        onEnterDayChart={onEnterDayChart}
+        tradeOpController={tradeOpController}
+      />
 
       {pendingDelete && (
         <div className="dialog-backdrop" role="presentation">
