@@ -653,6 +653,9 @@ def _normalize_preheat_bars(
             # Invalid bars are skipped, not fatal, for preheat history.
             logger.debug("skipping invalid preheat bar at %s", timestamp)
             continue
+        if bar.get("closed") is not True:
+            logger.debug("skipping non-closed preheat bar at %s", timestamp)
+            continue
         parsed[timestamp] = bar
     return tuple(parsed[key] for key in sorted(parsed))
 
@@ -681,6 +684,10 @@ def _normalize_target_day_bars(
             raise ReplayDataError(
                 f"invalid bar at {timestamp.strftime(MARKET_TIMESTAMP_FORMAT)}: {exc}"
             ) from exc
+        if bar.get("closed") is not True:
+            raise ReplayDataError(
+                f"invalid bar at {timestamp.strftime(MARKET_TIMESTAMP_FORMAT)}: expected a closed bar"
+            )
         parsed[timestamp] = bar
     return tuple(parsed[key] for key in sorted(parsed))
 
@@ -706,6 +713,8 @@ def _normalize_daily_bars(
         try:
             bar = standardize_bar(row, closed=True)
         except (TypeError, ValueError):
+            continue
+        if bar.get("closed") is not True:
             continue
         parsed[bar_date.isoformat()] = bar
     return tuple(parsed[key] for key in sorted(parsed))
