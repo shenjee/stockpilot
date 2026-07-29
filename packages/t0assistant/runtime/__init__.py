@@ -74,6 +74,14 @@ from .projection import (
     project_market_at,
     project_quote_at,
 )
+from .replay_clock import (
+    MonotonicClockPort,
+    NullPlaybackScheduler,
+    PlaybackSchedulerPort,
+    SimulatedMonotonicClock,
+    SystemMonotonicClock,
+    TimerPlaybackScheduler,
+)
 from .replay_data import (
     ReplayDataError,
     ReplayDataPreparator,
@@ -81,6 +89,13 @@ from .replay_data import (
     ReplayDataUnavailableError,
     ReplayMarketDataPort,
     ReplayPreparationConfig,
+)
+from .replay_session import (
+    PlaybackPumpResult,
+    ReplaySession,
+    ReplaySessionError,
+    ReplaySessionStateError,
+    ReplayStepResult,
 )
 from .workbench_projection import (
     ReplayProjectionInput,
@@ -129,6 +144,10 @@ __all__ = [
     "LiveSessionError",
     "LiveSessionValidationError",
     "MarketInputPort",
+    "MonotonicClockPort",
+    "NullPlaybackScheduler",
+    "PlaybackPumpResult",
+    "PlaybackSchedulerPort",
     "PipelineInstanceIdentity",
     "PipelineMarketInput",
     "PipelineResult",
@@ -142,6 +161,10 @@ __all__ = [
     "ReplayPreparationConfig",
     "ReplayProjectionInput",
     "ReplayReliabilityAssessment",
+    "ReplaySession",
+    "ReplaySessionError",
+    "ReplaySessionStateError",
+    "ReplayStepResult",
     "RuntimeMarketDataError",
     "SessionFactoryPort",
     "SessionIdentity",
@@ -149,7 +172,10 @@ __all__ = [
     "SessionProjectionInput",
     "SessionSpec",
     "SessionType",
+    "SimulatedMonotonicClock",
+    "SystemMonotonicClock",
     "TargetTimeMarketProjection",
+    "TimerPlaybackScheduler",
     "WorkbenchPipeline",
     "WorkbenchPipelineError",
     "WorkbenchProjection",
