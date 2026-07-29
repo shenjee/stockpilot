@@ -65,6 +65,8 @@ import {
   TradeOperationController,
   type TradeOperationFailure,
 } from "./trading/trade-operation-controller.mjs";
+import { applyHistoryTradesChanged } from "./trading/history-state.mjs";
+import type { TradeRecord } from "./trading/trade-client.mjs";
 
 const initialStatus: ServiceStatus = {
   state: "starting",
@@ -117,6 +119,16 @@ interface ActiveOperation {
   sessionId: string | null;
 }
 
+function localToday() {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+function tradeDateOf(executedAt: string) {
+  return executedAt.length >= 10 ? executedAt.slice(0, 10) : null;
+}
+
 export function App() {
   const [status, setStatus] = useState<ServiceStatus>(initialStatus);
   const [workbench, setWorkbench] = useState<WorkbenchState>(
@@ -148,6 +160,15 @@ export function App() {
   const [replayLoading, setReplayLoading] = useState(false);
   const [replayBusy, setReplayBusy] = useState(false);
   const [replayPlaybackPending, setReplayPlaybackPending] = useState(false);
+  // T0-043: repository-scoped real-trade snapshot, kept at the App level so
+  // both the trade Drawer/Dialog and the 5m chart markers consume the same
+  // authoritative list. The reducer applies the same generation/revision gate
+  // used by the history dialog.
+  const [realTrades, setRealTrades] = useState<{
+    trades: TradeRecord[];
+    tradeRevision: number;
+    serviceGeneration: number | null;
+  }>({ trades: [], tradeRevision: -1, serviceGeneration: null });
   // T0-043 "进入当天图形": a dismissible notice when a historical trade's full
   // day chart cannot be restored (no frozen non-Replay command serves a static
   // historical workbench; see the T0-043 contract gap). Never wipes the last
@@ -461,6 +482,10 @@ export function App() {
             ? envelope.operation_id
             : null;
         if (opId) tradeOpController.current?.resolve(opId);
+        // Keep the authoritative repository-scoped snapshot at the App level so
+        // the 5m chart can overlay real-trade markers for the current symbol
+        // and trading date.
+        setRealTrades((current) => applyHistoryTradesChanged(current, event));
         applyLiveEvent();
         return;
       }
@@ -818,14 +843,11 @@ export function App() {
   // T0-043 "进入当天图形": restore a historical trade's full trading-day chart
   // without starting Replay playback. Today's trades reuse the Live workbench
   // (switch security -> today's bars + today's real-trade markers, which the
-  // TradeDrawer already scopes). A historical trading day has no frozen
-  // non-Replay command that serves a complete static workbench (Live forbids
-  // trade_date; Replay is excluded by T0-043's no-T0-046 rule), so a clear,
-  // retryable notice is surfaced and the last successful chart is preserved.
-  function handleEnterDayChart(symbol: string, tradeDate: string) {
-    const now = new Date();
-    const pad = (n: number) => String(n).padStart(2, "0");
-    const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  // TradeDrawer already scopes). A historical trading day loads a complete,
+  // static workbench snapshot via get_historical_snapshot and replaces the
+  // current projection with it.
+  async function handleEnterDayChart(symbol: string, tradeDate: string) {
+    const today = localToday();
     const identity: SecurityIdentity =
       workbench.security && workbench.security.symbol === symbol
         ? workbench.security
@@ -833,7 +855,7 @@ export function App() {
             symbol,
             code: symbol.slice(3),
             market: (symbol.slice(0, 2) === "sz" ? "sz" : "sh") as "sh" | "sz",
-            name: "",
+            name: symbol.slice(3),
             security_type: "a_share",
           };
     if (tradeDate === today) {
@@ -841,9 +863,55 @@ export function App() {
       void performSecuritySelection(identity);
       return;
     }
-    setDayChartNotice(
-      `该交易日（${tradeDate}）的完整历史图形暂不可用，已保留当前图形。`,
-    );
+
+    if (!window.stockpilot) {
+      setDayChartNotice(
+        `该交易日（${tradeDate}）的完整历史图形暂不可用，已保留当前图形。`,
+      );
+      return;
+    }
+
+    setLoading(true);
+    setDayChartNotice(null);
+    try {
+      const response = await window.stockpilot.getHistoricalSnapshot(
+        appRequest("get_historical_snapshot", null, {
+          symbol,
+          trade_date: tradeDate,
+        }),
+      );
+      const error = applicationErrorFrom(response);
+      if (error) {
+        setDayChartNotice(
+          `该交易日（${tradeDate}）的历史图形加载失败：${error.message}`,
+        );
+        return;
+      }
+      const responseData = (response as { data?: unknown }).data;
+      const snapshot = responseData as WorkbenchChartSnapshot;
+      if (!isCompleteWorkbenchSnapshot(snapshot) || !snapshot.session) {
+        setDayChartNotice(
+          `该交易日（${tradeDate}）的历史图形响应不完整，已保留当前图形。`,
+        );
+        return;
+      }
+      setWorkbench((current) => selectWorkbenchSecurity(current, identity));
+      setQuery(identity.code);
+      setProjection(
+        createChartProjection(snapshot, {
+          service_generation: serviceGeneration.current,
+          session_id: snapshot.session.session_id,
+          revision: snapshot.session.revision,
+        }),
+      );
+    } catch (error) {
+      const appError = clientError(error, "historical_chart");
+      setDayChartNotice(
+        `该交易日（${tradeDate}）的历史图形加载失败：${appError.message}`,
+      );
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function retryLiveOrService() {
@@ -1052,14 +1120,26 @@ export function App() {
     }
   }
 
+  const currentSymbol = workbench.security?.symbol ?? null;
+  const currentTradeDate = snapshot.session?.trade_date ?? localToday();
+  const chartTrades = useMemo(() => {
+    if (!currentSymbol) return [];
+    return realTrades.trades.filter(
+      (trade) =>
+        trade.symbol === currentSymbol &&
+        tradeDateOf(trade.executed_at) === currentTradeDate,
+    );
+  }, [realTrades.trades, currentSymbol, currentTradeDate]);
+
   const fiveMinuteModel = useMemo(
     () =>
       createChartGroupModel(
         snapshot,
         ChartGroupKind.FIVE_MINUTE,
         workbench.layers,
+        chartTrades,
       ),
-    [snapshot, workbench.layers],
+    [snapshot, workbench.layers, chartTrades],
   );
   const intradayModel = useMemo(
     () => createChartGroupModel(snapshot, ChartGroupKind.ONE_MINUTE),

@@ -295,6 +295,43 @@ class TradeServiceWiringTest(unittest.TestCase):
         finally:
             client.close()
 
+    def test_immediate_list_trades_after_connect_does_not_drop_trades_changed(self) -> None:
+        """Regression for the connect-race window.
+
+        The renderer may send list_trades as soon as the WebSocket handshake
+        completes, before (or concurrently with) reading service_status. The
+        service must already be subscribed before sending service_status, so the
+        authoritative trades_changed is enqueued to this connection and is not
+        lost. A lost event would leave the client with revision 0 and no trades,
+        and the next service-scoped event would look like a gap.
+        """
+        client = _WebSocketClient("127.0.0.1", self.server.server_port, "wiring-token")
+        try:
+            # Fire list_trades BEFORE reading service_status, while the server
+            # has just finished the handshake. This deterministically exercises
+            # the old race window where service_status was sent before subscribe.
+            status, response = self._post(
+                "list_trades",
+                {"trade_scope": "real", "symbol": "sh.600584",
+                 "trade_date": "2026-07-24"},
+                "r-list-race",
+            )
+            self.assertEqual(status, 200)
+            self.assertTrue(response["accepted"])
+
+            # Now drain events. service_status (revision 0) and trades_changed
+            # (revision 1) must both arrive, in order, on this connection.
+            first = client.recv_text()
+            self.assertEqual(first["event_type"], "service_status")
+            self.assertEqual(first["revision"], 0)
+            second = client.recv_text()
+            self.assertEqual(second["event_type"], "trades_changed")
+            self.assertEqual(second["revision"], 1)
+            self.assertEqual(second["payload"]["trade_revision"], 0)
+            self.assertEqual(second["payload"]["trades"], [])
+        finally:
+            client.close()
+
     def test_delete_missing_trade_returns_not_found_and_publishes_nothing(self) -> None:
         client = _WebSocketClient("127.0.0.1", self.server.server_port, "wiring-token")
         try:

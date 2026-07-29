@@ -9,6 +9,7 @@ const APP_COMMANDS = Object.freeze({
   deleteTrade: "delete_trade",
   getPreferences: "get_preferences",
   savePreferences: "save_preferences",
+  getHistoricalSnapshot: "get_historical_snapshot",
 });
 
 const REPLAY_COMMANDS = Object.freeze({

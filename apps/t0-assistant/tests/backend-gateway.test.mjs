@@ -476,6 +476,53 @@ test("buffer overflow re-baselines every Session whose queued event was discarde
   gateway.close();
 });
 
+test("gateway allows and forwards get_historical_snapshot", async () => {
+  const historicalSnapshot = {
+    session: {
+      session_id: "historical:sh.600000:2026-07-22",
+      session_type: "historical",
+      symbol: "sh.600000",
+      trade_date: "2026-07-22",
+      state: "ready",
+      revision: 0,
+    },
+  };
+  let captured;
+  const gateway = new BackendGateway({
+    WebSocketImpl: FakeWebSocket,
+    fetchImpl: async (url, options) => {
+      captured = { url, options };
+      return {
+        ok: true,
+        json: async () => ({
+          schema_version: "t0_app_v1",
+          request_id: "historical-req",
+          accepted: true,
+          operation_id: null,
+          data: historicalSnapshot,
+          error: null,
+        }),
+      };
+    },
+  });
+  gateway.start(connection);
+  const request = {
+    schema_version: "t0_app_v1",
+    request_id: "historical-req",
+    command: "get_historical_snapshot",
+    session_id: null,
+    payload: { symbol: "sh.600000", trade_date: "2026-07-22" },
+  };
+  const response = await gateway.invoke("get_historical_snapshot", request);
+
+  assert.equal(captured.url, "http://127.0.0.1:43123/api/commands/get_historical_snapshot");
+  assert.equal(ALLOWED_COMMANDS.has("get_historical_snapshot"), true);
+  assert.deepEqual(JSON.parse(captured.options.body), request);
+  assert.equal(response.accepted, true);
+  assert.equal(response.data.session.session_type, "historical");
+  gateway.close();
+});
+
 test("managed Python service authenticates transport and rejects unavailable domain commands explicitly", async () => {
   const host = new PythonServiceHost({
     generation: 6,

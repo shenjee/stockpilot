@@ -29,6 +29,7 @@ declare global {
     deleteTrade(request: unknown): Promise<unknown>;
     getPreferences(request: unknown): Promise<unknown>;
     savePreferences(request: unknown): Promise<unknown>;
+    getHistoricalSnapshot(request: unknown): Promise<unknown>;
     selectSymbol(request: unknown): Promise<unknown>;
     beginReplay(request: unknown): Promise<unknown>;
     setReplayPlayback(request: unknown): Promise<unknown>;

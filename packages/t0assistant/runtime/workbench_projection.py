@@ -35,9 +35,10 @@ class WorkbenchProjectionError(RuntimeMarketDataError):
 
 _SYMBOL_PATTERN = re.compile(r"^(sh|sz)\.[0-9]{6}$")
 _TRADE_DATE_PATTERN = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
-_ALLOWED_SESSION_TYPES = frozenset({"live", "replay"})
+_ALLOWED_SESSION_TYPES = frozenset({"live", "replay", "historical"})
 _LIVE_STATES = frozenset({"created", "loading", "ready", "failed", "retired"})
 _REPLAY_STATES = frozenset({"loading", "ready", "playing", "paused", "failed", "retired"})
+_HISTORICAL_STATES = frozenset({"ready"})
 _ALLOWED_GRANULARITIES = frozenset({"one_minute", "five_minute"})
 _ALLOWED_PLAYBACK_SPEEDS = frozenset({1, 2, 5, 10})
 _ALLOWED_STEP_SECONDS = frozenset({60, 300})
@@ -179,7 +180,8 @@ def _validate_session_fields(session: SessionProjectionInput) -> None:
 
     if session.session_type not in _ALLOWED_SESSION_TYPES:
         raise WorkbenchProjectionError(
-            "session_type must be 'live' or 'replay'"
+            "session_type must be one of "
+            f"{sorted(_ALLOWED_SESSION_TYPES)}"
         )
 
     if not _SYMBOL_PATTERN.fullmatch(session.symbol):
@@ -187,7 +189,12 @@ def _validate_session_fields(session: SessionProjectionInput) -> None:
             "symbol must use canonical sh.###### or sz.######"
         )
 
-    allowed_states = _LIVE_STATES if session.session_type == "live" else _REPLAY_STATES
+    if session.session_type == "live":
+        allowed_states = _LIVE_STATES
+    elif session.session_type == "replay":
+        allowed_states = _REPLAY_STATES
+    else:
+        allowed_states = _HISTORICAL_STATES
     if session.state not in allowed_states:
         raise WorkbenchProjectionError(
             f"state must be one of {sorted(allowed_states)}"
@@ -233,10 +240,10 @@ def _validate_session_consistency(
             raise WorkbenchProjectionError(
                 "live session trade_date must be null"
             )
-    else:  # replay
+    else:  # replay or historical
         if session.trade_date is None:
             raise WorkbenchProjectionError(
-                "replay session trade_date is required"
+                f"{session.session_type} session trade_date is required"
             )
         if session.trade_date != result_trade_date:
             raise WorkbenchProjectionError(
@@ -255,6 +262,13 @@ def _validate_replay_input(
         if replay is not None:
             raise WorkbenchProjectionError(
                 "live projection replay must be null"
+            )
+        return
+
+    if session.session_type == "historical":
+        if replay is not None:
+            raise WorkbenchProjectionError(
+                "historical projection replay must be null"
             )
         return
 

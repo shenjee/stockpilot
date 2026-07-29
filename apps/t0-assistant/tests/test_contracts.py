@@ -145,10 +145,109 @@ class ContractTest(unittest.TestCase):
                     }
                 },
             },
+            {
+                "schema_version": "t0_app_v1",
+                "request_id": "req-hist",
+                "command": "get_historical_snapshot",
+                "session_id": None,
+                "payload": {"symbol": "sh.600519", "trade_date": "2026-07-22"},
+            },
         ]
         validator = self.app_validator("command_request")
         for request in requests:
             validator.validate(request)
+
+    def test_historical_command_response_validates(self) -> None:
+        """A successful get_historical_snapshot response carries a workbench_snapshot."""
+        result = PipelineResult(
+            target_time=datetime(2026, 7, 22, 10, 0, 0),
+            symbol="sh.600519",
+            trade_date=date(2026, 7, 22),
+            bars_1m=tuple(),
+            bars_5m=tuple(),
+            closed_5m_prefix=tuple(),
+            daily_bars=tuple(),
+            daily_bar=None,
+            quote=None,
+            indicators_1m={
+                "vwap": [],
+                "volume": {"values": []},
+                "macd": {
+                    "fast_period": 12,
+                    "slow_period": 26,
+                    "signal_period": 9,
+                    "dif": [],
+                    "dea": [],
+                    "histogram": [],
+                },
+            },
+            indicators_5m={
+                "ma": {f"ma{period}": [] for period in (5, 10, 20, 30, 60)},
+                "boll": {
+                    "period": 20,
+                    "stddev": 2.0,
+                    "upper": [],
+                    "middle": [],
+                    "lower": [],
+                },
+                "volume": {"values": [], "ma5": [], "ma10": []},
+                "macd": {
+                    "fast_period": 12,
+                    "slow_period": 26,
+                    "signal_period": 9,
+                    "dif": [],
+                    "dea": [],
+                    "histogram": [],
+                },
+            },
+            chan_analysis={
+                "symbol": "sh.600519",
+                "timeframe": "5m",
+                "source": "fixture",
+                "engine": "czsc",
+                "engine_version": "0.10.12",
+                "parameters": {},
+                "fractals": [],
+                "strokes": [],
+                "segments": [],
+                "pivot_zones": [],
+                "divergences": [],
+                "structure_alerts": [],
+                "signal_series": [],
+                "signal_events": [],
+                "signal_snapshots": [],
+                "candidate_point_events": [],
+                "candidate_buy_points": [],
+                "candidate_sell_points": [],
+                "plot_primitives": [],
+                "summary": [],
+                "warnings": [],
+                "meta": {},
+            },
+            warnings=[],
+        )
+        session = SessionProjectionInput(
+            session_id="historical:sh.600519:2026-07-22",
+            session_type="historical",
+            symbol="sh.600519",
+            trade_date="2026-07-22",
+            state="ready",
+            revision=0,
+        )
+        snapshot = build_workbench_projection(result, session).to_dict()
+        response = {
+            "schema_version": "t0_app_v1",
+            "request_id": "req-hist-resp",
+            "accepted": True,
+            "operation_id": None,
+            "data": snapshot,
+            "error": None,
+        }
+        validator = self.app_validator("command_response")
+        validator.validate(response)
+        self.assertEqual(snapshot["session"]["session_type"], "historical")
+        self.assertEqual(snapshot["session"]["trade_date"], "2026-07-22")
+        self.assertEqual(snapshot["replay"], None)
 
     def test_app_events_enforce_generation_session_and_revision(self) -> None:
         event = {

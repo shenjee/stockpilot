@@ -46,6 +46,17 @@ from packages.t0assistant.runtime.live_projection_store import (
 )
 from packages.t0assistant.trading import TradeCommandApi, TradeService
 
+try:  # package context: ``from backend.historical_snapshot_api import ...``
+    from backend.historical_snapshot_api import (
+        HistoricalSnapshotApi,
+        create_historical_snapshot_api,
+    )
+except ImportError:  # script context: ``python backend/service.py``
+    from historical_snapshot_api import (
+        HistoricalSnapshotApi,
+        create_historical_snapshot_api,
+    )
+
 # ``EventPublisher`` lives in this backend package. The import form depends on
 # whether this module is imported as ``backend.service`` (tests, with the app
 # root on ``sys.path``) or executed as a script (Electron, with the backend
@@ -67,10 +78,12 @@ APP_COMMANDS = {
     "delete_trade",
     "get_preferences",
     "save_preferences",
+    "get_historical_snapshot",
 }
 
 _LIVE_COMMANDS = frozenset({"get_live_snapshot"})
 _TRADE_COMMANDS = frozenset({"list_trades", "create_trade", "update_trade", "delete_trade"})
+_HISTORICAL_COMMANDS = frozenset({"get_historical_snapshot"})
 
 
 class LiveSnapshotApiPort(Protocol):
@@ -83,6 +96,19 @@ class LiveSnapshotApiPort(Protocol):
         session_id: str,
     ) -> dict[str, Any]:
         """Return a ``command_response`` payload for ``get_live_snapshot``."""
+
+
+class HistoricalSnapshotApiPort(Protocol):
+    """Transport-independent historical snapshot command boundary."""
+
+    def get_historical_snapshot(
+        self,
+        *,
+        request_id: str,
+        symbol: str,
+        trade_date: str,
+    ) -> dict[str, Any]:
+        """Return a ``command_response`` payload for ``get_historical_snapshot``."""
 
 
 class LiveSnapshotApiError(RuntimeError):
@@ -220,6 +246,7 @@ class DesktopServiceServer(ThreadingHTTPServer):
         search_service: SecuritiesSearchService | None = None,
         replay_api: ReplayCommandApi | None = None,
         live_snapshot_api: LiveSnapshotApiPort | None = None,
+        historical_snapshot_api: HistoricalSnapshotApiPort | None = None,
         trade_api: TradeCommandApi | None = None,
         event_publisher: "EventPublisher | None" = None,
     ) -> None:
@@ -237,6 +264,14 @@ class DesktopServiceServer(ThreadingHTTPServer):
         ):
             raise ValueError(
                 "Live snapshot API service_generation must match the desktop service"
+            )
+        if (
+            historical_snapshot_api is not None
+            and getattr(historical_snapshot_api, "service_generation", service_generation)
+            != service_generation
+        ):
+            raise ValueError(
+                "Historical snapshot API service_generation must match the desktop service"
             )
         if (
             trade_api is not None
@@ -260,6 +295,7 @@ class DesktopServiceServer(ThreadingHTTPServer):
         self.search_service = search_service
         self.replay_api = replay_api
         self.live_snapshot_api = live_snapshot_api
+        self.historical_snapshot_api = historical_snapshot_api
         self.trade_api = trade_api
         self.event_publisher = event_publisher
         self.shutdown_event = threading.Event()
@@ -356,6 +392,9 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if command in _TRADE_COMMANDS:
             self._trade_command(command, request)
+            return
+        if command in _HISTORICAL_COMMANDS:
+            self._historical_command(command, request)
             return
         if command in REPLAY_COMMANDS:
             self._replay_command(command, request)
@@ -458,6 +497,71 @@ class _Handler(BaseHTTPRequestHandler):
         status = (
             HTTPStatus.OK if result.get("accepted") else _trade_error_status(result)
         )
+        self._json(status, result)
+
+    def _historical_command(self, command: str, request: dict[str, Any]) -> None:
+        historical_api = getattr(self.server, "historical_snapshot_api", None)
+        if historical_api is None:
+            self._service_unavailable(command, request)
+            return
+        error = _validate_historical_snapshot_request(command, request)
+        if error is not None:
+            request_id = request.get("request_id", "missing-request-id")
+            self._json(
+                HTTPStatus.BAD_REQUEST,
+                {
+                    "schema_version": "t0_app_v1",
+                    "request_id": request_id,
+                    "accepted": False,
+                    "operation_id": None,
+                    "data": None,
+                    "error": error,
+                },
+            )
+            return
+        request_id = request["request_id"]
+        payload = request.get("payload") or {}
+        try:
+            result = historical_api.get_historical_snapshot(
+                request_id=request_id,
+                symbol=payload["symbol"],
+                trade_date=payload["trade_date"],
+            )
+        except Exception:
+            traceback.print_exc()
+            error = {
+                "error_code": "service_unavailable",
+                "category": "service",
+                "severity": "error",
+                "retryable": True,
+                "affected_capability": "historical_chart",
+                "message": "本地历史图形服务暂时不可用",
+                "request_id": request_id,
+                "details": {},
+            }
+            self._json(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                {
+                    "schema_version": "t0_app_v1",
+                    "request_id": request_id,
+                    "accepted": False,
+                    "operation_id": None,
+                    "data": None,
+                    "error": error,
+                },
+            )
+            return
+        status = HTTPStatus.OK if result.get("accepted") else HTTPStatus.NOT_FOUND
+        result_error = result.get("error")
+        if (
+            isinstance(result_error, dict)
+            and result_error.get("error_code") == "service_unavailable"
+        ):
+            status = HTTPStatus.SERVICE_UNAVAILABLE
+        elif isinstance(result_error, dict) and result_error.get("error_code") == "historical_data_unavailable":
+            status = HTTPStatus.NOT_FOUND
+        elif not result.get("accepted"):
+            status = HTTPStatus.BAD_REQUEST
         self._json(status, result)
 
     def _search_securities(self, request: dict[str, Any]) -> None:
@@ -604,6 +708,11 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
         publisher = getattr(self.server, "event_publisher", None)
+        # Subscribe BEFORE claiming/sending the connect service_status revision.
+        # A renderer that immediately issues list_trades after receiving
+        # connected must not miss the authoritative trades_changed published in
+        # the tiny window between the handshake and the subscription.
+        subscriber = publisher.subscribe() if publisher is not None else None
         # Claim the connect service_status revision from the publisher so the
         # service-scoped (session_id: null) revision sequence is single-sourced
         # and gap-free; fall back to 0 when no publisher is wired (contract-only
@@ -627,9 +736,6 @@ class _Handler(BaseHTTPRequestHandler):
                 ensure_ascii=False,
             )
         )
-        # Subscribe before announcing readiness so no published event (e.g. an
-        # authoritative trades_changed) is lost between connect and subscribe.
-        subscriber = publisher.subscribe() if publisher is not None else None
         self.server.websocket_connected()
         try:
             while not self.server.shutdown_event.is_set():
@@ -698,6 +804,21 @@ def _live_invalid_request(message: str, request_id: str) -> dict[str, Any]:
         "severity": "error",
         "retryable": False,
         "affected_capability": "live",
+        "message": message,
+        "request_id": request_id,
+        "details": {},
+    }
+
+
+def _historical_invalid_request(message: str, request_id: str) -> dict[str, Any]:
+    """Build a structured ``invalid_request`` application_error for historical commands."""
+
+    return {
+        "error_code": "invalid_request",
+        "category": "validation",
+        "severity": "error",
+        "retryable": False,
+        "affected_capability": "historical_chart",
         "message": message,
         "request_id": request_id,
         "details": {},
@@ -834,6 +955,40 @@ def _validate_live_snapshot_request(
     )
 
 
+def _validate_historical_snapshot_request(
+    url_command: str,
+    request: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Validate a ``get_historical_snapshot`` command envelope before dispatch.
+
+    Enforces the frozen ``command_request`` contract via the formal JSON Schema
+    validator (``additionalProperties: false``, required fields, and the
+    ``get_historical_snapshot`` if/then rule requiring ``session_id: null`` and
+    a payload with ``symbol`` + ``trade_date``), plus the URL/body command match.
+    Returns a structured ``application_error`` dict when invalid, or ``None``
+    when accepted. An invalid request never reaches ``HistoricalSnapshotApi``.
+    """
+
+    errors = list(_COMMAND_REQUEST_VALIDATOR.iter_errors(request))
+    if not errors:
+        request_id = request["request_id"]
+        if request.get("command") != url_command:
+            return _historical_invalid_request(
+                "body command must match the URL command", request_id
+            )
+        return None
+
+    request_id = request.get("request_id")
+    request_id_echo = (
+        request_id
+        if isinstance(request_id, str) and request_id
+        else "missing-request-id"
+    )
+    first = errors[0]
+    field = "/".join(str(part) for part in first.absolute_path) or "command_request"
+    return _historical_invalid_request(f"{field}: {first.message}", request_id_echo)
+
+
 def create_server(
     host: str,
     port: int,
@@ -842,6 +997,7 @@ def create_server(
     search_service: SecuritiesSearchService | None = None,
     replay_api: ReplayCommandApi | None = None,
     live_snapshot_api: LiveSnapshotApiPort | None = None,
+    historical_snapshot_api: HistoricalSnapshotApiPort | None = None,
     trade_api: TradeCommandApi | None = None,
     event_publisher: "EventPublisher | None" = None,
 ) -> DesktopServiceServer:
@@ -856,6 +1012,7 @@ def create_server(
         search_service=search_service,
         replay_api=replay_api,
         live_snapshot_api=live_snapshot_api,
+        historical_snapshot_api=historical_snapshot_api,
         trade_api=trade_api,
         event_publisher=event_publisher,
     )
@@ -894,18 +1051,36 @@ def _build_trade_api(
     return trade_api, publisher
 
 
+def _build_historical_api(service_generation: int) -> HistoricalSnapshotApiPort | None:
+    """Construct the historical snapshot API for ``main()``.
+
+    Opens (or creates) the local market-data store under the runtime ``db`` dir
+    and wires the real ``HistoricalSnapshotApi``. Returns ``None`` if the store
+    cannot be initialized, in which case historical commands fall back to
+    ``service_unavailable`` rather than crashing the service.
+    """
+
+    try:
+        return create_historical_snapshot_api(service_generation)
+    except Exception:  # pragma: no cover - degraded startup path
+        traceback.print_exc()
+        return None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="StockPilot T+0 desktop service")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", required=True, type=int)
     parser.add_argument("--service-generation", default=1, type=int)
     args = parser.parse_args()
+    historical_api = _build_historical_api(args.service_generation)
     trade_api, event_publisher = _build_trade_api(args.service_generation)
     server = create_server(
         args.host,
         args.port,
         os.environ.get("T0_SERVICE_TOKEN", ""),
         args.service_generation,
+        historical_snapshot_api=historical_api,
         trade_api=trade_api,
         event_publisher=event_publisher,
     )

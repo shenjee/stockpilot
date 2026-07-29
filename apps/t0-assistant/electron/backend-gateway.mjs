@@ -11,6 +11,7 @@ const ALLOWED_COMMANDS = new Set([
   "delete_trade",
   "get_preferences",
   "save_preferences",
+  "get_historical_snapshot",
   "select_symbol",
   "begin_replay",
   "set_replay_playback",

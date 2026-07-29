@@ -15,7 +15,7 @@ function clone(value) {
   return value === undefined ? undefined : structuredClone(value);
 }
 
-export function createFakeSafeBridge(fixture, { replayFixture = null } = {}) {
+export function createFakeSafeBridge(fixture, { replayFixture = null, historicalSnapshot = null } = {}) {
   const listeners = new Map();
   const calls = [];
   const serviceStatus = {
@@ -86,6 +86,17 @@ export function createFakeSafeBridge(fixture, { replayFixture = null } = {}) {
       if (command === "get_replay_snapshot") {
         if (!replayFixture?.snapshot) throw new Error("Replay fixture is required");
         return clone(replayFixture.snapshot);
+      }
+      if (command === "get_historical_snapshot") {
+        if (!historicalSnapshot) throw new Error("Historical snapshot fixture is required");
+        return {
+          schema_version: "t0_app_v1",
+          request_id: request.request_id,
+          accepted: true,
+          operation_id: null,
+          data: clone(historicalSnapshot),
+          error: null,
+        };
       }
       if (REPLAY_COMMANDS.has(command)) {
         const createsOperation = new Set([

@@ -590,5 +590,217 @@ class LiveSnapshotServiceTest(unittest.TestCase, _LiveSnapshotMixin):
             )
 
 
+class _FakeHistoricalSnapshotApi:
+    """In-memory historical snapshot API for service dispatch tests."""
+
+    def __init__(self, service_generation: int) -> None:
+        self.service_generation = service_generation
+
+    def get_historical_snapshot(
+        self,
+        *,
+        request_id: str,
+        symbol: str,
+        trade_date: str,
+    ) -> dict:
+        return {
+            "schema_version": "t0_app_v1",
+            "request_id": request_id,
+            "accepted": True,
+            "operation_id": None,
+            "data": {
+                "timezone": "Asia/Shanghai",
+                "session": {
+                    "session_id": f"historical:{symbol}:{trade_date}",
+                    "session_type": "historical",
+                    "symbol": symbol,
+                    "trade_date": trade_date,
+                    "state": "ready",
+                    "revision": 0,
+                },
+                "market": {
+                    "bars_1m": [],
+                    "bars_5m": [],
+                    "daily_bars": [],
+                    "quote": None,
+                },
+                "indicators": {
+                    "five_minute": {
+                        "ma": {
+                            "ma5": [],
+                            "ma10": [],
+                            "ma20": [],
+                            "ma30": [],
+                            "ma60": [],
+                        },
+                        "volume": {"values": [], "ma5": [], "ma10": []},
+                        "macd": {
+                            "fast_period": 12,
+                            "slow_period": 26,
+                            "signal_period": 9,
+                            "dif": [],
+                            "dea": [],
+                            "histogram": [],
+                        },
+                    },
+                    "one_minute": {
+                        "vwap": [],
+                        "volume": {"values": []},
+                        "macd": {
+                            "fast_period": 12,
+                            "slow_period": 26,
+                            "signal_period": 9,
+                            "dif": [],
+                            "dea": [],
+                            "histogram": [],
+                        },
+                    },
+                },
+                "chan_analysis": {
+                    "strokes": [],
+                    "pivot_zones": [],
+                },
+                "warnings": [],
+            },
+            "error": None,
+        }
+
+
+class HistoricalSnapshotServiceTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.api = _FakeHistoricalSnapshotApi(service_generation=5)
+        self.server = create_server(
+            "127.0.0.1",
+            0,
+            "formal-token",
+            5,
+            historical_snapshot_api=self.api,
+        )
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.base_url = f"http://127.0.0.1:{self.server.server_port}"
+
+    def tearDown(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=2)
+
+    def _post(self, command: str, body: dict) -> tuple[int, dict]:
+        request = Request(
+            f"{self.base_url}/api/commands/{command}",
+            data=json.dumps(body).encode(),
+            headers={
+                "Authorization": "Bearer formal-token",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        response = None
+        try:
+            response = urlopen(request, timeout=1)
+            return response.status, json.load(response)
+        except HTTPError as exc:
+            response = exc
+            return exc.code, json.load(exc)
+        finally:
+            if response is not None:
+                response.close()
+
+    def test_get_historical_snapshot_returns_static_snapshot(self) -> None:
+        status, payload = self._post(
+            "get_historical_snapshot",
+            {
+                "schema_version": "t0_app_v1",
+                "request_id": "hist-1",
+                "command": "get_historical_snapshot",
+                "session_id": None,
+                "payload": {"symbol": "sh.600000", "trade_date": "2026-07-22"},
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["accepted"])
+        self.assertIsNone(payload["operation_id"])
+        self.assertIsNotNone(payload["data"])
+        self.assertEqual(payload["data"]["session"]["session_type"], "historical")
+        self.assertEqual(payload["data"]["session"]["trade_date"], "2026-07-22")
+        self.assertEqual(payload["data"]["session"]["revision"], 0)
+
+    def test_get_historical_snapshot_rejects_invalid_payload(self) -> None:
+        status, payload = self._post(
+            "get_historical_snapshot",
+            {
+                "schema_version": "t0_app_v1",
+                "request_id": "hist-bad",
+                "command": "get_historical_snapshot",
+                "session_id": None,
+                "payload": {"symbol": "invalid", "trade_date": "not-a-date"},
+            },
+        )
+        self.assertEqual(status, 400)
+        self.assertFalse(payload["accepted"])
+        self.assertEqual(payload["error"]["error_code"], "invalid_request")
+        self.assertEqual(payload["error"]["affected_capability"], "historical_chart")
+
+    def test_get_historical_snapshot_requires_session_id_null(self) -> None:
+        status, payload = self._post(
+            "get_historical_snapshot",
+            {
+                "schema_version": "t0_app_v1",
+                "request_id": "hist-session",
+                "command": "get_historical_snapshot",
+                "session_id": "live-1",
+                "payload": {"symbol": "sh.600000", "trade_date": "2026-07-22"},
+            },
+        )
+        self.assertEqual(status, 400)
+        self.assertFalse(payload["accepted"])
+        self.assertEqual(payload["error"]["error_code"], "invalid_request")
+
+    def test_get_historical_snapshot_no_api_returns_service_unavailable(self) -> None:
+        server = create_server("127.0.0.1", 0, "formal-token", 5)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        try:
+            request = Request(
+                f"{base_url}/api/commands/get_historical_snapshot",
+                data=json.dumps(
+                    {
+                        "schema_version": "t0_app_v1",
+                        "request_id": "hist-noapi",
+                        "command": "get_historical_snapshot",
+                        "session_id": None,
+                        "payload": {"symbol": "sh.600000", "trade_date": "2026-07-22"},
+                    }
+                ).encode(),
+                headers={
+                    "Authorization": "Bearer formal-token",
+                    "Content-Type": "application/json",
+                },
+                method="POST",
+            )
+            with self.assertRaises(HTTPError) as rejected:
+                urlopen(request, timeout=1)
+            self.assertEqual(rejected.exception.code, 503)
+            payload = json.load(rejected.exception)
+            rejected.exception.close()
+            self.assertEqual(payload["error"]["error_code"], "service_unavailable")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+    def test_historical_api_generation_must_match_server_generation(self) -> None:
+        bad_api = _FakeHistoricalSnapshotApi(service_generation=6)
+        with self.assertRaisesRegex(ValueError, "service_generation"):
+            create_server(
+                "127.0.0.1",
+                0,
+                "token",
+                5,
+                historical_snapshot_api=bad_api,
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
