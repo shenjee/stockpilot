@@ -499,6 +499,24 @@ class LiveSnapshotServiceTest(unittest.TestCase, _LiveSnapshotMixin):
         # authoritative state was read.
         self.assertEqual(payload["error"]["request_id"], "snap-env-3")
 
+    def test_get_live_snapshot_rejects_envelope_with_extra_top_level_field(self) -> None:
+        # The frozen command_request schema forbids additional top-level fields.
+        status, payload = self._post(
+            "get_live_snapshot",
+            {
+                "schema_version": "t0_app_v1",
+                "request_id": "snap-env-4",
+                "command": "get_live_snapshot",
+                "session_id": "live-1",
+                "payload": {},
+                "unexpected": True,
+            },
+        )
+        self.assertEqual(status, 400)
+        self.assertFalse(payload["accepted"])
+        self.assertEqual(payload["error"]["error_code"], "invalid_request")
+        self.assertEqual(payload["error"]["request_id"], "snap-env-4")
+
     def test_get_live_snapshot_wrong_session_is_rejected(self) -> None:
         status, payload = self._post(
             "get_live_snapshot",

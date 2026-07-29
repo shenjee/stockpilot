@@ -22,10 +22,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Protocol
 from pathlib import Path
 
+from jsonschema import Draft202012Validator
+from referencing import Registry, Resource
+
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
+
+APP_CONTRACTS_DIR = Path(__file__).resolve().parents[1] / "contracts"
 
 from packages.marketdata.repositories.securities_store import SecuritiesStore
 from packages.marketdata.runtime_paths import RuntimePaths
@@ -597,46 +602,72 @@ def _live_invalid_request(message: str, request_id: str) -> dict[str, Any]:
     }
 
 
+def _build_command_request_validator() -> Draft202012Validator:
+    """Load the frozen ``command_request`` schema for runtime validation.
+
+    Using the formal schema (rather than hand-rolled field checks) keeps the
+    backend aligned with the frozen contract, including
+    ``additionalProperties: false`` and the per-command ``if/then`` payload
+    constraints, so the validation never drifts if the contract evolves.
+    """
+
+    app_path = APP_CONTRACTS_DIR / "app-v1.schema.json"
+    logical_path = APP_CONTRACTS_DIR / "logical-schema.json"
+    with app_path.open(encoding="utf-8") as stream:
+        app = json.load(stream)
+    with logical_path.open(encoding="utf-8") as stream:
+        logical = json.load(stream)
+    registry = Registry().with_resources(
+        [
+            (app["$id"], Resource.from_contents(app)),
+            (logical["$id"], Resource.from_contents(logical)),
+        ]
+    )
+    return Draft202012Validator(
+        {"$ref": f"{app['$id']}#/$defs/command_request"}, registry=registry
+    )
+
+
+_COMMAND_REQUEST_VALIDATOR = _build_command_request_validator()
+
+
 def _validate_live_snapshot_request(
     url_command: str,
     request: dict[str, Any],
 ) -> dict[str, Any] | None:
     """Validate a ``get_live_snapshot`` command envelope before dispatch.
 
-    Enforces the frozen ``command_request`` contract for the Live snapshot
-    command: ``schema_version == "t0_app_v1"``, a non-empty ``request_id``, the
-    body ``command`` matching the URL command, a non-empty ``session_id`` and an
-    empty ``payload``.  Returns a structured ``application_error`` dict when the
-    request is invalid, or ``None`` when it is accepted.  An invalid request
-    never reaches ``LiveSnapshotApi``.
+    Enforces the frozen ``command_request`` contract via the formal JSON Schema
+    validator (``additionalProperties: false``, required fields, and the
+    ``get_live_snapshot`` if/then rule requiring a non-empty ``session_id`` and
+    an empty ``payload``), plus the URL/body command match.  Returns a
+    structured ``application_error`` dict when the request is invalid, or
+    ``None`` when it is accepted.  An invalid request never reaches
+    ``LiveSnapshotApi``.
     """
 
+    errors = list(_COMMAND_REQUEST_VALIDATOR.iter_errors(request))
+    if not errors:
+        request_id = request["request_id"]
+        if request.get("command") != url_command:
+            return _live_invalid_request(
+                "body command must match the URL command", request_id
+            )
+        return None
+
+    # Schema validation failed: report the first cause with a stable echo of
+    # request_id when one is present and valid.
     request_id = request.get("request_id")
-    if not isinstance(request_id, str) or not request_id:
-        request_id_echo = (
-            request_id if isinstance(request_id, str) and request_id else "missing-request-id"
-        )
-        return _live_invalid_request("request_id is required", request_id_echo)
-
-    schema_version = request.get("schema_version")
-    if schema_version != "t0_app_v1":
-        return _live_invalid_request("schema_version must be t0_app_v1", request_id)
-
-    body_command = request.get("command")
-    if body_command != url_command:
-        return _live_invalid_request(
-            "body command must match the URL command", request_id
-        )
-
-    session_id = request.get("session_id")
-    if not isinstance(session_id, str) or not session_id:
-        return _live_invalid_request("session_id is required", request_id)
-
-    payload = request.get("payload")
-    if not isinstance(payload, dict) or payload:
-        return _live_invalid_request("payload must be an empty object", request_id)
-
-    return None
+    request_id_echo = (
+        request_id
+        if isinstance(request_id, str) and request_id
+        else "missing-request-id"
+    )
+    first = errors[0]
+    field = "/".join(str(part) for part in first.absolute_path) or "command_request"
+    return _live_invalid_request(
+        f"{field}: {first.message}", request_id_echo
+    )
 
 
 def create_server(

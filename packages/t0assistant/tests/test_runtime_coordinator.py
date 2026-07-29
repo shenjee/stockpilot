@@ -1100,26 +1100,34 @@ class CommitIfAcceptedTests(unittest.TestCase):
         commit_thread.start()
         self.assertTrue(commit_started.wait(timeout=1))
 
+        switch_started = Event()
+        switch_done = Event()
         switch_results: list[Any] = []
         switch_errors: list[Exception] = []
 
         def switch_symbol() -> None:
+            switch_started.set()
             try:
                 switch_results.append(self.coordinator.select_symbol("sz.000001"))
             except Exception as exc:  # pragma: no cover - surfaced via switch_errors
                 switch_errors.append(exc)
+            finally:
+                switch_done.set()
 
         switch_thread = Thread(target=switch_symbol)
         switch_thread.start()
-        # While the old commit holds the state lock, the new transition cannot
-        # complete; give it a short window to prove it is still pending.
-        self.assertFalse(switch_thread.join(timeout=0.3))
+        # Wait until the switch thread has actually entered its call, then prove
+        # it cannot complete while the old commit still holds the state lock.
+        self.assertTrue(switch_started.wait(timeout=1))
+        self.assertFalse(switch_done.is_set())
+        self.assertTrue(switch_thread.is_alive())
 
         allow_commit.set()
         commit_thread.join(timeout=2)
         switch_thread.join(timeout=2)
         self.assertFalse(commit_thread.is_alive())
         self.assertFalse(switch_thread.is_alive())
+        self.assertTrue(switch_done.is_set())
         self.assertEqual(commit_completed, [True])
         self.assertEqual(switch_errors, [])
 
@@ -1178,10 +1186,12 @@ class CommitIfAcceptedTests(unittest.TestCase):
         self.assertTrue(accepted)
         self.assertEqual(ran2, [True])
 
-    def test_snapshot_is_readable_during_commit(self) -> None:
-        # A commit callback runs under the state lock (RLock), so a concurrent
-        # snapshot read (also under the same lock) must not deadlock and must
-        # observe the Session as still accepted.
+    def test_snapshot_is_readable_inside_commit_callback_via_reentrant_lock(self) -> None:
+        # commit_if_accepted runs the callback under the state RLock.  snapshot
+        # also takes the same RLock, so a read issued from within the callback
+        # succeeds by reentrant acquisition (no deadlock) and observes the
+        # Session as still accepted.  This is a same-thread reentrancy check,
+        # not a cross-thread concurrency assertion.
         snapshot_read: list[Any] = []
         commit_started = Event()
         allow_commit = Event()
