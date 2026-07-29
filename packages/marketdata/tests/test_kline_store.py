@@ -178,6 +178,37 @@ class KLineStoreTests(unittest.TestCase):
             self.assertEqual(current, (1030.0, "second"))
             self.assertEqual(daily, (1030.0, "second"))
 
+    def test_all_trade_dates_unions_dates_across_symbols(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = KLineStore(Path(tmpdir) / "market_data.sqlite")
+            store.upsert_many(
+                code="600519",
+                market="sh",
+                klines=[
+                    {"date": "2026-06-10", "open": 10.0, "close": 10.5, "high": 10.6, "low": 9.9, "volume": 100},
+                    {"date": "2026-06-11", "open": 10.5, "close": 11.0, "high": 11.1, "low": 10.4, "volume": 120},
+                ],
+                source="test",
+            )
+            store.upsert_many(
+                code="000001",
+                market="sz",
+                klines=[
+                    {"date": "2026-06-11", "open": 12.0, "close": 12.1, "high": 12.2, "low": 11.9, "volume": 200},
+                    {"date": "2026-06-12", "open": 12.1, "close": 12.2, "high": 12.3, "low": 12.0, "volume": 210},
+                ],
+                source="test",
+            )
+            self.assertEqual(
+                store.all_trade_dates(),
+                ["2026-06-10", "2026-06-11", "2026-06-12"],
+            )
+
+    def test_all_trade_dates_returns_empty_list_when_store_is_empty(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = KLineStore(Path(tmpdir) / "market_data.sqlite")
+            self.assertEqual(store.all_trade_dates(), [])
+
 
 if __name__ == "__main__":
     unittest.main()

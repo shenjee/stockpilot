@@ -51,6 +51,7 @@ class HistoricalSnapshotApi:
         service_generation: int,
         store: KLineStore,
         provider: TencentStockDataProvider,
+        market_context: MarketContextService,
     ) -> None:
         if (
             isinstance(service_generation, bool)
@@ -58,34 +59,16 @@ class HistoricalSnapshotApi:
             or service_generation < 1
         ):
             raise ValueError("service_generation must be a positive integer")
+        if not isinstance(market_context, MarketContextService):
+            raise TypeError("market_context must be a MarketContextService")
         self._service_generation = service_generation
         self._store = store
         self._provider = provider
-        self._market_context: MarketContextService | None = None
+        self._market_context = market_context
 
     @property
     def service_generation(self) -> int:
         return self._service_generation
-
-    def _market_context_for(self, symbol: str) -> MarketContextService:
-        """Build (and cache) a trading calendar from the local kline store."""
-
-        if self._market_context is not None:
-            return self._market_context
-
-        market = symbol[:2]
-        code = symbol[3:]
-        dates = self._store.trade_dates(code, market)
-        if not dates:
-            raise HistoricalDataUnavailableError(
-                f"no market data available for {symbol}"
-            )
-        self._market_context = MarketContextService(
-            trading_days=dates,
-            coverage_start=dates[0],
-            coverage_end=dates[-1],
-        )
-        return self._market_context
 
     def _market_data(self) -> KLineDataService:
         """Build a ``KLineDataService`` wired to the local store and provider."""
@@ -119,12 +102,11 @@ class HistoricalSnapshotApi:
             )
 
         try:
-            market_context = self._market_context_for(symbol)
             snapshot = build_historical_snapshot(
                 symbol=symbol,
                 trade_date=trade_date,
                 market_data=self._market_data(),
-                market_context=market_context,
+                market_context=self._market_context,
             )
         except HistoricalDataUnavailableError as exc:
             return self._reject(
@@ -197,10 +179,17 @@ def create_historical_snapshot_api(
     paths.ensure_dirs()
     store = KLineStore(db_path or paths.db_dir / "market_data.sqlite")
     provider = TencentStockDataProvider()
+    dates = store.all_trade_dates()
+    market_context = MarketContextService(
+        trading_days=dates,
+        coverage_start=dates[0],
+        coverage_end=dates[-1],
+    )
     return HistoricalSnapshotApi(
         service_generation=service_generation,
         store=store,
         provider=provider,
+        market_context=market_context,
     )
 
 

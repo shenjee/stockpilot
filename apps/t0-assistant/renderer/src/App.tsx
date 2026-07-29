@@ -184,6 +184,7 @@ export function App() {
   const activeReplayCursorOperation = useRef<string | null>(null);
   const searchRequests = useRef(createLatestRequestTracker());
   const securitySelectionSequence = useRef(0);
+  const dayChartSequence = useRef(0);
   const preferenceHydrationInFlight = useRef(false);
   const userModifiedPreferences = useRef(false);
   const preferenceSaveQueue = useRef(
@@ -847,6 +848,7 @@ export function App() {
   // static workbench snapshot via get_historical_snapshot and replaces the
   // current projection with it.
   async function handleEnterDayChart(symbol: string, tradeDate: string) {
+    const requestSequence = ++dayChartSequence.current;
     const today = localToday();
     const identity: SecurityIdentity =
       workbench.security && workbench.security.symbol === symbol
@@ -865,12 +867,14 @@ export function App() {
     }
 
     if (!window.stockpilot) {
+      if (requestSequence !== dayChartSequence.current) return;
       setDayChartNotice(
         `该交易日（${tradeDate}）的完整历史图形暂不可用，已保留当前图形。`,
       );
       return;
     }
 
+    if (requestSequence !== dayChartSequence.current) return;
     setLoading(true);
     setDayChartNotice(null);
     try {
@@ -880,8 +884,10 @@ export function App() {
           trade_date: tradeDate,
         }),
       );
+      if (requestSequence !== dayChartSequence.current) return;
       const error = applicationErrorFrom(response);
       if (error) {
+        setLoading(false);
         setDayChartNotice(
           `该交易日（${tradeDate}）的历史图形加载失败：${error.message}`,
         );
@@ -890,6 +896,7 @@ export function App() {
       const responseData = (response as { data?: unknown }).data;
       const snapshot = responseData as WorkbenchChartSnapshot;
       if (!isCompleteWorkbenchSnapshot(snapshot) || !snapshot.session) {
+        setLoading(false);
         setDayChartNotice(
           `该交易日（${tradeDate}）的历史图形响应不完整，已保留当前图形。`,
         );
@@ -904,13 +911,14 @@ export function App() {
           revision: snapshot.session.revision,
         }),
       );
+      setLoading(false);
     } catch (error) {
+      if (requestSequence !== dayChartSequence.current) return;
       const appError = clientError(error, "historical_chart");
+      setLoading(false);
       setDayChartNotice(
         `该交易日（${tradeDate}）的历史图形加载失败：${appError.message}`,
       );
-    } finally {
-      setLoading(false);
     }
   }
 
