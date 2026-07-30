@@ -79,6 +79,36 @@ class LiveRefreshIntervals:
 
 
 @dataclass(frozen=True, slots=True)
+class LiveRefreshBackoff:
+    """Bound consecutive branch failures without coupling their schedules."""
+
+    multiplier: float = 2.0
+    maximum: timedelta = timedelta(minutes=5)
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.multiplier, bool)
+            or not isinstance(self.multiplier, (int, float))
+            or self.multiplier < 1
+        ):
+            raise LiveRefreshValidationError(
+                "backoff multiplier must be a number >= 1"
+            )
+        if not isinstance(self.maximum, timedelta) or self.maximum <= timedelta(0):
+            raise LiveRefreshValidationError(
+                "backoff maximum must be a positive timedelta"
+            )
+
+    def delay(
+        self,
+        interval: timedelta,
+        consecutive_failures: int,
+    ) -> timedelta:
+        delay = interval * (self.multiplier ** consecutive_failures)
+        return min(delay, self.maximum)
+
+
+@dataclass(frozen=True, slots=True)
 class LiveRefreshResult:
     """One branch's normalized result.
 
@@ -128,6 +158,7 @@ class LiveRefreshBranchState:
     last_success_at: datetime | None
     next_due_at: datetime | None
     last_failure: BaseException | None
+    consecutive_failures: int
     in_flight: bool
 
 
@@ -138,6 +169,7 @@ class _MutableBranchState:
     last_success_at: datetime | None = None
     next_due_at: datetime | None = None
     last_failure: BaseException | None = None
+    consecutive_failures: int = 0
 
 
 class LiveRefreshScheduler:
@@ -164,6 +196,7 @@ class LiveRefreshScheduler:
         *,
         on_update: LiveRefreshUpdateHandler,
         intervals: LiveRefreshIntervals = LiveRefreshIntervals(),
+        backoff: LiveRefreshBackoff = LiveRefreshBackoff(),
         clock: Callable[[], datetime] | None = None,
         on_failure: LiveRefreshFailureHandler | None = None,
         initial_data_times: Mapping[LiveRefreshKind | str, datetime | None]
@@ -191,6 +224,7 @@ class LiveRefreshScheduler:
         self._executor = executor
         self._on_update = on_update
         self._intervals = intervals
+        self._backoff = backoff
         self._clock = clock or datetime.now
         self._on_failure = on_failure
         self._lock = RLock()
@@ -306,7 +340,7 @@ class LiveRefreshScheduler:
             except BaseException as exc:
                 with self._lock:
                     self._active_kinds.discard(kind)
-                self._record_failure(kind, exc)
+                self._record_failure(kind, observed_at, exc)
 
         for kind, future in futures:
             try:
@@ -318,7 +352,7 @@ class LiveRefreshScheduler:
                     continue
                 self._accept_result(kind, observed_at, outcome.value)
             except BaseException as exc:
-                self._record_failure(kind, exc)
+                self._record_failure(kind, observed_at, exc)
             finally:
                 with self._lock:
                     self._active_kinds.discard(kind)
@@ -373,6 +407,7 @@ class LiveRefreshScheduler:
                 state.latest_data_time = data_time
             state.last_success_at = observed_at
             state.last_failure = None
+            state.consecutive_failures = 0
 
     def _validate_update(
         self,
@@ -407,12 +442,19 @@ class LiveRefreshScheduler:
     def _record_failure(
         self,
         kind: LiveRefreshKind,
+        observed_at: datetime,
         failure: BaseException,
     ) -> None:
         with self._lock:
             if self._retired:
                 return
-            self._states[kind].last_failure = failure
+            state = self._states[kind]
+            state.last_failure = failure
+            state.consecutive_failures += 1
+            state.next_due_at = observed_at + self._backoff.delay(
+                self._intervals.for_kind(kind),
+                state.consecutive_failures,
+            )
         if self._on_failure is not None:
             try:
                 self._on_failure(kind, failure)
@@ -448,6 +490,7 @@ class LiveRefreshScheduler:
             last_success_at=state.last_success_at,
             next_due_at=state.next_due_at,
             last_failure=state.last_failure,
+            consecutive_failures=state.consecutive_failures,
             in_flight=kind in self._active_kinds,
         )
 
@@ -461,6 +504,7 @@ def _coerce_kind(kind: LiveRefreshKind | str) -> LiveRefreshKind:
 
 __all__ = [
     "LiveRefreshBranchState",
+    "LiveRefreshBackoff",
     "LiveRefreshError",
     "LiveRefreshInputPort",
     "LiveRefreshIntervals",

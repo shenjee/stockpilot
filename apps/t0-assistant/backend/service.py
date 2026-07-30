@@ -12,12 +12,12 @@ import argparse
 import base64
 import hashlib
 import json
+import logging
 import os
 import queue as _queue
 import select
 import sys
 import threading
-import traceback
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Protocol
@@ -25,6 +25,9 @@ from pathlib import Path
 
 from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
+
+
+logger = logging.getLogger(__name__)
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -58,11 +61,16 @@ try:  # package context: ``from backend.historical_snapshot_api import ...``
         HistoricalSnapshotApi,
         create_historical_snapshot_api,
     )
+    from backend.live_application import (
+        LazyLiveApplicationApi,
+        create_live_application_api,
+    )
 except ImportError:  # script context: ``python backend/service.py``
     from historical_snapshot_api import (
         HistoricalSnapshotApi,
         create_historical_snapshot_api,
     )
+    from live_application import LazyLiveApplicationApi, create_live_application_api
 
 # ``EventPublisher`` lives in this backend package. The import form depends on
 # whether this module is imported as ``backend.service`` (tests, with the app
@@ -94,6 +102,13 @@ APP_COMMANDS = {
 }
 
 _LIVE_COMMANDS = frozenset({"get_live_snapshot"})
+_LIVE_APPLICATION_COMMANDS = frozenset({
+    "select_security",
+    "get_live_snapshot",
+    "retry_live",
+    "get_preferences",
+    "save_preferences",
+})
 _TRADE_COMMANDS = frozenset({"list_trades", "create_trade", "update_trade", "delete_trade"})
 _FEE_PLAN_COMMANDS = frozenset({
     "list_fee_plans",
@@ -264,6 +279,7 @@ class DesktopServiceServer(ThreadingHTTPServer):
         service_generation: int,
         search_service: SecuritiesSearchService | None = None,
         replay_api: ReplayCommandApi | None = None,
+        live_application_api: Any | None = None,
         live_snapshot_api: LiveSnapshotApiPort | None = None,
         historical_snapshot_api: HistoricalSnapshotApiPort | None = None,
         trade_api: TradeCommandApi | None = None,
@@ -277,6 +293,14 @@ class DesktopServiceServer(ThreadingHTTPServer):
         ):
             raise ValueError(
                 "Replay API service_generation must match the desktop service"
+            )
+        if (
+            live_application_api is not None
+            and getattr(live_application_api, "service_generation", service_generation)
+            != service_generation
+        ):
+            raise ValueError(
+                "Live application API service_generation must match the desktop service"
             )
         if (
             live_snapshot_api is not None
@@ -322,6 +346,7 @@ class DesktopServiceServer(ThreadingHTTPServer):
         self.service_generation = service_generation
         self.search_service = search_service
         self.replay_api = replay_api
+        self.live_application_api = live_application_api
         self.live_snapshot_api = live_snapshot_api
         self.historical_snapshot_api = historical_snapshot_api
         self.trade_api = trade_api
@@ -417,6 +442,16 @@ class _Handler(BaseHTTPRequestHandler):
         if command == "search_securities":
             self._search_securities(request)
             return
+        # ``get_live_snapshot`` intentionally has two adapters during
+        # migration. Prefer the production Live application API whenever it
+        # is installed; the narrower LiveSnapshotApi below is compatibility
+        # fallback only and must not shadow the authoritative projection store.
+        if (
+            command in _LIVE_APPLICATION_COMMANDS
+            and getattr(self.server, "live_application_api", None) is not None
+        ):
+            self._live_application_command(command, request)
+            return
         if command in _LIVE_COMMANDS:
             self._live_command(command, request)
             return
@@ -433,6 +468,47 @@ class _Handler(BaseHTTPRequestHandler):
             self._replay_command(command, request)
             return
         self._service_unavailable(command, request)
+
+    def _live_application_command(
+        self,
+        command: str,
+        request: dict[str, Any],
+    ) -> None:
+        error = _validate_app_command_request(command, request)
+        if error is not None:
+            self._json(
+                HTTPStatus.BAD_REQUEST,
+                {
+                    "schema_version": "t0_app_v1",
+                    "request_id": request.get("request_id", "missing-request-id"),
+                    "accepted": False,
+                    "operation_id": None,
+                    "data": None,
+                    "error": error,
+                },
+            )
+            return
+        api = self.server.live_application_api
+        try:
+            result = api.dispatch(command, request)
+        except Exception:
+            logger.exception(
+                "live application command failed at transport boundary",
+                extra={
+                    "command": command,
+                    "request_id": request.get("request_id"),
+                },
+            )
+            self._service_unavailable(command, request)
+            return
+        error_code = (result.get("error") or {}).get("error_code")
+        status = HTTPStatus.OK
+        if not result.get("accepted"):
+            status = {
+                "invalid_request": HTTPStatus.BAD_REQUEST,
+                "session_not_found": HTTPStatus.NOT_FOUND,
+            }.get(error_code, HTTPStatus.SERVICE_UNAVAILABLE)
+        self._json(status, result)
 
     def _live_command(self, command: str, request: dict[str, Any]) -> None:
         live_api = getattr(self.server, "live_snapshot_api", None)
@@ -460,7 +536,10 @@ class _Handler(BaseHTTPRequestHandler):
                 session_id=session_id,
             )
         except Exception:
-            traceback.print_exc()
+            logger.exception(
+                "legacy live snapshot command failed at transport boundary",
+                extra={"command": command, "request_id": request_id},
+            )
             error = {
                 "error_code": "service_unavailable",
                 "category": "service",
@@ -598,7 +677,10 @@ class _Handler(BaseHTTPRequestHandler):
                 trade_date=payload["trade_date"],
             )
         except Exception:
-            traceback.print_exc()
+            logger.exception(
+                "historical command failed at transport boundary",
+                extra={"command": command, "request_id": request_id},
+            )
             error = {
                 "error_code": "service_unavailable",
                 "category": "service",
@@ -679,7 +761,13 @@ class _Handler(BaseHTTPRequestHandler):
                 self.server.search_service = service
             securities = service.search(query, limit=limit)
         except Exception:
-            traceback.print_exc()
+            logger.exception(
+                "security search failed at transport boundary",
+                extra={
+                    "command": "search_securities",
+                    "request_id": request_id,
+                },
+            )
             error = {
                 "error_code": "security_search_failed",
                 "category": "data",
@@ -1112,6 +1200,48 @@ def _validate_live_snapshot_request(
     )
 
 
+def _validate_app_command_request(
+    url_command: str,
+    request: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Validate Live application commands against the frozen App v1 schema."""
+
+    errors = list(_COMMAND_REQUEST_VALIDATOR.iter_errors(request))
+    if not errors and request.get("command") == url_command:
+        return None
+    request_id = request.get("request_id")
+    request_id_echo = (
+        request_id
+        if isinstance(request_id, str) and request_id
+        else "missing-request-id"
+    )
+    if not errors:
+        message = "body command must match the URL command"
+    else:
+        first = errors[0]
+        field = (
+            "/".join(str(part) for part in first.absolute_path)
+            or "command_request"
+        )
+        message = f"{field}: {first.message}"
+    return {
+        "error_code": "invalid_request",
+        "category": "validation",
+        "severity": "error",
+        "retryable": False,
+        "affected_capability": (
+            "preferences"
+            if url_command in {"get_preferences", "save_preferences"}
+            else "symbol_selection"
+            if url_command == "select_security"
+            else "live"
+        ),
+        "message": message,
+        "request_id": request_id_echo,
+        "details": {},
+    }
+
+
 def _validate_historical_snapshot_request(
     url_command: str,
     request: dict[str, Any],
@@ -1153,6 +1283,7 @@ def create_server(
     service_generation: int,
     search_service: SecuritiesSearchService | None = None,
     replay_api: ReplayCommandApi | None = None,
+    live_application_api: Any | None = None,
     live_snapshot_api: LiveSnapshotApiPort | None = None,
     historical_snapshot_api: HistoricalSnapshotApiPort | None = None,
     trade_api: TradeCommandApi | None = None,
@@ -1170,6 +1301,7 @@ def create_server(
         service_generation,
         search_service=search_service,
         replay_api=replay_api,
+        live_application_api=live_application_api,
         live_snapshot_api=live_snapshot_api,
         historical_snapshot_api=historical_snapshot_api,
         trade_api=trade_api,
@@ -1201,7 +1333,10 @@ def _build_trade_api(
     try:
         database = open_app_database(db_path)
     except Exception:  # pragma: no cover - degraded startup path
-        traceback.print_exc()
+        logger.exception(
+            "trade database initialization failed",
+            extra={"component": "trade_api"},
+        )
         return None, None, None
     service = TradeService(SqliteTradeRepository(database))
     fee_plan_api = FeePlanCommandApi(
@@ -1229,8 +1364,26 @@ def _build_historical_api(service_generation: int) -> HistoricalSnapshotApiPort 
     try:
         return create_historical_snapshot_api(service_generation)
     except Exception:  # pragma: no cover - degraded startup path
-        traceback.print_exc()
+        logger.exception(
+            "historical API initialization failed",
+            extra={"component": "historical_snapshot_api"},
+        )
         return None
+
+
+def _build_live_application_api(
+    service_generation: int,
+    event_publisher: "EventPublisher",
+) -> Any | None:
+    """Construct the production Live coordinator/pipeline composition."""
+
+    return LazyLiveApplicationApi(
+        service_generation,
+        lambda: create_live_application_api(
+            service_generation,
+            event_publisher=event_publisher,
+        ),
+    )
 
 
 def main() -> None:
@@ -1241,11 +1394,18 @@ def main() -> None:
     args = parser.parse_args()
     historical_api = _build_historical_api(args.service_generation)
     trade_api, fee_plan_api, event_publisher = _build_trade_api(args.service_generation)
+    if event_publisher is None:
+        event_publisher = EventPublisher(service_generation=args.service_generation)
+    live_application_api = _build_live_application_api(
+        args.service_generation,
+        event_publisher,
+    )
     server = create_server(
         args.host,
         args.port,
         os.environ.get("T0_SERVICE_TOKEN", ""),
         args.service_generation,
+        live_application_api=live_application_api,
         historical_snapshot_api=historical_api,
         trade_api=trade_api,
         fee_plan_api=fee_plan_api,

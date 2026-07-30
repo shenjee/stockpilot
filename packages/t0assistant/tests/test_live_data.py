@@ -72,12 +72,14 @@ class _FakeMarketData:
 
 
 class _FakeQuoteReader:
-    def __init__(self, payload: dict[str, Any] | None) -> None:
+    def __init__(self, payload: dict[str, Any] | BaseException | None) -> None:
         self.payload = payload
         self.calls: list[tuple[object, object]] = []
 
     def realtime_result(self, codes, markets=None) -> object:
         self.calls.append((codes, markets))
+        if isinstance(self.payload, BaseException):
+            raise self.payload
         return SimpleNamespace(data=self.payload)
 
 
@@ -198,6 +200,76 @@ class LiveDataPreparatorTests(unittest.TestCase):
                 "live-1",
             ],
         )
+
+    def test_refresh_reads_only_requested_normalized_branch(self) -> None:
+        market_data = _FakeMarketData(
+            {
+                ("1m", "2026-07-24"): [
+                    _bar(
+                        "2026-07-24 09:32:00",
+                        10.1,
+                        10.2,
+                        10.0,
+                        10.15,
+                        100,
+                        1015,
+                    )
+                ],
+                ("5m", "2026-07-24"): [
+                    _bar(
+                        "2026-07-24 09:35:00",
+                        10.1,
+                        10.2,
+                        10.0,
+                        10.15,
+                        500,
+                        5075,
+                    )
+                ],
+            }
+        )
+        quote_reader = _FakeQuoteReader(
+            {
+                "timestamp": "2026-07-24 09:32:10",
+                "latest_price": 10.16,
+                "change_percent": 0.6,
+                "open": 10.1,
+                "high": 10.2,
+                "low": 10.0,
+                "previous_close": 10.1,
+                "volume": 200,
+                "amount": 2032,
+                "volume_ratio": 1.1,
+                "order_imbalance": None,
+                "turnover_rate": 0.02,
+            }
+        )
+        preparator = LiveDataPreparator(
+            market_data,
+            self.market_context,
+            quote_reader=quote_reader,
+            clock=lambda: datetime(2026, 7, 24, 9, 32, 10),
+        )
+
+        one_minute = preparator.load_refresh_bars(self.spec, timeframe="1m")
+        self.assertEqual(one_minute[0]["timestamp"], "2026-07-24 09:32:00")
+        self.assertEqual([call["timeframe"] for call in market_data.calls], ["1m"])
+
+        quotes = preparator.load_refresh_quotes(self.spec)
+        self.assertEqual(quotes[0]["timestamp"], "2026-07-24 09:32:10")
+        self.assertEqual([call["timeframe"] for call in market_data.calls], ["1m"])
+        self.assertEqual(quote_reader.calls, [("600000", ["sh"])])
+
+    def test_refresh_quote_failure_is_visible_to_independent_scheduler(self) -> None:
+        preparator = LiveDataPreparator(
+            _FakeMarketData({}),
+            self.market_context,
+            quote_reader=_FakeQuoteReader(RuntimeError("quote unavailable")),
+            clock=lambda: datetime(2026, 7, 24, 9, 32, 10),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "quote unavailable"):
+            preparator.load_refresh_quotes(self.spec)
 
     def test_prepare_uses_observed_now_when_quote_is_unavailable(self) -> None:
         market_data = _FakeMarketData(

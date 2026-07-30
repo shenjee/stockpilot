@@ -295,6 +295,67 @@ class LiveProjectionStoreTests(unittest.TestCase):
         self.assertEqual([first.revision, second.revision, third.revision], [0, 1, 2])
         self.assertEqual(self.store.current_revision, 2)
 
+    def test_operation_failure_advances_revision_without_changing_projection(self) -> None:
+        self.coordinator.set_accepted("live-1", 1)
+        self.store.accept_candidate(
+            self.fixture.candidate(session_id="live-1", generation=1)
+        )
+        before = self.store.get_live_snapshot(session_id="live-1", generation=1)
+
+        event = self.store.accept_operation_failure(
+            session_id="live-1",
+            generation=1,
+            operation_id="refresh-1",
+            payload={"error_code": "calculation_failed"},
+        )
+        after = self.store.get_live_snapshot(session_id="live-1", generation=1)
+
+        self.assertIsNotNone(event)
+        assert event is not None
+        self.assertEqual(event.revision, 1)
+        self.assertEqual(event.event_type, "operation_failed")
+        self.assertEqual(after["session"]["revision"], 1)
+        before["session"]["revision"] = 1
+        self.assertEqual(after, before)
+
+    def test_prebaseline_failure_is_revision_zero_and_retains_prior_snapshot(self) -> None:
+        self.coordinator.set_accepted("live-old", 1)
+        self.store.accept_candidate(
+            self.fixture.candidate(session_id="live-old", generation=1)
+        )
+        retained_session = self.store.current_session
+        retained_revision = self.store.current_revision
+        self.coordinator.set_accepted("live-new", 2)
+
+        event = self.store.accept_operation_failure(
+            session_id="live-new",
+            generation=2,
+            operation_id="load-live-new",
+            payload={"error_code": "calculation_failed"},
+        )
+
+        self.assertIsNotNone(event)
+        assert event is not None
+        self.assertEqual(event.revision, 0)
+        self.assertEqual(event.session_id, "live-new")
+        self.assertEqual(self.store.current_session, retained_session)
+        self.assertEqual(self.store.current_revision, retained_revision)
+
+    def test_prebaseline_failure_without_prior_snapshot_is_revision_zero(self) -> None:
+        self.coordinator.set_accepted("live-new", 1)
+
+        event = self.store.accept_operation_failure(
+            session_id="live-new",
+            generation=1,
+            operation_id="load-live-new",
+            payload={"error_code": "calculation_failed"},
+        )
+
+        self.assertIsNotNone(event)
+        assert event is not None
+        self.assertEqual(event.revision, 0)
+        self.assertFalse(self.store.has_snapshot)
+
     # --- stale session / generation rejection ----------------------------
 
     def test_old_session_id_incremental_is_rejected(self) -> None:

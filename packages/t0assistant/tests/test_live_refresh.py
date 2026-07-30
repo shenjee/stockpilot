@@ -8,6 +8,7 @@ import unittest
 
 from packages.t0assistant.runtime import (
     BoundedComputationExecutor,
+    LiveRefreshBackoff,
     LiveIncrementalUpdate,
     LiveRefreshIntervals,
     LiveRefreshKind,
@@ -324,6 +325,88 @@ class LiveRefreshSchedulerTests(unittest.TestCase):
         )
         self.assertEqual(
             retried.next_due_at, self.t0 + timedelta(seconds=3)
+        )
+
+    def test_consecutive_failures_back_off_without_losing_last_success(self) -> None:
+        newest = self.t0 + timedelta(minutes=1)
+        self.input.queue(
+            LiveRefreshKind.ONE_MINUTE,
+            LiveRefreshResult(newest, (_update(LiveRefreshKind.ONE_MINUTE),)),
+            RuntimeError("provider failed once"),
+            RuntimeError("provider failed twice"),
+        )
+        scheduler = LiveRefreshScheduler(
+            self.spec,
+            self.input,
+            self.executor,
+            on_update=self.updates.append,
+            intervals=self.intervals,
+            backoff=LiveRefreshBackoff(multiplier=2, maximum=timedelta(seconds=60)),
+        )
+        self.addCleanup(scheduler.retire)
+
+        scheduler.retry(LiveRefreshKind.ONE_MINUTE, self.t0)
+        first_failure = scheduler.retry(
+            LiveRefreshKind.ONE_MINUTE,
+            self.t0 + timedelta(seconds=1),
+        )
+        second_failure = scheduler.retry(
+            LiveRefreshKind.ONE_MINUTE,
+            self.t0 + timedelta(seconds=2),
+        )
+
+        self.assertEqual(first_failure.latest_data_time, newest)
+        self.assertEqual(first_failure.consecutive_failures, 1)
+        self.assertEqual(
+            first_failure.next_due_at,
+            self.t0 + timedelta(seconds=21),
+        )
+        self.assertEqual(second_failure.latest_data_time, newest)
+        self.assertEqual(second_failure.consecutive_failures, 2)
+        self.assertEqual(
+            second_failure.next_due_at,
+            self.t0 + timedelta(seconds=42),
+        )
+
+    def test_manual_retry_bypasses_backoff_and_success_resets_it(self) -> None:
+        self.input.queue(
+            LiveRefreshKind.QUOTE,
+            RuntimeError("provider failed"),
+            LiveRefreshResult.no_change(),
+        )
+        scheduler = LiveRefreshScheduler(
+            self.spec,
+            self.input,
+            self.executor,
+            on_update=self.updates.append,
+            intervals=self.intervals,
+            backoff=LiveRefreshBackoff(multiplier=4, maximum=timedelta(seconds=60)),
+        )
+        self.addCleanup(scheduler.retire)
+
+        failed = scheduler.retry(LiveRefreshKind.QUOTE, self.t0)
+        self.assertEqual(failed.consecutive_failures, 1)
+        self.assertEqual(failed.next_due_at, self.t0 + timedelta(seconds=8))
+
+        scheduler.run_due(self.t0 + timedelta(seconds=2))
+        self.assertEqual(
+            [call[0] for call in self.input.calls].count(LiveRefreshKind.QUOTE),
+            1,
+        )
+
+        recovered = scheduler.retry(
+            LiveRefreshKind.QUOTE,
+            self.t0 + timedelta(seconds=3),
+        )
+        self.assertEqual(
+            [call[0] for call in self.input.calls].count(LiveRefreshKind.QUOTE),
+            2,
+        )
+        self.assertEqual(recovered.consecutive_failures, 0)
+        self.assertIsNone(recovered.last_failure)
+        self.assertEqual(
+            recovered.next_due_at,
+            self.t0 + timedelta(seconds=5),
         )
 
     def test_watermark_never_moves_backwards_and_previous_success_is_kept(self) -> None:
