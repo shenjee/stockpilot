@@ -36,6 +36,23 @@ python -m unittest \
 
 自动化视口测试不能替代物理屏幕上的可读性、鼠标缩放、拖动和十字光标验收。
 
+### 1.1 运行环境前提与降级验证
+
+- `npm test` 中的 Python service host / backend gateway 用例需要当前执行环境允许
+  启动 `~/.venvs/czsc/bin/python` 子进程、绑定本机 `127.0.0.1` 临时端口，并在
+  5 秒内完成健康检查。受限 runner 若禁止上述能力，可能以
+  `Python service did not become ready before timeout` 失败。
+- `acceptance:target-viewports` 需要 macOS 允许 Electron 创建 sandbox、GPU 和
+  renderer 子进程。缺少相应 entitlement 或被外层 sandbox 禁止时，Electron 会在
+  Renderer 加载前以 `sandbox initialization failed: Operation not permitted`
+  退出；此结果属于“未执行”，不能记作视口验收通过。
+- 受限 CI 应至少运行 `npm run smoke:renderer`、`node --test
+  tests/preload-safe-bridge.test.mjs` 和 Python 回归。目标视口结果只能由满足上述
+  前提的 macOS runner 产出，并应保留 Electron 命令输出作为验收证据。
+
+本 PR 中记录的通过结果来自允许本机 loopback、Python 子进程和 Electron sandbox
+子进程的 macOS 开发环境，不表示所有受限 review sandbox 都能执行这些用例。
+
 ## 2. FR-06 强制检查
 
 | 检查项 | 结果 | 证据 |

@@ -323,11 +323,16 @@ export function TradeDrawer({
   const feePlanUnavailable = feePlanClient === null;
 
   return (
-    <footer className="trade-drawer" aria-label="T+0 成交折叠栏">
+    <footer
+      className="trade-drawer"
+      data-testid="trade-drawer"
+      aria-label="T+0 成交折叠栏"
+    >
       <div className="trade-drawer-bar">
         <button
           type="button"
           className="trade-drawer-toggle"
+          data-testid="trade-drawer-toggle"
           aria-expanded={expanded}
           aria-label={expanded ? "收起成交栏" : "展开成交栏"}
           onClick={() => setExpanded((v) => !v)}
@@ -371,6 +376,7 @@ export function TradeDrawer({
       {expanded && (
         <div
           className="trade-drawer-panel"
+          data-testid="trade-drawer-panel"
           role="region"
           aria-label="当日成交记录"
         >

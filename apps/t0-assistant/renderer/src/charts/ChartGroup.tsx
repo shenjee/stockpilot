@@ -61,7 +61,7 @@ export function ChartGroup({
 
   return (
     <>
-      <section className="chart-panel price-panel">
+      <section className="chart-panel price-panel" data-testid="chart-panel">
         {priceHeader}
         <div
           ref={priceRef}
@@ -77,7 +77,7 @@ export function ChartGroup({
           </div>
         )}
       </section>
-      <section className="chart-panel indicator-panel">
+      <section className="chart-panel indicator-panel" data-testid="chart-panel">
         <h2>{isIntraday ? "1 分钟 VOL" : "VOL"}</h2>
         <div
           ref={volumeRef}
@@ -85,7 +85,7 @@ export function ChartGroup({
           aria-label={isIntraday ? "1 分钟成交量" : "5 分钟成交量"}
         />
       </section>
-      <section className="chart-panel indicator-panel">
+      <section className="chart-panel indicator-panel" data-testid="chart-panel">
         <h2>{isIntraday ? "1 分钟 MACD" : "MACD"}</h2>
         <div
           ref={macdRef}

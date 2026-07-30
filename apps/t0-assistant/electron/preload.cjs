@@ -35,10 +35,10 @@ const REPLAY_COMMANDS = Object.freeze({
 });
 
 const SUBSCRIPTIONS = Object.freeze({
-  onServiceStatus: ["service_status", "bridge:service-status"],
-  onAppEvent: ["app_event", "bridge:app-event"],
-  onReplayEvent: ["replay_event", "bridge:replay-event"],
-  onReplaySnapshot: ["replay_snapshot", "bridge:replay-snapshot"],
+  onServiceStatus: "bridge:service-status",
+  onAppEvent: "bridge:app-event",
+  onReplayEvent: "bridge:replay-event",
+  onReplaySnapshot: "bridge:replay-snapshot",
 });
 
 const bridge = {
@@ -56,7 +56,7 @@ for (const [method, command] of Object.entries({
     ipcRenderer.invoke("bridge:invoke", command, request);
 }
 
-for (const [method, [, ipcChannel]] of Object.entries(SUBSCRIPTIONS)) {
+for (const [method, ipcChannel] of Object.entries(SUBSCRIPTIONS)) {
   bridge[method] = (listener) => {
     if (typeof listener !== "function") {
       throw new TypeError(`${method} requires a listener`);

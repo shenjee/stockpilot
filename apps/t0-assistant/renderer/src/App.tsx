@@ -1226,6 +1226,7 @@ export function App() {
 
   return (
     <main
+      data-testid="shell"
       className={[
         "shell",
         backgroundError ? "has-feedback" : "",
@@ -1303,11 +1304,16 @@ export function App() {
 
       <section
         className="workspace"
+        data-testid="workbench"
         data-chart-split={workbench.layout.chartSplit}
         data-show-intraday={workbench.layout.showIntraday}
         aria-label="T+0 三栏三行工作台"
       >
-        <article className="chart-group five-minute-group" aria-label="5 分钟图表组">
+        <article
+          className="chart-group five-minute-group"
+          data-testid="five-minute-group"
+          aria-label="5 分钟图表组"
+        >
           <ChartGroup
             key={`five-${workbench.security?.symbol ?? "fixture"}`}
             model={fiveMinuteModel}
@@ -1343,6 +1349,7 @@ export function App() {
 
         <article
           className="chart-group intraday-group"
+          data-testid="intraday-group"
           aria-label="分时图表组"
           hidden={!workbench.layout.showIntraday}
         >
@@ -1520,7 +1527,11 @@ function ReplayControls({
 
   if (!facts) {
     return (
-      <section className="replay-controls replay-setup" aria-label="回放控制面板">
+      <section
+        className="replay-controls replay-setup"
+        data-testid="replay-controls"
+        aria-label="回放控制面板"
+      >
         <label htmlFor="replay-date">回放日期</label>
         <input
           id="replay-date"
@@ -1554,6 +1565,7 @@ function ReplayControls({
   return (
     <section
       className="replay-controls replay-active"
+      data-testid="replay-controls"
       aria-label="回放控制面板"
       aria-busy={busy}
     >
@@ -1654,7 +1666,7 @@ function WorkbenchToolbar({
   const showResults =
     searching || Boolean(searchMessage) || suggestions.length > 0;
   return (
-    <header className="toolbar">
+    <header className="toolbar" data-testid="toolbar">
       <div className="security-picker">
         <label className="sr-only" htmlFor="security-search">
           股票搜索
@@ -1692,9 +1704,14 @@ function WorkbenchToolbar({
         )}
         <span className="security-name">{workbench.security?.name ?? ""}</span>
       </div>
-      <div className="mode-switcher" aria-label="工作台模式">
+      <div
+        className="mode-switcher"
+        data-testid="mode-switcher"
+        aria-label="工作台模式"
+      >
         <button
           type="button"
+          data-testid="mode-live"
           aria-pressed={workbench.mode === WorkbenchMode.LIVE}
           onClick={() => onMode(WorkbenchMode.LIVE)}
         >
@@ -1702,6 +1719,7 @@ function WorkbenchToolbar({
         </button>
         <button
           type="button"
+          data-testid="mode-replay"
           aria-pressed={workbench.mode === WorkbenchMode.REPLAY}
           onClick={() => onMode(WorkbenchMode.REPLAY)}
         >
@@ -1729,12 +1747,17 @@ function LayerSwitcher({
     [WorkbenchLayer.PIVOT_ZONES, "笔中枢"],
   ];
   return (
-    <div className="layer-switcher" aria-label="图层开关">
+    <div
+      className="layer-switcher"
+      data-testid="layer-switcher"
+      aria-label="图层开关"
+    >
       {layers.map(([layer, label]) => (
         <button
           type="button"
           key={layer}
           data-layer={layer}
+          data-testid={`layer-${layer}`}
           aria-pressed={state.layers[layer]}
           onClick={() => onToggle(layer)}
         >
@@ -1753,19 +1776,26 @@ function LayoutSwitcher({
   onSelect: (mode: WorkbenchLayoutModeValue) => void;
 }) {
   return (
-    <div className="layout-switcher" aria-label="工作台布局">
+    <div
+      className="layout-switcher"
+      data-testid="layout-switcher"
+      aria-label="工作台布局"
+    >
       <LayoutButton
         active={mode === WorkbenchLayoutMode.MAIN_PRIORITY}
+        testId="layout-main-priority"
         label="64 / 36"
         onClick={() => onSelect(WorkbenchLayoutMode.MAIN_PRIORITY)}
       />
       <LayoutButton
         active={mode === WorkbenchLayoutMode.EQUAL}
+        testId="layout-equal"
         label="50 / 50"
         onClick={() => onSelect(WorkbenchLayoutMode.EQUAL)}
       />
       <LayoutButton
         active={mode === WorkbenchLayoutMode.HIDE_INTRADAY}
+        testId="layout-hide-intraday"
         label="隐藏分时"
         onClick={() => onSelect(WorkbenchLayoutMode.HIDE_INTRADAY)}
       />
@@ -1775,15 +1805,22 @@ function LayoutSwitcher({
 
 function LayoutButton({
   active,
+  testId,
   label,
   onClick,
 }: {
   active: boolean;
+  testId: string;
   label: string;
   onClick: () => void;
 }) {
   return (
-    <button type="button" aria-pressed={active} onClick={onClick}>
+    <button
+      type="button"
+      data-testid={testId}
+      aria-pressed={active}
+      onClick={onClick}
+    >
       {label}
     </button>
   );
@@ -1799,7 +1836,11 @@ function MarketSidebar({
   status: ServiceStatus;
 }) {
   return (
-    <aside className="market-sidebar" aria-label="行情栏">
+    <aside
+      className="market-sidebar"
+      data-testid="market-sidebar"
+      aria-label="行情栏"
+    >
       <section className="daily-chart">
         <h2>日 K</h2>
         <DailyMiniChart bars={bars} />

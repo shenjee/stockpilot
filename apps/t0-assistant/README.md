@@ -98,6 +98,16 @@ changes, and absence of horizontal scrolling. Physical-device readability and
 Canvas crosshair behavior remain manual acceptance items documented in
 `docs/t0assistant/t0_054_acceptance.md`.
 
+The service-host tests require permission to spawn the configured Python
+interpreter and bind an ephemeral `127.0.0.1` port. The target-viewport command
+additionally requires a macOS runner that permits Electron sandbox, GPU, and
+renderer child processes. A restricted runner may therefore report a Python
+readiness timeout or `sandbox initialization failed: Operation not permitted`
+before product behavior is exercised. Such a run is "not executed", not a
+viewport pass. On restricted CI, run `npm run smoke:renderer`,
+`node --test tests/preload-safe-bridge.test.mjs`, and the Python regression
+suite; reserve the target-viewport gate for a compatible macOS runner.
+
 ## W0 boundary
 
 - No market provider, SQLite repository, indicator, CZSC, Session, or playback
