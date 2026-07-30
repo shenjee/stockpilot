@@ -34,6 +34,9 @@ class ContractTest(unittest.TestCase):
         cls.fixture = load_json("fixtures/replay-speed-v1.json")
         cls.workbench_flow = load_json("fixtures/workbench-flow-v1.json")
         cls.list_trades_flow = load_json("fixtures/list-trades-flow-v1.json")
+        cls.historical_snapshot_flow = load_json(
+            "fixtures/historical-snapshot-flow-v1.json"
+        )
         cls.registry = Registry().with_resources(
             [
                 (cls.logical["$id"], Resource.from_contents(cls.logical)),
@@ -543,6 +546,90 @@ class ContractTest(unittest.TestCase):
             and trade["executed_at"][:10] == scope["trade_date"]
         ]
         self.assertEqual(matched, scope["matched_trade_ids"])
+
+    def test_historical_snapshot_command_returns_static_workbench_snapshot(self) -> None:
+        """get_historical_snapshot is a synchronous command that returns a static
+        workbench_snapshot with session_type 'historical' and replay null.
+        """
+        flow = self.historical_snapshot_flow
+        request_validator = self.app_validator("command_request")
+        response_validator = self.app_validator(
+            "historical_snapshot_success_response"
+        )
+
+        request_validator.validate(flow["historical_snapshot_request"])
+        response_validator.validate(flow["historical_snapshot_response"])
+
+        response = flow["historical_snapshot_response"]
+        self.assertTrue(response["accepted"])
+        self.assertIsNone(response["operation_id"])
+        self.assertIsNone(response["error"])
+
+        snapshot = response["data"]
+        self.assertEqual(snapshot["session"]["session_type"], "historical")
+        self.assertEqual(snapshot["session"]["state"], "ready")
+        self.assertEqual(
+            snapshot["session"]["trade_date"],
+            flow["historical_snapshot_request"]["payload"]["trade_date"],
+        )
+        self.assertIsNone(snapshot["replay"])
+
+    def test_historical_success_schema_rejects_generic_or_non_static_data(self) -> None:
+        response = self.historical_snapshot_flow["historical_snapshot_response"]
+        validator = self.app_validator("historical_snapshot_success_response")
+
+        invalid_responses = (
+            {**response, "data": {}},
+            {
+                **response,
+                "data": {
+                    **response["data"],
+                    "session": {
+                        **response["data"]["session"],
+                        "session_type": "live",
+                    },
+                },
+            },
+            {
+                **response,
+                "data": {
+                    **response["data"],
+                    "session": {
+                        **response["data"]["session"],
+                        "state": "loading",
+                    },
+                },
+            },
+            {**response, "data": {**response["data"], "replay": {}}},
+            {**response, "operation_id": "operation-must-not-exist"},
+        )
+        for invalid in invalid_responses:
+            with self.subTest(invalid=invalid):
+                self.assertTrue(list(validator.iter_errors(invalid)))
+
+    def test_historical_error_schema_freezes_both_failure_semantics(self) -> None:
+        flow = self.historical_snapshot_flow
+        validator = self.app_validator("historical_snapshot_error_response")
+
+        for fixture_name in (
+            "historical_data_unavailable_response",
+            "service_unavailable_response",
+        ):
+            validator.validate(flow[fixture_name])
+
+        unavailable = flow["historical_data_unavailable_response"]
+        wrong_retryability = {
+            **unavailable,
+            "error": {**unavailable["error"], "retryable": False},
+        }
+        self.assertTrue(list(validator.iter_errors(wrong_retryability)))
+
+        service = flow["service_unavailable_response"]
+        wrong_capability = {
+            **service,
+            "error": {**service["error"], "affected_capability": "service"},
+        }
+        self.assertTrue(list(validator.iter_errors(wrong_capability)))
 
 
 if __name__ == "__main__":
