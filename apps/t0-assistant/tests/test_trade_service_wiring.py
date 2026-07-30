@@ -389,6 +389,46 @@ class TradeServiceWiringTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=2)
 
+    def test_session_scoped_trade_does_not_fall_through_to_real_repository(self) -> None:
+        """Until a Replay registry is injected, simulated UI fails closed.
+
+        The production bootstrap currently owns only the real Trade API. A
+        session-scoped request must therefore report unavailable instead of
+        accidentally persisting a simulated trade through that API.
+        """
+
+        request = Request(
+            f"{self.base_url}/api/commands/create_trade",
+            data=json.dumps(
+                {
+                    "schema_version": "t0_app_v1",
+                    "request_id": "r-simulated-unwired",
+                    "command": "create_trade",
+                    "session_id": "replay-not-registered",
+                    "payload": {
+                        "trade": _draft(trade_scope="simulated"),
+                    },
+                }
+            ).encode("utf-8"),
+            headers={
+                "Authorization": "Bearer wiring-token",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with self.assertRaises(HTTPError) as rejected:
+            urlopen(request, timeout=2)
+        self.assertEqual(rejected.exception.code, 503)
+        payload = json.load(rejected.exception)
+        rejected.exception.close()
+        self.assertEqual(payload["error"]["error_code"], "service_unavailable")
+        self.assertEqual(
+            self._database.connection.execute(
+                "SELECT COUNT(*) FROM trades"
+            ).fetchone()[0],
+            0,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

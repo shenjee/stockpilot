@@ -62,3 +62,29 @@ test("simulated draft reuses shared validation and differs only by scope", () =>
   assert.equal(draft.trade_scope, "simulated");
   assert.equal(draft.executed_at, "2026-07-01 14:55:00");
 });
+
+test("Replay client exposes service_unavailable so UI can disable entry", async () => {
+  const client = createSimulatedTradeClient(
+    {
+      listTrades: async () => ({
+        accepted: false,
+        error: {
+          error_code: "service_unavailable",
+          message: "本地服务尚未提供模拟成交能力",
+        },
+      }),
+    },
+    "replay-unwired",
+  );
+
+  await assert.rejects(
+    client.listTrades({
+      symbol: "sh.600000",
+      tradeDate: "2026-07-01",
+    }),
+    (error) =>
+      error instanceof Error &&
+      error.message === "本地服务尚未提供模拟成交能力" &&
+      error.cause?.error_code === "service_unavailable",
+  );
+});

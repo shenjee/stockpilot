@@ -22,6 +22,9 @@ export function ReplayTradeDrawer({
 }) {
   const [trades, setTrades] = useState<TradeRecord[]>([]);
   const [expanded, setExpanded] = useState(false);
+  const [availability, setAvailability] = useState<
+    "checking" | "available" | "unavailable"
+  >("checking");
   const [form, setForm] = useState<
     { mode: "create" } | { mode: "edit"; trade: TradeRecord } | null
   >(null);
@@ -38,17 +41,32 @@ export function ReplayTradeDrawer({
   }
 
   useEffect(() => {
+    let active = true;
     replace([]);
+    setAvailability("checking");
+    setError(null);
     void tradeClient
       .listTrades({
         symbol: security.symbol,
         tradeDate: currentTime.slice(0, 10),
         tradeScope: "simulated",
       })
-      .catch((cause) =>
-        setError(cause instanceof Error ? cause.message : "模拟成交读取失败"),
-      );
-    return () => onTradesChange([]);
+      .then(() => {
+        if (active) setAvailability("available");
+      })
+      .catch((cause) => {
+        if (!active) return;
+        setAvailability("unavailable");
+        setError(
+          cause instanceof Error
+            ? cause.message
+            : "模拟成交服务尚未接入，当前不可录入",
+        );
+      });
+    return () => {
+      active = false;
+      onTradesChange([]);
+    };
   }, [sessionId, tradeClient, security.symbol]);
 
   useEffect(() => {
@@ -66,12 +84,16 @@ export function ReplayTradeDrawer({
       ) {
         return;
       }
+      setAvailability("available");
       replace(event.payload.trades as TradeRecord[]);
       setError(null);
     });
   }, [subscribeAppEvent, sessionId]);
 
   async function submit(draft: TradeDraft) {
+    if (availability !== "available") {
+      throw new Error("模拟成交服务当前不可用");
+    }
     try {
       if (form?.mode === "edit") {
         await tradeClient.updateTrade(form.trade.trade_id, draft);
@@ -106,11 +128,21 @@ export function ReplayTradeDrawer({
           <span>模拟成交</span>
         </button>
         <span className="trade-drawer-summary">
-          当前回放会话 {trades.length} 笔（退出后清空）
+          {availability === "available"
+            ? `当前回放会话 ${trades.length} 笔（退出后清空）`
+            : availability === "checking"
+              ? "正在检查模拟成交服务…"
+              : "模拟成交服务尚未接入，当前不可录入"}
         </span>
         <button
           type="button"
           className="primary-button"
+          disabled={availability !== "available"}
+          title={
+            availability === "unavailable"
+              ? "当前正式启动路径尚未提供 Replay Session 成交服务"
+              : undefined
+          }
           onClick={() => setForm({ mode: "create" })}
         >
           录入模拟成交
