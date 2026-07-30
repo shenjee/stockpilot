@@ -45,6 +45,16 @@ def _error_category(error_code: str) -> str:
     return "service"
 
 
+def _weekday_dates(start: date, end: date) -> list[date]:
+    """Return every weekday in the inclusive date range."""
+
+    return [
+        start + timedelta(days=offset)
+        for offset in range((end - start).days + 1)
+        if (start + timedelta(days=offset)).weekday() < 5
+    ]
+
+
 def _build_market_context(
     provider: TencentStockDataProvider,
     store: KLineStore,
@@ -52,12 +62,12 @@ def _build_market_context(
 ) -> MarketContextService:
     """Build a market-wide calendar that does not depend on any single security.
 
-    The preferred source is cached benchmark index (``sh.000001``) bars, because
-    the benchmark trades on nearly every open market day.  If the benchmark is
-    not cached, fall back to the union of all cached bars.  When the store is
-    completely empty, use a generated weekday calendar so the API remains
-    usable; holidays then degrade cleanly to ``historical_data_unavailable``
-    when the provider cannot supply bars.
+    Cached benchmark index (``sh.000001``) bars are the preferred evidence of
+    which days the exchange was open, but a stale cache must not make a newer
+    weekday appear to be a holiday.  Therefore the generated weekday calendar
+    for the coverage window is always the base set, and cached dates are merged
+    into it as known-good trading days.  Holidays then degrade cleanly to
+    ``historical_data_unavailable`` when the provider cannot supply bars.
 
     This synchronous path intentionally avoids network I/O so service startup
     stays fast and reliable.
@@ -66,25 +76,53 @@ def _build_market_context(
     coverage_end = today
     coverage_start = today - timedelta(days=_BENCHMARK_LOOKBACK_DAYS)
 
-    dates = store.trade_dates(_BENCHMARK_CODE, market=_BENCHMARK_MARKET)
-    if not dates:
-        dates = store.all_trade_dates()
-    if dates:
-        return MarketContextService(
-            trading_days=dates,
-            coverage_start=dates[0],
-            coverage_end=coverage_end.isoformat(),
-        )
+    cached_dates = store.trade_dates(_BENCHMARK_CODE, market=_BENCHMARK_MARKET)
+    if not cached_dates:
+        cached_dates = store.all_trade_dates()
 
-    weekday_dates = [
-        (coverage_start + timedelta(days=offset)).isoformat()
-        for offset in range((coverage_end - coverage_start).days + 1)
-        if (coverage_start + timedelta(days=offset)).weekday() < 5
-    ]
+    if cached_dates:
+        first_cached = date.fromisoformat(cached_dates[0])
+        coverage_start = min(coverage_start, first_cached)
+        cached_day_set = {date.fromisoformat(value) for value in cached_dates}
+    else:
+        cached_day_set = set()
+
+    weekday_day_set = set(_weekday_dates(coverage_start, coverage_end))
+    trading_days = sorted(cached_day_set | weekday_day_set)
+
     return MarketContextService(
-        trading_days=weekday_dates,
-        coverage_start=weekday_dates[0],
+        trading_days=[value.isoformat() for value in trading_days],
+        coverage_start=trading_days[0].isoformat(),
         coverage_end=coverage_end.isoformat(),
+    )
+
+
+def _ensure_context_covers(
+    context: MarketContextService,
+    trade_date: date,
+) -> MarketContextService:
+    """Return a context whose coverage window includes ``trade_date``.
+
+    The initial coverage window is intentionally bounded so service startup
+    stays fast.  When a user requests a historical date outside that window,
+    the calendar is extended on demand using generated weekdays.  This keeps
+    the fixed 730-day lookback from becoming a hard limit on historical chart
+    range, while still avoiding network I/O during startup.
+    """
+
+    start = context.coverage_start
+    end = context.coverage_end
+    if start <= trade_date <= end:
+        return context
+    new_start = min(start, trade_date)
+    new_end = max(end, trade_date)
+    trading_days = sorted(
+        set(context.trading_days) | set(_weekday_dates(new_start, new_end))
+    )
+    return MarketContextService(
+        trading_days=[value.isoformat() for value in trading_days],
+        coverage_start=new_start.isoformat(),
+        coverage_end=new_end.isoformat(),
     )
 
 
@@ -129,13 +167,16 @@ class HistoricalSnapshotApi:
     def service_generation(self) -> int:
         return self._service_generation
 
-    def _market_data(self) -> KLineDataService:
+    def _market_data(
+        self,
+        market_context: MarketContextService | None = None,
+    ) -> KLineDataService:
         """Build a ``KLineDataService`` wired to the local store and provider."""
 
         return KLineDataService(
             provider=self._provider,
             store=self._store,
-            market_context=self._market_context,
+            market_context=market_context or self._market_context,
         )
 
     def get_historical_snapshot(
@@ -160,12 +201,18 @@ class HistoricalSnapshotApi:
                 "trade_date must use YYYY-MM-DD",
             )
 
+        resolved_trade_date = date.fromisoformat(trade_date)
+        effective_context = _ensure_context_covers(
+            self._market_context,
+            resolved_trade_date,
+        )
+
         try:
             snapshot = build_historical_snapshot(
                 symbol=symbol,
                 trade_date=trade_date,
-                market_data=self._market_data(),
-                market_context=self._market_context,
+                market_data=self._market_data(effective_context),
+                market_context=effective_context,
             )
         except HistoricalDataUnavailableError as exc:
             return self._reject(

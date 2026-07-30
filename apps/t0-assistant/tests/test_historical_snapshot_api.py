@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 APP_ROOT = Path(__file__).resolve().parents[1]
@@ -20,10 +21,61 @@ from backend.historical_snapshot_api import (  # noqa: E402
     create_historical_snapshot_api,
 )
 from packages.marketdata.market_data import TencentStockDataProvider  # noqa: E402
+from packages.marketdata.provider_result import (  # noqa: E402
+    MarketDataResult,
+    ProviderIssue,
+)
 from packages.marketdata.repositories.kline_store import KLineStore  # noqa: E402
 from packages.marketdata.services.market_context_service import (  # noqa: E402
     MarketContextService,
 )
+
+
+class _ObservingProvider:
+    """Fake Tencent provider that records every ``get_kline_result`` call.
+
+    Returns empty successful results with a ``replay_reliability_evidence``
+    issue so the store records the requested dates as complete.  This is enough
+    to prove the real factory-to-provider path was exercised, without needing
+    to synthesize a full valid snapshot.
+    """
+
+    provider_id = "observing"
+
+    def __init__(self) -> None:
+        self.calls: list[
+            tuple[str, str, str, str, str | None, str | None]
+        ] = []
+
+    def get_kline_result(
+        self,
+        *,
+        code: str,
+        start_date: str,
+        end_date: str,
+        ktype: str = "day",
+        autype: str = "qfq",
+        market: str | None = None,
+        security_type: str | None = None,
+    ) -> MarketDataResult[list]:
+        self.calls.append((code, start_date, end_date, ktype, market, security_type))
+        issue = ProviderIssue(
+            level="warning",
+            reason_code="replay_reliability_evidence",
+            message="test reliability evidence",
+            context={
+                "default_status": "complete",
+                "trade_date_statuses": {end_date: "complete"},
+            },
+        )
+        return MarketDataResult(success=True, data=[], issues=[issue])
+
+    def get_kline(
+        self,
+        *args: Any,
+        **kwargs: Any,
+    ) -> list:
+        raise AssertionError("get_kline should not be called when get_kline_result exists")
 
 
 class HistoricalSnapshotApiTests(unittest.TestCase):
@@ -460,6 +512,72 @@ class CreateHistoricalSnapshotApiTests(unittest.TestCase):
                 api._market_context.is_trading_day("2026-07-19", "sh")
             )
             provider.get_kline_result.assert_not_called()
+
+    def test_date_newer_than_cached_benchmark_reaches_provider(self) -> None:
+        """A weekday newer than the cached benchmark calendar must not be rejected.
+
+        The provider must be consulted before the request is classified as
+        unavailable, even when sh.000001 bars stop before the requested date.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "market_data.sqlite"
+            store = KLineStore(db_path)
+            # Benchmark cached only through 2026-07-20 (Monday), inserting only
+            # weekdays so the cached dates are valid trading days.
+            bars = [
+                {
+                    "date": f"2026-07-{day:02d} 00:00:00",
+                    "open": 3000.0,
+                    "close": 3010.0,
+                    "high": 3020.0,
+                    "low": 2990.0,
+                    "volume": 1_000_000,
+                    "amount": 1_000_000_000.0,
+                }
+                for day in range(13, 21)
+                if date(2026, 7, day).weekday() < 5
+            ]
+            self._insert_bars(store, "000001", "sh", bars)
+            provider = _ObservingProvider()
+            api = create_historical_snapshot_api(
+                service_generation=1,
+                db_path=db_path,
+                provider=provider,
+                clock=self._clock,
+            )
+            # 2026-07-21 is newer than the last cached benchmark bar but is a
+            # weekday inside the coverage window, so it must be a potential
+            # trading day rather than a holiday.
+            self.assertTrue(
+                api._market_context.is_trading_day("2026-07-21", "sh")
+            )
+
+            response = api.get_historical_snapshot(
+                request_id="req-stale-benchmark",
+                symbol="sh.600000",
+                trade_date="2026-07-21",
+            )
+
+            # The provider was consulted (real factory-to-provider path).
+            self.assertTrue(provider.calls)
+            target_calls = [
+                call
+                for call in provider.calls
+                if call[1] <= "2026-07-21" <= call[2]
+            ]
+            self.assertTrue(
+                target_calls,
+                f"expected provider call covering 2026-07-21, got {provider.calls}",
+            )
+            # Without data the snapshot is unavailable, but the failure must be
+            # classified as data (provider returned nothing) not service
+            # (calendar rejected the date before the provider ran).
+            self.assertFalse(response["accepted"])
+            self.assertEqual(
+                response["error"]["error_code"],
+                "historical_data_unavailable",
+            )
+            self.assertEqual(response["error"]["category"], "data")
 
 
 if __name__ == "__main__":
