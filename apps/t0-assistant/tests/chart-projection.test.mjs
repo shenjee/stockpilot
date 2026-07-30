@@ -187,17 +187,32 @@ test("indicator, Chan, quote, and daily-bar increments update sidebar layers", (
   assert.equal(afterQuote.snapshot.market.quote.latest_price, 10.2);
 });
 
-test("non-chart events advance the shared revision without changing chart data", () => {
-  const event = {
-    event_type: "operation_failed",
-    service_generation: fixture.service_generation,
-    session_id: baseline.session.session_id,
-    revision: 2,
-    payload: {},
+test("historical snapshot replaces the current projection without starting a Session stream", () => {
+  const historical = {
+    ...structuredClone(baseline),
+    session: {
+      session_id: "historical:sh.600000:2026-07-22",
+      session_type: "historical",
+      symbol: "sh.600000",
+      trade_date: "2026-07-22",
+      state: "ready",
+      revision: 0,
+    },
+    replay: null,
   };
-  const projection = baselineProjection();
-  const next = applyLiveChartEvent(projection, event);
+  const empty = createChartProjection(
+    { ...structuredClone(baseline), session: undefined },
+    { service_generation: fixture.service_generation },
+  );
+  const projection = applyWorkbenchSnapshot(empty, historical, {
+    service_generation: fixture.service_generation,
+    session_id: historical.session.session_id,
+    revision: historical.session.revision,
+  });
 
-  assert.strictEqual(next.snapshot, projection.snapshot);
-  assert.equal(next.revision, 2);
+  assert.equal(projection.sessionId, "historical:sh.600000:2026-07-22");
+  assert.equal(projection.snapshot.session.session_type, "historical");
+  assert.equal(projection.snapshot.session.trade_date, "2026-07-22");
+  assert.equal(projection.revision, 0);
+  assert.equal(projection.rebaselineRequired, false);
 });

@@ -541,3 +541,49 @@ class KLineStore:
             }
             for row in rows
         ]
+
+    def trade_dates(
+        self,
+        code: str,
+        market: str | None = None,
+    ) -> list[str]:
+        """Return the distinct trade dates persisted for a symbol.
+
+        Dates are derived from all available intraday and daily timeframes so
+        the caller can build a trading calendar even when only minute data has
+        been synced. Weekends are filtered out because the exchange never
+        trades on them.
+        """
+
+        symbol = self.symbol(code, market)
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT substr(timestamp, 1, 10)
+                FROM klines
+                WHERE symbol = ?
+                  AND timeframe IN ('day', '1m', '5m', '30m', '60m')
+                ORDER BY 1
+                """,
+                (symbol,),
+            ).fetchall()
+        return [str(row[0]) for row in rows]
+
+    def all_trade_dates(self) -> list[str]:
+        """Return the distinct trade dates persisted across all symbols.
+
+        This is a market-wide calendar: a date is included if any security has
+        bars on that date, so suspensions of one security do not remove an
+        otherwise open market day. Weekends are filtered out at the source.
+        """
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT substr(timestamp, 1, 10)
+                FROM klines
+                WHERE timeframe IN ('day', '1m', '5m', '30m', '60m')
+                ORDER BY 1
+                """,
+            ).fetchall()
+        return [str(row[0]) for row in rows]

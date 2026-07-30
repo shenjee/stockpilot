@@ -52,6 +52,20 @@ function tick() {
   return new Promise((resolveWait) => setImmediate(resolveWait));
 }
 
+function respectSignal(signal, delayMs) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error("aborted"));
+      return;
+    }
+    const timer = setTimeout(resolve, delayMs);
+    signal?.addEventListener("abort", () => {
+      clearTimeout(timer);
+      reject(new Error("aborted"));
+    });
+  });
+}
+
 test("gateway authenticates inside main and never adds transport fields to domain requests", async () => {
   let captured;
   const gateway = new BackendGateway({
@@ -473,6 +487,112 @@ test("buffer overflow re-baselines every Session whose queued event was discarde
     requests.map((request) => request.session_id).sort(),
     ["live-a", "live-b"],
   );
+  gateway.close();
+});
+
+test("gateway allows and forwards get_historical_snapshot", async () => {
+  const historicalSnapshot = {
+    session: {
+      session_id: "historical:sh.600000:2026-07-22",
+      session_type: "historical",
+      symbol: "sh.600000",
+      trade_date: "2026-07-22",
+      state: "ready",
+      revision: 0,
+    },
+  };
+  let captured;
+  const gateway = new BackendGateway({
+    WebSocketImpl: FakeWebSocket,
+    fetchImpl: async (url, options) => {
+      captured = { url, options };
+      return {
+        ok: true,
+        json: async () => ({
+          schema_version: "t0_app_v1",
+          request_id: "historical-req",
+          accepted: true,
+          operation_id: null,
+          data: historicalSnapshot,
+          error: null,
+        }),
+      };
+    },
+  });
+  gateway.start(connection);
+  const request = {
+    schema_version: "t0_app_v1",
+    request_id: "historical-req",
+    command: "get_historical_snapshot",
+    session_id: null,
+    payload: { symbol: "sh.600000", trade_date: "2026-07-22" },
+  };
+  const response = await gateway.invoke("get_historical_snapshot", request);
+
+  assert.equal(captured.url, "http://127.0.0.1:43123/api/commands/get_historical_snapshot");
+  assert.equal(ALLOWED_COMMANDS.has("get_historical_snapshot"), true);
+  assert.deepEqual(JSON.parse(captured.options.body), request);
+  assert.equal(response.accepted, true);
+  assert.equal(response.data.session.session_type, "historical");
+  gateway.close();
+});
+
+test("gateway uses per-command timeout for get_historical_snapshot", async () => {
+  let captured;
+  const gateway = new BackendGateway({
+    WebSocketImpl: FakeWebSocket,
+    requestTimeoutMs: 50,
+    commandTimeouts: { get_historical_snapshot: 200 },
+    fetchImpl: async (_url, options) => {
+      captured = options;
+      await respectSignal(options.signal, 120);
+      return {
+        ok: true,
+        json: async () => ({
+          schema_version: "t0_app_v1",
+          request_id: "hist-timeout",
+          accepted: true,
+          operation_id: null,
+          data: { session: { session_id: "historical:sh.600000:2026-07-22", session_type: "historical" } },
+          error: null,
+        }),
+      };
+    },
+  });
+  gateway.start(connection);
+  const request = {
+    schema_version: "t0_app_v1",
+    request_id: "hist-timeout",
+    command: "get_historical_snapshot",
+    session_id: null,
+    payload: { symbol: "sh.600000", trade_date: "2026-07-22" },
+  };
+  const response = await gateway.invoke("get_historical_snapshot", request);
+  assert.equal(response.accepted, true, "get_historical_snapshot uses its 200 ms timeout, not the 50 ms default");
+  assert.equal(captured.signal.aborted, false);
+  gateway.close();
+});
+
+test("gateway falls back to default timeout for commands without per-command override", async () => {
+  const gateway = new BackendGateway({
+    WebSocketImpl: FakeWebSocket,
+    requestTimeoutMs: 50,
+    commandTimeouts: { get_historical_snapshot: 10_000 },
+    fetchImpl: async (_url, options) => {
+      await respectSignal(options.signal, 120);
+      return { ok: true, json: async () => ({ accepted: true, operation_id: null, data: null, error: null }) };
+    },
+  });
+  gateway.start(connection);
+  const response = await gateway.invoke("get_preferences", {
+    schema_version: "t0_app_v1",
+    request_id: "pref-timeout",
+    command: "get_preferences",
+    session_id: null,
+    payload: {},
+  });
+  assert.equal(response.accepted, false, "get_preferences uses the 50 ms default timeout");
+  assert.equal(response.error.error_code, "service_unavailable");
   gateway.close();
 });
 

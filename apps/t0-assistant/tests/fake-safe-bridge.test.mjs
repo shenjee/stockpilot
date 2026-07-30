@@ -103,6 +103,55 @@ test("Fake Safe Bridge subscriptions are isolated and removable", () => {
   assert.equal(replayEvents.length, 1);
 });
 
+test("Fake Safe Bridge returns a historical snapshot via getHistoricalSnapshot", async () => {
+  const historicalSnapshot = {
+    timezone: "Asia/Shanghai",
+    session: {
+      session_id: "historical:sh.600000:2026-07-22",
+      session_type: "historical",
+      symbol: "sh.600000",
+      trade_date: "2026-07-22",
+      state: "ready",
+      revision: 0,
+    },
+    market: { bars_1m: [], bars_5m: [], daily_bars: [], quote: null },
+    indicators: {
+      five_minute: {
+        ma: { ma5: [], ma10: [], ma20: [], ma30: [], ma60: [] },
+        volume: { values: [], ma5: [], ma10: [] },
+        macd: { fast_period: 12, slow_period: 26, signal_period: 9, dif: [], dea: [], histogram: [] },
+      },
+      one_minute: {
+        vwap: [],
+        volume: { values: [] },
+        macd: { fast_period: 12, slow_period: 26, signal_period: 9, dif: [], dea: [], histogram: [] },
+      },
+    },
+    chan_analysis: { strokes: [], pivot_zones: [] },
+    warnings: [],
+  };
+  const { bridge, controller } = createFakeSafeBridge(fixture, { historicalSnapshot });
+  const response = await bridge.getHistoricalSnapshot({
+    schema_version: "t0_app_v1",
+    request_id: "node-historical-1",
+    command: "get_historical_snapshot",
+    session_id: null,
+    payload: { symbol: "sh.600000", trade_date: "2026-07-22" },
+  });
+  assert.equal(response.data.session.session_id, "historical:sh.600000:2026-07-22");
+  assert.equal(response.data.session.session_type, "historical");
+  assert.deepEqual(controller.calls[0], {
+    command: "get_historical_snapshot",
+    request: {
+      schema_version: "t0_app_v1",
+      request_id: "node-historical-1",
+      command: "get_historical_snapshot",
+      session_id: null,
+      payload: { symbol: "sh.600000", trade_date: "2026-07-22" },
+    },
+  });
+});
+
 test("Fake Safe Bridge returns Replay v1 identities and a complete Replay snapshot", async () => {
   const { bridge } = createFakeSafeBridge(fixture, { replayFixture });
   const request = {

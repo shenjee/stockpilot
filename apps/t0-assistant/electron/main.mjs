@@ -9,7 +9,9 @@ import { retryDesktopService } from "./service-retry.mjs";
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 const serviceHost = new PythonServiceHost();
-const gateway = new BackendGateway();
+const gateway = new BackendGateway({
+  commandTimeouts: { get_historical_snapshot: 10_000 },
+});
 let mainWindow = null;
 let quitting = false;
 let technicalLog = null;

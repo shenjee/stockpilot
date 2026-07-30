@@ -65,6 +65,8 @@ import {
   TradeOperationController,
   type TradeOperationFailure,
 } from "./trading/trade-operation-controller.mjs";
+import { applyHistoryTradesChanged } from "./trading/history-state.mjs";
+import type { TradeRecord } from "./trading/trade-client.mjs";
 
 const initialStatus: ServiceStatus = {
   state: "starting",
@@ -117,6 +119,16 @@ interface ActiveOperation {
   sessionId: string | null;
 }
 
+function localToday() {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+function tradeDateOf(executedAt: string) {
+  return executedAt.length >= 10 ? executedAt.slice(0, 10) : null;
+}
+
 export function App() {
   const [status, setStatus] = useState<ServiceStatus>(initialStatus);
   const [workbench, setWorkbench] = useState<WorkbenchState>(
@@ -148,6 +160,20 @@ export function App() {
   const [replayLoading, setReplayLoading] = useState(false);
   const [replayBusy, setReplayBusy] = useState(false);
   const [replayPlaybackPending, setReplayPlaybackPending] = useState(false);
+  // T0-043: repository-scoped real-trade snapshot, kept at the App level so
+  // both the trade Drawer/Dialog and the 5m chart markers consume the same
+  // authoritative list. The reducer applies the same generation/revision gate
+  // used by the history dialog.
+  const [realTrades, setRealTrades] = useState<{
+    trades: TradeRecord[];
+    tradeRevision: number;
+    serviceGeneration: number | null;
+  }>({ trades: [], tradeRevision: -1, serviceGeneration: null });
+  // T0-043 "进入当天图形": a dismissible notice when a historical trade's full
+  // day chart cannot be restored (no frozen non-Replay command serves a static
+  // historical workbench; see the T0-043 contract gap). Never wipes the last
+  // successful chart.
+  const [dayChartNotice, setDayChartNotice] = useState<string | null>(null);
   const rebaselineRequest = useRef<string | null>(null);
   const activeOperations = useRef(new Map<string, ActiveOperation>());
   const modeRef = useRef(workbench.mode);
@@ -157,7 +183,7 @@ export function App() {
   const activeReplayLoadOperation = useRef<string | null>(null);
   const activeReplayCursorOperation = useRef<string | null>(null);
   const searchRequests = useRef(createLatestRequestTracker());
-  const securitySelectionSequence = useRef(0);
+  const navigationRequests = useRef(createLatestRequestTracker());
   const preferenceHydrationInFlight = useRef(false);
   const userModifiedPreferences = useRef(false);
   const preferenceSaveQueue = useRef(
@@ -456,6 +482,10 @@ export function App() {
             ? envelope.operation_id
             : null;
         if (opId) tradeOpController.current?.resolve(opId);
+        // Keep the authoritative repository-scoped snapshot at the App level so
+        // the 5m chart can overlay real-trade markers for the current symbol
+        // and trading date.
+        setRealTrades((current) => applyHistoryTradesChanged(current, event));
         applyLiveEvent();
         return;
       }
@@ -746,7 +776,7 @@ export function App() {
     security: SecurityIdentity,
     restoring = false,
   ) {
-    const selectionSequence = ++securitySelectionSequence.current;
+    const selectionSequence = navigationRequests.current.begin();
     if (!restoring) userModifiedPreferences.current = true;
     if (!window.stockpilot) {
       setWorkbench((current) =>
@@ -760,7 +790,7 @@ export function App() {
       const response = await window.stockpilot.selectSecurity(
         appRequest("select_security", null, { symbol: security.symbol }),
       );
-      if (selectionSequence !== securitySelectionSequence.current) return;
+      if (!navigationRequests.current.isCurrent(selectionSequence)) return;
       const error = applicationErrorFrom(response);
       if (error) {
         setLoading(false);
@@ -797,7 +827,7 @@ export function App() {
       setSuggestions([]);
       setSearchMessage("");
     } catch (error) {
-      if (selectionSequence !== securitySelectionSequence.current) return;
+      if (!navigationRequests.current.isCurrent(selectionSequence)) return;
       setLoading(false);
       const failure = clientError(error, "symbol_selection");
       if (restoring) setBackgroundError(failure);
@@ -807,6 +837,87 @@ export function App() {
           retry: "security",
           security,
         });
+    }
+  }
+
+  // T0-043 "进入当天图形": restore a historical trade's full trading-day chart
+  // without starting Replay playback. Today's trades reuse the Live workbench
+  // (switch security -> today's bars + today's real-trade markers, which the
+  // TradeDrawer already scopes). A historical trading day loads a complete,
+  // static workbench snapshot via get_historical_snapshot and replaces the
+  // current projection with it.
+  async function handleEnterDayChart(symbol: string, tradeDate: string) {
+    const requestSequence = navigationRequests.current.begin();
+    const today = localToday();
+    const identity: SecurityIdentity =
+      workbench.security && workbench.security.symbol === symbol
+        ? workbench.security
+        : {
+            symbol,
+            code: symbol.slice(3),
+            market: (symbol.slice(0, 2) === "sz" ? "sz" : "sh") as "sh" | "sz",
+            name: symbol.slice(3),
+            security_type: "a_share",
+          };
+    if (tradeDate === today) {
+      setDayChartNotice(null);
+      void performSecuritySelection(identity);
+      return;
+    }
+
+    if (!window.stockpilot) {
+      if (!navigationRequests.current.isCurrent(requestSequence)) return;
+      setDayChartNotice(
+        `该交易日（${tradeDate}）的完整历史图形暂不可用，已保留当前图形。`,
+      );
+      return;
+    }
+
+    if (!navigationRequests.current.isCurrent(requestSequence)) return;
+    setLoading(true);
+    setDayChartNotice(null);
+    try {
+      const response = await window.stockpilot.getHistoricalSnapshot(
+        appRequest("get_historical_snapshot", null, {
+          symbol,
+          trade_date: tradeDate,
+        }),
+      );
+      if (!navigationRequests.current.isCurrent(requestSequence)) return;
+      const error = applicationErrorFrom(response);
+      if (error) {
+        setLoading(false);
+        setDayChartNotice(
+          `该交易日（${tradeDate}）的历史图形加载失败：${error.message}`,
+        );
+        return;
+      }
+      const responseData = (response as { data?: unknown }).data;
+      const snapshot = responseData as WorkbenchChartSnapshot;
+      if (!isCompleteWorkbenchSnapshot(snapshot) || !snapshot.session) {
+        setLoading(false);
+        setDayChartNotice(
+          `该交易日（${tradeDate}）的历史图形响应不完整，已保留当前图形。`,
+        );
+        return;
+      }
+      setWorkbench((current) => selectWorkbenchSecurity(current, identity));
+      setQuery(identity.code);
+      setProjection(
+        createChartProjection(snapshot, {
+          service_generation: serviceGeneration.current,
+          session_id: snapshot.session.session_id,
+          revision: snapshot.session.revision,
+        }),
+      );
+      setLoading(false);
+    } catch (error) {
+      if (!navigationRequests.current.isCurrent(requestSequence)) return;
+      const appError = clientError(error, "historical_chart");
+      setLoading(false);
+      setDayChartNotice(
+        `该交易日（${tradeDate}）的历史图形加载失败：${appError.message}`,
+      );
     }
   }
 
@@ -1016,14 +1127,26 @@ export function App() {
     }
   }
 
+  const currentSymbol = workbench.security?.symbol ?? null;
+  const currentTradeDate = snapshot.session?.trade_date ?? localToday();
+  const chartTrades = useMemo(() => {
+    if (!currentSymbol) return [];
+    return realTrades.trades.filter(
+      (trade) =>
+        trade.symbol === currentSymbol &&
+        tradeDateOf(trade.executed_at) === currentTradeDate,
+    );
+  }, [realTrades.trades, currentSymbol, currentTradeDate]);
+
   const fiveMinuteModel = useMemo(
     () =>
       createChartGroupModel(
         snapshot,
         ChartGroupKind.FIVE_MINUTE,
         workbench.layers,
+        chartTrades,
       ),
-    [snapshot, workbench.layers],
+    [snapshot, workbench.layers, chartTrades],
   );
   const intradayModel = useMemo(
     () => createChartGroupModel(snapshot, ChartGroupKind.ONE_MINUTE),
@@ -1255,7 +1378,17 @@ export function App() {
           subscribeAppEvent={subscribeAppEvent}
           serviceGeneration={status.service_generation}
           tradeOpController={tradeOpController.current as TradeOperationController}
+          onEnterDayChart={handleEnterDayChart}
         />
+      )}
+
+      {dayChartNotice && (
+        <div className="inline-error" role="status" style={{ margin: "8px 12px" }}>
+          <span>{dayChartNotice}</span>
+          <button type="button" onClick={() => setDayChartNotice(null)}>
+            知道了
+          </button>
+        </div>
       )}
 
       {activeFailure && (

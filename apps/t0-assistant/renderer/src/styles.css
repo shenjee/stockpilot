@@ -755,3 +755,54 @@ button { color: inherit; }
 }
 .plan-form { display: flex; flex-direction: column; gap: 10px; }
 .confirm-block p { margin: 0 0 14px; color: #aeb9ca; line-height: 1.6; }
+
+/* 历史交易记录弹窗 (T0-043) */
+.history-dialog {
+  width: min(760px, calc(100vw - 40px));
+  max-height: min(640px, calc(100vh - 60px));
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #3b4961;
+  border-radius: 10px;
+  background: #141d2c;
+  box-shadow: 0 22px 60px rgb(0 0 0 / 48%);
+  padding: 18px;
+}
+.history-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.history-dialog-header h2 { margin: 0; font-size: 16px; }
+.history-dialog-body { flex: 1; min-height: 0; overflow-y: auto; padding-right: 2px; }
+.history-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.history-item {
+  display: grid;
+  grid-template-columns: 28px 132px 132px 70px 70px 56px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #2b3850;
+  border-radius: 6px;
+  background: #101826;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.history-item .trade-side { justify-self: center; }
+.history-symbol { color: #e8edf5; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-symbol-name { color: #8492a8; margin-left: 4px; }
+.history-datetime { color: #cbd5e1; font-variant-numeric: tabular-nums; }
+.history-note { color: #6f7f96; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-item-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.history-item-actions button {
+  border: 1px solid #40516c;
+  border-radius: 5px;
+  background: transparent;
+  color: #e8edf5;
+  padding: 4px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.history-item-actions .danger-button { border-color: #7a3a3a; color: #f6b6b6; }
+.history-loading { color: #8492a8; font-size: 12px; padding: 12px 4px; }

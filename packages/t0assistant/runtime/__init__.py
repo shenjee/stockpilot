@@ -46,6 +46,11 @@ from .pipeline import (
     WorkbenchPipeline,
     WorkbenchPipelineError,
 )
+from .historical_snapshot import (
+    HistoricalDataUnavailableError,
+    HistoricalSnapshotError,
+    build_historical_snapshot,
+)
 from .live_data import (
     LiveDataError,
     LiveDataPreparator,
@@ -112,6 +117,8 @@ __all__ = [
     "CoordinatorValidationError",
     "CzscAnalyzerPort",
     "DynamicFiveMinuteAggregator",
+    "HistoricalDataUnavailableError",
+    "HistoricalSnapshotError",
     "LiveDataError",
     "LiveDataPreparator",
     "LiveDataUnavailableError",
@@ -155,6 +162,7 @@ __all__ = [
     "WorkbenchProjection",
     "WorkbenchProjectionError",
     "build_dynamic_daily_bar",
+    "build_historical_snapshot",
     "build_workbench_projection",
     "default_accept_result",
     "new_task_id",

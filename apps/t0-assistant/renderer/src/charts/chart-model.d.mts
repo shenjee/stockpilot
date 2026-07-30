@@ -29,7 +29,7 @@ export interface WorkbenchChartSnapshot {
   timezone: "Asia/Shanghai";
   session?: {
     session_id: string;
-    session_type?: "live" | "replay";
+    session_type?: "live" | "replay" | "historical";
     symbol?: string;
     trade_date?: string;
     state?: string;

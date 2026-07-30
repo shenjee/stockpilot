@@ -11,6 +11,7 @@ const ALLOWED_COMMANDS = new Set([
   "delete_trade",
   "get_preferences",
   "save_preferences",
+  "get_historical_snapshot",
   "select_symbol",
   "begin_replay",
   "set_replay_playback",
@@ -85,6 +86,7 @@ export class BackendGateway extends EventEmitter {
     fetchImpl = globalThis.fetch,
     WebSocketImpl = globalThis.WebSocket,
     requestTimeoutMs = 5_000,
+    commandTimeouts = {},
     maxReconnectAttempts = 3,
     reconnectBackoffMs = [100, 250, 500],
     maxEventBuffer = 128,
@@ -93,6 +95,7 @@ export class BackendGateway extends EventEmitter {
     this.fetchImpl = fetchImpl;
     this.WebSocketImpl = WebSocketImpl;
     this.requestTimeoutMs = requestTimeoutMs;
+    this.commandTimeouts = commandTimeouts;
     this.maxReconnectAttempts = maxReconnectAttempts;
     this.reconnectBackoffMs = reconnectBackoffMs;
     this.maxEventBuffer = maxEventBuffer;
@@ -124,6 +127,7 @@ export class BackendGateway extends EventEmitter {
     if (!this.connection || this.closed) return synchronousFailure(command, request);
     const controller = new AbortController();
     this.pendingRequests.add(controller);
+    const timeoutMs = this.commandTimeouts[command] ?? this.requestTimeoutMs;
     try {
       try {
         const response = await this.fetchImpl(
@@ -137,7 +141,7 @@ export class BackendGateway extends EventEmitter {
             body: JSON.stringify(request ?? {}),
             signal: AbortSignal.any([
               controller.signal,
-              AbortSignal.timeout(this.requestTimeoutMs),
+              AbortSignal.timeout(timeoutMs),
             ]),
           },
         );

@@ -192,6 +192,21 @@ class MarketContextService:
         self._coverage_start = resolved_start
         self._coverage_end = resolved_end
 
+    @property
+    def trading_days(self) -> tuple[date, ...]:
+        """Return the authoritative trading days in ascending order."""
+        return self._trading_days
+
+    @property
+    def coverage_start(self) -> date:
+        """Return the inclusive start of the calendar coverage window."""
+        return self._coverage_start
+
+    @property
+    def coverage_end(self) -> date:
+        """Return the inclusive end of the calendar coverage window."""
+        return self._coverage_end
+
     def is_trading_day(self, trade_date: date | str, market: str) -> bool:
         """Return exchange-open status; weekends are never treated as open."""
 
