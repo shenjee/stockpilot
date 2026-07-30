@@ -33,7 +33,7 @@ Design rules enforced here:
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from threading import Event, RLock
 from typing import Any, Callable
@@ -1229,8 +1229,24 @@ class ReplaySession:
             playback_speed=self._playback_speed,
             step_seconds=self._step_seconds,
         )
+        pipeline_result = self._last_pipeline_result
+        if self._prepared.warnings:
+            # Replay preparation owns granularity degradation.  Its warning is
+            # Session metadata rather than market-input data, so attach it at
+            # the atomic projection boundary instead of teaching the shared
+            # Live/Replay pipeline about Replay loading policy.
+            pipeline_result = replace(
+                pipeline_result,
+                warnings=[
+                    *pipeline_result.warnings,
+                    *(
+                        _mutable_json_value(warning)
+                        for warning in self._prepared.warnings
+                    ),
+                ],
+            )
         projection = build_workbench_projection(
-            self._last_pipeline_result, session_input, replay_input
+            pipeline_result, session_input, replay_input
         )
         return projection.to_dict()
 
@@ -1332,6 +1348,16 @@ def _outcome_is_failure(outcome: ComputationOutcome) -> bool:
         CancelReason.DEADLINE_EXCEEDED,
         CancelReason.EXECUTOR_CLOSED,
     }
+
+
+def _mutable_json_value(value: Any) -> Any:
+    """Detach recursively frozen Replay-preparation metadata for projection."""
+
+    if isinstance(value, Mapping):
+        return {key: _mutable_json_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_mutable_json_value(item) for item in value]
+    return value
 
 
 __all__ = [
