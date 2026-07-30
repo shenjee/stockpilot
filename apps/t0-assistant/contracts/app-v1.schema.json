@@ -118,6 +118,60 @@
         "trade_scope": {"$ref": "#/$defs/trade_scope"}
       }
     },
+    "fee_plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fee_plan_id",
+        "name",
+        "a_share_commission_rate",
+        "a_share_min_commission",
+        "etf_commission_rate",
+        "etf_min_commission",
+        "stamp_duty_rate",
+        "stamp_duty_sell_only",
+        "transfer_fee_rate",
+        "transfer_fee_side",
+        "transfer_fee_enabled"
+      ],
+      "properties": {
+        "fee_plan_id": {"type": "string", "minLength": 1},
+        "name": {"type": "string", "minLength": 1},
+        "a_share_commission_rate": {"type": ["string", "number"]},
+        "a_share_min_commission": {"type": ["string", "number"]},
+        "etf_commission_rate": {"type": ["string", "number"]},
+        "etf_min_commission": {"type": ["string", "number"]},
+        "stamp_duty_rate": {"type": ["string", "number"]},
+        "stamp_duty_sell_only": {"type": "boolean"},
+        "transfer_fee_rate": {"type": ["string", "number"]},
+        "transfer_fee_side": {"enum": ["buy", "sell", "both"]},
+        "transfer_fee_enabled": {"type": "boolean"}
+      }
+    },
+    "fee_plan_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fee_plan"],
+      "properties": {"fee_plan": {"$ref": "#/$defs/fee_plan"}}
+    },
+    "delete_fee_plan_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fee_plan_id"],
+      "properties": {"fee_plan_id": {"type": "string", "minLength": 1}}
+    },
+    "calculate_trade_fee_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fee_plan_id", "security_type", "side", "price", "quantity"],
+      "properties": {
+        "fee_plan_id": {"type": "string", "minLength": 1},
+        "security_type": {"enum": ["a_share", "etf"]},
+        "side": {"enum": ["buy", "sell"]},
+        "price": {"type": ["string", "number"]},
+        "quantity": {"type": "integer", "minimum": 1}
+      }
+    },
     "layout_preference": {
       "type": "object",
       "additionalProperties": false,
@@ -188,6 +242,11 @@
             "create_trade",
             "update_trade",
             "delete_trade",
+            "list_fee_plans",
+            "create_fee_plan",
+            "update_fee_plan",
+            "delete_fee_plan",
+            "calculate_trade_fee",
             "get_preferences",
             "save_preferences",
             "get_historical_snapshot"
@@ -204,6 +263,10 @@
         {"if": {"properties": {"command": {"const": "create_trade"}}}, "then": {"properties": {"payload": {"$ref": "#/$defs/create_trade_payload"}}}},
         {"if": {"properties": {"command": {"const": "update_trade"}}}, "then": {"properties": {"payload": {"$ref": "#/$defs/update_trade_payload"}}}},
         {"if": {"properties": {"command": {"const": "delete_trade"}}}, "then": {"properties": {"payload": {"$ref": "#/$defs/delete_trade_payload"}}}},
+        {"if": {"properties": {"command": {"const": "list_fee_plans"}}}, "then": {"properties": {"session_id": {"type": "null"}, "payload": {"$ref": "#/$defs/empty_payload"}}}},
+        {"if": {"properties": {"command": {"enum": ["create_fee_plan", "update_fee_plan"]}}}, "then": {"properties": {"session_id": {"type": "null"}, "payload": {"$ref": "#/$defs/fee_plan_payload"}}}},
+        {"if": {"properties": {"command": {"const": "delete_fee_plan"}}}, "then": {"properties": {"session_id": {"type": "null"}, "payload": {"$ref": "#/$defs/delete_fee_plan_payload"}}}},
+        {"if": {"properties": {"command": {"const": "calculate_trade_fee"}}}, "then": {"properties": {"session_id": {"type": "null"}, "payload": {"$ref": "#/$defs/calculate_trade_fee_payload"}}}},
         {"if": {"properties": {"command": {"const": "get_preferences"}}}, "then": {"properties": {"payload": {"$ref": "#/$defs/empty_payload"}}}},
         {"if": {"properties": {"command": {"const": "save_preferences"}}}, "then": {"properties": {"payload": {"$ref": "#/$defs/save_preferences_payload"}}}},
         {"if": {"properties": {"command": {"const": "get_historical_snapshot"}}}, "then": {"properties": {"session_id": {"type": "null"}, "payload": {"$ref": "#/$defs/get_historical_snapshot_payload"}}}}
