@@ -12,6 +12,7 @@ updates continue through the existing Live projection revision authority.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
@@ -28,6 +29,10 @@ from .computation_contract import (
 )
 from .coordinator import SessionSpec, SessionType
 from .live_projection_store import LiveIncrementalUpdate
+
+
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
 
 
 class LiveRefreshError(RuntimeError):
@@ -412,6 +417,15 @@ class LiveRefreshScheduler:
             try:
                 self._on_failure(kind, failure)
             except Exception:
+                logger.exception(
+                    "live refresh failure callback raised",
+                    extra={
+                        "refresh_kind": kind.value,
+                        "session_id": self._spec.session_id,
+                        "session_generation": self._spec.generation,
+                        "original_failure_type": type(failure).__name__,
+                    },
+                )
                 return
 
     def _resolve_now(self, observed_at: datetime | None) -> datetime:

@@ -237,6 +237,40 @@ class LiveRefreshSchedulerTests(unittest.TestCase):
         )
         self.assertEqual(self.failures, [(LiveRefreshKind.QUOTE, quote_failure)])
 
+    def test_failure_callback_exception_is_logged_without_replacing_branch_failure(
+        self,
+    ) -> None:
+        original_failure = RuntimeError("quote unavailable")
+        callback_failure = ValueError("callback broken")
+        self.input.queue(LiveRefreshKind.QUOTE, original_failure)
+
+        def bad_callback(kind, failure):
+            raise callback_failure
+
+        scheduler = LiveRefreshScheduler(
+            self.spec,
+            self.input,
+            self.executor,
+            on_update=self.updates.append,
+            intervals=self.intervals,
+            on_failure=bad_callback,
+        )
+        self.addCleanup(scheduler.retire)
+
+        with self.assertLogs(
+            "packages.t0assistant.runtime.live_refresh",
+            level="ERROR",
+        ) as captured:
+            state = scheduler.retry(LiveRefreshKind.QUOTE, self.t0)
+
+        self.assertIs(state.last_failure, original_failure)
+        self.assertEqual(state.latest_data_time, None)
+        self.assertIn(
+            "live refresh failure callback raised",
+            captured.output[0],
+        )
+        self.assertIn("callback broken", captured.output[0])
+
     def test_slow_quote_does_not_prevent_one_minute_work_from_running(self) -> None:
         quote_entered = Event()
         release_quote = Event()
