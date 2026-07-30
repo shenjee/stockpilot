@@ -13,6 +13,7 @@
     "test:contracts": "node --test tests/replay-contract.test.mjs tests/fake-safe-bridge.test.mjs tests/historical-snapshot-contract.test.mjs",
     "smoke:renderer": "npm run typecheck && npm run build",
     "smoke:electron": "node --test tests/python-service-host.test.mjs tests/backend-gateway.test.mjs",
+    "acceptance:target-viewports": "npm run build && electron tests/target-viewport.electron.mjs",
     "smoke": "npm run smoke:renderer && npm run smoke:electron && npm run test:contracts"
   },
   "dependencies": {
