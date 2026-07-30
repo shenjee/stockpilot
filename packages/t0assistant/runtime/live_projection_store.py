@@ -296,7 +296,13 @@ class LiveProjectionStore:
         operation_id: str,
         payload: dict[str, Any],
     ) -> LiveAcceptedEvent | None:
-        """Advance revision for a recoverable failure without changing facts."""
+        """Publish a recoverable failure without replacing market facts.
+
+        A running Session with an accepted baseline advances that baseline's
+        revision.  A newly selected/rebuilt Session can fail before producing
+        any baseline; its failure is still published at revision ``0`` while
+        an older successful snapshot remains retained for later recovery.
+        """
 
         if not session_id or not operation_id:
             raise ValueError("session_id and operation_id must be non-empty")
@@ -307,17 +313,20 @@ class LiveProjectionStore:
         def commit() -> None:
             with self._lock:
                 session_key = (session_id, generation)
+                current_payload = self._current_payload
+                current_revision = self._current_revision
                 if (
-                    self._current_session != session_key
-                    or self._current_payload is None
-                    or self._current_revision is None
+                    self._current_session == session_key
+                    and current_payload is not None
+                    and current_revision is not None
                 ):
-                    return
-                revision = self._current_revision + 1
-                staged = copy.deepcopy(self._current_payload)
-                staged["session"]["revision"] = revision
-                self._current_payload = staged
-                self._current_revision = revision
+                    revision = current_revision + 1
+                    staged = copy.deepcopy(current_payload)
+                    staged["session"]["revision"] = revision
+                    self._current_payload = staged
+                    self._current_revision = revision
+                else:
+                    revision = 0
                 event_box.append(
                     LiveAcceptedEvent(
                         schema_version=SCHEMA_VERSION,

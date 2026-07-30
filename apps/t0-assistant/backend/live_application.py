@@ -133,6 +133,10 @@ class LiveApplicationApi:
         self._service_generation = service_generation
         self._preference_service = preference_service
         self._event_publisher = event_publisher
+        # Production composition assigns the shared SQLite connection here.
+        # Its lifetime deliberately matches this API object and therefore the
+        # local service process; repositories do not own/close it separately.
+        self._database_keep_alive: Any | None = None
         self._coordinator = AppCoordinator(session_factory)
         self._store = LiveProjectionStore(
             self._coordinator,
@@ -238,7 +242,15 @@ class LiveApplicationApi:
             )
 
         live = snapshot.live_session
-        assert live is not None
+        if live is None:
+            return self._rejected(
+                request_id,
+                "service_unavailable",
+                "Live Session 未能建立",
+                category="service",
+                affected_capability="live",
+                retryable=True,
+            )
         self._save_last_symbol_best_effort(symbol)
         if (
             before.live_session is not None
@@ -279,7 +291,15 @@ class LiveApplicationApi:
                 retryable=True,
             )
         replacement = snapshot.live_session
-        assert replacement is not None
+        if replacement is None:
+            return self._rejected(
+                request_id,
+                "service_unavailable",
+                "Live Session 恢复结果不可用",
+                category="service",
+                affected_capability="live",
+                retryable=True,
+            )
         return self._accepted(
             request_id,
             operation_id=self._operation_id(replacement.session_id),
@@ -394,31 +414,25 @@ class LiveApplicationApi:
     ) -> None:
         if state != "failed":
             return
-        revision = 0
-        if self._store.current_session == (spec.session_id, spec.generation):
-            revision = (self._store.current_revision or 0) + 1
         operation_id = self._operation_id(spec.session_id)
-        self._event_publisher.publish_envelope(
-            {
-                "schema_version": "t0_app_v1",
-                "service_generation": self._service_generation,
-                "session_id": spec.session_id,
-                "revision": revision,
-                "event_type": "operation_failed",
+        accepted = self._store.accept_operation_failure(
+            session_id=spec.session_id,
+            generation=spec.generation,
+            operation_id=operation_id,
+            payload={
+                "error_code": "calculation_failed",
+                "category": "calculation",
+                "severity": "error",
+                "retryable": True,
+                "affected_capability": "live",
+                "message": "Live 行情加载失败，请重试",
+                "request_id": operation_id,
                 "operation_id": operation_id,
-                "payload": {
-                    "error_code": "calculation_failed",
-                    "category": "calculation",
-                    "severity": "error",
-                    "retryable": True,
-                    "affected_capability": "live",
-                    "message": "Live 行情加载失败，请重试",
-                    "request_id": operation_id,
-                    "operation_id": operation_id,
-                    "details": {},
-                },
-            }
+                "details": {},
+            },
         )
+        if accepted is not None:
+            self._event_publisher.publish_envelope(accepted.to_envelope())
 
     def _save_last_symbol_best_effort(self, symbol: str) -> None:
         try:
@@ -568,8 +582,9 @@ def create_live_application_api(
         event_publisher=event_publisher,
         restore_on_startup=True,
     )
-    # Keep the shared SQLite connection alive for the service lifetime.
-    api._app_database = database
+    # Explicit ownership: the API keeps the shared connection alive until the
+    # service releases the API at process shutdown.
+    api._database_keep_alive = database
     return api
 
 

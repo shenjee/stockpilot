@@ -125,6 +125,11 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
                 updated_input = replace(self._market_input, bars_1m=rows)
             else:
                 updated_input = replace(self._market_input, official_5m_bars=rows)
+            # This is the intentional cross-branch consistency boundary.
+            # Provider I/O remains outside the lock and can fail independently;
+            # merging the cached prefix and rebuilding the projection are
+            # serialized so two successful branches cannot publish projections
+            # from torn combinations of cached inputs.
             result = WorkbenchPipeline(
                 session=self._session,
                 market_input_port=_FixedMarketInput(updated_input),
@@ -219,6 +224,11 @@ class LiveRuntimeSession:
         return {} if scheduler is None else scheduler.run_due(observed_at)
 
     def retire(self) -> None:
+        # Retirement is cooperative for already-running Python/provider work:
+        # the scheduler rejects late results and the executor cancels queued
+        # work, while an in-flight provider call completes under whatever
+        # request-timeout/session-validator boundary its data port configured.
+        # Python worker threads are never force-killed.
         self._retired.set()
         with self._lock:
             scheduler = self._scheduler

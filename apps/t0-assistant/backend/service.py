@@ -12,12 +12,12 @@ import argparse
 import base64
 import hashlib
 import json
+import logging
 import os
 import queue as _queue
 import select
 import sys
 import threading
-import traceback
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Protocol
@@ -25,6 +25,9 @@ from pathlib import Path
 
 from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
+
+
+logger = logging.getLogger(__name__)
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -439,6 +442,10 @@ class _Handler(BaseHTTPRequestHandler):
         if command == "search_securities":
             self._search_securities(request)
             return
+        # ``get_live_snapshot`` intentionally has two adapters during
+        # migration. Prefer the production Live application API whenever it
+        # is installed; the narrower LiveSnapshotApi below is compatibility
+        # fallback only and must not shadow the authoritative projection store.
         if (
             command in _LIVE_APPLICATION_COMMANDS
             and getattr(self.server, "live_application_api", None) is not None
@@ -485,7 +492,13 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             result = api.dispatch(command, request)
         except Exception:
-            traceback.print_exc()
+            logger.exception(
+                "live application command failed at transport boundary",
+                extra={
+                    "command": command,
+                    "request_id": request.get("request_id"),
+                },
+            )
             self._service_unavailable(command, request)
             return
         error_code = (result.get("error") or {}).get("error_code")
@@ -523,7 +536,10 @@ class _Handler(BaseHTTPRequestHandler):
                 session_id=session_id,
             )
         except Exception:
-            traceback.print_exc()
+            logger.exception(
+                "legacy live snapshot command failed at transport boundary",
+                extra={"command": command, "request_id": request_id},
+            )
             error = {
                 "error_code": "service_unavailable",
                 "category": "service",
@@ -661,7 +677,10 @@ class _Handler(BaseHTTPRequestHandler):
                 trade_date=payload["trade_date"],
             )
         except Exception:
-            traceback.print_exc()
+            logger.exception(
+                "historical command failed at transport boundary",
+                extra={"command": command, "request_id": request_id},
+            )
             error = {
                 "error_code": "service_unavailable",
                 "category": "service",
@@ -742,7 +761,13 @@ class _Handler(BaseHTTPRequestHandler):
                 self.server.search_service = service
             securities = service.search(query, limit=limit)
         except Exception:
-            traceback.print_exc()
+            logger.exception(
+                "security search failed at transport boundary",
+                extra={
+                    "command": "search_securities",
+                    "request_id": request_id,
+                },
+            )
             error = {
                 "error_code": "security_search_failed",
                 "category": "data",
@@ -1308,7 +1333,10 @@ def _build_trade_api(
     try:
         database = open_app_database(db_path)
     except Exception:  # pragma: no cover - degraded startup path
-        traceback.print_exc()
+        logger.exception(
+            "trade database initialization failed",
+            extra={"component": "trade_api"},
+        )
         return None, None, None
     service = TradeService(SqliteTradeRepository(database))
     fee_plan_api = FeePlanCommandApi(
@@ -1336,7 +1364,10 @@ def _build_historical_api(service_generation: int) -> HistoricalSnapshotApiPort 
     try:
         return create_historical_snapshot_api(service_generation)
     except Exception:  # pragma: no cover - degraded startup path
-        traceback.print_exc()
+        logger.exception(
+            "historical API initialization failed",
+            extra={"component": "historical_snapshot_api"},
+        )
         return None
 
 

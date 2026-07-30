@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 
 
 APP_ROOT = Path(__file__).resolve().parents[1]
@@ -198,6 +199,34 @@ class LiveApplicationTests(unittest.TestCase):
             "sh.600000",
         )
 
+    def test_missing_coordinator_session_returns_structured_service_errors(self) -> None:
+        app = self._app(_DeterministicLiveInput())
+        app._coordinator = SimpleNamespace(
+            snapshot=SimpleNamespace(live_session=None),
+            select_symbol=lambda symbol: SimpleNamespace(live_session=None),
+        )
+
+        selected = app.select_security(
+            request_id="select-missing",
+            symbol="sh.600000",
+        )
+
+        self.assertFalse(selected["accepted"])
+        self.assertEqual(selected["error"]["error_code"], "service_unavailable")
+
+        app._coordinator = SimpleNamespace(
+            snapshot=SimpleNamespace(
+                live_session=SimpleNamespace(session_id="live-missing")
+            ),
+            retry_live=lambda: SimpleNamespace(live_session=None),
+        )
+        retried = app.retry_live(
+            request_id="retry-missing",
+            session_id="live-missing",
+        )
+        self.assertFalse(retried["accepted"])
+        self.assertEqual(retried["error"]["error_code"], "service_unavailable")
+
     def test_startup_restores_last_symbol_and_repeated_selection_republishes(self) -> None:
         self.preferences.save(
             PreferenceValues(last_symbol="sh.600000")
@@ -217,6 +246,23 @@ class LiveApplicationTests(unittest.TestCase):
             response["data"]["session_id"],
         )
         self.assertEqual(republished["payload"], first["payload"])
+
+    def test_initial_failure_publishes_revision_zero_without_a_baseline(self) -> None:
+        app = self._app(
+            _DeterministicLiveInput([RuntimeError("initial provider failure")])
+        )
+
+        selected = app.select_security(
+            request_id="select-failing",
+            symbol="sh.600000",
+        )
+        failure = self.events.get(timeout=1)
+
+        self.assertTrue(selected["accepted"])
+        self.assertEqual(failure["event_type"], "operation_failed")
+        self.assertEqual(failure["revision"], 0)
+        self.assertEqual(failure["session_id"], selected["data"]["session_id"])
+        self.assertFalse(app.store.has_snapshot)
 
     def test_switch_retires_old_session_and_live_remains_active_in_replay_mode(self) -> None:
         input_port = _DeterministicLiveInput()
@@ -281,6 +327,11 @@ class LiveApplicationTests(unittest.TestCase):
 
         self.assertTrue(failed_retry["accepted"])
         self.assertEqual(failure["event_type"], "operation_failed")
+        self.assertEqual(failure["revision"], 0)
+        self.assertEqual(
+            failure["session_id"],
+            failed_retry["data"]["session_id"],
+        )
         self.assertTrue(app.store.has_snapshot)
         self.assertEqual(
             app.store.current_session,
