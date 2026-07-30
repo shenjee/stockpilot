@@ -224,6 +224,24 @@ class HistoricalSnapshotApiTests(unittest.TestCase):
         self.assertFalse(response["accepted"])
         self.assertEqual(response["error"]["error_code"], "invalid_request")
 
+    def test_rejects_non_calendar_trade_date(self) -> None:
+        """A format-valid but calendar-invalid date must be invalid_request."""
+        api = HistoricalSnapshotApi(
+            service_generation=1,
+            store=MagicMock(spec=KLineStore),
+            provider=MagicMock(),
+            market_context=self._market_context(),
+        )
+        response = api.get_historical_snapshot(
+            request_id="req-1",
+            symbol="sh.600000",
+            trade_date="2026-02-30",
+        )
+        self.assertFalse(response["accepted"])
+        self.assertEqual(response["error"]["error_code"], "invalid_request")
+        self.assertEqual(response["error"]["category"], "validation")
+        self.assertFalse(response["error"]["retryable"])
+
     def test_maps_historical_data_unavailable_error(self) -> None:
         api = HistoricalSnapshotApi(
             service_generation=1,

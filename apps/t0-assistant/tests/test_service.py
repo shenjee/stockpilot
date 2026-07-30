@@ -7,6 +7,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -14,8 +15,12 @@ from urllib.request import Request, urlopen
 APP_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(APP_ROOT))
 
+from backend.historical_snapshot_api import HistoricalSnapshotApi  # noqa: E402
 from backend.service import create_server  # noqa: E402
 from backend.service import LiveSnapshotApi  # noqa: E402
+from packages.marketdata.services.market_context_service import (  # noqa: E402
+    MarketContextService,
+)
 from packages.t0assistant.replay import ReplayAccepted, ReplayCommandApi  # noqa: E402
 from packages.t0assistant.runtime import SessionType  # noqa: E402
 from packages.t0assistant.runtime.live_projection_store import (  # noqa: E402
@@ -686,8 +691,12 @@ class HistoricalSnapshotServiceTest(unittest.TestCase):
         self.thread.join(timeout=2)
 
     def _post(self, command: str, body: dict) -> tuple[int, dict]:
+        return self._post_with_base_url(self.base_url, command, body)
+
+    @staticmethod
+    def _post_with_base_url(base_url: str, command: str, body: dict) -> tuple[int, dict]:
         request = Request(
-            f"{self.base_url}/api/commands/{command}",
+            f"{base_url}/api/commands/{command}",
             data=json.dumps(body).encode(),
             headers={
                 "Authorization": "Bearer formal-token",
@@ -740,6 +749,51 @@ class HistoricalSnapshotServiceTest(unittest.TestCase):
         self.assertFalse(payload["accepted"])
         self.assertEqual(payload["error"]["error_code"], "invalid_request")
         self.assertEqual(payload["error"]["affected_capability"], "historical_chart")
+
+    def test_get_historical_snapshot_rejects_non_calendar_date(self) -> None:
+        """A format-valid but calendar-invalid date returns 400 via the real API."""
+        api = HistoricalSnapshotApi(
+            service_generation=5,
+            store=MagicMock(),
+            provider=MagicMock(),
+            market_context=MarketContextService(
+                trading_days=["2026-02-20"],
+                coverage_start="2026-02-20",
+                coverage_end="2026-02-20",
+            ),
+        )
+        server = create_server(
+            "127.0.0.1",
+            0,
+            "formal-token",
+            5,
+            historical_snapshot_api=api,
+        )
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        try:
+            status, payload = self._post_with_base_url(
+                base_url,
+                "get_historical_snapshot",
+                {
+                    "schema_version": "t0_app_v1",
+                    "request_id": "hist-non-calendar",
+                    "command": "get_historical_snapshot",
+                    "session_id": None,
+                    "payload": {"symbol": "sh.600000", "trade_date": "2026-02-30"},
+                },
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+        self.assertEqual(status, 400)
+        self.assertFalse(payload["accepted"])
+        self.assertEqual(payload["error"]["error_code"], "invalid_request")
+        self.assertEqual(payload["error"]["category"], "validation")
+        self.assertFalse(payload["error"]["retryable"])
 
     def test_get_historical_snapshot_requires_session_id_null(self) -> None:
         status, payload = self._post(

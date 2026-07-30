@@ -201,7 +201,15 @@ class HistoricalSnapshotApi:
                 "trade_date must use YYYY-MM-DD",
             )
 
-        resolved_trade_date = date.fromisoformat(trade_date)
+        try:
+            resolved_trade_date = date.fromisoformat(trade_date)
+        except ValueError:
+            return self._reject(
+                request_id,
+                "invalid_request",
+                "trade_date must be a valid calendar date",
+            )
+
         effective_context = _ensure_context_covers(
             self._market_context,
             resolved_trade_date,
