@@ -11,6 +11,9 @@ export class FeePlanValidationError extends Error {
   field: string;
   message: string;
 }
+export class FeePlanClientError extends Error {
+  retryable: boolean;
+}
 
 export interface FeePlan {
   fee_plan_id: string;
@@ -41,11 +44,11 @@ export interface FeePlanInput {
 }
 
 export interface FeePlanClient {
-  listPlans(): FeePlan[];
-  getPlan(feePlanId: string): FeePlan | null;
-  createPlan(input: FeePlanInput): FeePlan;
-  updatePlan(input: FeePlanInput): FeePlan;
-  deletePlan(feePlanId: string): boolean;
+  listPlans(): FeePlan[] | Promise<FeePlan[]>;
+  getPlan(feePlanId: string): FeePlan | null | Promise<FeePlan | null>;
+  createPlan(input: FeePlanInput): FeePlan | Promise<FeePlan>;
+  updatePlan(input: FeePlanInput): FeePlan | Promise<FeePlan>;
+  deletePlan(feePlanId: string): boolean | Promise<boolean>;
 }
 
 export function createFeePlan(input: FeePlanInput): FeePlan;
@@ -53,3 +56,7 @@ export function defaultFeePlan(): FeePlan;
 export function createInMemoryFeePlanClient(options?: {
   seed?: boolean;
 }): FeePlanClient;
+export function createFeePlanClient(
+  bridge: object,
+  options?: {makeRequestId?: (command: string) => string},
+): FeePlanClient;

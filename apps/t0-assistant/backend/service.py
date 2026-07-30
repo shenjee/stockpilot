@@ -39,8 +39,11 @@ from packages.marketdata.services import SecuritiesSearchService
 from packages.t0assistant.replay import REPLAY_COMMANDS, ReplayCommandApi
 from packages.t0assistant.repositories import (
     open_app_database,
+    SqliteFeePlanRepository,
     SqliteTradeRepository,
 )
+from packages.t0assistant.preferences import FeePlanService
+from packages.t0assistant.preferences.fee_plan_api import FeePlanCommandApi
 from packages.t0assistant.runtime.live_projection_store import (
     LiveProjectionSnapshotUnavailable as _LiveSnapshotUnavailable,
 )
@@ -76,6 +79,11 @@ APP_COMMANDS = {
     "create_trade",
     "update_trade",
     "delete_trade",
+    "list_fee_plans",
+    "create_fee_plan",
+    "update_fee_plan",
+    "delete_fee_plan",
+    "calculate_trade_fee",
     "get_preferences",
     "save_preferences",
     "get_historical_snapshot",
@@ -83,6 +91,13 @@ APP_COMMANDS = {
 
 _LIVE_COMMANDS = frozenset({"get_live_snapshot"})
 _TRADE_COMMANDS = frozenset({"list_trades", "create_trade", "update_trade", "delete_trade"})
+_FEE_PLAN_COMMANDS = frozenset({
+    "list_fee_plans",
+    "create_fee_plan",
+    "update_fee_plan",
+    "delete_fee_plan",
+    "calculate_trade_fee",
+})
 _HISTORICAL_COMMANDS = frozenset({"get_historical_snapshot"})
 
 
@@ -248,6 +263,7 @@ class DesktopServiceServer(ThreadingHTTPServer):
         live_snapshot_api: LiveSnapshotApiPort | None = None,
         historical_snapshot_api: HistoricalSnapshotApiPort | None = None,
         trade_api: TradeCommandApi | None = None,
+        fee_plan_api: FeePlanCommandApi | None = None,
         event_publisher: "EventPublisher | None" = None,
     ) -> None:
         if (
@@ -282,6 +298,13 @@ class DesktopServiceServer(ThreadingHTTPServer):
                 "Trade API service_generation must match the desktop service"
             )
         if (
+            fee_plan_api is not None
+            and fee_plan_api.service_generation != service_generation
+        ):
+            raise ValueError(
+                "Fee plan API service_generation must match the desktop service"
+            )
+        if (
             event_publisher is not None
             and getattr(event_publisher, "service_generation", service_generation)
             != service_generation
@@ -297,6 +320,7 @@ class DesktopServiceServer(ThreadingHTTPServer):
         self.live_snapshot_api = live_snapshot_api
         self.historical_snapshot_api = historical_snapshot_api
         self.trade_api = trade_api
+        self.fee_plan_api = fee_plan_api
         self.event_publisher = event_publisher
         self.shutdown_event = threading.Event()
         self._websocket_lock = threading.Lock()
@@ -392,6 +416,9 @@ class _Handler(BaseHTTPRequestHandler):
             return
         if command in _TRADE_COMMANDS:
             self._trade_command(command, request)
+            return
+        if command in _FEE_PLAN_COMMANDS:
+            self._fee_plan_command(command, request)
             return
         if command in _HISTORICAL_COMMANDS:
             self._historical_command(command, request)
@@ -497,6 +524,37 @@ class _Handler(BaseHTTPRequestHandler):
         status = (
             HTTPStatus.OK if result.get("accepted") else _trade_error_status(result)
         )
+        self._json(status, result)
+
+    def _fee_plan_command(self, command: str, request: dict[str, Any]) -> None:
+        api = getattr(self.server, "fee_plan_api", None)
+        if api is None:
+            self._service_unavailable(command, request)
+            return
+        error = _validate_trade_request(command, request)
+        if error is not None:
+            error = {**error, "affected_capability": "preferences"}
+            self._json(
+                HTTPStatus.BAD_REQUEST,
+                {
+                    "schema_version": "t0_app_v1",
+                    "request_id": request.get("request_id", "missing-request-id"),
+                    "accepted": False,
+                    "operation_id": None,
+                    "data": None,
+                    "error": error,
+                },
+            )
+            return
+        result = api.dispatch(command, request)
+        error_code = (result.get("error") or {}).get("error_code")
+        status = HTTPStatus.OK
+        if not result.get("accepted"):
+            status = {
+                "invalid_fee_plan_request": HTTPStatus.BAD_REQUEST,
+                "fee_plan_not_found": HTTPStatus.NOT_FOUND,
+                "fee_plan_conflict": HTTPStatus.CONFLICT,
+            }.get(error_code, HTTPStatus.SERVICE_UNAVAILABLE)
         self._json(status, result)
 
     def _historical_command(self, command: str, request: dict[str, Any]) -> None:
@@ -999,6 +1057,7 @@ def create_server(
     live_snapshot_api: LiveSnapshotApiPort | None = None,
     historical_snapshot_api: HistoricalSnapshotApiPort | None = None,
     trade_api: TradeCommandApi | None = None,
+    fee_plan_api: FeePlanCommandApi | None = None,
     event_publisher: "EventPublisher | None" = None,
 ) -> DesktopServiceServer:
     if host != "127.0.0.1":
@@ -1014,22 +1073,25 @@ def create_server(
         live_snapshot_api=live_snapshot_api,
         historical_snapshot_api=historical_snapshot_api,
         trade_api=trade_api,
+        fee_plan_api=fee_plan_api,
         event_publisher=event_publisher,
     )
 
 
 def _build_trade_api(
     service_generation: int,
-) -> tuple[TradeCommandApi | None, "EventPublisher | None"]:
-    """Construct the real-trade command API + event publisher for ``main()``.
+) -> tuple[
+    TradeCommandApi | None,
+    FeePlanCommandApi | None,
+    "EventPublisher | None",
+]:
+    """Construct real-trade, fee-plan, and event APIs for ``main()``.
 
     Opens (or creates) the private App database under the runtime ``db`` dir,
-    wires the SQLite trade repository and :class:`TradeService`, and binds a
-    :class:`TradeCommandApi` to an :class:`EventPublisher` so accepted trade
-    commands publish authoritative ``trades_changed`` events. Returns
-    ``(None, None)`` only if the App database cannot be opened at all, in which
-    case trade commands fall back to ``service_unavailable`` rather than
-    crashing the service.
+    wires the trade and fee-plan services over the same private database, and
+    binds :class:`TradeCommandApi` to an :class:`EventPublisher` so accepted
+    trade commands publish authoritative ``trades_changed`` events. Returns
+    ``(None, None, None)`` if the App database cannot be opened at all.
     """
 
     paths = RuntimePaths()
@@ -1039,16 +1101,19 @@ def _build_trade_api(
         database = open_app_database(db_path)
     except Exception:  # pragma: no cover - degraded startup path
         traceback.print_exc()
-        return None, None
-    repository = SqliteTradeRepository(database)
-    service = TradeService(repository)
+        return None, None, None
+    service = TradeService(SqliteTradeRepository(database))
+    fee_plan_api = FeePlanCommandApi(
+        FeePlanService(SqliteFeePlanRepository(database)),
+        service_generation=service_generation,
+    )
     publisher = EventPublisher(service_generation=service_generation)
     trade_api = TradeCommandApi(
         service,
         service_generation=service_generation,
         publisher=publisher,
     )
-    return trade_api, publisher
+    return trade_api, fee_plan_api, publisher
 
 
 def _build_historical_api(service_generation: int) -> HistoricalSnapshotApiPort | None:
@@ -1074,7 +1139,7 @@ def main() -> None:
     parser.add_argument("--service-generation", default=1, type=int)
     args = parser.parse_args()
     historical_api = _build_historical_api(args.service_generation)
-    trade_api, event_publisher = _build_trade_api(args.service_generation)
+    trade_api, fee_plan_api, event_publisher = _build_trade_api(args.service_generation)
     server = create_server(
         args.host,
         args.port,
@@ -1082,6 +1147,7 @@ def main() -> None:
         args.service_generation,
         historical_snapshot_api=historical_api,
         trade_api=trade_api,
+        fee_plan_api=fee_plan_api,
         event_publisher=event_publisher,
     )
     try:
