@@ -1,0 +1,156 @@
+{
+  "schema_version": "t0_app_v1",
+  "description": "Canonical get_historical_snapshot command/response flow. The command is synchronous, session-scoped to null, and returns a complete static workbench_snapshot with session_type 'historical' and replay null. There are no incremental events because a historical session has no lifecycle.",
+  "service_generation": 3,
+  "historical_snapshot_request": {
+    "schema_version": "t0_app_v1",
+    "request_id": "req-hist-1",
+    "command": "get_historical_snapshot",
+    "session_id": null,
+    "payload": {
+      "symbol": "sh.600000",
+      "trade_date": "2026-07-21"
+    }
+  },
+  "historical_snapshot_response": {
+    "schema_version": "t0_app_v1",
+    "request_id": "req-hist-1",
+    "accepted": true,
+    "operation_id": null,
+    "data": {
+      "timezone": "Asia/Shanghai",
+      "session": {
+        "session_id": "historical:sh.600000:2026-07-21",
+        "session_type": "historical",
+        "symbol": "sh.600000",
+        "trade_date": "2026-07-21",
+        "state": "ready",
+        "revision": 0
+      },
+      "replay": null,
+      "market": {
+        "bars_1m": [
+          {
+            "timestamp": "2026-07-21 09:31:00",
+            "open": 10.0,
+            "high": 10.08,
+            "low": 9.98,
+            "close": 10.05,
+            "volume": 12000.0,
+            "amount": 120500.0,
+            "closed": true
+          }
+        ],
+        "bars_5m": [
+          {
+            "timestamp": "2026-07-21 09:35:00",
+            "open": 10.0,
+            "high": 10.12,
+            "low": 9.98,
+            "close": 10.08,
+            "volume": 51000.0,
+            "amount": 513200.0,
+            "closed": true
+          }
+        ],
+        "daily_bars": [
+          {
+            "timestamp": "2026-07-21",
+            "open": 10.0,
+            "high": 10.12,
+            "low": 9.98,
+            "close": 10.08,
+            "volume": 51000.0,
+            "amount": 513200.0,
+            "closed": true
+          }
+        ],
+        "quote": {
+          "timestamp": "2026-07-21 15:00:00",
+          "latest_price": 10.08,
+          "change_percent": 0.8,
+          "open": 10.0,
+          "high": 10.12,
+          "low": 9.98,
+          "previous_close": 10.0,
+          "volume": 51000.0,
+          "amount": 513200.0,
+          "volume_ratio": null,
+          "order_imbalance": null,
+          "turnover_rate": null
+        }
+      },
+      "indicators": {
+        "five_minute": {
+          "ma": {
+            "ma5": [{"timestamp": "2026-07-21 09:35:00", "value": null}],
+            "ma10": [{"timestamp": "2026-07-21 09:35:00", "value": null}],
+            "ma20": [{"timestamp": "2026-07-21 09:35:00", "value": null}],
+            "ma30": [{"timestamp": "2026-07-21 09:35:00", "value": null}],
+            "ma60": [{"timestamp": "2026-07-21 09:35:00", "value": null}]
+          },
+          "boll": {
+            "period": 20,
+            "stddev": 2.0,
+            "upper": [{"timestamp": "2026-07-21 09:35:00", "value": null}],
+            "middle": [{"timestamp": "2026-07-21 09:35:00", "value": null}],
+            "lower": [{"timestamp": "2026-07-21 09:35:00", "value": null}]
+          },
+          "volume": {
+            "values": [{"timestamp": "2026-07-21 09:35:00", "value": 51000.0}],
+            "ma5": [{"timestamp": "2026-07-21 09:35:00", "value": null}],
+            "ma10": [{"timestamp": "2026-07-21 09:35:00", "value": null}]
+          },
+          "macd": {
+            "fast_period": 12,
+            "slow_period": 26,
+            "signal_period": 9,
+            "dif": [{"timestamp": "2026-07-21 09:35:00", "value": null}],
+            "dea": [{"timestamp": "2026-07-21 09:35:00", "value": null}],
+            "histogram": [{"timestamp": "2026-07-21 09:35:00", "value": null}]
+          }
+        },
+        "one_minute": {
+          "vwap": [{"timestamp": "2026-07-21 09:31:00", "value": 10.041667}],
+          "volume": {
+            "values": [{"timestamp": "2026-07-21 09:31:00", "value": 12000.0}]
+          },
+          "macd": {
+            "fast_period": 12,
+            "slow_period": 26,
+            "signal_period": 9,
+            "dif": [{"timestamp": "2026-07-21 09:31:00", "value": null}],
+            "dea": [{"timestamp": "2026-07-21 09:31:00", "value": null}],
+            "histogram": [{"timestamp": "2026-07-21 09:31:00", "value": null}]
+          }
+        }
+      },
+      "chan_analysis": {
+        "symbol": "sh.600000",
+        "timeframe": "5m",
+        "source": "czsc",
+        "engine": "czsc",
+        "engine_version": "0.10.12",
+        "parameters": {},
+        "fractals": [],
+        "strokes": [],
+        "segments": [],
+        "pivot_zones": [],
+        "divergences": [],
+        "structure_alerts": [],
+        "signal_series": [],
+        "signal_events": [],
+        "signal_snapshots": [],
+        "candidate_point_events": [],
+        "candidate_buy_points": [],
+        "candidate_sell_points": [],
+        "plot_primitives": [],
+        "summary": [],
+        "warnings": [],
+        "meta": {}
+      },
+      "warnings": []
+    },
+    "error": null
+  }
+}
