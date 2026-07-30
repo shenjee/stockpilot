@@ -74,6 +74,7 @@ source ~/.venvs/czsc/bin/activate
 python -m unittest discover -s apps/t0-assistant/tests -p 'test_*.py'
 cd apps/t0-assistant
 npm run smoke
+npm run acceptance:target-viewports
 ```
 
 The smoke suite is offline with respect to market services. CI reports four
@@ -88,6 +89,24 @@ Contract smoke   Python JSON Schema validation plus Node fixture consumption
 
 Electron GUI launch remains a manual smoke; the automated Electron track tests
 the headless process-host lifecycle without opening a window.
+
+`acceptance:target-viewports` builds the production Renderer and opens hidden
+sandboxed Electron windows at the 13-inch and 14-inch target logical viewports.
+It verifies the three workbench layouts, fixed market sidebar, aligned chart
+rows, Replay controls, overlay trade drawer, preference-preserving layout
+changes, and absence of horizontal scrolling. Physical-device readability and
+Canvas crosshair behavior remain manual acceptance items documented in
+`docs/t0assistant/t0_054_acceptance.md`.
+
+The service-host tests require permission to spawn the configured Python
+interpreter and bind an ephemeral `127.0.0.1` port. The target-viewport command
+additionally requires a macOS runner that permits Electron sandbox, GPU, and
+renderer child processes. A restricted runner may therefore report a Python
+readiness timeout or `sandbox initialization failed: Operation not permitted`
+before product behavior is exercised. Such a run is "not executed", not a
+viewport pass. On restricted CI, run `npm run smoke:renderer`,
+`node --test tests/preload-safe-bridge.test.mjs`, and the Python regression
+suite; reserve the target-viewport gate for a compatible macOS runner.
 
 ## W0 boundary
 

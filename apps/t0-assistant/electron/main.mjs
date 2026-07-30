@@ -27,7 +27,7 @@ function createWindow() {
     minWidth: 1080,
     minHeight: 700,
     webPreferences: {
-      preload: resolve(moduleDir, "preload.mjs"),
+      preload: resolve(moduleDir, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
