@@ -8,6 +8,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 APP_ROOT = Path(__file__).resolve().parents[1]
@@ -67,6 +68,25 @@ class FeePlanServiceWiringTest(unittest.TestCase):
         with urlopen(request, timeout=2) as response:
             return json.load(response)
 
+    def post_envelope(self, command: str, envelope: dict) -> tuple[int, dict]:
+        request = Request(
+            f"http://127.0.0.1:{self.server.server_port}/api/commands/{command}",
+            data=json.dumps(envelope).encode(),
+            method="POST",
+            headers={
+                "Authorization": "Bearer fee-token",
+                "Content-Type": "application/json",
+            },
+        )
+        try:
+            with urlopen(request, timeout=2) as response:
+                return response.status, json.load(response)
+        except HTTPError as error:
+            try:
+                return error.code, json.load(error)
+            finally:
+                error.close()
+
     def test_list_and_calculate_reach_persistent_domain_services(self) -> None:
         plans = self.post("list_fee_plans", {})
         self.assertTrue(plans["accepted"])
@@ -86,6 +106,25 @@ class FeePlanServiceWiringTest(unittest.TestCase):
         self.assertTrue(fee["accepted"])
         self.assertEqual(fee["data"]["commission"], 5.0)
         self.assertEqual(fee["data"]["stamp_duty"], 0.0)
+
+    def test_transport_uses_fee_plan_validation_identity(self) -> None:
+        status, response = self.post_envelope(
+            "list_fee_plans",
+            {
+                "schema_version": "t0_app_v1",
+                "command": "list_fee_plans",
+                "session_id": None,
+                "payload": {},
+            },
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(response["request_id"], "missing-request-id")
+        self.assertEqual(
+            response["error"]["error_code"], "invalid_fee_plan_request"
+        )
+        self.assertEqual(
+            response["error"]["affected_capability"], "preferences"
+        )
 
 
 if __name__ == "__main__":

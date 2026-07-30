@@ -531,9 +531,8 @@ class _Handler(BaseHTTPRequestHandler):
         if api is None:
             self._service_unavailable(command, request)
             return
-        error = _validate_trade_request(command, request)
+        error = _validate_fee_plan_request(command, request)
         if error is not None:
-            error = {**error, "affected_capability": "preferences"}
             self._json(
                 HTTPStatus.BAD_REQUEST,
                 {
@@ -898,6 +897,21 @@ def _trade_invalid_request(message: str, request_id: str) -> dict[str, Any]:
     }
 
 
+def _fee_plan_invalid_request(message: str, request_id: str) -> dict[str, Any]:
+    """Build a structured validation error for fee-plan commands."""
+
+    return {
+        "error_code": "invalid_fee_plan_request",
+        "category": "validation",
+        "severity": "error",
+        "retryable": False,
+        "affected_capability": "preferences",
+        "message": message,
+        "request_id": request_id,
+        "details": {},
+    }
+
+
 def _trade_error_status(result: dict[str, Any]) -> HTTPStatus:
     """Map a rejected trade ``command_response`` to an HTTP status."""
 
@@ -943,6 +957,34 @@ def _validate_trade_request(
     first = errors[0]
     field = "/".join(str(part) for part in first.absolute_path) or "command_request"
     return _trade_invalid_request(f"{field}: {first.message}", request_id_echo)
+
+
+def _validate_fee_plan_request(
+    url_command: str,
+    request: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Validate a fee-plan App-v1 command before domain dispatch."""
+
+    errors = list(_COMMAND_REQUEST_VALIDATOR.iter_errors(request))
+    if not errors:
+        request_id = request["request_id"]
+        if request.get("command") != url_command:
+            return _fee_plan_invalid_request(
+                "body command must match the URL command", request_id
+            )
+        return None
+
+    request_id = request.get("request_id")
+    request_id_echo = (
+        request_id
+        if isinstance(request_id, str) and request_id
+        else "missing-request-id"
+    )
+    first = errors[0]
+    field = "/".join(str(part) for part in first.absolute_path) or "command_request"
+    return _fee_plan_invalid_request(
+        f"{field}: {first.message}", request_id_echo
+    )
 
 
 def _build_command_request_validator() -> Draft202012Validator:

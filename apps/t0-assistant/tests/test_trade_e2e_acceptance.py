@@ -52,6 +52,12 @@ class TradeEndToEndAcceptanceTest(unittest.TestCase):
             )
             self.assertTrue(listed["accepted"])
             self.assertEqual(listed["data"]["fee_plans"][0]["fee_plan_id"], "shenwan-hongyuan")
+            self.assertIsInstance(
+                listed["data"]["fee_plans"][0]["a_share_commission_rate"], str
+            )
+            self.assertEqual(
+                listed["data"]["fee_plans"][0]["transfer_fee_side"], "both"
+            )
 
             quote = plan_api.dispatch(
                 "calculate_trade_fee",
@@ -68,6 +74,18 @@ class TradeEndToEndAcceptanceTest(unittest.TestCase):
                 ),
             )
             self.assertTrue(quote["accepted"])
+            self.assertTrue(
+                all(
+                    isinstance(quote["data"][field], float)
+                    for field in (
+                        "trade_amount",
+                        "commission",
+                        "stamp_duty",
+                        "transfer_fee",
+                        "total_fee",
+                    )
+                )
+            )
             confirmed_fee = quote["data"]["total_fee"]
 
             draft = {
@@ -180,6 +198,30 @@ class TradeEndToEndAcceptanceTest(unittest.TestCase):
             self.assertTrue(retried["accepted"])
             self.assertEqual(trade_api.trade_revision, 1)
             self.assertEqual(len(trade_service.list_all_trades()), 1)
+
+    def test_malformed_domain_requests_are_validation_errors(self) -> None:
+        with open_app_database(self.db_path) as database:
+            *_, plan_api = self._apis(database)
+            missing_id = plan_api.dispatch(
+                "list_fee_plans",
+                {"payload": {}},
+            )
+            self.assertFalse(missing_id["accepted"])
+            self.assertEqual(missing_id["request_id"], "missing-request-id")
+            self.assertEqual(
+                missing_id["error"]["error_code"], "invalid_fee_plan_request"
+            )
+            self.assertEqual(missing_id["error"]["category"], "validation")
+
+            missing_payload = plan_api.dispatch(
+                "list_fee_plans",
+                {"request_id": "missing-payload"},
+            )
+            self.assertFalse(missing_payload["accepted"])
+            self.assertEqual(
+                missing_payload["error"]["error_code"],
+                "invalid_fee_plan_request",
+            )
 
 
 if __name__ == "__main__":

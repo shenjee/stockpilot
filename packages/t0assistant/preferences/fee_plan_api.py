@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from decimal import Decimal
+from enum import Enum
 from typing import Any
 
 from packages.t0assistant.repositories import FeePlanRecord
@@ -20,9 +21,19 @@ class FeePlanCommandApi:
         self.service_generation = service_generation
 
     def dispatch(self, command: str, request: dict[str, Any]) -> dict[str, Any]:
-        request_id = request["request_id"]
-        payload = request["payload"]
+        request_id = request.get("request_id")
+        request_id_valid = isinstance(request_id, str) and bool(request_id)
+        request_id = (
+            request_id
+            if request_id_valid
+            else "missing-request-id"
+        )
         try:
+            if not request_id_valid:
+                raise ValueError("request_id must be a non-empty string")
+            payload = request.get("payload")
+            if not isinstance(payload, dict):
+                raise TypeError("payload must be an object")
             if command == "list_fee_plans":
                 data = {
                     "fee_plans": [
@@ -73,7 +84,7 @@ class FeePlanCommandApi:
         for key, value in tuple(values.items()):
             if isinstance(value, Decimal):
                 values[key] = str(value)
-            elif hasattr(value, "value"):
+            elif isinstance(value, Enum):
                 values[key] = value.value
         return values
 
