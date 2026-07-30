@@ -148,6 +148,22 @@ class _WebSocketClient:
             pass
 
 
+class _RecordingTradeApi:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+
+    def dispatch(self, command: str, request: dict) -> dict:
+        self.calls.append((command, request))
+        return {
+            "schema_version": "t0_app_v1",
+            "request_id": request["request_id"],
+            "accepted": True,
+            "operation_id": None,
+            "data": {},
+            "error": None,
+        }
+
+
 class TradeServiceWiringTest(unittest.TestCase):
     def setUp(self) -> None:
         self._tempdir = tempfile.TemporaryDirectory()
@@ -427,6 +443,81 @@ class TradeServiceWiringTest(unittest.TestCase):
                 "SELECT COUNT(*) FROM trades"
             ).fetchone()[0],
             0,
+        )
+
+    def test_scope_and_session_route_real_and_simulated_without_crossing(self) -> None:
+        simulated_api = _RecordingTradeApi()
+        self.server.simulated_trade_api = simulated_api
+
+        def post(request_id: str, session_id: str | None, trade_scope: str):
+            request = Request(
+                f"{self.base_url}/api/commands/create_trade",
+                data=json.dumps(
+                    {
+                        "schema_version": "t0_app_v1",
+                        "request_id": request_id,
+                        "command": "create_trade",
+                        "session_id": session_id,
+                        "payload": {
+                            "trade": _draft(trade_scope=trade_scope),
+                        },
+                    }
+                ).encode("utf-8"),
+                headers={
+                    "Authorization": "Bearer wiring-token",
+                    "Content-Type": "application/json",
+                },
+                method="POST",
+            )
+            try:
+                with urlopen(request, timeout=2) as response:
+                    return response.status, json.load(response)
+            except HTTPError as error:
+                payload = json.load(error)
+                error.close()
+                return error.code, payload
+
+        # A non-null Session must never override an explicit real scope.
+        status, rejected = post("r-real-wrong-session", "replay-1", "real")
+        self.assertEqual(status, 400)
+        self.assertEqual(rejected["error"]["error_code"], "invalid_trade_request")
+        self.assertEqual(simulated_api.calls, [])
+        self.assertEqual(
+            self._database.connection.execute(
+                "SELECT COUNT(*) FROM trades"
+            ).fetchone()[0],
+            0,
+        )
+
+        # A simulated trade with a Replay identity reaches only Session memory.
+        status, accepted = post("r-simulated", "replay-1", "simulated")
+        self.assertEqual(status, 200)
+        self.assertTrue(accepted["accepted"])
+        self.assertEqual(len(simulated_api.calls), 1)
+        self.assertEqual(simulated_api.calls[0][0], "create_trade")
+        self.assertEqual(
+            self._database.connection.execute(
+                "SELECT COUNT(*) FROM trades"
+            ).fetchone()[0],
+            0,
+        )
+
+        # Missing Replay identity is invalid and reaches neither API.
+        status, rejected = post("r-simulated-no-session", None, "simulated")
+        self.assertEqual(status, 400)
+        self.assertEqual(rejected["error"]["error_code"], "invalid_trade_request")
+        self.assertEqual(len(simulated_api.calls), 1)
+
+        # A real trade with null Session reaches only the SQLite-backed API.
+        status, accepted = post("r-real", None, "real")
+        self.assertEqual(status, 200)
+        self.assertTrue(accepted["accepted"])
+        self.assertEqual(len(simulated_api.calls), 1)
+        self.assertEqual(
+            self._database.connection.execute(
+                "SELECT COUNT(*) FROM trades"
+            ).fetchone()[0],
+            1,
         )
 
 

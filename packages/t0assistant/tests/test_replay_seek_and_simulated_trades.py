@@ -233,6 +233,19 @@ class ReplaySimulatedTradeTests(ReplaySeekTests):
             "request_id": "trade-request",
             "session_id": session.session_id,
         }
+        listed = api.dispatch(
+            "list_trades",
+            {
+                **base,
+                "payload": {
+                    "trade_scope": "simulated",
+                    "symbol": session.symbol,
+                    "trade_date": session.trade_date,
+                },
+            },
+        )
+        self.assertTrue(listed["accepted"])
+        self.assertEqual(trade_events[-1]["payload"]["trades"], [])
         draft = {
             "trade_scope": "simulated",
             "symbol": session.symbol,

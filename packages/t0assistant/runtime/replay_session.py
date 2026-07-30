@@ -384,15 +384,7 @@ class ReplaySession:
         """Return the Session-owned simulated trades in deterministic order."""
 
         with self._lock:
-            return tuple(
-                sorted(
-                    self._simulated_trades.values(),
-                    key=lambda record: (
-                        record.trade.executed_at,
-                        record.trade_id,
-                    ),
-                )
-            )
+            return self._sorted_simulated_trades_locked()
 
     def create_simulated_trade(
         self, draft: TradeDraft | dict[str, Any], *, trade_id: str | None = None
@@ -1284,7 +1276,10 @@ class ReplaySession:
 
     def _publish_simulated_trades_locked(self) -> None:
         self._trade_revision += 1
-        trades = [record.to_dict() for record in self.simulated_trades]
+        trades = [
+            record.to_dict()
+            for record in self._sorted_simulated_trades_locked()
+        ]
         self._on_trade_event(
             {
                 "schema_version": "t0_app_v1",
@@ -1297,6 +1292,19 @@ class ReplaySession:
                     "trades": trades,
                 },
             }
+        )
+
+    def _sorted_simulated_trades_locked(self) -> tuple[TradeRecord, ...]:
+        """Return deterministic Session memory without re-entering the lock."""
+
+        return tuple(
+            sorted(
+                self._simulated_trades.values(),
+                key=lambda record: (
+                    record.trade.executed_at,
+                    record.trade_id,
+                ),
+            )
         )
 
 
