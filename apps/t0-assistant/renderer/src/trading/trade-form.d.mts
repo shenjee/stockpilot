@@ -17,7 +17,7 @@ export interface TradeFormFields {
 }
 
 export interface TradeDraft {
-  trade_scope: "real";
+  trade_scope: "real" | "simulated";
   symbol: string;
   side: "buy" | "sell";
   executed_at: string;
@@ -29,4 +29,7 @@ export interface TradeDraft {
 }
 
 export function normalizeExecutedAt(value: string): string;
-export function buildTradeDraft(fields: TradeFormFields): TradeDraft;
+export function buildTradeDraft(
+  fields: TradeFormFields,
+  options?: { tradeScope?: "real" | "simulated" },
+): TradeDraft;

@@ -67,6 +67,8 @@ import {
 } from "./trading/trade-operation-controller.mjs";
 import { applyHistoryTradesChanged } from "./trading/history-state.mjs";
 import type { TradeRecord } from "./trading/trade-client.mjs";
+import { createSimulatedTradeClient } from "./trading/simulated-trade-client.mjs";
+import { ReplayTradeDrawer } from "./trading/ReplayTradeDrawer";
 
 const initialStatus: ServiceStatus = {
   state: "starting",
@@ -169,6 +171,7 @@ export function App() {
     tradeRevision: number;
     serviceGeneration: number | null;
   }>({ trades: [], tradeRevision: -1, serviceGeneration: null });
+  const [simulatedTrades, setSimulatedTrades] = useState<TradeRecord[]>([]);
   // T0-043 "进入当天图形": a dismissible notice when a historical trade's full
   // day chart cannot be restored (no frozen non-Replay command serves a static
   // historical workbench; see the T0-043 contract gap). Never wipes the last
@@ -271,6 +274,7 @@ export function App() {
         setReplayLoading(false);
         setReplayBusy(false);
         setReplayPlaybackPending(false);
+        setSimulatedTrades([]);
       }
       if (next.state === "ready" || next.state === "connected") {
         setBackgroundError((current) =>
@@ -1110,6 +1114,7 @@ export function App() {
     setReplayLoading(false);
     setReplayBusy(false);
     setReplayPlaybackPending(false);
+    setSimulatedTrades([]);
     if (window.stockpilot && sessionId) {
       void window.stockpilot
         .endReplay({
@@ -1131,12 +1136,36 @@ export function App() {
   const currentTradeDate = snapshot.session?.trade_date ?? localToday();
   const chartTrades = useMemo(() => {
     if (!currentSymbol) return [];
+    if (workbench.mode === WorkbenchMode.REPLAY) {
+      return simulatedTrades.filter(
+        (trade) =>
+          trade.symbol === currentSymbol &&
+          tradeDateOf(trade.executed_at) === currentTradeDate,
+      );
+    }
     return realTrades.trades.filter(
       (trade) =>
         trade.symbol === currentSymbol &&
         tradeDateOf(trade.executed_at) === currentTradeDate,
     );
-  }, [realTrades.trades, currentSymbol, currentTradeDate]);
+  }, [
+    realTrades.trades,
+    simulatedTrades,
+    currentSymbol,
+    currentTradeDate,
+    workbench.mode,
+  ]);
+
+  const simulatedTradeClient = useMemo(
+    () =>
+      window.stockpilot && replayFacts
+        ? createSimulatedTradeClient(
+            window.stockpilot,
+            replayFacts.sessionId,
+          )
+        : null,
+    [replayFacts?.sessionId],
+  );
 
   const fiveMinuteModel = useMemo(
     () =>
@@ -1381,6 +1410,20 @@ export function App() {
           onEnterDayChart={handleEnterDayChart}
         />
       )}
+
+      {replayMode &&
+        replayFacts &&
+        workbench.security &&
+        simulatedTradeClient && (
+          <ReplayTradeDrawer
+            security={workbench.security}
+            sessionId={replayFacts.sessionId}
+            currentTime={replayFacts.currentTime}
+            tradeClient={simulatedTradeClient}
+            subscribeAppEvent={subscribeAppEvent}
+            onTradesChange={setSimulatedTrades}
+          />
+        )}
 
       {dayChartNotice && (
         <div className="inline-error" role="status" style={{ margin: "8px 12px" }}>

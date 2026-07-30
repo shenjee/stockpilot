@@ -44,7 +44,11 @@ from packages.t0assistant.repositories import (
 from packages.t0assistant.runtime.live_projection_store import (
     LiveProjectionSnapshotUnavailable as _LiveSnapshotUnavailable,
 )
-from packages.t0assistant.trading import TradeCommandApi, TradeService
+from packages.t0assistant.trading import (
+    SimulatedTradeCommandApi,
+    TradeCommandApi,
+    TradeService,
+)
 
 try:  # package context: ``from backend.historical_snapshot_api import ...``
     from backend.historical_snapshot_api import (
@@ -248,6 +252,7 @@ class DesktopServiceServer(ThreadingHTTPServer):
         live_snapshot_api: LiveSnapshotApiPort | None = None,
         historical_snapshot_api: HistoricalSnapshotApiPort | None = None,
         trade_api: TradeCommandApi | None = None,
+        simulated_trade_api: SimulatedTradeCommandApi | None = None,
         event_publisher: "EventPublisher | None" = None,
     ) -> None:
         if (
@@ -297,6 +302,7 @@ class DesktopServiceServer(ThreadingHTTPServer):
         self.live_snapshot_api = live_snapshot_api
         self.historical_snapshot_api = historical_snapshot_api
         self.trade_api = trade_api
+        self.simulated_trade_api = simulated_trade_api
         self.event_publisher = event_publisher
         self.shutdown_event = threading.Event()
         self._websocket_lock = threading.Lock()
@@ -471,7 +477,12 @@ class _Handler(BaseHTTPRequestHandler):
         result.response_delivered()
 
     def _trade_command(self, command: str, request: dict[str, Any]) -> None:
-        trade_api = getattr(self.server, "trade_api", None)
+        session_id = request.get("session_id")
+        trade_api = (
+            getattr(self.server, "simulated_trade_api", None)
+            if isinstance(session_id, str) and session_id
+            else getattr(self.server, "trade_api", None)
+        )
         if trade_api is None:
             self._service_unavailable(command, request)
             return
@@ -999,6 +1010,7 @@ def create_server(
     live_snapshot_api: LiveSnapshotApiPort | None = None,
     historical_snapshot_api: HistoricalSnapshotApiPort | None = None,
     trade_api: TradeCommandApi | None = None,
+    simulated_trade_api: SimulatedTradeCommandApi | None = None,
     event_publisher: "EventPublisher | None" = None,
 ) -> DesktopServiceServer:
     if host != "127.0.0.1":
@@ -1014,6 +1026,7 @@ def create_server(
         live_snapshot_api=live_snapshot_api,
         historical_snapshot_api=historical_snapshot_api,
         trade_api=trade_api,
+        simulated_trade_api=simulated_trade_api,
         event_publisher=event_publisher,
     )
 
