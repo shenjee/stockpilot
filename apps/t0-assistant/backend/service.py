@@ -47,7 +47,11 @@ from packages.t0assistant.preferences.fee_plan_api import FeePlanCommandApi
 from packages.t0assistant.runtime.live_projection_store import (
     LiveProjectionSnapshotUnavailable as _LiveSnapshotUnavailable,
 )
-from packages.t0assistant.trading import TradeCommandApi, TradeService
+from packages.t0assistant.trading import (
+    SimulatedTradeCommandApi,
+    TradeCommandApi,
+    TradeService,
+)
 
 try:  # package context: ``from backend.historical_snapshot_api import ...``
     from backend.historical_snapshot_api import (
@@ -263,6 +267,7 @@ class DesktopServiceServer(ThreadingHTTPServer):
         live_snapshot_api: LiveSnapshotApiPort | None = None,
         historical_snapshot_api: HistoricalSnapshotApiPort | None = None,
         trade_api: TradeCommandApi | None = None,
+        simulated_trade_api: SimulatedTradeCommandApi | None = None,
         fee_plan_api: FeePlanCommandApi | None = None,
         event_publisher: "EventPublisher | None" = None,
     ) -> None:
@@ -320,6 +325,7 @@ class DesktopServiceServer(ThreadingHTTPServer):
         self.live_snapshot_api = live_snapshot_api
         self.historical_snapshot_api = historical_snapshot_api
         self.trade_api = trade_api
+        self.simulated_trade_api = simulated_trade_api
         self.fee_plan_api = fee_plan_api
         self.event_publisher = event_publisher
         self.shutdown_event = threading.Event()
@@ -498,11 +504,9 @@ class _Handler(BaseHTTPRequestHandler):
         result.response_delivered()
 
     def _trade_command(self, command: str, request: dict[str, Any]) -> None:
-        trade_api = getattr(self.server, "trade_api", None)
-        if trade_api is None:
-            self._service_unavailable(command, request)
-            return
         error = _validate_trade_request(command, request)
+        if error is None:
+            error = _validate_trade_route(command, request)
         if error is not None:
             request_id = request.get("request_id", "missing-request-id")
             self._json(
@@ -516,6 +520,15 @@ class _Handler(BaseHTTPRequestHandler):
                     "error": error,
                 },
             )
+            return
+        scope = _trade_scope_for_command(command, request)
+        trade_api = (
+            getattr(self.server, "simulated_trade_api", None)
+            if scope == "simulated"
+            else getattr(self.server, "trade_api", None)
+        )
+        if trade_api is None:
+            self._service_unavailable(command, request)
             return
         # TradeCommandApi persists synchronously and publishes the authoritative
         # trades_changed event itself (session_id: null) on success. The sync
@@ -959,6 +972,50 @@ def _validate_trade_request(
     return _trade_invalid_request(f"{field}: {first.message}", request_id_echo)
 
 
+def _trade_scope_for_command(
+    command: str,
+    request: dict[str, Any],
+) -> str | None:
+    """Read the frozen command's explicit trade scope without guessing."""
+
+    payload = request.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    if command in {"create_trade", "update_trade"}:
+        trade = payload.get("trade")
+        return trade.get("trade_scope") if isinstance(trade, dict) else None
+    if command in {"list_trades", "delete_trade"}:
+        scope = payload.get("trade_scope")
+        return scope if isinstance(scope, str) else None
+    return None
+
+
+def _validate_trade_route(
+    command: str,
+    request: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Require scope and Session identity to describe the same trade domain."""
+
+    request_id = request.get("request_id", "missing-request-id")
+    scope = _trade_scope_for_command(command, request)
+    session_id = request.get("session_id")
+    if scope == "real":
+        if session_id is not None:
+            return _trade_invalid_request(
+                "真实成交必须使用空 session_id",
+                request_id,
+            )
+        return None
+    if scope == "simulated":
+        if not isinstance(session_id, str) or not session_id:
+            return _trade_invalid_request(
+                "模拟成交必须绑定 Replay Session",
+                request_id,
+            )
+        return None
+    return _trade_invalid_request("成交范围无效", request_id)
+
+
 def _validate_fee_plan_request(
     url_command: str,
     request: dict[str, Any],
@@ -1099,6 +1156,7 @@ def create_server(
     live_snapshot_api: LiveSnapshotApiPort | None = None,
     historical_snapshot_api: HistoricalSnapshotApiPort | None = None,
     trade_api: TradeCommandApi | None = None,
+    simulated_trade_api: SimulatedTradeCommandApi | None = None,
     fee_plan_api: FeePlanCommandApi | None = None,
     event_publisher: "EventPublisher | None" = None,
 ) -> DesktopServiceServer:
@@ -1115,6 +1173,7 @@ def create_server(
         live_snapshot_api=live_snapshot_api,
         historical_snapshot_api=historical_snapshot_api,
         trade_api=trade_api,
+        simulated_trade_api=simulated_trade_api,
         fee_plan_api=fee_plan_api,
         event_publisher=event_publisher,
     )

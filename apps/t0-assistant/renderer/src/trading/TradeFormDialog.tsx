@@ -32,6 +32,8 @@ export function TradeFormDialog({
   feeAdvisor,
   onSubmit,
   onClose,
+  tradeScope = "real",
+  initialExecutedAt,
 }: {
   open: boolean;
   mode: "create" | "edit";
@@ -41,6 +43,8 @@ export function TradeFormDialog({
   feeAdvisor: FeeAdvisor;
   onSubmit: (draft: TradeDraft) => Promise<void>;
   onClose: () => void;
+  tradeScope?: "real" | "simulated";
+  initialExecutedAt?: string;
 }) {
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [executedAt, setExecutedAt] = useState(localNowInput);
@@ -72,7 +76,11 @@ export function TradeFormDialog({
       setNote(initial.note);
     } else {
       setSide("buy");
-      setExecutedAt(localNowInput());
+      setExecutedAt(
+        initialExecutedAt
+          ? executedAtToInputValue(initialExecutedAt)
+          : localNowInput(),
+      );
       setPrice("");
       setQuantity("100");
       setFeePlanId(NO_PLAN);
@@ -129,16 +137,19 @@ export function TradeFormDialog({
     } else {
       setFieldError(null);
       try {
-        draft = buildTradeDraft({
-          symbol: security.symbol,
-          side,
-          executedAt,
-          price,
-          quantity,
-          fee: fee === "" ? null : fee,
-          note,
-          feePlanId,
-        });
+        draft = buildTradeDraft(
+          {
+            symbol: security.symbol,
+            side,
+            executedAt,
+            price,
+            quantity,
+            fee: fee === "" ? null : fee,
+            note,
+            feePlanId,
+          },
+          { tradeScope },
+        );
       } catch (error) {
         if (error instanceof TradeFormValidationError) {
           setFieldError({ field: error.field, message: error.message });

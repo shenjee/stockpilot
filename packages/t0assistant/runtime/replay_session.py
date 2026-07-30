@@ -32,10 +32,19 @@ Design rules enforced here:
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from threading import Event, RLock
 from typing import Any, Callable
+from uuid import uuid4
+
+from packages.t0assistant.trading.models import (
+    TradeDraft,
+    TradeRecord,
+    TradeScope,
+    TradeValidationError,
+)
 
 from ._market_bars import MARKET_TIMESTAMP_FORMAT
 from .computation_contract import (
@@ -105,6 +114,17 @@ class ReplayStepResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ReplaySeekResult:
+    """Outcome of one latest-wins Replay seek."""
+
+    rebuilt: bool
+    revision: int
+    operation_id: str
+    outcome_status: str
+    outcome: ComputationOutcome | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ReplayInitialResult:
     """One-shot result of the initial Replay ready computation.
 
@@ -131,6 +151,7 @@ class PlaybackPumpResult:
 
 
 EventPublisher = Callable[[dict[str, Any]], None]
+TradeEventPublisher = Callable[[dict[str, Any]], None]
 
 
 class ReplaySession:
@@ -173,6 +194,7 @@ class ReplaySession:
         clock: MonotonicClockPort | None = None,
         scheduler: PlaybackSchedulerPort | None = None,
         on_event: EventPublisher | None = None,
+        on_trade_event: TradeEventPublisher | None = None,
         analyzer: CzscAnalyzerPort | None = None,
         initial_operation_id: str | None = None,
         auto_ready: bool = True,
@@ -196,8 +218,12 @@ class ReplaySession:
         self._service_generation = service_generation
         self._prepared = prepared
         self._executor = executor
+        self._analyzer = analyzer
         self._clock = clock or SystemMonotonicClock()
         self._on_event: EventPublisher = on_event or (lambda _event: None)
+        self._on_trade_event: TradeEventPublisher = (
+            on_trade_event or (lambda _event: None)
+        )
         self._initial_operation_id = initial_operation_id
         self._computation_timeout = computation_timeout
         self._deadline_seconds = deadline_seconds
@@ -233,6 +259,8 @@ class ReplaySession:
         self._last_pipeline_result: PipelineResult | None = None
         self._retired = False
         self._ended_converged = False
+        self._simulated_trades: dict[str, TradeRecord] = {}
+        self._trade_revision = -1
 
         self._next_ticket = 1
         self._inflight_ticket: int | None = None
@@ -350,6 +378,61 @@ class ReplaySession:
             result = self._initial_result
             self._initial_result = None
             return result
+
+    @property
+    def simulated_trades(self) -> tuple[TradeRecord, ...]:
+        """Return the Session-owned simulated trades in deterministic order."""
+
+        with self._lock:
+            return self._sorted_simulated_trades_locked()
+
+    def create_simulated_trade(
+        self, draft: TradeDraft | dict[str, Any], *, trade_id: str | None = None
+    ) -> TradeRecord:
+        """Create a Replay-only trade without touching a repository."""
+
+        with self._lock:
+            normalized = self._validate_simulated_draft_locked(draft)
+            record_id = trade_id or f"sim-{uuid4().hex}"
+            if record_id in self._simulated_trades:
+                raise TradeValidationError("trade_id", "must be unique in Replay Session")
+            record = TradeRecord(record_id, normalized)
+            self._simulated_trades[record_id] = record
+            self._publish_simulated_trades_locked()
+            return record
+
+    def update_simulated_trade(
+        self, trade_id: str, draft: TradeDraft | dict[str, Any]
+    ) -> TradeRecord:
+        """Replace a Replay-only trade while preserving its identity."""
+
+        with self._lock:
+            if trade_id not in self._simulated_trades:
+                raise TradeValidationError("trade_id", "simulated trade not found")
+            record = TradeRecord(
+                trade_id, self._validate_simulated_draft_locked(draft)
+            )
+            self._simulated_trades[trade_id] = record
+            self._publish_simulated_trades_locked()
+            return record
+
+    def delete_simulated_trade(self, trade_id: str) -> bool:
+        """Permanently remove one in-memory simulated trade."""
+
+        with self._lock:
+            if trade_id not in self._simulated_trades:
+                return False
+            del self._simulated_trades[trade_id]
+            self._publish_simulated_trades_locked()
+            return True
+
+    def publish_simulated_trades(self) -> None:
+        """Publish the complete in-memory trade fact for Renderer hydration."""
+
+        with self._lock:
+            if self._retired:
+                raise ReplaySessionStateError("session is retired")
+            self._publish_simulated_trades_locked()
 
     # ------------------------------------------------------------------
     # Cursor operations
@@ -495,7 +578,8 @@ class ReplaySession:
             # the cursor busy and clears the ticket itself.
             if outcome is None:
                 with self._lock:
-                    self._inflight_ticket = None
+                    if self._inflight_ticket == ticket:
+                        self._inflight_ticket = None
 
         try:
             with self._lock:
@@ -547,7 +631,10 @@ class ReplaySession:
                 # Non-completed: never commit the cursor or pipeline state.
                 if self._retired:
                     return ReplayStepResult(False, revision, operation_id, "dropped", outcome)
-                if _outcome_is_failure(outcome):
+                if (
+                    _outcome_is_failure(outcome)
+                    and self._inflight_ticket == ticket
+                ):
                     self._state = "failed"
                     self._publish_session_status_locked(
                         "failed", "operation_failed", operation_id, None
@@ -556,7 +643,118 @@ class ReplaySession:
                 return ReplayStepResult(False, revision, operation_id, "dropped", outcome)
         finally:
             with self._lock:
-                self._inflight_ticket = None
+                if self._inflight_ticket == ticket:
+                    self._inflight_ticket = None
+
+    def seek(self, target_time: datetime | str, operation_id: str) -> ReplaySeekResult:
+        """Seek to a target prefix, rebuilding from preheat when moving back.
+
+        A newer seek replaces any in-flight cursor operation.  Its result is
+        accepted only when its ticket is still current, which prevents an old
+        computation from publishing future bars after a backward seek.
+        """
+
+        if not isinstance(operation_id, str) or not operation_id:
+            raise ValueError("operation_id must be a non-empty string")
+        if isinstance(target_time, str):
+            try:
+                target = datetime.strptime(target_time, MARKET_TIMESTAMP_FORMAT)
+            except ValueError as exc:
+                raise ValueError(
+                    f"target_time must use {MARKET_TIMESTAMP_FORMAT}"
+                ) from exc
+        elif isinstance(target_time, datetime):
+            target = target_time
+        else:
+            raise TypeError("target_time must be a datetime or market timestamp")
+
+        with self._lock:
+            if self._retired:
+                raise ReplaySessionStateError("session is retired")
+            if self._state not in {"ready", "playing", "paused"}:
+                raise ReplaySessionStateError(
+                    f"seek requires ready, playing or paused state, not {self._state}"
+                )
+            if target < self._start_time or target > self._end_time:
+                raise ValueError("target_time must be inside the Replay session")
+            self._scheduler.cancel()
+            self._state = "paused"
+            ticket = self._next_ticket
+            self._next_ticket += 1
+            self._inflight_ticket = ticket
+            rebuilt = target < self._current_time
+            if rebuilt:
+                candidate_pipeline = WorkbenchPipeline(
+                    session=self._market_session,
+                    market_input_port=self._prepared.market_input_port,
+                    analyzer=self._analyzer,
+                )
+                candidate_identity = PipelineInstanceIdentity(
+                    instance_id=id(candidate_pipeline),
+                    generation=self._service_generation,
+                    session_id=self._session_id,
+                )
+            else:
+                candidate_pipeline = self._pipeline
+                candidate_identity = self._pipeline_identity
+
+        supersede = getattr(self._executor, "supersede_operation", None)
+        if callable(supersede):
+            supersede(self._session_id, operation_id)
+
+        outcome = self._submit_advance(
+            target,
+            operation_id,
+            "paused",
+            ticket,
+            "seek",
+            pipeline=candidate_pipeline,
+            pipeline_identity=candidate_identity,
+            replace_pipeline=rebuilt,
+        )
+        try:
+            with self._lock:
+                if (
+                    outcome.status is ComputationStatus.COMPLETED
+                    and self._inflight_committed_ticket != ticket
+                    and self._inflight_ticket == ticket
+                ):
+                    self._commit_advance_locked(
+                        outcome.value,
+                        target=target,
+                        operation_id=operation_id,
+                        ticket=ticket,
+                        commit_kind="seek",
+                        pipeline=candidate_pipeline,
+                        pipeline_identity=candidate_identity,
+                        replace_pipeline=rebuilt,
+                    )
+                if self._inflight_committed_ticket == ticket:
+                    return ReplaySeekResult(
+                        rebuilt,
+                        self._inflight_committed_revision or self.revision,
+                        operation_id,
+                        "completed",
+                        outcome,
+                    )
+                if (
+                    _outcome_is_failure(outcome)
+                    and self._inflight_ticket == ticket
+                ):
+                    self._state = "failed"
+                    self._publish_session_status_locked(
+                        "failed", "operation_failed", operation_id, None
+                    )
+                    return ReplaySeekResult(
+                        rebuilt, self.revision, operation_id, "failed", outcome
+                    )
+                return ReplaySeekResult(
+                    rebuilt, self.revision, operation_id, "dropped", outcome
+                )
+        finally:
+            with self._lock:
+                if self._inflight_ticket == ticket:
+                    self._inflight_ticket = None
 
     def pump_playback(self) -> PlaybackPumpResult:
         """Perform at most one due playback advance.
@@ -594,7 +792,8 @@ class ReplaySession:
         finally:
             if outcome is None:
                 with self._lock:
-                    self._inflight_ticket = None
+                    if self._inflight_ticket == ticket:
+                        self._inflight_ticket = None
 
         try:
             with self._lock:
@@ -645,15 +844,23 @@ class ReplaySession:
                 # Non-completed: never advance.
                 if self._retired:
                     return PlaybackPumpResult("dropped", None)
-                if _outcome_is_failure(outcome):
+                is_current_failure = (
+                    _outcome_is_failure(outcome)
+                    and self._inflight_ticket == ticket
+                )
+                if is_current_failure:
                     self._state = "failed"
                     self._publish_session_status_locked(
                         "failed", "operation_failed", None, None
                     )
-                return PlaybackPumpResult("failed" if _outcome_is_failure(outcome) else "dropped", None)
+                return PlaybackPumpResult(
+                    "failed" if is_current_failure else "dropped",
+                    None,
+                )
         finally:
             with self._lock:
-                self._inflight_ticket = None
+                if self._inflight_ticket == ticket:
+                    self._inflight_ticket = None
 
     def retire(self) -> None:
         """Retire the Session and isolate any late result."""
@@ -662,6 +869,7 @@ class ReplaySession:
             if self._retired:
                 return
             self._retired = True
+            self._simulated_trades.clear()
             # Replay v1.0: retired is the terminal state, even from failed.
             self._state = "retired"
             self._publish_session_status_locked("retired", None, None, None)
@@ -680,11 +888,15 @@ class ReplaySession:
         expected_state: str | None,
         ticket: int,
         commit_kind: str = "step",
+        *,
+        pipeline: WorkbenchPipeline | None = None,
+        pipeline_identity: PipelineInstanceIdentity | None = None,
+        replace_pipeline: bool = False,
     ) -> ComputationOutcome:
         """Submit one advance computation and block until it resolves."""
 
-        pipeline = self._pipeline
-        identity = self._pipeline_identity
+        pipeline = pipeline or self._pipeline
+        identity = pipeline_identity or self._pipeline_identity
         session_id = self._session_id
         generation = self._service_generation
         deadline = self._deadline_for_now()
@@ -719,6 +931,9 @@ class ReplaySession:
                     operation_id=operation_id,
                     ticket=ticket,
                     commit_kind=commit_kind,
+                    pipeline=pipeline,
+                    pipeline_identity=identity,
+                    replace_pipeline=replace_pipeline,
                 )
 
         def accept_result(_value: Any) -> bool:
@@ -837,9 +1052,11 @@ class ReplaySession:
         finally:
             if outcome is None:
                 with self._lock:
-                    self._inflight_ticket = None
+                    if self._inflight_ticket == ticket:
+                        self._inflight_ticket = None
         with self._lock:
-            self._inflight_ticket = None
+            if self._inflight_ticket == ticket:
+                self._inflight_ticket = None
             if outcome is None:
                 outcome = ComputationOutcome(
                     task_id="",
@@ -886,6 +1103,9 @@ class ReplaySession:
         operation_id: str | None,
         ticket: int,
         commit_kind: str,
+        pipeline: WorkbenchPipeline | None = None,
+        pipeline_identity: PipelineInstanceIdentity | None = None,
+        replace_pipeline: bool = False,
     ) -> None:
         """Atomically publish one accepted preview into all Session state.
 
@@ -895,10 +1115,21 @@ class ReplaySession:
         snapshot; it cannot split pipeline state from the Replay cursor.
         """
 
-        if commit_kind not in {"initialize", "step", "playback"}:
+        if commit_kind not in {"initialize", "step", "playback", "seek"}:
             raise ValueError(f"unsupported commit_kind: {commit_kind}")
 
-        self._pipeline.commit_preview(value)
+        committed_pipeline = pipeline or self._pipeline
+        committed_pipeline.commit_preview(value)
+        if replace_pipeline:
+            self._pipeline = committed_pipeline
+            self._pipeline_identity = (
+                pipeline_identity
+                or PipelineInstanceIdentity(
+                    instance_id=id(committed_pipeline),
+                    generation=self._service_generation,
+                    session_id=self._session_id,
+                )
+            )
         self._last_pipeline_result = value
         self._current_time = target
         self._next_bar_time = self._resolve_next_bar(
@@ -1015,6 +1246,67 @@ class ReplaySession:
             envelope["operation_id"] = operation_id
         self._on_event(envelope)
 
+    def _validate_simulated_draft_locked(
+        self, draft: TradeDraft | dict[str, Any]
+    ) -> TradeDraft:
+        if self._retired:
+            raise ReplaySessionStateError("session is retired")
+        if not isinstance(draft, (TradeDraft, Mapping)):
+            raise TradeValidationError("trade", "must be a trade draft")
+        normalized = (
+            draft
+            if isinstance(draft, TradeDraft)
+            else TradeDraft.from_mapping(draft)
+        )
+        if normalized.trade_scope is not TradeScope.SIMULATED:
+            raise TradeValidationError(
+                "trade_scope", "Replay trades must use simulated scope"
+            )
+        if normalized.symbol != self._prepared.symbol:
+            raise TradeValidationError("symbol", "must match Replay Session symbol")
+        if normalized.executed_at.date().isoformat() != self._prepared.trade_date:
+            raise TradeValidationError(
+                "executed_at", "must be on the Replay trade date"
+            )
+        if normalized.executed_at > self._current_time:
+            raise TradeValidationError(
+                "executed_at", "must not be later than the Replay cursor"
+            )
+        return normalized
+
+    def _publish_simulated_trades_locked(self) -> None:
+        self._trade_revision += 1
+        trades = [
+            record.to_dict()
+            for record in self._sorted_simulated_trades_locked()
+        ]
+        self._on_trade_event(
+            {
+                "schema_version": "t0_app_v1",
+                "service_generation": self._service_generation,
+                "session_id": self._session_id,
+                "revision": self._trade_revision,
+                "event_type": "trades_changed",
+                "payload": {
+                    "trade_revision": self._trade_revision,
+                    "trades": trades,
+                },
+            }
+        )
+
+    def _sorted_simulated_trades_locked(self) -> tuple[TradeRecord, ...]:
+        """Return deterministic Session memory without re-entering the lock."""
+
+        return tuple(
+            sorted(
+                self._simulated_trades.values(),
+                key=lambda record: (
+                    record.trade.executed_at,
+                    record.trade_id,
+                ),
+            )
+        )
+
 
 def _outcome_is_failure(outcome: ComputationOutcome) -> bool:
     """Return whether a non-completed outcome should fail the Session.
@@ -1042,6 +1334,7 @@ __all__ = [
     "ReplaySession",
     "ReplaySessionError",
     "ReplaySessionStateError",
+    "ReplaySeekResult",
     "ReplayStepResult",
     "REPLAY_SCHEMA_VERSION",
 ]

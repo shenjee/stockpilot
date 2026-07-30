@@ -110,6 +110,7 @@ from .replay_session import (
     ReplayInitialResult,
     ReplaySession,
     ReplaySessionError,
+    ReplaySeekResult,
     ReplaySessionStateError,
     ReplayStepResult,
 )
@@ -190,6 +191,7 @@ __all__ = [
     "ReplayInitialResult",
     "ReplaySession",
     "ReplaySessionError",
+    "ReplaySeekResult",
     "ReplaySessionStateError",
     "ReplayStepResult",
     "RuntimeMarketDataError",

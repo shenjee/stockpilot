@@ -106,12 +106,13 @@ function optionalFeePlanId(value) {
  * Validate form fields and return a `trade_draft` for `create_trade` /
  * `update_trade`. `trade_scope` is always `real` here.
  */
-export function buildTradeDraft(fields) {
+export function buildTradeDraft(fields, options = {}) {
   if (!fields || typeof fields !== "object") {
     throw new TradeFormValidationError("form", "must be a form object");
   }
   return Object.freeze({
-    trade_scope: "real",
+    trade_scope:
+      options.tradeScope === "simulated" ? "simulated" : "real",
     symbol: requireSymbol(fields.symbol),
     side: requireSide(fields.side),
     executed_at: normalizeExecutedAt(fields.executedAt ?? fields.executed_at),
