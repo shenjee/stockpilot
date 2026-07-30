@@ -50,6 +50,8 @@ class _ConcreteLifecycleFactory:
         self.executor = BoundedComputationExecutor(capacity=16, worker_count=1)
         self.live_sessions: list[_BackgroundLiveSession] = []
         self.replay_sessions: list[ReplaySession] = []
+        self.replay_events: list[dict] = []
+        self.trade_events: list[dict] = []
 
     def create_live(self, spec: SessionSpec) -> _BackgroundLiveSession:
         session = _BackgroundLiveSession(spec)
@@ -67,6 +69,8 @@ class _ConcreteLifecycleFactory:
             clock=SimulatedMonotonicClock(),
             scheduler=NullPlaybackScheduler(),
             analyzer=_CachingAnalyzer(_default_analyze_5m),
+            on_event=self.replay_events.append,
+            on_trade_event=self.trade_events.append,
         )
         self.replay_sessions.append(session)
         return session
@@ -162,6 +166,10 @@ class LiveReplayLifecycleAcceptanceTests(unittest.TestCase):
         )
         self.assertTrue(replay.snapshot()["market"]["bars_1m"])
         self.assertEqual(len(replay.simulated_trades), 1)
+        self.assertEqual(
+            len(self.factory.trade_events[-1]["payload"]["trades"]),
+            1,
+        )
 
         returned = self.coordinator.set_mode(AppMode.LIVE)
 
@@ -169,6 +177,18 @@ class LiveReplayLifecycleAcceptanceTests(unittest.TestCase):
         self.assertTrue(replay.retired)
         self.assertEqual(replay.state, "retired")
         self.assertEqual(replay.simulated_trades, ())
+        self.assertEqual(
+            self.factory.trade_events[-1]["payload"]["trades"],
+            [],
+        )
+        self.assertEqual(
+            self.factory.replay_events[-1]["event_type"],
+            "session_status",
+        )
+        self.assertEqual(
+            self.factory.replay_events[-1]["payload"]["state"],
+            "retired",
+        )
         with self.assertRaisesRegex(RuntimeError, "retired"):
             replay.snapshot()
 

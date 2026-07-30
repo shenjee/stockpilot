@@ -10,8 +10,11 @@ Renderer event-gap/rebaseline behavior is covered by
 from __future__ import annotations
 
 import copy
-from datetime import datetime
+from datetime import date, datetime, time
+from decimal import Decimal
+from enum import Enum
 import json
+from types import MappingProxyType
 import unittest
 
 from packages.t0assistant.runtime import (
@@ -22,6 +25,7 @@ from packages.t0assistant.runtime import (
     ReplaySession,
     SimulatedMonotonicClock,
 )
+from packages.t0assistant.runtime.replay_session import _mutable_json_value
 from packages.t0assistant.tests.fixtures.replay_fixtures import (
     SYMBOL,
     TRADE_DATE,
@@ -178,6 +182,44 @@ class ReplayEndToEndAcceptanceTests(unittest.TestCase):
                 for event, following in zip(events, events[1:])
             )
         )
+
+    def test_frozen_warning_details_are_recursively_json_safe(self) -> None:
+        class WarningState(str, Enum):
+            DEGRADED = "degraded"
+
+        frozen = MappingProxyType(
+            {
+                "state": WarningState.DEGRADED,
+                "ratio": Decimal("1.25"),
+                "observed_at": datetime(2026, 7, 24, 10, 23, 45),
+                "trade_date": date(2026, 7, 24),
+                "market_time": time(10, 23, 45),
+                "nested": (
+                    MappingProxyType({"amount": Decimal("10.01")}),
+                ),
+            }
+        )
+
+        thawed = _mutable_json_value(frozen)
+
+        self.assertEqual(
+            thawed,
+            {
+                "state": "degraded",
+                "ratio": 1.25,
+                "observed_at": "2026-07-24 10:23:45",
+                "trade_date": "2026-07-24",
+                "market_time": "10:23:45",
+                "nested": [{"amount": 10.01}],
+            },
+        )
+        # ``allow_nan=False`` proves the result is valid JSON rather than only
+        # serializable by Python's permissive NaN extension.
+        json.dumps(thawed, allow_nan=False)
+
+    def test_non_finite_warning_decimal_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must be finite"):
+            _mutable_json_value(Decimal("NaN"))
 
     def test_five_minute_fallback_keeps_intraday_empty_and_is_deterministic(
         self,

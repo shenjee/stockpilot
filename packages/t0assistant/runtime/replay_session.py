@@ -34,7 +34,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import date, datetime, time
+from decimal import Decimal
+from enum import Enum
 from threading import Event, RLock
 from typing import Any, Callable
 from uuid import uuid4
@@ -871,7 +873,14 @@ class ReplaySession:
             if self._retired:
                 return
             self._retired = True
+            had_simulated_trades = bool(self._simulated_trades)
             self._simulated_trades.clear()
+            if had_simulated_trades:
+                # ``trades_changed`` is already the authoritative Session trade
+                # snapshot seam.  Publish the empty fact before the terminal
+                # status so consumers that still retain this Session cannot
+                # keep a stale Replay marker.
+                self._publish_simulated_trades_locked()
             # A retired Replay is one-shot state, not a historical snapshot
             # cache.  Drop the last projection so no caller retaining the
             # Python object can recover the retired picture/progress through
@@ -1357,6 +1366,18 @@ def _mutable_json_value(value: Any) -> Any:
         return {key: _mutable_json_value(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_mutable_json_value(item) for item in value]
+    if isinstance(value, Enum):
+        return _mutable_json_value(value.value)
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            raise ValueError("Replay warning Decimal values must be finite")
+        return float(value)
+    if isinstance(value, datetime):
+        return value.strftime(MARKET_TIMESTAMP_FORMAT)
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, time):
+        return value.isoformat(timespec="seconds")
     return value
 
 
