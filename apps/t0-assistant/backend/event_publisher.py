@@ -105,6 +105,26 @@ class EventPublisher:
             queue.put(envelope)
         return revision
 
+    def publish_envelope(self, envelope: dict[str, Any]) -> None:
+        """Broadcast an already-revisioned Session envelope.
+
+        Live/Replay revision authorities own their per-Session counters.  This
+        transport method deliberately does not claim a service-scoped revision
+        or rewrite the envelope.
+        """
+
+        if envelope.get("schema_version") != "t0_app_v1":
+            raise ValueError("event envelope must use t0_app_v1")
+        if envelope.get("service_generation") != self._service_generation:
+            raise ValueError("event service_generation must match the publisher")
+        session_id = envelope.get("session_id")
+        if not isinstance(session_id, str) or not session_id:
+            raise ValueError("pre-revisioned envelopes require a Session")
+        with self._lock:
+            subscribers = list(self._subscribers)
+        for queue in subscribers:
+            queue.put(dict(envelope))
+
     # -- TradeEventPublisher Protocol -----------------------------------
 
     def publish_trades_changed(

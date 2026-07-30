@@ -596,7 +596,7 @@ test("gateway falls back to default timeout for commands without per-command ove
   gateway.close();
 });
 
-test("managed Python service authenticates transport and rejects unavailable domain commands explicitly", async () => {
+test("managed Python service authenticates transport and rejects an unknown Live Session explicitly", async () => {
   const host = new PythonServiceHost({
     generation: 6,
   });
@@ -631,7 +631,7 @@ test("managed Python service authenticates transport and rejects unavailable dom
     assert.equal(status.service_generation, 6);
     assert.equal(event.event_type, "service_status");
     assert.equal(rejection.accepted, false);
-    assert.equal(rejection.error.error_code, "service_unavailable");
+    assert.equal(rejection.error.error_code, "session_not_found");
     assert.equal(Object.hasOwn(status, "port"), false);
     assert.equal(Object.hasOwn(status, "token"), false);
   } finally {
