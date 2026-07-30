@@ -27,6 +27,11 @@ declare global {
     createTrade(request: unknown): Promise<unknown>;
     updateTrade(request: unknown): Promise<unknown>;
     deleteTrade(request: unknown): Promise<unknown>;
+    listFeePlans(request: unknown): Promise<unknown>;
+    createFeePlan(request: unknown): Promise<unknown>;
+    updateFeePlan(request: unknown): Promise<unknown>;
+    deleteFeePlan(request: unknown): Promise<unknown>;
+    calculateTradeFee(request: unknown): Promise<unknown>;
     getPreferences(request: unknown): Promise<unknown>;
     savePreferences(request: unknown): Promise<unknown>;
     getHistoricalSnapshot(request: unknown): Promise<unknown>;

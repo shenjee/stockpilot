@@ -1,16 +1,9 @@
 /**
  * Renderer-side fee-plan values, validation and an in-memory client port.
  *
- * There is no frozen transport contract for fee plans yet (the frozen
- * `StockPilotBridge` / `app-v1.schema.json` cover trades and preferences
- * only). Per T0-041's non-goals, this issue does not add a public contract or
- * backend CRUD. The UI therefore talks to a `FeePlanClient` port backed by an
- * in-memory store seeded with the editable "申万宏源（示例）" default plan
- * (matching T0-039's `FeePlanService.DEFAULT_PLAN_ID`). The in-memory client is
- * a fixture/test stand-in only - it must not be wired as the production path,
- * because fee plans are persisted by the Python config repository
- * (`architecture.md` §5.6). When a fee-plan transport contract lands, a
- * bridge-backed client replaces this one without touching the UI.
+ * App-v1 owns the persistent fee-plan command surface. Production uses the
+ * bridge-backed client below; the in-memory client remains a fixture/test
+ * stand-in seeded with the same editable "申万宏源（示例）" default plan.
  *
  * This module owns the fee-plan *data model* (value + validation) only. The
  * fee *calculation rule* is NOT reimplemented here - it belongs to
@@ -35,6 +28,15 @@ export class FeePlanValidationError extends Error {
     this.name = "FeePlanValidationError";
     this.field = field;
     this.message = message;
+  }
+}
+
+export class FeePlanClientError extends Error {
+  constructor(error) {
+    super(error?.message ?? "收费方案操作未完成");
+    this.name = "FeePlanClientError";
+    this.error = error;
+    this.retryable = Boolean(error?.retryable);
   }
 }
 
@@ -215,5 +217,60 @@ export function createInMemoryFeePlanClient({ seed = true } = {}) {
     createPlan,
     updatePlan,
     deletePlan,
+  });
+}
+
+/** Persistent production client over the App-v1 Safe Bridge. */
+export function createFeePlanClient(bridge, options = {}) {
+  if (!bridge || typeof bridge.listFeePlans !== "function") {
+    throw new TypeError("FeePlanClient requires a fee-plan capable bridge");
+  }
+  const makeRequestId =
+    options.makeRequestId ??
+    ((command) =>
+      `${command}-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`}`);
+  const request = (command, payload) => ({
+    schema_version: "t0_app_v1",
+    request_id: makeRequestId(command),
+    command,
+    session_id: null,
+    payload,
+  });
+  async function invoke(method, command, payload) {
+    const response = await bridge[method](request(command, payload));
+    if (!response?.accepted) {
+      throw new FeePlanClientError(response?.error);
+    }
+    return response.data;
+  }
+  return Object.freeze({
+    async listPlans() {
+      const data = await invoke("listFeePlans", "list_fee_plans", {});
+      return (data?.fee_plans ?? []).map(createFeePlan);
+    },
+    async getPlan(feePlanId) {
+      const plans = await this.listPlans();
+      return plans.find((plan) => plan.fee_plan_id === feePlanId) ?? null;
+    },
+    async createPlan(input) {
+      const plan = createFeePlan(input);
+      const data = await invoke("createFeePlan", "create_fee_plan", {
+        fee_plan: plan,
+      });
+      return createFeePlan(data.fee_plan);
+    },
+    async updatePlan(input) {
+      const plan = createFeePlan(input);
+      const data = await invoke("updateFeePlan", "update_fee_plan", {
+        fee_plan: plan,
+      });
+      return createFeePlan(data.fee_plan);
+    },
+    async deletePlan(feePlanId) {
+      const data = await invoke("deleteFeePlan", "delete_fee_plan", {
+        fee_plan_id: nonBlankString(feePlanId, "fee_plan_id"),
+      });
+      return data?.deleted === true;
+    },
   });
 }
