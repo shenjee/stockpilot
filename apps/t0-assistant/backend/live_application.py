@@ -25,12 +25,15 @@ from packages.t0assistant.repositories import (
 )
 from packages.t0assistant.runtime import (
     AppCoordinator,
+    BranchingLiveInput,
     CoordinatorStateError,
     CzscAnalyzerPort,
-    LiveInitialInputPort,
+    LiveBranchDataPort,
     LiveDataPreparator,
+    LiveIncrementalUpdate,
     LiveProjectionStore,
-    LiveSession,
+    LiveRefreshKind,
+    LiveRuntimeSession,
     SessionSpec,
 )
 
@@ -41,41 +44,73 @@ except ImportError:
 
 
 class LiveSessionFactory:
-    """Create real ``LiveSession`` instances over an injected market port."""
+    """Create Live initial-load plus production refresh runtimes."""
 
     def __init__(
         self,
-        initial_input_port: LiveInitialInputPort,
+        input_port: LiveBranchDataPort,
         *,
         analyzer: CzscAnalyzerPort | None = None,
+        auto_poll: bool = True,
     ) -> None:
-        self._initial_input_port = initial_input_port
+        self._input_port = input_port
         self._analyzer = analyzer
+        self._auto_poll = auto_poll
         self._candidate_handler: Callable[[Any], None] | None = None
+        self._incremental_handler: Callable[[LiveIncrementalUpdate], object] | None = None
+        self._refresh_failure_handler: (
+            Callable[[SessionSpec, LiveRefreshKind, BaseException], None] | None
+        ) = None
         self._state_handler: Callable[[SessionSpec, str, str], None] | None = None
+        self._latest_session: LiveRuntimeSession | None = None
+
+    @property
+    def latest_session(self) -> LiveRuntimeSession | None:
+        return self._latest_session
 
     def bind(
         self,
         *,
         candidate_handler: Callable[[Any], None],
+        incremental_handler: Callable[[LiveIncrementalUpdate], object],
+        refresh_failure_handler: Callable[
+            [SessionSpec, LiveRefreshKind, BaseException], None
+        ],
         state_handler: Callable[[SessionSpec, str, str], None],
     ) -> None:
         self._candidate_handler = candidate_handler
+        self._incremental_handler = incremental_handler
+        self._refresh_failure_handler = refresh_failure_handler
         self._state_handler = state_handler
 
-    def create_live(self, spec: SessionSpec) -> LiveSession:
-        if self._candidate_handler is None or self._state_handler is None:
+    def create_live(self, spec: SessionSpec) -> LiveRuntimeSession:
+        if (
+            self._candidate_handler is None
+            or self._incremental_handler is None
+            or self._refresh_failure_handler is None
+            or self._state_handler is None
+        ):
             raise RuntimeError("LiveSessionFactory must be bound before use")
-        return LiveSession(
+        runtime_input = BranchingLiveInput(
+            self._input_port,
+            analyzer=self._analyzer,
+        )
+        session = LiveRuntimeSession(
             spec,
-            self._initial_input_port,
+            runtime_input,
             on_snapshot_candidate=self._candidate_handler,
+            on_incremental_update=self._incremental_handler,
+            on_refresh_failure=lambda kind, failure: self._refresh_failure_handler(
+                spec, kind, failure
+            ),
             on_state_change=lambda state, reason: self._state_handler(
                 spec, state, reason
             ),
             analyzer=self._analyzer,
-            auto_start=False,
+            auto_poll=self._auto_poll,
         )
+        self._latest_session = session
+        return session
 
     def create_replay(self, spec: SessionSpec) -> Any:
         raise CoordinatorStateError(
@@ -105,6 +140,8 @@ class LiveApplicationApi:
         )
         session_factory.bind(
             candidate_handler=self._accept_candidate,
+            incremental_handler=self._accept_incremental,
+            refresh_failure_handler=self._on_refresh_failure,
             state_handler=self._on_state_change,
         )
         if restore_on_startup:
@@ -313,6 +350,42 @@ class LiveApplicationApi:
         if accepted is not None:
             self._event_publisher.publish_envelope(accepted.to_envelope())
 
+    def _accept_incremental(self, update: LiveIncrementalUpdate) -> None:
+        accepted = self._store.accept_incremental(update)
+        if accepted is not None:
+            self._event_publisher.publish_envelope(accepted.to_envelope())
+
+    def _on_refresh_failure(
+        self,
+        spec: SessionSpec,
+        kind: LiveRefreshKind,
+        failure: BaseException,
+    ) -> None:
+        operation_id = f"live-refresh-{kind.value}-{spec.session_id}"
+        capabilities = {
+            LiveRefreshKind.QUOTE: "live",
+            LiveRefreshKind.ONE_MINUTE: "intraday_chart",
+            LiveRefreshKind.OFFICIAL_FIVE_MINUTE: "five_minute_chart",
+        }
+        accepted = self._store.accept_operation_failure(
+            session_id=spec.session_id,
+            generation=spec.generation,
+            operation_id=operation_id,
+            payload={
+                "error_code": "calculation_failed",
+                "category": "calculation",
+                "severity": "error",
+                "retryable": True,
+                "affected_capability": capabilities[kind],
+                "message": "Live 行情刷新失败，请重试",
+                "request_id": operation_id,
+                "operation_id": operation_id,
+                "details": {"refresh_kind": kind.value},
+            },
+        )
+        if accepted is not None:
+            self._event_publisher.publish_envelope(accepted.to_envelope())
+
     def _on_state_change(
         self,
         spec: SessionSpec,
@@ -481,14 +554,15 @@ def create_live_application_api(
         app_db_path or paths.db_dir / "t0_assistant.sqlite"
     )
     preferences = PreferenceService(SqlitePreferenceRepository(database))
+    preparator = LiveDataPreparator(
+        market_data,
+        context,
+        quote_reader=resolved_provider,
+    )
     api = LiveApplicationApi(
         service_generation=service_generation,
         session_factory=LiveSessionFactory(
-            LiveDataPreparator(
-                market_data,
-                context,
-                quote_reader=resolved_provider,
-            )
+            preparator
         ),
         preference_service=preferences,
         event_publisher=event_publisher,

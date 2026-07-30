@@ -288,6 +288,58 @@ class LiveProjectionStore:
             return None
         return event_box[0] if event_box else None
 
+    def accept_operation_failure(
+        self,
+        *,
+        session_id: str,
+        generation: int,
+        operation_id: str,
+        payload: dict[str, Any],
+    ) -> LiveAcceptedEvent | None:
+        """Advance revision for a recoverable failure without changing facts."""
+
+        if not session_id or not operation_id:
+            raise ValueError("session_id and operation_id must be non-empty")
+        if not isinstance(payload, dict):
+            raise TypeError("payload must be a dictionary")
+        event_box: list[LiveAcceptedEvent] = []
+
+        def commit() -> None:
+            with self._lock:
+                session_key = (session_id, generation)
+                if (
+                    self._current_session != session_key
+                    or self._current_payload is None
+                    or self._current_revision is None
+                ):
+                    return
+                revision = self._current_revision + 1
+                staged = copy.deepcopy(self._current_payload)
+                staged["session"]["revision"] = revision
+                self._current_payload = staged
+                self._current_revision = revision
+                event_box.append(
+                    LiveAcceptedEvent(
+                        schema_version=SCHEMA_VERSION,
+                        service_generation=self._service_generation,
+                        session_id=session_id,
+                        revision=revision,
+                        event_type="operation_failed",
+                        operation_id=operation_id,
+                        payload=copy.deepcopy(payload),
+                    )
+                )
+
+        accepted = self._coordinator.commit_if_accepted(
+            session_type=SessionType.LIVE,
+            session_id=session_id,
+            generation=generation,
+            commit=commit,
+        )
+        if not accepted:
+            return None
+        return event_box[0] if event_box else None
+
     def get_live_snapshot(
         self,
         *,

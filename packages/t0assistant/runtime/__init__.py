@@ -84,6 +84,11 @@ from .live_session import (
     LiveSessionError,
     LiveSessionValidationError,
 )
+from .live_runtime import (
+    BranchingLiveInput,
+    LiveBranchDataPort,
+    LiveRuntimeSession,
+)
 from .projection import (
     TargetTimeMarketProjection,
     build_dynamic_daily_bar,
@@ -127,6 +132,7 @@ __all__ = [
     "AppCoordinator",
     "AppMode",
     "BoundedComputationExecutor",
+    "BranchingLiveInput",
     "CancelReason",
     "ClockPort",
     "ComputationExecutorClosedError",
@@ -153,6 +159,7 @@ __all__ = [
     "LiveAcceptedEvent",
     "LiveIncrementalUpdate",
     "LiveInitialInputPort",
+    "LiveBranchDataPort",
     "LiveMarketDataPort",
     "LivePreparationConfig",
     "LiveProjectionSnapshotUnavailable",
@@ -169,6 +176,7 @@ __all__ = [
     "LiveRefreshResult",
     "LiveRefreshScheduler",
     "LiveRefreshValidationError",
+    "LiveRuntimeSession",
     "LiveSession",
     "LiveSessionError",
     "LiveSessionValidationError",

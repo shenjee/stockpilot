@@ -8,6 +8,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from datetime import datetime
 from urllib.request import Request, urlopen
 
 
@@ -22,7 +23,7 @@ from packages.t0assistant.repositories import (  # noqa: E402
     SqlitePreferenceRepository,
     open_app_database,
 )
-from test_live_application import _DeterministicLiveInput, _chan  # noqa: E402
+from test_live_application import _DeterministicLiveInput, _bar, _chan  # noqa: E402
 
 
 class LiveEndToEndAcceptanceTests(unittest.TestCase):
@@ -31,15 +32,17 @@ class LiveEndToEndAcceptanceTests(unittest.TestCase):
         self.database = open_app_database(Path(self.tempdir.name) / "app.sqlite")
         self.publisher = EventPublisher(service_generation=7)
         self.events = self.publisher.subscribe()
-        input_port = _DeterministicLiveInput(
+        self.input_port = _DeterministicLiveInput(
             [object(), RuntimeError("injected provider failure"), object()]
+        )
+        self.factory = LiveSessionFactory(
+            self.input_port,
+            analyzer=lambda bars, symbol: _chan(symbol),
+            auto_poll=False,
         )
         self.app = LiveApplicationApi(
             service_generation=7,
-            session_factory=LiveSessionFactory(
-                input_port,
-                analyzer=lambda bars, symbol: _chan(symbol),
-            ),
+            session_factory=self.factory,
             preference_service=PreferenceService(
                 SqlitePreferenceRepository(self.database)
             ),
@@ -127,6 +130,38 @@ class LiveEndToEndAcceptanceTests(unittest.TestCase):
             replacement["session_id"],
         )
         self.assertNotEqual(replacement["session_id"], baseline["session_id"])
+
+        self.input_port.queue_refresh(
+            "1m",
+            [
+                _bar("2026-07-24 09:31:00", 10.2),
+                _bar("2026-07-24 09:32:00", 10.3),
+            ],
+        )
+        runtime = self.factory.latest_session
+        assert runtime is not None
+        runtime.wait_for_completion(1)
+        runtime.refresh_scheduler.retry(
+            "one_minute",
+            datetime(2026, 7, 24, 9, 32),
+        )
+        updates = [self.events.get(timeout=1) for _ in range(3)]
+        refreshed = self.command(
+            "get_live_snapshot",
+            recovered["data"]["session_id"],
+            {},
+        )
+
+        self.assertEqual(updates[0]["event_type"], "market_update")
+        self.assertEqual(updates[0]["payload"]["target"], "bars_1m")
+        self.assertEqual(
+            refreshed["data"]["market"]["bars_1m"][-1]["timestamp"],
+            "2026-07-24 09:32:00",
+        )
+        self.assertEqual(
+            refreshed["data"]["session"]["revision"],
+            updates[-1]["revision"],
+        )
 
 
 if __name__ == "__main__":

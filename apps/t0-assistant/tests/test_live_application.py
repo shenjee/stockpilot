@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 import sys
 import tempfile
@@ -25,6 +25,7 @@ from packages.t0assistant.repositories import (  # noqa: E402
 )
 from packages.t0assistant.runtime import (  # noqa: E402
     AppMode,
+    LiveRefreshKind,
     PipelineMarketInput,
 )
 from packages.t0assistant.runtime.live_session import PreparedLiveWarmup  # noqa: E402
@@ -85,6 +86,8 @@ class _DeterministicLiveInput:
     def __init__(self, outcomes: list[object] | None = None) -> None:
         self.outcomes = list(outcomes or [])
         self.requests = []
+        self.refresh_requests = []
+        self.refresh_outcomes = {"quote": [], "1m": [], "5m": []}
         self.context = MarketContextService(["2026-07-23", "2026-07-24"])
 
     def prepare(self, spec, *, minimum_preheat_5m):
@@ -113,6 +116,31 @@ class _DeterministicLiveInput:
             market_input_port=_MarketInput(target, market_input),
         )
 
+    def queue_refresh(self, branch: str, *outcomes: object) -> None:
+        self.refresh_outcomes[branch].extend(outcomes)
+
+    def load_refresh_bars(self, spec, *, timeframe):
+        self.refresh_requests.append(timeframe)
+        return self._refresh_value(
+            timeframe,
+            (
+                [_bar("2026-07-24 09:31:00", 10.2)]
+                if timeframe == "1m"
+                else []
+            ),
+        )
+
+    def load_refresh_quotes(self, spec):
+        self.refresh_requests.append("quote")
+        return self._refresh_value("quote", [])
+
+    def _refresh_value(self, branch, default):
+        queued = self.refresh_outcomes[branch]
+        value = queued.pop(0) if queued else default
+        if isinstance(value, BaseException):
+            raise value
+        return value
+
 
 class LiveApplicationTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -135,12 +163,15 @@ class LiveApplicationTests(unittest.TestCase):
         *,
         restore_on_startup: bool = False,
     ) -> LiveApplicationApi:
+        factory = LiveSessionFactory(
+            input_port,
+            analyzer=lambda bars, symbol: _chan(symbol),
+            auto_poll=False,
+        )
+        self.factory = factory
         return LiveApplicationApi(
             service_generation=7,
-            session_factory=LiveSessionFactory(
-                input_port,
-                analyzer=lambda bars, symbol: _chan(symbol),
-            ),
+            session_factory=factory,
             preference_service=self.preferences,
             event_publisher=self.publisher,
             restore_on_startup=restore_on_startup,
@@ -188,9 +219,13 @@ class LiveApplicationTests(unittest.TestCase):
         self.assertEqual(republished["payload"], first["payload"])
 
     def test_switch_retires_old_session_and_live_remains_active_in_replay_mode(self) -> None:
-        app = self._app(_DeterministicLiveInput())
+        input_port = _DeterministicLiveInput()
+        app = self._app(input_port)
         first = app.select_security(request_id="first", symbol="sh.600000")
         self.events.get(timeout=1)
+        old_runtime = self.factory.latest_session
+        assert old_runtime is not None
+        old_runtime.wait_for_completion(1)
         old_id = first["data"]["session_id"]
 
         second = app.select_security(request_id="second", symbol="sz.000001")
@@ -206,8 +241,28 @@ class LiveApplicationTests(unittest.TestCase):
                 generation=1,
             )
         )
+        self.assertTrue(old_runtime.retired)
+        self.assertTrue(old_runtime.refresh_scheduler.retired)
         app.coordinator.set_mode(AppMode.REPLAY)
         self.assertEqual(app.coordinator.snapshot.live_session, current)
+
+        input_port.queue_refresh(
+            "1m",
+            [
+                _bar("2026-07-24 09:31:00", 10.2),
+                _bar("2026-07-24 09:32:00", 10.3),
+            ],
+        )
+        current_runtime = self.factory.latest_session
+        assert current_runtime is not None
+        current_runtime.wait_for_completion(1)
+        current_runtime.refresh_scheduler.retry(
+            LiveRefreshKind.ONE_MINUTE,
+            datetime(2026, 7, 24, 9, 32),
+        )
+        refresh_event = self.events.get(timeout=1)
+        self.assertEqual(refresh_event["event_type"], "market_update")
+        self.assertEqual(refresh_event["payload"]["target"], "bars_1m")
 
     def test_failed_rebuild_keeps_last_snapshot_and_manual_retry_recovers_cleanly(self) -> None:
         input_port = _DeterministicLiveInput(
@@ -241,6 +296,79 @@ class LiveApplicationTests(unittest.TestCase):
         self.assertTrue(recovered["accepted"])
         self.assertEqual(recovered_event["event_type"], "workbench_snapshot")
         self.assertNotEqual(recovered_event["session_id"], baseline["session_id"])
+
+    def test_refresh_failure_preserves_projection_and_other_branches_advance(self) -> None:
+        input_port = _DeterministicLiveInput()
+        input_port.queue_refresh(
+            "quote",
+            RuntimeError("quote unavailable"),
+        )
+        input_port.queue_refresh(
+            "1m",
+            [
+                _bar("2026-07-24 09:31:00", 10.2),
+                _bar("2026-07-24 09:32:00", 10.3),
+            ],
+        )
+        input_port.queue_refresh(
+            "5m",
+            [_bar("2026-07-24 09:35:00", 10.4)],
+        )
+        app = self._app(input_port)
+        selected = app.select_security(request_id="select", symbol="sh.600000")
+        baseline = self.events.get(timeout=1)
+        runtime = self.factory.latest_session
+        assert runtime is not None
+        runtime.wait_for_completion(1)
+
+        states = runtime.run_refresh_due(datetime(2026, 7, 24, 9, 35))
+        emitted = [self.events.get(timeout=1) for _ in range(7)]
+
+        self.assertIsNotNone(states[LiveRefreshKind.QUOTE].last_failure)
+        self.assertEqual(
+            states[LiveRefreshKind.ONE_MINUTE].latest_data_time,
+            datetime(2026, 7, 24, 9, 32),
+        )
+        self.assertEqual(
+            states[LiveRefreshKind.OFFICIAL_FIVE_MINUTE].latest_data_time,
+            datetime(2026, 7, 24, 9, 35),
+        )
+        failure = next(e for e in emitted if e["event_type"] == "operation_failed")
+        self.assertEqual(failure["revision"], baseline["revision"] + 1)
+        snapshot = app.get_live_snapshot(
+            request_id="snapshot",
+            session_id=selected["data"]["session_id"],
+        )["data"]
+        self.assertEqual(snapshot["session"]["revision"], emitted[-1]["revision"])
+        self.assertEqual(snapshot["market"]["bars_1m"][-1]["timestamp"], "2026-07-24 09:32:00")
+
+        recovered = app.retry_live(
+            request_id="retry-refresh",
+            session_id=selected["data"]["session_id"],
+        )
+        replacement = self.events.get(timeout=1)
+        self.assertTrue(recovered["accepted"])
+        self.assertEqual(replacement["event_type"], "workbench_snapshot")
+        self.assertTrue(runtime.retired)
+        self.assertTrue(runtime.refresh_scheduler.retired)
+
+    def test_no_new_official_five_minute_is_successful_noop(self) -> None:
+        input_port = _DeterministicLiveInput()
+        app = self._app(input_port)
+        app.select_security(request_id="select", symbol="sh.600000")
+        self.events.get(timeout=1)
+        runtime = self.factory.latest_session
+        assert runtime is not None
+        runtime.wait_for_completion(1)
+        before = app.store.current_revision
+
+        state = runtime.refresh_scheduler.retry(
+            LiveRefreshKind.OFFICIAL_FIVE_MINUTE,
+            datetime(2026, 7, 24, 9, 32),
+        )
+
+        self.assertIsNone(state.last_failure)
+        self.assertEqual(app.store.current_revision, before)
 
 if __name__ == "__main__":
     unittest.main()

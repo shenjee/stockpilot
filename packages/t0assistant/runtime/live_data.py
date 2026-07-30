@@ -105,16 +105,8 @@ class LiveDataPreparator(LiveInitialInputPort):
             raise LiveDataError("minimum_preheat_5m must be positive")
 
         resolved_symbol, code, market = _parse_symbol(spec.symbol)
-        session_validator = (
-            None
-            if self._session_validator_factory is None
-            else self._session_validator_factory(spec)
-        )
-        observed_now = self._clock()
-        if not isinstance(observed_now, datetime) or observed_now.tzinfo is not None:
-            raise LiveDataError(
-                "clock must return a naive Asia/Shanghai datetime"
-            )
+        session_validator = self._session_validator(spec)
+        observed_now = self._resolve_observed_now()
 
         session = self._market_context.require_session(observed_now.date(), market)
         trade_date_str = session.trade_date.isoformat()
@@ -177,6 +169,63 @@ class LiveDataPreparator(LiveInitialInputPort):
             target_time=target_time,
             market_input_port=market_input_port,
         )
+
+    def load_refresh_bars(
+        self,
+        spec: SessionSpec,
+        *,
+        timeframe: str,
+    ) -> tuple[Mapping[str, Any], ...]:
+        """Read one normalized intraday branch without coupling refreshes."""
+
+        if timeframe not in {"1m", "5m"}:
+            raise LiveDataError("refresh timeframe must be '1m' or '5m'")
+        _, code, market = self._refresh_identity(spec)
+        observed_now = self._resolve_observed_now()
+        session = self._market_context.require_session(observed_now.date(), market)
+        return self._load_target_day_bars(
+            code=code,
+            market=market,
+            trade_date=session.trade_date.isoformat(),
+            timeframe=timeframe,
+            session_validator=self._session_validator(spec),
+        )
+
+    def load_refresh_quotes(
+        self,
+        spec: SessionSpec,
+    ) -> tuple[Mapping[str, Any], ...]:
+        """Read only the normalized quote branch."""
+
+        _, code, market = self._refresh_identity(spec)
+        return self._load_quote_snapshots(
+            code=code,
+            market=market,
+            suppress_errors=False,
+        )
+
+    def _refresh_identity(self, spec: SessionSpec) -> tuple[str, str, str]:
+        if not isinstance(spec, SessionSpec):
+            raise TypeError("spec must be a SessionSpec")
+        if spec.session_type is not SessionType.LIVE:
+            raise LiveDataError("LiveDataPreparator requires a live SessionSpec")
+        return _parse_symbol(spec.symbol)
+
+    def _resolve_observed_now(self) -> datetime:
+        observed_now = self._clock()
+        if not isinstance(observed_now, datetime) or observed_now.tzinfo is not None:
+            raise LiveDataError(
+                "clock must return a naive Asia/Shanghai datetime"
+            )
+        return observed_now
+
+    def _session_validator(
+        self,
+        spec: SessionSpec,
+    ) -> Callable[[], bool] | None:
+        if self._session_validator_factory is None:
+            return None
+        return self._session_validator_factory(spec)
 
     def _load_preheat_5m(
         self,
@@ -267,13 +316,16 @@ class LiveDataPreparator(LiveInitialInputPort):
         *,
         code: str,
         market: str,
+        suppress_errors: bool = True,
     ) -> tuple[Mapping[str, Any], ...]:
         if self._quote_reader is None:
             return ()
         try:
             result = self._quote_reader.realtime_result(code, markets=[market])
         except Exception:
-            return ()
+            if suppress_errors:
+                return ()
+            raise
         payload = getattr(result, "data", result)
         if isinstance(payload, Mapping):
             rows = [payload]
