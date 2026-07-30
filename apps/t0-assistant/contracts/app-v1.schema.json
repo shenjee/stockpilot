@@ -247,6 +247,86 @@
         {"if": {"properties": {"accepted": {"const": false}}}, "then": {"properties": {"operation_id": {"type": "null"}, "data": {"type": "null"}, "error": {"$ref": "#/$defs/application_error"}}}}
       ]
     },
+    "historical_workbench_snapshot": {
+      "allOf": [
+        {"$ref": "https://stockpilot.local/contracts/t0-logic-v1.schema.json#/$defs/workbench_snapshot"},
+        {
+          "required": ["session", "replay"],
+          "properties": {
+            "session": {
+              "properties": {
+                "session_type": {"const": "historical"},
+                "trade_date": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+                "state": {"const": "ready"}
+              }
+            },
+            "replay": {"type": "null"}
+          }
+        }
+      ]
+    },
+    "historical_snapshot_success_response": {
+      "allOf": [
+        {"$ref": "#/$defs/command_response"},
+        {
+          "properties": {
+            "accepted": {"const": true},
+            "operation_id": {"type": "null"},
+            "data": {"$ref": "#/$defs/historical_workbench_snapshot"},
+            "error": {"type": "null"}
+          }
+        }
+      ]
+    },
+    "historical_snapshot_error": {
+      "oneOf": [
+        {
+          "allOf": [
+            {"$ref": "#/$defs/application_error"},
+            {
+              "properties": {
+                "error_code": {"const": "historical_data_unavailable"},
+                "category": {"const": "data"},
+                "retryable": {"const": true},
+                "affected_capability": {"const": "historical_chart"}
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {"$ref": "#/$defs/application_error"},
+            {
+              "properties": {
+                "error_code": {"const": "service_unavailable"},
+                "category": {"const": "service"},
+                "retryable": {"const": true},
+                "affected_capability": {"const": "historical_chart"}
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "historical_snapshot_error_response": {
+      "allOf": [
+        {"$ref": "#/$defs/command_response"},
+        {
+          "properties": {
+            "accepted": {"const": false},
+            "operation_id": {"type": "null"},
+            "data": {"type": "null"},
+            "error": {"$ref": "#/$defs/historical_snapshot_error"}
+          }
+        }
+      ]
+    },
+    "historical_snapshot_response": {
+      "oneOf": [
+        {"$ref": "#/$defs/historical_snapshot_success_response"},
+        {"$ref": "#/$defs/historical_snapshot_error_response"}
+      ]
+    },
     "live_session_status_payload": {
       "type": "object",
       "additionalProperties": false,

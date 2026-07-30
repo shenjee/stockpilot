@@ -82,13 +82,16 @@ paths, and SQLite implementation fields may not cross this boundary.
   lifecycle, no playback cursor, and no incremental events.
 - The response `data` is a complete `workbench_snapshot` whose
   `session.session_type` is `"historical"`, `state` is `"ready"`, and
-  `replay` is `null`. The renderer treats it as an authoritative full
-  replacement of the current workbench view, exactly like a Live snapshot.
+  `replay` is `null`; `operation_id` is also `null`. The reusable
+  `historical_snapshot_success_response` definition enforces those semantics.
+  The renderer treats the result as an authoritative full replacement of the
+  current workbench view, exactly like a Live snapshot.
 - Failures are delivered synchronously in `command_response.error` using the
-  `historical_chart` `affected_capability`. `historical_data_unavailable`
-  means the provider could not supply usable data for the requested date;
-  `service_unavailable` means an unexpected failure inside the snapshot
-  pipeline.
+  `historical_snapshot_error_response` definition. Both are retryable and
+  affect `historical_chart`: `historical_data_unavailable` has category `data`
+  and means the provider could not supply usable data for the requested date;
+  `service_unavailable` has category `service` and means an unexpected failure
+  inside the snapshot pipeline.
 
 ## Contract evolution
 
@@ -99,4 +102,3 @@ existing command or event semantics, so the schema identifier remains
 `t0_app_v1`. Incompatible changes (removing commands, changing payload
 shapes, or altering event delivery guarantees) still require a new schema
 identifier.
-
