@@ -359,6 +359,8 @@ class ReplaySession:
         """
 
         with self._lock:
+            if self._retired:
+                raise ReplaySessionStateError("session is retired")
             if self._last_pipeline_result is None:
                 raise ReplaySessionStateError(
                     "no snapshot available before the ready computation"
@@ -870,6 +872,11 @@ class ReplaySession:
                 return
             self._retired = True
             self._simulated_trades.clear()
+            # A retired Replay is one-shot state, not a historical snapshot
+            # cache.  Drop the last projection so no caller retaining the
+            # Python object can recover the retired picture/progress through
+            # ``snapshot()`` after the coordinator has returned to Live.
+            self._last_pipeline_result = None
             # Replay v1.0: retired is the terminal state, even from failed.
             self._state = "retired"
             self._publish_session_status_locked("retired", None, None, None)
