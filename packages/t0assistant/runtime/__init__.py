@@ -68,6 +68,7 @@ from .live_projection_store import (
     LiveProjectionValidationError,
 )
 from .live_refresh import (
+    LiveRefreshBackoff,
     LiveRefreshBranchState,
     LiveRefreshError,
     LiveRefreshInputPort,
@@ -159,6 +160,7 @@ __all__ = [
     "LiveProjectionStoreError",
     "LiveProjectionValidationError",
     "LiveQuotePort",
+    "LiveRefreshBackoff",
     "LiveRefreshBranchState",
     "LiveRefreshError",
     "LiveRefreshInputPort",
