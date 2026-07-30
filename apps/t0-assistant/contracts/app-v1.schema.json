@@ -162,6 +162,15 @@
       "required": ["preferences"],
       "properties": {"preferences": {"$ref": "#/$defs/preference_values"}}
     },
+    "get_historical_snapshot_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["symbol", "trade_date"],
+      "properties": {
+        "symbol": {"type": "string", "pattern": "^(sh|sz)\\.[0-9]{6}$"},
+        "trade_date": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"}
+      }
+    },
     "command_request": {
       "type": "object",
       "additionalProperties": false,
@@ -180,7 +189,8 @@
             "update_trade",
             "delete_trade",
             "get_preferences",
-            "save_preferences"
+            "save_preferences",
+            "get_historical_snapshot"
           ]
         },
         "session_id": {"type": ["string", "null"], "minLength": 1},
@@ -195,7 +205,8 @@
         {"if": {"properties": {"command": {"const": "update_trade"}}}, "then": {"properties": {"payload": {"$ref": "#/$defs/update_trade_payload"}}}},
         {"if": {"properties": {"command": {"const": "delete_trade"}}}, "then": {"properties": {"payload": {"$ref": "#/$defs/delete_trade_payload"}}}},
         {"if": {"properties": {"command": {"const": "get_preferences"}}}, "then": {"properties": {"payload": {"$ref": "#/$defs/empty_payload"}}}},
-        {"if": {"properties": {"command": {"const": "save_preferences"}}}, "then": {"properties": {"payload": {"$ref": "#/$defs/save_preferences_payload"}}}}
+        {"if": {"properties": {"command": {"const": "save_preferences"}}}, "then": {"properties": {"payload": {"$ref": "#/$defs/save_preferences_payload"}}}},
+        {"if": {"properties": {"command": {"const": "get_historical_snapshot"}}}, "then": {"properties": {"session_id": {"type": "null"}, "payload": {"$ref": "#/$defs/get_historical_snapshot_payload"}}}}
       ]
     },
     "application_error": {
@@ -207,7 +218,7 @@
         "category": {"enum": ["validation", "data", "calculation", "session", "persistence", "service"]},
         "severity": {"const": "error"},
         "retryable": {"type": "boolean"},
-        "affected_capability": {"enum": ["symbol_selection", "live", "intraday_chart", "five_minute_chart", "chan_analysis", "trades", "preferences", "service"]},
+        "affected_capability": {"enum": ["symbol_selection", "live", "intraday_chart", "five_minute_chart", "chan_analysis", "trades", "preferences", "service", "historical_chart"]},
         "message": {"type": "string", "minLength": 1},
         "request_id": {"type": "string", "minLength": 1},
         "operation_id": {"type": "string", "minLength": 1},
@@ -234,6 +245,86 @@
       "allOf": [
         {"if": {"properties": {"accepted": {"const": true}}}, "then": {"properties": {"error": {"type": "null"}}}},
         {"if": {"properties": {"accepted": {"const": false}}}, "then": {"properties": {"operation_id": {"type": "null"}, "data": {"type": "null"}, "error": {"$ref": "#/$defs/application_error"}}}}
+      ]
+    },
+    "historical_workbench_snapshot": {
+      "allOf": [
+        {"$ref": "https://stockpilot.local/contracts/t0-logic-v1.schema.json#/$defs/workbench_snapshot"},
+        {
+          "required": ["session", "replay"],
+          "properties": {
+            "session": {
+              "properties": {
+                "session_type": {"const": "historical"},
+                "trade_date": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+                "state": {"const": "ready"}
+              }
+            },
+            "replay": {"type": "null"}
+          }
+        }
+      ]
+    },
+    "historical_snapshot_success_response": {
+      "allOf": [
+        {"$ref": "#/$defs/command_response"},
+        {
+          "properties": {
+            "accepted": {"const": true},
+            "operation_id": {"type": "null"},
+            "data": {"$ref": "#/$defs/historical_workbench_snapshot"},
+            "error": {"type": "null"}
+          }
+        }
+      ]
+    },
+    "historical_snapshot_error": {
+      "oneOf": [
+        {
+          "allOf": [
+            {"$ref": "#/$defs/application_error"},
+            {
+              "properties": {
+                "error_code": {"const": "historical_data_unavailable"},
+                "category": {"const": "data"},
+                "retryable": {"const": true},
+                "affected_capability": {"const": "historical_chart"}
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {"$ref": "#/$defs/application_error"},
+            {
+              "properties": {
+                "error_code": {"const": "service_unavailable"},
+                "category": {"const": "service"},
+                "retryable": {"const": true},
+                "affected_capability": {"const": "historical_chart"}
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "historical_snapshot_error_response": {
+      "allOf": [
+        {"$ref": "#/$defs/command_response"},
+        {
+          "properties": {
+            "accepted": {"const": false},
+            "operation_id": {"type": "null"},
+            "data": {"type": "null"},
+            "error": {"$ref": "#/$defs/historical_snapshot_error"}
+          }
+        }
+      ]
+    },
+    "historical_snapshot_response": {
+      "oneOf": [
+        {"$ref": "#/$defs/historical_snapshot_success_response"},
+        {"$ref": "#/$defs/historical_snapshot_error_response"}
       ]
     },
     "live_session_status_payload": {

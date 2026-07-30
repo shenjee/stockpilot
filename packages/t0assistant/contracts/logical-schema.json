@@ -156,7 +156,7 @@
       "required": ["session_id", "session_type", "symbol", "trade_date", "state", "revision"],
       "properties": {
         "session_id": {"type": "string", "minLength": 1},
-        "session_type": {"enum": ["live", "replay"]},
+        "session_type": {"enum": ["live", "replay", "historical"]},
         "symbol": {"type": "string", "pattern": "^(sh|sz)\\.[0-9]{6}$"},
         "trade_date": {"type": ["string", "null"], "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
         "state": {"enum": ["created", "loading", "ready", "playing", "paused", "failed", "retired"]},
