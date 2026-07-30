@@ -33,8 +33,10 @@ Design rules enforced here:
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, replace
+from datetime import date, datetime, time
+from decimal import Decimal
+from enum import Enum
 from threading import Event, RLock
 from typing import Any, Callable
 from uuid import uuid4
@@ -359,6 +361,8 @@ class ReplaySession:
         """
 
         with self._lock:
+            if self._retired:
+                raise ReplaySessionStateError("session is retired")
             if self._last_pipeline_result is None:
                 raise ReplaySessionStateError(
                     "no snapshot available before the ready computation"
@@ -869,7 +873,19 @@ class ReplaySession:
             if self._retired:
                 return
             self._retired = True
+            had_simulated_trades = bool(self._simulated_trades)
             self._simulated_trades.clear()
+            if had_simulated_trades:
+                # ``trades_changed`` is already the authoritative Session trade
+                # snapshot seam.  Publish the empty fact before the terminal
+                # status so consumers that still retain this Session cannot
+                # keep a stale Replay marker.
+                self._publish_simulated_trades_locked()
+            # A retired Replay is one-shot state, not a historical snapshot
+            # cache.  Drop the last projection so no caller retaining the
+            # Python object can recover the retired picture/progress through
+            # ``snapshot()`` after the coordinator has returned to Live.
+            self._last_pipeline_result = None
             # Replay v1.0: retired is the terminal state, even from failed.
             self._state = "retired"
             self._publish_session_status_locked("retired", None, None, None)
@@ -1222,8 +1238,24 @@ class ReplaySession:
             playback_speed=self._playback_speed,
             step_seconds=self._step_seconds,
         )
+        pipeline_result = self._last_pipeline_result
+        if self._prepared.warnings:
+            # Replay preparation owns granularity degradation.  Its warning is
+            # Session metadata rather than market-input data, so attach it at
+            # the atomic projection boundary instead of teaching the shared
+            # Live/Replay pipeline about Replay loading policy.
+            pipeline_result = replace(
+                pipeline_result,
+                warnings=[
+                    *pipeline_result.warnings,
+                    *(
+                        _mutable_json_value(warning)
+                        for warning in self._prepared.warnings
+                    ),
+                ],
+            )
         projection = build_workbench_projection(
-            self._last_pipeline_result, session_input, replay_input
+            pipeline_result, session_input, replay_input
         )
         return projection.to_dict()
 
@@ -1325,6 +1357,28 @@ def _outcome_is_failure(outcome: ComputationOutcome) -> bool:
         CancelReason.DEADLINE_EXCEEDED,
         CancelReason.EXECUTOR_CLOSED,
     }
+
+
+def _mutable_json_value(value: Any) -> Any:
+    """Detach recursively frozen Replay-preparation metadata for projection."""
+
+    if isinstance(value, Mapping):
+        return {key: _mutable_json_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_mutable_json_value(item) for item in value]
+    if isinstance(value, Enum):
+        return _mutable_json_value(value.value)
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            raise ValueError("Replay warning Decimal values must be finite")
+        return float(value)
+    if isinstance(value, datetime):
+        return value.strftime(MARKET_TIMESTAMP_FORMAT)
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, time):
+        return value.isoformat(timespec="seconds")
+    return value
 
 
 __all__ = [
