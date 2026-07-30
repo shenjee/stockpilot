@@ -8,10 +8,14 @@ export interface FeeSuggestionInput {
 }
 
 export interface FeeAdvisor {
-  suggestFee(plan: FeePlan | null, input: FeeSuggestionInput): number | null;
+  suggestFee(plan: FeePlan | null, input: FeeSuggestionInput): number | null | Promise<number | null>;
 }
 
 export function createNullFeeAdvisor(): FeeAdvisor;
 export function createFakeFeeAdvisor(
   suggest: (plan: FeePlan | null, input: FeeSuggestionInput) => number | null,
+): FeeAdvisor;
+export function createFeeAdvisor(
+  bridge: object,
+  options?: {makeRequestId?: () => string},
 ): FeeAdvisor;

@@ -102,14 +102,22 @@ export function TradeFormDialog({
   // fee is authoritative and never recomputed after save.
   useEffect(() => {
     if (!selectedPlan || feeTouched) return;
-    const suggested = feeAdvisor.suggestFee(selectedPlan, {
+    let cancelled = false;
+    Promise.resolve(feeAdvisor.suggestFee(selectedPlan, {
       securityType: security.security_type,
       side,
       price,
       quantity,
+    })).then((suggested) => {
+      if (!cancelled && suggested !== null && suggested !== undefined) {
+        setFee(formatFee(suggested));
+      }
+    }).catch(() => {
+      // Fee advice is optional; leave the field manual when calculation fails.
     });
-    if (suggested === null || suggested === undefined) return;
-    setFee(formatFee(suggested));
+    return () => {
+      cancelled = true;
+    };
   }, [
     feeAdvisor,
     selectedPlan,

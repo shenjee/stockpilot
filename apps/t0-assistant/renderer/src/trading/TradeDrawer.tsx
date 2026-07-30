@@ -88,9 +88,7 @@ export function TradeDrawer({
   >(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [feePlans, setFeePlans] = useState<FeePlan[]>(() =>
-    feePlanClient ? feePlanClient.listPlans() : [],
-  );
+  const [feePlans, setFeePlans] = useState<FeePlan[]>([]);
   const [pendingDelete, setPendingDelete] = useState<TradeRecord | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
@@ -184,9 +182,18 @@ export function TradeDrawer({
     });
   }, [subscribeAppEvent, security]);
 
-  function refreshFeePlans() {
-    if (feePlanClient) setFeePlans(feePlanClient.listPlans());
+  async function refreshFeePlans() {
+    if (!feePlanClient) return;
+    try {
+      setFeePlans(await feePlanClient.listPlans());
+    } catch {
+      // Keep the last successful plans. The settings dialog owns retry UI.
+    }
   }
+
+  useEffect(() => {
+    if (feePlanClient && serviceReady) void refreshFeePlans();
+  }, [feePlanClient, serviceReady, serviceGeneration]);
 
   // Submit a create/update, tracking the async operation on the App-level
   // controller so its retry survives a mode switch. Sync rejections surface on

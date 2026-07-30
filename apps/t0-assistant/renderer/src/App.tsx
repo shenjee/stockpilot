@@ -59,7 +59,8 @@ import {
   createBoundTradeClient,
   createInMemoryFeePlanClient,
 } from "./trading/TradeDrawer";
-import { createNullFeeAdvisor } from "./trading/fee-advisor.mjs";
+import { createFeePlanClient } from "./trading/fee-plans.mjs";
+import { createFeeAdvisor, createNullFeeAdvisor } from "./trading/fee-advisor.mjs";
 import { isTradeScopedError } from "./trading/app-event-ownership.mjs";
 import {
   TradeOperationController,
@@ -204,20 +205,26 @@ export function App() {
     () => replayFactsFromSnapshot(replaySnapshot),
     [replaySnapshot],
   );
-  // T+0 成交与收费方案客户端。成交客户端绑定冻结的 Safe Bridge（后端 CRUD
-  // 尚未接入时 bridge 返回 service_unavailable，由成交 UI 主动失败重试）。
-  // 收费方案暂无冻结传输契约：内存客户端仅在 fixture 模式使用，正式环境为
-  // null（设置入口禁用），避免把会话内存伪装成持久化（architecture.md §5.6）。
-  // 费用建议通过 FeeAdvisor 端口取得；规则不在此重新实现，故生产用 null 顾问。
+  // 正式环境中的成交、收费方案和费用建议均经 Safe Bridge 访问 Python 权威
+  // 服务；fixture 模式保留内存方案和 null 顾问，不复制收费公式。
   const tradeClient = useMemo(
     () => (window.stockpilot ? createBoundTradeClient(window.stockpilot) : null),
     [],
   );
   const feePlanClient = useMemo(
-    () => (window.stockpilot ? null : createInMemoryFeePlanClient()),
+    () =>
+      window.stockpilot
+        ? createFeePlanClient(window.stockpilot)
+        : createInMemoryFeePlanClient(),
     [],
   );
-  const feeAdvisor = useMemo(() => createNullFeeAdvisor(), []);
+  const feeAdvisor = useMemo(
+    () =>
+      window.stockpilot
+        ? createFeeAdvisor(window.stockpilot)
+        : createNullFeeAdvisor(),
+    [],
+  );
   const subscribeAppEvent = useMemo(
     () =>
       window.stockpilot ? window.stockpilot.onAppEvent.bind(window.stockpilot) : null,

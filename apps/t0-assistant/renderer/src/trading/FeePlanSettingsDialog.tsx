@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   createFeePlan,
   FeePlanValidationError,
@@ -58,7 +58,7 @@ export function FeePlanSettingsDialog({
   onClose: () => void;
   onChanged: () => void;
 }) {
-  const [plans, setPlans] = useState<FeePlan[]>(() => client.listPlans());
+  const [plans, setPlans] = useState<FeePlan[]>([]);
   const [editing, setEditing] = useState<
     | { mode: "create" }
     | { mode: "edit"; plan: FeePlan }
@@ -69,12 +69,23 @@ export function FeePlanSettingsDialog({
     null,
   );
   const [pendingDelete, setPendingDelete] = useState<FeePlan | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [operationError, setOperationError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (open) void refresh();
+  }, [open, client]);
 
   if (!open) return null;
 
-  function refresh() {
-    setPlans(client.listPlans());
-    onChanged();
+  async function refresh() {
+    try {
+      setPlans(await client.listPlans());
+      setOperationError(null);
+      onChanged();
+    } catch (error) {
+      setOperationError(error instanceof Error ? error.message : "收费方案读取失败");
+    }
   }
 
   function startCreate() {
@@ -89,33 +100,50 @@ export function FeePlanSettingsDialog({
     setEditing({ mode: "edit", plan });
   }
 
-  function submitForm() {
+  async function submitForm() {
     if (!editing) return;
+    setBusy(true);
+    setOperationError(null);
     try {
       const input = formToInput(form);
       if (editing.mode === "create") {
-        client.createPlan(input);
+        await client.createPlan(input);
       } else {
-        client.updatePlan(input);
+        await client.updatePlan(input);
       }
     } catch (error) {
       if (error instanceof FeePlanValidationError) {
         setFieldError({ field: error.field, message: error.message });
+        setBusy(false);
         return;
       }
       setFieldError({ field: "fee_plan", message: "方案保存失败" });
+      setOperationError(error instanceof Error ? error.message : "方案保存失败");
+      setBusy(false);
       return;
     }
     setEditing(null);
     setFieldError(null);
-    refresh();
+    await refresh();
+    setBusy(false);
   }
 
-  function confirmDelete() {
+  async function confirmDelete() {
     if (!pendingDelete) return;
-    client.deletePlan(pendingDelete.fee_plan_id);
-    setPendingDelete(null);
-    refresh();
+    setBusy(true);
+    try {
+      await client.deletePlan(pendingDelete.fee_plan_id);
+      setPendingDelete(null);
+      await refresh();
+    } catch (error) {
+      setFieldError({
+        field: "fee_plan",
+        message: error instanceof Error ? error.message : "方案删除失败",
+      });
+      setOperationError(error instanceof Error ? error.message : "方案删除失败");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -137,6 +165,14 @@ export function FeePlanSettingsDialog({
             ×
           </button>
         </header>
+        {operationError && (
+          <div className="inline-error" role="status">
+            <span>{operationError}</span>
+            <button type="button" onClick={() => void refresh()} disabled={busy}>
+              重试
+            </button>
+          </div>
+        )}
 
         {editing ? (
           <div className="plan-form" aria-label="收费方案编辑表单">
@@ -306,7 +342,8 @@ export function FeePlanSettingsDialog({
               <button
                 type="button"
                 className="primary-button"
-                onClick={submitForm}
+                onClick={() => void submitForm()}
+                disabled={busy}
               >
                 保存
               </button>
@@ -327,7 +364,8 @@ export function FeePlanSettingsDialog({
               <button
                 type="button"
                 className="danger-button"
-                onClick={confirmDelete}
+                onClick={() => void confirmDelete()}
+                disabled={busy}
               >
                 确认删除
               </button>
