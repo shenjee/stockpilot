@@ -65,12 +65,14 @@ try:  # package context: ``from backend.historical_snapshot_api import ...``
         LazyLiveApplicationApi,
         create_live_application_api,
     )
+    from backend.replay_application import create_replay_application
 except ImportError:  # script context: ``python backend/service.py``
     from historical_snapshot_api import (
         HistoricalSnapshotApi,
         create_historical_snapshot_api,
     )
     from live_application import LazyLiveApplicationApi, create_live_application_api
+    from replay_application import create_replay_application
 
 # ``EventPublisher`` lives in this backend package. The import form depends on
 # whether this module is imported as ``backend.service`` (tests, with the app
@@ -1400,14 +1402,20 @@ def main() -> None:
         args.service_generation,
         event_publisher,
     )
+    replay_api, simulated_trade_api = create_replay_application(
+        args.service_generation,
+        publish_event=event_publisher.publish_envelope,
+    )
     server = create_server(
         args.host,
         args.port,
         os.environ.get("T0_SERVICE_TOKEN", ""),
         args.service_generation,
+        replay_api=replay_api,
         live_application_api=live_application_api,
         historical_snapshot_api=historical_api,
         trade_api=trade_api,
+        simulated_trade_api=simulated_trade_api,
         fee_plan_api=fee_plan_api,
         event_publisher=event_publisher,
     )
@@ -1415,6 +1423,7 @@ def main() -> None:
         server.serve_forever(poll_interval=0.1)
     finally:
         server.server_close()
+        replay_api.close()
 
 
 if __name__ == "__main__":

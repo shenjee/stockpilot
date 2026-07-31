@@ -7,6 +7,7 @@ import {
   createLatestRequestTracker,
   isCompleteWorkbenchSnapshot,
   latestDailyBars,
+  liveOperationFailurePresentation,
   operationMatchesEnvelope,
   quoteRows,
   securitiesFromSearchResponse,
@@ -63,6 +64,26 @@ test("preferences hydrate only after the event channel is connected", () => {
   assert.equal(canHydratePreferences({ state: "ready" }, false), false);
   assert.equal(canHydratePreferences({ state: "connected" }, false), true);
   assert.equal(canHydratePreferences({ state: "connected" }, true), false);
+});
+
+test("Live failures become non-blocking while Replay owns the visible workbench", () => {
+  const error = {
+    error_code: "live_data_unavailable",
+    message: "Live 行情加载失败，请重试",
+    retryable: true,
+    affected_capability: "live",
+  };
+  assert.deepEqual(liveOperationFailurePresentation("live", error), {
+    blocking: true,
+    error,
+  });
+  assert.deepEqual(liveOperationFailurePresentation("replay", error), {
+    blocking: false,
+    error: {
+      ...error,
+      message: "后台 Live 行情加载失败，请重试；当前回放不受影响",
+    },
+  });
 });
 
 test("a later search invalidates an older in-flight result", () => {

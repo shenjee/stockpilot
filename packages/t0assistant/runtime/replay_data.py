@@ -392,24 +392,47 @@ class ReplayDataPreparator:
 
         self._check_deadline(config)
         collected: list[Mapping[str, Any]] = []
-        day = self._market_context.previous_trading_day(session.trade_date, market)
-        while day is not None and len(collected) < config.preheat_5m_count:
-            day_str = day.isoformat()
+        normalized: tuple[dict[str, Any], ...] = ()
+        batch_end = self._market_context.previous_trading_day(
+            session.trade_date,
+            market,
+        )
+        while batch_end is not None and len(normalized) < config.preheat_5m_count:
+            batch_start = batch_end
+            for _ in range(14):
+                previous = self._market_context.previous_trading_day(
+                    batch_start,
+                    market,
+                )
+                if previous is None:
+                    break
+                batch_start = previous
             result = self._get_klines_result(
                 code=code,
-                end_date=day_str,
+                end_date=batch_end.isoformat(),
                 market=market,
                 timeframe="5m",
-                start_date=day_str,
-                limit=config.preheat_5m_count,
+                start_date=batch_start.isoformat(),
+                # Leave room for legacy/incomplete rows that normalization
+                # rejects; the final result is still trimmed to the requested
+                # number of valid bars.
+                limit=config.preheat_5m_count + 15 * 48,
                 config=config,
                 session_validator=session_validator,
             )
             self._check_deadline(config)
             collected.extend(_extract_rows(result))
-            day = self._market_context.previous_trading_day(day, market)
+            # Count only valid, closed OHLCV bars; rejected cache rows must not
+            # make the loop stop before 500 usable bars have been collected.
+            normalized = _normalize_preheat_bars(
+                collected,
+                session_start=session.start,
+            )
+            batch_end = self._market_context.previous_trading_day(
+                batch_start,
+                market,
+            )
 
-        normalized = _normalize_preheat_bars(collected, session_start=session.start)
         if len(normalized) <= config.preheat_5m_count:
             return normalized
         return normalized[-config.preheat_5m_count :]
@@ -648,7 +671,16 @@ def _normalize_preheat_bars(
             # strictly historical.
             continue
         try:
-            bar = standardize_bar(row, closed=True)
+            # Tencent's paged historical 5m endpoint omits turnover amount on
+            # older pages. Preheat calculations consume OHLCV only; keep the
+            # frozen public bar shape unchanged and use the contract's zero
+            # sentinel for this provider-confirmed unavailable field.
+            candidate = (
+                {**row, "amount": 0}
+                if row.get("amount") is None
+                else row
+            )
+            bar = standardize_bar(candidate, closed=True)
         except (TypeError, ValueError):
             # Invalid bars are skipped, not fatal, for preheat history.
             logger.debug("skipping invalid preheat bar at %s", timestamp)

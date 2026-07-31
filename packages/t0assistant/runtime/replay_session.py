@@ -256,7 +256,7 @@ class ReplaySession:
         self._playback_speed = _DEFAULT_PLAYBACK_SPEED
         self._current_time = self._start_time
         self._next_bar_time: datetime | None = self._resolve_next_bar(
-            self._start_time, consumed=False
+            self._start_time, consumed=True
         )
         self._last_pipeline_result: PipelineResult | None = None
         self._retired = False
@@ -1150,7 +1150,7 @@ class ReplaySession:
         self._current_time = target
         self._next_bar_time = self._resolve_next_bar(
             target,
-            consumed=(commit_kind != "initialize"),
+            consumed=True,
         )
         if commit_kind == "initialize":
             self._state = "ready"

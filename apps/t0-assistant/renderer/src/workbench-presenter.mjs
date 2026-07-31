@@ -75,6 +75,19 @@ export function canHydratePreferences(status, hydrated) {
   return status?.state === "connected" && hydrated === false;
 }
 
+export function liveOperationFailurePresentation(mode, error) {
+  if (mode !== "replay") {
+    return { blocking: true, error };
+  }
+  return {
+    blocking: false,
+    error: {
+      ...error,
+      message: `后台 ${error.message}；当前回放不受影响`,
+    },
+  };
+}
+
 export function applicationErrorFrom(candidate) {
   const error = candidate?.error ?? candidate?.payload ?? candidate;
   return error &&

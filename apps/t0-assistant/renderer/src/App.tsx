@@ -37,10 +37,10 @@ import {
   createLatestRequestTracker,
   isCompleteWorkbenchSnapshot,
   latestDailyBars,
+  liveOperationFailurePresentation,
   operationMatchesEnvelope,
   quoteRows,
   securitiesFromSearchResponse,
-  standardSecurityFromResponse,
   type ApplicationError,
 } from "./workbench-presenter.mjs";
 import { createSerialTaskQueue } from "./serial-task-queue.mjs";
@@ -349,7 +349,9 @@ export function App() {
             applyWorkbenchPreferences(current, preferences),
           );
           if (preferences.last_symbol) {
-            const selected = await resolveSecurity(preferences.last_symbol);
+            const selected = await resolveSavedSecurity(
+              preferences.last_symbol,
+            );
             if (
               selected &&
               !cancelled &&
@@ -402,6 +404,7 @@ export function App() {
       };
       if (envelope.event_type === "live_session_status") {
         const state = (envelope.payload as { state?: unknown })?.state;
+        const liveIsVisible = modeRef.current !== WorkbenchMode.REPLAY;
         if (envelope.operation_id && envelope.session_id) {
           const active = activeOperations.current.get(envelope.operation_id);
           if (
@@ -415,10 +418,14 @@ export function App() {
             });
           }
         }
-        if (state === "loading" || state === "created") setLoading(true);
+        if (liveIsVisible && (state === "loading" || state === "created")) {
+          setLoading(true);
+        }
         if (state === "ready") {
-          setLoading(false);
-          setBackgroundError(null);
+          if (liveIsVisible) setLoading(false);
+          setBackgroundError((current) =>
+            current?.affected_capability === "live" ? null : current,
+          );
         }
         applyLiveEvent();
         return;
@@ -464,12 +471,20 @@ export function App() {
           activeOperations.current.delete(envelope.operation_id);
         }
         if (active) {
-          setLoading(false);
-          setActiveFailure({
+          const presentation = liveOperationFailurePresentation(
+            modeRef.current,
             error,
-            retry: active.retry,
-            security: active.security,
-          });
+          );
+          if (presentation.blocking) {
+            setLoading(false);
+            setActiveFailure({
+              error: presentation.error,
+              retry: active.retry,
+              security: active.security,
+            });
+          } else {
+            setBackgroundError(presentation.error);
+          }
         } else {
           setBackgroundError(error);
         }
@@ -763,22 +778,14 @@ export function App() {
     return securitiesFromSearchResponse(response);
   }
 
-  async function resolveSecurity(input: string) {
+  async function resolveSavedSecurity(input: string) {
     if (!window.stockpilot) return null;
     try {
-      const response = await window.stockpilot.selectSymbol({
-        schema_version: "t0_replay_v1",
-        request_id: requestId("select-symbol"),
-        symbol: input,
-      });
-      const error = applicationErrorFrom(response);
-      if (error) {
-        setSearchMessage(error.message);
-        return null;
-      }
-      return standardSecurityFromResponse(response);
-    } catch (error) {
-      setSearchMessage(clientError(error, "symbol_selection").message);
+      const matches = await searchSecurityMatches(input);
+      return matches.find((security) => security.symbol === input) ?? null;
+    } catch {
+      // last_symbol is only a convenience. Missing or stale saved data is a
+      // normal empty state; leave the selector blank for the user's next input.
       return null;
     }
   }
@@ -788,6 +795,7 @@ export function App() {
     restoring = false,
   ) {
     const selectionSequence = navigationRequests.current.begin();
+    const replayOwnsView = modeRef.current === WorkbenchMode.REPLAY;
     if (!restoring) userModifiedPreferences.current = true;
     if (!window.stockpilot) {
       setWorkbench((current) =>
@@ -795,8 +803,20 @@ export function App() {
       );
       return;
     }
-    setActiveFailure(null);
-    setLoading(true);
+    if (!replayOwnsView) {
+      setActiveFailure(null);
+      setLoading(true);
+    } else {
+      // Replay owns the visible workbench. The selected security is shared
+      // with Live, but choosing it must not pretend that Replay history is
+      // loading before the user has selected a date and started Replay.
+      setWorkbench((current) =>
+        selectWorkbenchSecurity(current, security),
+      );
+      setQuery(security.code);
+      setSuggestions([]);
+      setSearchMessage("");
+    }
     try {
       const response = await window.stockpilot.selectSecurity(
         appRequest("select_security", null, { symbol: security.symbol }),
@@ -804,11 +824,19 @@ export function App() {
       if (!navigationRequests.current.isCurrent(selectionSequence)) return;
       const error = applicationErrorFrom(response);
       if (error) {
-        setLoading(false);
-        if (!restoring) {
-          setActiveFailure({ error, retry: "security", security });
+        const presentation = liveOperationFailurePresentation(
+          modeRef.current,
+          error,
+        );
+        if (presentation.blocking && !restoring) {
+          setLoading(false);
+          setActiveFailure({
+            error: presentation.error,
+            retry: "security",
+            security,
+          });
         } else {
-          setBackgroundError(error);
+          setBackgroundError(presentation.error);
         }
         return;
       }
@@ -816,13 +844,16 @@ export function App() {
       const sessionId = responseSessionId(response);
       activeOperations.current.clear();
       rebaselineRequest.current = null;
-      setProjection(
-        beginChartSession(
-          emptyChartSnapshot,
-          status.service_generation,
-          sessionId,
-        ),
+      const nextLiveProjection = beginChartSession(
+        emptyChartSnapshot,
+        status.service_generation,
+        sessionId,
       );
+      if (modeRef.current === WorkbenchMode.REPLAY) {
+        liveProjection.current = nextLiveProjection;
+      } else {
+        setProjection(nextLiveProjection);
+      }
       if (operationId) {
         activeOperations.current.set(operationId, {
           retry: "security",
@@ -839,15 +870,21 @@ export function App() {
       setSearchMessage("");
     } catch (error) {
       if (!navigationRequests.current.isCurrent(selectionSequence)) return;
-      setLoading(false);
       const failure = clientError(error, "symbol_selection");
-      if (restoring) setBackgroundError(failure);
-      else
+      const presentation = liveOperationFailurePresentation(
+        modeRef.current,
+        failure,
+      );
+      if (presentation.blocking && !restoring) {
+        setLoading(false);
         setActiveFailure({
-          error: failure,
+          error: presentation.error,
           retry: "security",
           security,
         });
+      } else {
+        setBackgroundError(presentation.error);
+      }
     }
   }
 
@@ -1103,6 +1140,15 @@ export function App() {
     modeRef.current = mode;
     if (mode === WorkbenchMode.REPLAY) {
       liveProjection.current = projection;
+      setLoading(false);
+      if (activeFailure) {
+        const presentation = liveOperationFailurePresentation(
+          WorkbenchMode.REPLAY,
+          activeFailure.error,
+        );
+        setActiveFailure(null);
+        setBackgroundError(presentation.error);
+      }
       updateWorkbenchFromUser((current) =>
         selectWorkbenchMode(current, WorkbenchMode.REPLAY),
       );
@@ -1315,11 +1361,17 @@ export function App() {
           aria-label="5 分钟图表组"
         >
           <ChartGroup
-            key={`five-${workbench.security?.symbol ?? "fixture"}`}
+            key={`five-${workbench.security?.symbol ?? "fixture"}-${
+              replayFacts?.sessionId ?? "live"
+            }`}
             model={fiveMinuteModel}
-            initialViewport={workbench.chartViews.fiveMinute}
-            onViewportChange={(snapshot) =>
-              rememberChartView("fiveMinute", snapshot)
+            initialViewport={
+              replayFacts ? null : workbench.chartViews.fiveMinute
+            }
+            onViewportChange={
+              replayFacts
+                ? undefined
+                : (snapshot) => rememberChartView("fiveMinute", snapshot)
             }
             priceHeader={
               <div className="panel-heading">
@@ -1359,11 +1411,17 @@ export function App() {
             </div>
           ) : (
             <ChartGroup
-              key={`intra-${workbench.security?.symbol ?? "fixture"}`}
+              key={`intra-${workbench.security?.symbol ?? "fixture"}-${
+                replayFacts?.sessionId ?? "live"
+              }`}
               model={intradayModel}
-              initialViewport={workbench.chartViews.intraday}
-              onViewportChange={(snapshot) =>
-                rememberChartView("intraday", snapshot)
+              initialViewport={
+                replayFacts ? null : workbench.chartViews.intraday
+              }
+              onViewportChange={
+                replayFacts
+                  ? undefined
+                  : (snapshot) => rememberChartView("intraday", snapshot)
               }
               priceHeader={
                 <div className="panel-heading">

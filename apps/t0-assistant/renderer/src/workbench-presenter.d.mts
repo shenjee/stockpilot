@@ -33,6 +33,10 @@ export function canHydratePreferences(
   status: { state: string },
   hydrated: boolean,
 ): boolean;
+export function liveOperationFailurePresentation(
+  mode: string,
+  error: ApplicationError,
+): { blocking: boolean; error: ApplicationError };
 export function applicationErrorFrom(
   candidate: unknown,
 ): ApplicationError | null;

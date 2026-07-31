@@ -296,6 +296,11 @@ class ReplayCommandApi:
     def service_generation(self) -> int:
         return self._service_generation
 
+    def close(self) -> None:
+        close = getattr(self._port, "close", None)
+        if callable(close):
+            close()
+
     def dispatch(
         self, command: str, raw_request: Mapping[str, Any]
     ) -> ReplayHttpResult:

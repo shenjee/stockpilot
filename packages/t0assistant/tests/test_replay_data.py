@@ -74,7 +74,22 @@ class FakeMarketDataPort:
         if timeframe in self.fail_timeframes:
             return MarketDataResult(success=False, data=[], issues=[])
         key = (timeframe, end_date)
-        rows = list(self.store.get(key, []))
+        if start_date is not None and start_date != end_date:
+            rows = sorted(
+                [
+                    row
+                    for (
+                        stored_timeframe,
+                        stored_date,
+                    ), stored_rows in self.store.items()
+                    if stored_timeframe == timeframe
+                    and start_date <= stored_date <= end_date
+                    for row in stored_rows
+                ],
+                key=lambda row: row.get("timestamp", row.get("date", "")),
+            )[-limit:]
+        else:
+            rows = list(self.store.get(key, []))
         return MarketDataResult(
             success=True,
             data=rows,
@@ -209,6 +224,81 @@ class OneMinuteReliabilityTests(_PreparatorTestBase):
 
 
 class PreheatTests(unittest.TestCase):
+    def test_preheat_stops_only_after_reaching_the_valid_bar_count(self) -> None:
+        fixture = one_minute_replay()
+        port = FakeMarketDataPort()
+        _populate_from_fixture(port, fixture)
+        context = MarketContextService(
+            [date(2026, 7, 22), date(2026, 7, 23), TRADE_DATE],
+            coverage_start=date(2026, 7, 22),
+            coverage_end=TRADE_DATE,
+        )
+        invalid = [
+            {
+                "timestamp": f"2026-07-23 09:{35 + index * 5}:00",
+                "open": -1.0,
+                "high": 10.2,
+                "low": 9.9,
+                "close": 10.1,
+                "volume": 100,
+                "closed": True,
+            }
+            for index in range(3)
+        ]
+        valid = [
+            {
+                "timestamp": f"2026-07-22 09:{35 + index * 5}:00",
+                "open": 9.0,
+                "high": 9.2,
+                "low": 8.9,
+                "close": 9.1,
+                "volume": 100,
+                "amount": 910.0,
+                "closed": True,
+            }
+            for index in range(3)
+        ]
+        port.store[("5m", "2026-07-23")] = invalid
+        port.store[("5m", "2026-07-22")] = valid
+
+        prepared = ReplayDataPreparator(port, context).prepare(
+            SYMBOL,
+            TRADE_DATE,
+            config=ReplayPreparationConfig(preheat_5m_count=3),
+        )
+
+        self.assertEqual(len(prepared.preheat_5m_bars), 3)
+        self.assertTrue(
+            all(
+                bar["timestamp"].startswith("2026-07-22")
+                for bar in prepared.preheat_5m_bars
+            )
+        )
+        preheat_days = [
+            (entry[4], entry[1])
+            for entry in port.call_log
+            if entry[3] == "5m" and entry[1] != TRADE_DATE.isoformat()
+        ]
+        self.assertEqual(preheat_days, [("2026-07-22", "2026-07-23")])
+
+    def test_preheat_keeps_ohlcv_when_provider_amount_is_unavailable(self) -> None:
+        fixture = one_minute_replay()
+        port = FakeMarketDataPort()
+        _populate_from_fixture(port, fixture)
+        rows = [dict(bar) for bar in fixture.preheat_5m_bars[:3]]
+        for row in rows:
+            row["amount"] = None
+        port.store[("5m", PREVIOUS_TRADE_DATE.isoformat())] = rows
+
+        prepared = ReplayDataPreparator(port, market_context_service()).prepare(
+            SYMBOL,
+            TRADE_DATE,
+            config=ReplayPreparationConfig(preheat_5m_count=3),
+        )
+
+        self.assertEqual(len(prepared.preheat_5m_bars), 3)
+        self.assertTrue(all(bar["amount"] == 0 for bar in prepared.preheat_5m_bars))
+
     def test_preheat_loads_across_multiple_trading_days_until_count_reached(self) -> None:
         fixture = one_minute_replay()
         port = FakeMarketDataPort()
@@ -251,12 +341,12 @@ class PreheatTests(unittest.TestCase):
         self.assertEqual(len(prepared.preheat_5m_bars), 60)
         self.assertEqual(prepared.preheat_5m_bars[0]["timestamp"], "2026-07-22 14:05:00")
         self.assertEqual(prepared.preheat_5m_bars[-1]["timestamp"], "2026-07-23 15:00:00")
-        queried_days = [
-            entry[1]
+        queried_ranges = [
+            (entry[4], entry[1])
             for entry in port.call_log
             if entry[3] == "5m" and entry[1] in {"2026-07-22", "2026-07-23"}
         ]
-        self.assertEqual(queried_days[:2], ["2026-07-23", "2026-07-22"])
+        self.assertEqual(queried_ranges, [("2026-07-21", "2026-07-23")])
 
 
 class RealKLineServiceIntegrationTests(unittest.TestCase):

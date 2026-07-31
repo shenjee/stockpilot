@@ -1,11 +1,10 @@
 # StockPilot T+0 Assistant
 
-This directory is the formal desktop-delivery skeleton created by T0-001 and
-extended by T0-004/T0-028. It starts an Electron shell, a React renderer, and
-one Electron-managed Python service. The service proves process
-ownership, authenticated loopback health and commands, ordered WebSocket event
-delivery, Renderer isolation, bounded restart, and graceful shutdown; it does
-not implement market data or Replay domain behavior.
+This directory contains the Electron T+0 desktop app, React renderer, and the
+Electron-managed Python service. The local service provides Live and historical
+market data, Replay sessions and playback, real and simulated trades,
+preferences, authenticated loopback transport, bounded restart, and graceful
+shutdown.
 
 W0 integration coordinator: **Codex**, acting in the repository's integration
 owner role for T0-001, T0-002, and T0-056. Public contract changes remain
@@ -24,9 +23,7 @@ apps/t0-assistant/
 
 Reusable domain behavior must go to `packages/`; Electron, React, HTTP, and
 WebSocket adapters stay here. No source from `spikes/` is copied into this app.
-`backend/service.py` is the sole Electron-managed Python entry point. Until
-domain handlers are integrated, it rejects recognized commands with a
-structured `service_unavailable` response.
+`backend/service.py` is the sole Electron-managed Python entry point.
 
 ## Validated Python environment
 
@@ -108,14 +105,12 @@ viewport pass. On restricted CI, run `npm run smoke:renderer`,
 `node --test tests/preload-safe-bridge.test.mjs`, and the Python regression
 suite; reserve the target-viewport gate for a compatible macOS runner.
 
-## W0 boundary
+## Current boundary
 
-- No market provider, SQLite repository, indicator, CZSC, Session, or playback
-  implementation is present. Until their handlers are integrated, the formal
-  service rejects those domain commands with `service_unavailable`.
 - `contracts/logical-schema.json` is a logical JSON boundary, not a SQLite
   schema.
-- Replay v1.0 freezes playback-speed intent and state only; runtime playback and
-  UI controls remain T0-046 and T0-049.
-- FR-06 is unaffected: the skeleton and contracts emit no trading advice,
-  positions, P&L, automatic trades, or future Replay data.
+- Replay only exposes market data at or before its current cursor.
+- The app emits no trading advice, positions, P&L, automatic trades, or future
+  Replay data.
+- Packaging, signing, notarization, and installed-App acceptance are tracked by
+  issue #87 and are not performed by `npm start`.

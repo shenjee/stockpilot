@@ -113,8 +113,8 @@ class EventPublisher:
         or rewrite the envelope.
         """
 
-        if envelope.get("schema_version") != "t0_app_v1":
-            raise ValueError("event envelope must use t0_app_v1")
+        if envelope.get("schema_version") not in {"t0_app_v1", "t0_replay_v1"}:
+            raise ValueError("event envelope must use a supported schema")
         if envelope.get("service_generation") != self._service_generation:
             raise ValueError("event service_generation must match the publisher")
         session_id = envelope.get("session_id")
