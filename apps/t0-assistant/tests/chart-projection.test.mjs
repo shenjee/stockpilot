@@ -47,6 +47,25 @@ test("Live projection applies bar and indicator increments without dropping hist
   assert.equal(afterIndicators.revision, 3);
 });
 
+test("Live projection drops an indicator point until its matching bar arrives", () => {
+  const futureTimestamp = "2026-07-22 09:40:00";
+  const event = structuredClone(indicatorUpdate);
+  event.revision = 2;
+  event.payload.five_minute.boll.upper.push({
+    timestamp: futureTimestamp,
+    value: 10.3,
+  });
+
+  const projected = applyLiveChartEvent(baselineProjection(), event);
+
+  assert.equal(
+    projected.snapshot.indicators.five_minute.boll.upper.some(
+      (point) => point.timestamp === futureTimestamp,
+    ),
+    false,
+  );
+});
+
 test("Live projection replaces an updated timestamp instead of duplicating it", () => {
   const first = applyLiveChartEvent(baselineProjection(), marketUpdate);
   const revisedEvent = structuredClone(marketUpdate);
@@ -128,13 +147,10 @@ test("a stale or mismatched full snapshot cannot replace the current baseline", 
 });
 
 test("starting a new security selection retires the previous Session identity", () => {
-  const empty = structuredClone(baseline);
-  delete empty.session;
-  empty.market.bars_1m = [];
-  empty.market.bars_5m = [];
   const selecting = beginChartSession(
-    empty,
+    baseline,
     fixture.service_generation,
+    "live-fixture-2",
   );
   const replacement = structuredClone(baseline);
   replacement.session.session_id = "live-fixture-2";
@@ -147,7 +163,9 @@ test("starting a new security selection retires the previous Session identity", 
     revision: 1,
   });
 
-  assert.equal(selecting.sessionId, null);
+  assert.strictEqual(selecting.snapshot, baseline);
+  assert.equal(selecting.sessionId, "live-fixture-2");
+  assert.equal(selecting.revision, null);
   assert.equal(selected.sessionId, "live-fixture-2");
   assert.equal(selected.snapshot.session.symbol, "sz.000001");
 });

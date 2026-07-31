@@ -65,10 +65,22 @@ class _FakeMarketData:
                 "start_date": start_date,
                 "limit": limit,
                 "validator": session_validator,
+                "request_timeout": request_timeout,
             }
         )
-        rows = list(self.store.get((timeframe, start_date), ()))
-        return SimpleNamespace(data=rows)
+        rows: list[dict[str, Any]] = []
+        if timeframe == "5m" and start_date is not None:
+            for (stored_timeframe, stored_date), stored_rows in self.store.items():
+                if (
+                    stored_timeframe == timeframe
+                    and stored_date is not None
+                    and start_date <= stored_date <= end_date
+                ):
+                    rows.extend(stored_rows)
+        else:
+            rows = list(self.store.get((timeframe, start_date), ()))
+        rows.sort(key=lambda row: str(row.get("date", "")))
+        return SimpleNamespace(success=True, data=rows, issues=[])
 
 
 class _FakeQuoteReader:
@@ -190,16 +202,10 @@ class LiveDataPreparatorTests(unittest.TestCase):
         ]
         self.assertTrue(preheat_calls)
         self.assertTrue(all(call["limit"] == 6 for call in preheat_calls))
-        self.assertEqual(
-            validator_calls,
-            [
-                "live-1",
-                "live-1",
-                "live-1",
-                "live-1",
-                "live-1",
-            ],
+        self.assertTrue(
+            all(call["request_timeout"] == 15.0 for call in market_data.calls)
         )
+        self.assertEqual(validator_calls, ["live-1"] * len(market_data.calls))
 
     def test_refresh_reads_only_requested_normalized_branch(self) -> None:
         market_data = _FakeMarketData(
@@ -297,6 +303,44 @@ class LiveDataPreparatorTests(unittest.TestCase):
 
         prepared = preparator.prepare(self.spec, minimum_preheat_5m=2)
         self.assertEqual(prepared.target_time, datetime(2026, 7, 24, 9, 31, 30))
+
+    def test_prepare_drops_provider_future_bucket_before_strict_validation(self) -> None:
+        future_bucket = _bar(
+            "2026-07-24 09:35:00",
+            10.1,
+            10.2,
+            10.0,
+            10.15,
+            100,
+            1015,
+        )
+        future_bucket["amount"] = None
+        market_data = _FakeMarketData(
+            {
+                ("5m", "2026-07-23"): [
+                    _bar("2026-07-23 14:55:00", 10.0, 10.1, 9.9, 10.02, 100, 1002),
+                    _bar("2026-07-23 15:00:00", 10.02, 10.08, 10.0, 10.05, 120, 1206),
+                ],
+                ("1m", "2026-07-24"): [
+                    _bar("2026-07-24 09:31:00", 10.1, 10.12, 10.05, 10.11, 80, 808.8),
+                ],
+                ("5m", "2026-07-24"): [future_bucket],
+                ("day", None): [
+                    _bar("2026-07-23", 10.0, 10.1, 9.9, 10.1, 5400, 54540),
+                ],
+            }
+        )
+        preparator = LiveDataPreparator(
+            market_data,
+            self.market_context,
+            quote_reader=_FakeQuoteReader(None),
+            clock=lambda: datetime(2026, 7, 24, 9, 31, 30),
+        )
+
+        prepared = preparator.prepare(self.spec, minimum_preheat_5m=2)
+        market_input = prepared.market_input_port.read(prepared.target_time)
+
+        self.assertEqual(market_input.official_5m_bars, ())
 
     def test_prepare_fails_when_current_day_has_neither_quote_nor_intraday_data(self) -> None:
         market_data = _FakeMarketData(
@@ -403,8 +447,14 @@ class LiveDataPreparatorTests(unittest.TestCase):
             [bar["timestamp"] for bar in market_input.preheat_5m_bars],
             ["2026-07-22 14:55:00", "2026-07-22 15:00:00"],
         )
-        requested_days = [call["start_date"] for call in market_data.calls if call["timeframe"] == "5m"]
-        self.assertEqual(requested_days[:2], ["2026-07-23", "2026-07-22"])
+        preheat_call = next(
+            call
+            for call in market_data.calls
+            if call["timeframe"] == "5m"
+            and call["start_date"] != "2026-07-24"
+        )
+        self.assertEqual(preheat_call["start_date"], "2026-07-21")
+        self.assertEqual(preheat_call["end_date"], "2026-07-23")
 
     def test_prepare_backfills_until_effective_preheat_count_reaches_minimum(self) -> None:
         market_data = _FakeMarketData(
@@ -444,12 +494,14 @@ class LiveDataPreparatorTests(unittest.TestCase):
                 "2026-07-23 14:55:00",
             ],
         )
-        requested_days = [
-            call["start_date"]
+        preheat_call = next(
+            call
             for call in market_data.calls
             if call["timeframe"] == "5m"
-        ]
-        self.assertEqual(requested_days[:2], ["2026-07-23", "2026-07-22"])
+            and call["start_date"] != "2026-07-24"
+        )
+        self.assertEqual(preheat_call["start_date"], "2026-07-22")
+        self.assertEqual(preheat_call["end_date"], "2026-07-23")
 
     def test_prepare_skips_non_closed_preheat_bars_when_counting_minimum(self) -> None:
         market_data = _FakeMarketData(
@@ -493,12 +545,14 @@ class LiveDataPreparatorTests(unittest.TestCase):
             [bar["timestamp"] for bar in market_input.preheat_5m_bars],
             ["2026-07-22 15:00:00", "2026-07-23 14:55:00"],
         )
-        requested_days = [
-            call["start_date"]
+        preheat_call = next(
+            call
             for call in market_data.calls
             if call["timeframe"] == "5m"
-        ]
-        self.assertEqual(requested_days[:2], ["2026-07-23", "2026-07-22"])
+            and call["start_date"] != "2026-07-24"
+        )
+        self.assertEqual(preheat_call["start_date"], "2026-07-22")
+        self.assertEqual(preheat_call["end_date"], "2026-07-23")
 
     def test_prepare_fails_when_calendar_coverage_exhausted_before_minimum_preheat(self) -> None:
         market_context = MarketContextService(

@@ -13,10 +13,16 @@ export function createChartProjection(snapshot, identity = {}) {
 }
 
 export function beginChartSession(snapshot, serviceGeneration, sessionId = null) {
-  return createChartProjection(snapshot, {
-    service_generation: serviceGeneration,
-    ...(sessionId ? { session_id: sessionId } : {}),
-  });
+  // Keep the last successful snapshot visible while a replacement Session is
+  // loading, but reset its event identity. In particular, do not inherit the
+  // previous snapshot's revision: a new Session starts again at revision 1.
+  return {
+    snapshot,
+    serviceGeneration: integerOrNull(serviceGeneration),
+    sessionId: stringOrNull(sessionId),
+    revision: null,
+    rebaselineRequired: false,
+  };
 }
 
 export function applyWorkbenchSnapshot(
@@ -137,75 +143,109 @@ function applyIndicatorUpdate(snapshot, incoming) {
     return snapshot;
   }
   const current = snapshot.indicators;
+  const merged = {
+    ...current,
+    five_minute: {
+      ...current.five_minute,
+      ma: mergePointGroup(
+        current.five_minute.ma,
+        incoming.five_minute.ma,
+        ["ma5", "ma10", "ma20", "ma30", "ma60"],
+      ),
+      boll: {
+        ...current.five_minute.boll,
+        ...incoming.five_minute.boll,
+        upper: mergeTimestampRows(
+          current.five_minute.boll?.upper,
+          incoming.five_minute.boll?.upper,
+        ),
+        middle: mergeTimestampRows(
+          current.five_minute.boll?.middle,
+          incoming.five_minute.boll?.middle,
+        ),
+        lower: mergeTimestampRows(
+          current.five_minute.boll?.lower,
+          incoming.five_minute.boll?.lower,
+        ),
+      },
+      volume: {
+        ...current.five_minute.volume,
+        ...incoming.five_minute.volume,
+        values: mergeTimestampRows(
+          current.five_minute.volume.values,
+          incoming.five_minute.volume.values,
+        ),
+        ma5: mergeTimestampRows(
+          current.five_minute.volume.ma5,
+          incoming.five_minute.volume.ma5,
+        ),
+        ma10: mergeTimestampRows(
+          current.five_minute.volume.ma10,
+          incoming.five_minute.volume.ma10,
+        ),
+      },
+      macd: mergeMacd(
+        current.five_minute.macd,
+        incoming.five_minute.macd,
+      ),
+    },
+    one_minute: {
+      ...current.one_minute,
+      vwap: mergeTimestampRows(
+        current.one_minute.vwap,
+        incoming.one_minute.vwap,
+      ),
+      volume: {
+        ...current.one_minute.volume,
+        ...incoming.one_minute.volume,
+        values: mergeTimestampRows(
+          current.one_minute.volume.values,
+          incoming.one_minute.volume.values,
+        ),
+      },
+      macd: mergeMacd(
+        current.one_minute.macd,
+        incoming.one_minute.macd,
+      ),
+    },
+  };
+  const fiveMinuteTimestamps = new Set(
+    snapshot.market.bars_5m.map((bar) => bar.timestamp),
+  );
+  const oneMinuteTimestamps = new Set(
+    snapshot.market.bars_1m.map((bar) => bar.timestamp),
+  );
   return {
     ...snapshot,
     indicators: {
-      ...current,
-      five_minute: {
-        ...current.five_minute,
-        ma: mergePointGroup(
-          current.five_minute.ma,
-          incoming.five_minute.ma,
-          ["ma5", "ma10", "ma20", "ma30", "ma60"],
-        ),
-        boll: {
-          ...current.five_minute.boll,
-          ...incoming.five_minute.boll,
-          upper: mergeTimestampRows(
-            current.five_minute.boll?.upper,
-            incoming.five_minute.boll?.upper,
-          ),
-          middle: mergeTimestampRows(
-            current.five_minute.boll?.middle,
-            incoming.five_minute.boll?.middle,
-          ),
-          lower: mergeTimestampRows(
-            current.five_minute.boll?.lower,
-            incoming.five_minute.boll?.lower,
-          ),
-        },
-        volume: {
-          ...current.five_minute.volume,
-          ...incoming.five_minute.volume,
-          values: mergeTimestampRows(
-            current.five_minute.volume.values,
-            incoming.five_minute.volume.values,
-          ),
-          ma5: mergeTimestampRows(
-            current.five_minute.volume.ma5,
-            incoming.five_minute.volume.ma5,
-          ),
-          ma10: mergeTimestampRows(
-            current.five_minute.volume.ma10,
-            incoming.five_minute.volume.ma10,
-          ),
-        },
-        macd: mergeMacd(
-          current.five_minute.macd,
-          incoming.five_minute.macd,
-        ),
-      },
-      one_minute: {
-        ...current.one_minute,
-        vwap: mergeTimestampRows(
-          current.one_minute.vwap,
-          incoming.one_minute.vwap,
-        ),
-        volume: {
-          ...current.one_minute.volume,
-          ...incoming.one_minute.volume,
-          values: mergeTimestampRows(
-            current.one_minute.volume.values,
-            incoming.one_minute.volume.values,
-          ),
-        },
-        macd: mergeMacd(
-          current.one_minute.macd,
-          incoming.one_minute.macd,
-        ),
-      },
+      ...merged,
+      five_minute: alignIndicatorBranch(
+        merged.five_minute,
+        fiveMinuteTimestamps,
+      ),
+      one_minute: alignIndicatorBranch(
+        merged.one_minute,
+        oneMinuteTimestamps,
+      ),
     },
   };
+}
+
+function alignIndicatorBranch(value, allowedTimestamps) {
+  if (Array.isArray(value)) {
+    return value.filter(
+      (row) => row && allowedTimestamps.has(row.timestamp),
+    );
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.entries(value).map(([key, nested]) => [
+      key,
+      alignIndicatorBranch(nested, allowedTimestamps),
+    ]),
+  );
 }
 
 function mergePointGroup(current = {}, incoming = {}, keys) {

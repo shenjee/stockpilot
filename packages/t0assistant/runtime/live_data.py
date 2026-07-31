@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
+from math import ceil
 from typing import Any, Protocol
 
 from packages.marketdata.provider_request_queue import ProviderRequestPriority
@@ -65,7 +66,7 @@ class LivePreparationConfig:
     daily_history_days: int = 120
     intraday_limit: int = 300
     request_priority: ProviderRequestPriority = ProviderRequestPriority.LIVE
-    request_timeout: float | None = None
+    request_timeout: float | None = 15.0
 
 
 class LiveDataPreparator(LiveInitialInputPort):
@@ -124,6 +125,7 @@ class LiveDataPreparator(LiveInitialInputPort):
             trade_date=trade_date_str,
             timeframe="1m",
             session_validator=session_validator,
+            observed_at=observed_now,
         )
         official_5m = self._load_target_day_bars(
             code=code,
@@ -131,6 +133,7 @@ class LiveDataPreparator(LiveInitialInputPort):
             trade_date=trade_date_str,
             timeframe="5m",
             session_validator=session_validator,
+            observed_at=observed_now,
         )
         daily_history = self._load_daily_history(
             code=code,
@@ -189,6 +192,7 @@ class LiveDataPreparator(LiveInitialInputPort):
             trade_date=session.trade_date.isoformat(),
             timeframe=timeframe,
             session_validator=self._session_validator(spec),
+            observed_at=observed_now,
         )
 
     def load_refresh_quotes(
@@ -237,27 +241,48 @@ class LiveDataPreparator(LiveInitialInputPort):
         session_validator: Callable[[], bool] | None,
     ) -> tuple[Mapping[str, Any], ...]:
         collected: list[Mapping[str, Any]] = []
-        day = self._market_context.previous_trading_day(session.trade_date, market)
+        batch_end = self._market_context.previous_trading_day(
+            session.trade_date,
+            market,
+        )
         normalized: tuple[dict[str, Any], ...] = ()
-        while day is not None and len(normalized) < minimum_preheat_5m:
-            day_str = day.isoformat()
+        while batch_end is not None and len(normalized) < minimum_preheat_5m:
+            # A normal A-share session contributes 48 closed 5m bars. Fetch a
+            # small trading-day range in one provider call instead of repeating
+            # the same paged Tencent request once per day. The extra two days
+            # cover common suspensions and incomplete cached sessions.
+            remaining = minimum_preheat_5m - len(normalized)
+            batch_days = max(3, ceil(remaining / 48) + 2)
+            batch_start = batch_end
+            for _ in range(batch_days - 1):
+                previous = self._market_context.previous_trading_day(
+                    batch_start,
+                    market,
+                )
+                if previous is None:
+                    break
+                batch_start = previous
             result = self._market_data.get_klines_result(
                 code=code,
-                end_date=day_str,
+                end_date=batch_end.isoformat(),
                 market=market,
                 timeframe="5m",
-                start_date=day_str,
+                start_date=batch_start.isoformat(),
                 limit=minimum_preheat_5m,
                 request_priority=self._config.request_priority,
                 session_validator=session_validator,
                 request_timeout=self._config.request_timeout,
             )
-            collected.extend(_extract_rows(result))
+            rows = _extract_live_rows(result)
+            collected.extend(rows)
             normalized = _normalize_preheat_bars(
                 collected,
                 session_start=session.start,
             )
-            day = self._market_context.previous_trading_day(day, market)
+            batch_end = self._market_context.previous_trading_day(
+                batch_start,
+                market,
+            )
         if len(normalized) < minimum_preheat_5m:
             raise LiveDataUnavailableError(
                 f"live initial load requires at least {minimum_preheat_5m} closed 5m preheat bars"
@@ -272,6 +297,7 @@ class LiveDataPreparator(LiveInitialInputPort):
         trade_date: str,
         timeframe: str,
         session_validator: Callable[[], bool] | None,
+        observed_at: datetime,
     ) -> tuple[Mapping[str, Any], ...]:
         result = self._market_data.get_klines_result(
             code=code,
@@ -284,7 +310,11 @@ class LiveDataPreparator(LiveInitialInputPort):
             session_validator=session_validator,
             request_timeout=self._config.request_timeout,
         )
-        rows = _extract_rows(result)
+        rows = [
+            row
+            for row in _extract_live_rows(result)
+            if _live_bar_is_closed_at(row, observed_at)
+        ]
         session = self._market_context.require_session(trade_date, market)
         return _normalize_target_day_bars(rows, session=session)
 
@@ -308,7 +338,7 @@ class LiveDataPreparator(LiveInitialInputPort):
             session_validator=session_validator,
             request_timeout=self._config.request_timeout,
         )
-        rows = _extract_rows(result)
+        rows = _extract_live_rows(result)
         return _normalize_daily_bars(rows, trade_date=session_trade_date)
 
     def _load_quote_snapshots(
@@ -369,6 +399,45 @@ def _select_target_time(
         return None
     latest = max(candidates)
     return observed_now if observed_now >= latest else latest
+
+
+def _extract_live_rows(result: Any) -> list[Mapping[str, Any]]:
+    """Return usable rows or fail fast on an unsuccessful provider request."""
+
+    rows = _extract_rows(result)
+    if rows:
+        return rows
+    success = getattr(result, "success", True)
+    issues = getattr(result, "issues", ()) or ()
+    error_reason = next(
+        (
+            getattr(issue, "reason_code", "")
+            for issue in issues
+            if getattr(issue, "level", "") == "error"
+        ),
+        "",
+    )
+    if success is False or error_reason:
+        if error_reason == "request_timeout":
+            raise LiveDataUnavailableError("live market data request timed out")
+        raise LiveDataUnavailableError("live market data request failed")
+    return rows
+
+
+def _live_bar_is_closed_at(
+    row: Mapping[str, Any],
+    observed_at: datetime,
+) -> bool:
+    """Exclude Tencent's current, future-labelled minute bucket from Live."""
+
+    timestamp = row.get("timestamp", row.get("date"))
+    if not isinstance(timestamp, str):
+        return True
+    try:
+        return parse_market_timestamp(timestamp) <= observed_at
+    except (TypeError, ValueError):
+        # Let the strict shared normalizer produce the stable validation error.
+        return True
 
 
 __all__ = [

@@ -844,15 +844,43 @@ export function App() {
       const sessionId = responseSessionId(response);
       activeOperations.current.clear();
       rebaselineRequest.current = null;
-      const nextLiveProjection = beginChartSession(
-        emptyChartSnapshot,
-        status.service_generation,
-        sessionId,
-      );
       if (modeRef.current === WorkbenchMode.REPLAY) {
-        liveProjection.current = nextLiveProjection;
+        const current = liveProjection.current;
+        if (
+          current.serviceGeneration !== status.service_generation ||
+          current.sessionId !== sessionId ||
+          current.snapshot.session?.symbol !== security.symbol ||
+          current.snapshot.session?.state !== "ready"
+        ) {
+          liveProjection.current = beginChartSession(
+            current.snapshot,
+            status.service_generation,
+            sessionId,
+          );
+        }
       } else {
-        setProjection(nextLiveProjection);
+        setProjection((current) => {
+          // Startup restoration can publish the complete snapshot before the
+          // select_security HTTP response resolves. Never overwrite that newer
+          // baseline with the request's empty waiting projection.
+          if (
+            current.serviceGeneration === status.service_generation &&
+            current.sessionId === sessionId &&
+            current.snapshot.session?.symbol === security.symbol &&
+            current.snapshot.session?.state === "ready"
+          ) {
+            liveProjection.current = current;
+            setLoading(false);
+            return current;
+          }
+          const replacement = beginChartSession(
+            current.snapshot,
+            status.service_generation,
+            sessionId,
+          );
+          liveProjection.current = replacement;
+          return replacement;
+        });
       }
       if (operationId) {
         activeOperations.current.set(operationId, {
@@ -868,6 +896,42 @@ export function App() {
       setQuery(security.code);
       setSuggestions([]);
       setSearchMessage("");
+      // Recover the authoritative baseline when it raced ahead of the command
+      // response or the event channel. A cold load may not be ready yet; in
+      // that normal case the later workbench_snapshot event remains the owner.
+      if (sessionId) {
+        const snapshotResponse = await window.stockpilot.getLiveSnapshot(
+          appRequest("get_live_snapshot", sessionId, {}),
+        );
+        if (!navigationRequests.current.isCurrent(selectionSequence)) return;
+        const recovered = workbenchSnapshotFromResponse(snapshotResponse);
+        if (recovered) {
+          const identity = {
+            service_generation: status.service_generation,
+            session_id: sessionId,
+            revision: recovered.session?.revision,
+          };
+          if (modeRef.current === WorkbenchMode.REPLAY) {
+            liveProjection.current = applyWorkbenchSnapshot(
+              liveProjection.current,
+              recovered,
+              identity,
+            );
+          } else {
+            setProjection((current) => {
+              const replacement = applyWorkbenchSnapshot(
+                current,
+                recovered,
+                identity,
+              );
+              liveProjection.current = replacement;
+              return replacement;
+            });
+            setLoading(false);
+          }
+          activeOperations.current.delete(operationId ?? "");
+        }
+      }
     } catch (error) {
       if (!navigationRequests.current.isCurrent(selectionSequence)) return;
       const failure = clientError(error, "symbol_selection");
@@ -1013,11 +1077,25 @@ export function App() {
       const error = applicationErrorFrom(response);
       if (error) throw error;
       const operationId = responseOperationId(response);
+      const replacementSessionId = responseSessionId(response);
+      const retainedSnapshot =
+        modeRef.current === WorkbenchMode.REPLAY
+          ? liveProjection.current.snapshot
+          : projection.snapshot;
+      const nextLiveProjection = beginChartSession(
+        retainedSnapshot,
+        status.service_generation,
+        replacementSessionId,
+      );
+      liveProjection.current = nextLiveProjection;
+      if (modeRef.current !== WorkbenchMode.REPLAY) {
+        setProjection(nextLiveProjection);
+      }
       if (operationId) {
         activeOperations.current.set(operationId, {
           retry: "live",
           serviceGeneration: status.service_generation,
-          sessionId: projection.sessionId,
+          sessionId: replacementSessionId,
         });
       }
     } catch (error) {
@@ -1275,7 +1353,7 @@ export function App() {
       data-testid="shell"
       className={[
         "shell",
-        backgroundError ? "has-feedback" : "",
+        backgroundError || activeFailure ? "has-feedback" : "",
         replayMode ? "replay-mode" : "",
       ]
         .filter(Boolean)
@@ -1292,10 +1370,15 @@ export function App() {
         onMode={selectMode}
       />
 
-      {backgroundError && (
-        <section className="feedback-banner" role="status">
-          <span>{backgroundError.message}</span>
-          {backgroundError.retryable && (
+      {(activeFailure || backgroundError) && (
+        <section
+          className="feedback-banner"
+          role={activeFailure ? "alert" : "status"}
+        >
+          <span>
+            {(activeFailure?.error ?? backgroundError)?.message}
+          </span>
+          {(activeFailure?.error ?? backgroundError)?.retryable && (
             <button type="button" onClick={() => void retryLiveOrService()}>
               重试
             </button>
@@ -1303,7 +1386,10 @@ export function App() {
           <button
             type="button"
             aria-label="关闭提示"
-            onClick={() => setBackgroundError(null)}
+            onClick={() => {
+              setActiveFailure(null);
+              setBackgroundError(null);
+            }}
           >
             ×
           </button>
@@ -1445,9 +1531,8 @@ export function App() {
           </div>
         )}
         {loading && (
-          <div className="workspace-state loading-state" role="status">
-            <span className="loading-spinner" aria-hidden="true" />
-            <strong>正在加载历史行情并计算图表…</strong>
+          <div className="loading-indicator" role="status">
+            正在加载…
           </div>
         )}
       </section>
@@ -1506,33 +1591,6 @@ export function App() {
         </div>
       )}
 
-      {activeFailure && (
-        <div className="dialog-backdrop" role="presentation">
-          <section
-            className="error-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="operation-error-title"
-          >
-            <h2 id="operation-error-title">操作未完成</h2>
-            <p>{activeFailure.error.message}</p>
-            <div className="dialog-actions">
-              <button type="button" onClick={() => setActiveFailure(null)}>
-                关闭
-              </button>
-              {activeFailure.error.retryable && (
-                <button
-                  type="button"
-                  className="primary-button"
-                  onClick={() => void retryLiveOrService()}
-                >
-                  重试
-                </button>
-              )}
-            </div>
-          </section>
-        </div>
-      )}
     </main>
   );
 
