@@ -41,11 +41,22 @@ export function createViewportState(times, options = {}) {
 }
 
 // 以价格图绘图区宽度（已扣除坐标轴/边距）和目标槽位宽度计算可见 N 根。
-export function calculateVisibleCount(plotWidth, barSlotWidth) {
+export function calculateVisibleCount(
+  plotWidth,
+  barSlotWidth,
+  options = {},
+) {
+  const minimum = positiveInteger(options.minimum, 1);
+  const maximum = positiveInteger(options.maximum, Number.MAX_SAFE_INTEGER);
+  const lower = Math.min(minimum, maximum);
+  const upper = Math.max(minimum, maximum);
   if (!Number.isFinite(plotWidth) || plotWidth <= 0 || barSlotWidth <= 0) {
-    return 1;
+    return lower;
   }
-  return Math.max(1, Math.floor(plotWidth / barSlotWidth));
+  return Math.max(
+    lower,
+    Math.min(upper, Math.floor(plotWidth / barSlotWidth)),
+  );
 }
 
 // following：右对齐最新 N 根。
@@ -69,8 +80,24 @@ export function followLatest(state, visibleCount) {
 // 缩放传 false 始终 manual。默认 true 兼容 restore 等无意图场景。
 export function setManualRange(state, start, end, options = {}) {
   const length = state.logicalToTime.length;
-  const clampedStart = Math.max(0, Math.min(start, length));
-  const clampedEnd = Math.max(0, Math.min(end, length));
+  const minimumVisibleCount = Math.min(
+    length,
+    positiveInteger(options.minimumVisibleCount, 1),
+  );
+  const maximumVisibleCount = Math.min(
+    length,
+    Math.max(
+      minimumVisibleCount,
+      positiveInteger(options.maximumVisibleCount, length || 1),
+    ),
+  );
+  const [clampedStart, clampedEnd] = clampRangeSpan(
+    start,
+    end,
+    length,
+    minimumVisibleCount,
+    maximumVisibleCount,
+  );
   const atLatestEdge = clampedEnd >= length;
   const allowResumeFollowing = options.allowResumeFollowing !== false;
   return {
@@ -184,5 +211,32 @@ export function restoreViewportFromSnapshot(
   const wasClamped = endWasClamped || startWasClamped;
   return setManualRange(state, internal.start, internal.end, {
     allowResumeFollowing: wasClamped,
+    minimumVisibleCount: options.minimumVisibleCount,
+    maximumVisibleCount: options.maximumVisibleCount,
   });
+}
+
+function clampRangeSpan(start, end, length, minimum, maximum) {
+  if (length <= 0) return [0, 0];
+  let clampedStart = Math.max(0, Math.min(start, length));
+  let clampedEnd = Math.max(clampedStart, Math.min(end, length));
+  const span = clampedEnd - clampedStart;
+  if (span >= minimum && span <= maximum) {
+    return [clampedStart, clampedEnd];
+  }
+
+  const targetSpan = Math.max(minimum, Math.min(maximum, span));
+  // Keep an edge-pinned Live viewport pinned to the newest bar. Else preserve
+  // the interaction centre as closely as the available history permits.
+  if (clampedEnd >= length) {
+    return [Math.max(0, length - targetSpan), length];
+  }
+  const centre = (clampedStart + clampedEnd) / 2;
+  clampedStart = Math.round(centre - targetSpan / 2);
+  clampedStart = Math.max(0, Math.min(clampedStart, length - targetSpan));
+  return [clampedStart, clampedStart + targetSpan];
+}
+
+function positiveInteger(value, fallback) {
+  return Number.isInteger(value) && value > 0 ? value : fallback;
 }

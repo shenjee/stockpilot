@@ -49,6 +49,7 @@ from .computation_contract import (
 from ._market_bars import (
     MARKET_TIMESTAMP_FORMAT,
     RuntimeMarketDataError,
+    normalize_provider_bar_units,
     parse_market_timestamp,
 )
 
@@ -421,7 +422,12 @@ class ReplayDataPreparator:
                 session_validator=session_validator,
             )
             self._check_deadline(config)
-            collected.extend(_extract_rows(result))
+            collected.extend(
+                normalize_provider_bar_units(
+                    _extract_rows(result),
+                    self._market_data,
+                )
+            )
             # Count only valid, closed OHLCV bars; rejected cache rows must not
             # make the loop stop before 500 usable bars have been collected.
             normalized = _normalize_preheat_bars(
@@ -473,7 +479,10 @@ class ReplayDataPreparator:
                 session_validator=session_validator,
             )
             self._check_deadline(config)
-            rows = _extract_rows(result)
+            rows = normalize_provider_bar_units(
+                _extract_rows(result),
+                self._market_data,
+            )
             normalized = _normalize_target_day_bars(rows, session=session)
             is_reliable = _assess_local_intraday_reliability(
                 result=result,
@@ -525,7 +534,10 @@ class ReplayDataPreparator:
             session_validator=session_validator,
         )
         self._check_deadline(config)
-        rows = _extract_rows(result)
+        rows = normalize_provider_bar_units(
+            _extract_rows(result),
+            self._market_data,
+        )
         normalized = _normalize_target_day_bars(rows, session=session)
         is_reliable = not missing_after and _assess_local_intraday_reliability(
             result=result,
@@ -568,7 +580,10 @@ class ReplayDataPreparator:
             session_validator=session_validator,
         )
         self._check_deadline(config)
-        rows = _extract_rows(result)
+        rows = normalize_provider_bar_units(
+            _extract_rows(result),
+            self._market_data,
+        )
         return _normalize_target_day_bars(rows, session=session)
 
     def _load_daily_history(
@@ -593,7 +608,10 @@ class ReplayDataPreparator:
             session_validator=session_validator,
         )
         self._check_deadline(config)
-        rows = _extract_rows(result)
+        rows = normalize_provider_bar_units(
+            _extract_rows(result),
+            self._market_data,
+        )
         return _normalize_daily_bars(rows, trade_date=session.trade_date)
 
     def _load_quote_snapshots(

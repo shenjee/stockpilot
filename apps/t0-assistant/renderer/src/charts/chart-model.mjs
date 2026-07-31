@@ -71,8 +71,14 @@ export function createChartGroupModel(snapshot, kind, layers = {}, trades = []) 
       : snapshot.indicators.one_minute;
 
   assertOrderedUnique(bars, `${kind} bars`);
-  const timestamps = bars.map((bar) => bar.timestamp);
-  const timestampSet = new Set(timestamps);
+  const barTimestamps = bars.map((bar) => bar.timestamp);
+  const timestampSet = new Set(barTimestamps);
+  const tradeDate =
+    snapshot.session?.trade_date ?? barTimestamps[0]?.slice(0, 10) ?? null;
+  const timestamps =
+    kind === ONE_MINUTE && tradeDate !== null
+      ? buildIntradayTradingTimeline(tradeDate)
+      : barTimestamps;
   const timeByTimestamp = Object.fromEntries(
     timestamps.map((timestamp) => [timestamp, parseMarketTimestamp(timestamp)]),
   );
@@ -140,11 +146,15 @@ export function createChartGroupModel(snapshot, kind, layers = {}, trades = []) 
         )
       : [];
 
-  const volumePoints = normalizePoints(
+  const normalizedVolumePoints = normalizePoints(
     clipRows(indicator.volume.values),
     timestampSet,
     `${kind} volume`,
   );
+  const volumePoints =
+    kind === ONE_MINUTE
+      ? padPointsToTimeline(normalizedVolumePoints, timestamps)
+      : normalizedVolumePoints;
   if (kind === FIVE_MINUTE) {
     for (const bar of bars) {
       if (
@@ -171,16 +181,22 @@ export function createChartGroupModel(snapshot, kind, layers = {}, trades = []) 
             close: bar.close,
             closed: bar.closed,
           }))
-        : bars.map((bar) => ({
-            timestamp: bar.timestamp,
-            value: bar.close,
-          })),
+        : padPointsToTimeline(
+            bars.map((bar) => ({
+              timestamp: bar.timestamp,
+              value: bar.close,
+            })),
+            timestamps,
+          ),
     vwap:
       kind === ONE_MINUTE
-        ? normalizePoints(
-            clipRows(indicator.vwap),
-            timestampSet,
-            "one_minute vwap",
+        ? padPointsToTimeline(
+            normalizePoints(
+              clipRows(indicator.vwap),
+              timestampSet,
+              "one_minute vwap",
+            ),
+            timestamps,
           )
         : [],
     movingAverages,
@@ -206,24 +222,68 @@ export function createChartGroupModel(snapshot, kind, layers = {}, trades = []) 
           )
         : [],
     macd: {
-      dif: normalizePoints(
-        clipRows(indicator.macd.dif),
-        timestampSet,
-        `${kind} macd dif`,
+      dif: padIntradayIndicator(
+        normalizePoints(
+          clipRows(indicator.macd.dif),
+          timestampSet,
+          `${kind} macd dif`,
+        ),
+        kind,
+        timestamps,
       ),
-      dea: normalizePoints(
-        clipRows(indicator.macd.dea),
-        timestampSet,
-        `${kind} macd dea`,
+      dea: padIntradayIndicator(
+        normalizePoints(
+          clipRows(indicator.macd.dea),
+          timestampSet,
+          `${kind} macd dea`,
+        ),
+        kind,
+        timestamps,
       ),
-      histogram: normalizePoints(
-        clipRows(indicator.macd.histogram),
-        timestampSet,
-        `${kind} macd histogram`,
+      histogram: padIntradayIndicator(
+        normalizePoints(
+          clipRows(indicator.macd.histogram),
+          timestampSet,
+          `${kind} macd histogram`,
+        ),
+        kind,
+        timestamps,
       ),
     },
     tradeMarkers,
   };
+}
+
+function buildIntradayTradingTimeline(tradeDate) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(tradeDate)) {
+    throw new TypeError(`Unsupported trade date: ${tradeDate}`);
+  }
+  const timestamps = [];
+  for (const [start, end] of [
+    [9 * 60 + 30, 11 * 60 + 30],
+    [13 * 60, 15 * 60],
+  ]) {
+    for (let minuteOfDay = start; minuteOfDay <= end; minuteOfDay += 1) {
+      const hour = String(Math.floor(minuteOfDay / 60)).padStart(2, "0");
+      const minute = String(minuteOfDay % 60).padStart(2, "0");
+      timestamps.push(`${tradeDate} ${hour}:${minute}:00`);
+    }
+  }
+  return timestamps;
+}
+
+function padPointsToTimeline(points, timestamps) {
+  const values = new Map(points.map((point) => [point.timestamp, point.value]));
+  return timestamps.map((timestamp) => ({
+    timestamp,
+    value: values.get(timestamp) ?? null,
+  }));
+}
+
+function padIntradayIndicator(points, kind, timestamps) {
+  return kind === ONE_MINUTE
+    ? padPointsToTimeline(points, timestamps)
+    : points;
 }
 
 function normalizeStrokes(strokes, timestampSet) {

@@ -33,6 +33,7 @@ export function createViewportState(
 export function calculateVisibleCount(
   plotWidth: number,
   barSlotWidth: number,
+  options?: { minimum?: number; maximum?: number },
 ): number;
 
 export function followLatest(
@@ -44,7 +45,11 @@ export function setManualRange(
   state: ChartViewportState,
   start: number,
   end: number,
-  options?: { allowResumeFollowing?: boolean },
+  options?: {
+    allowResumeFollowing?: boolean;
+    minimumVisibleCount?: number;
+    maximumVisibleCount?: number;
+  },
 ): ChartViewportState;
 
 export function isAtLatestEdge(state: ChartViewportState): boolean;
@@ -80,5 +85,9 @@ export function restoreViewportFromSnapshot(
   snapshot: ChartViewportSnapshot | null,
   times: readonly string[],
   visibleCount: number,
-  options?: { barSlotWidth?: number },
+  options?: {
+    barSlotWidth?: number;
+    minimumVisibleCount?: number;
+    maximumVisibleCount?: number;
+  },
 ): ChartViewportState;

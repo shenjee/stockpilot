@@ -119,12 +119,24 @@ test("intraday model uses backend VWAP/MACD and keeps both sides of lunch", () =
     ChartGroupKind.ONE_MINUTE,
   );
   const lunchLeft = model.timestamps.indexOf("2026-07-22 11:30:00");
+  const afternoonOpen = model.timestamps.indexOf("2026-07-22 13:00:00");
   const lunchRight = model.timestamps.indexOf("2026-07-22 13:01:00");
 
-  assert.equal(lunchRight - lunchLeft, 1);
-  assert.deepEqual(model.vwap, fixture.indicators.one_minute.vwap);
-  assert.deepEqual(model.macd.dif, fixture.indicators.one_minute.macd.dif);
-  assert.equal(model.price.length, fixture.market.bars_1m.length);
+  assert.equal(model.timestamps[0], "2026-07-22 09:30:00");
+  assert.equal(model.timestamps.at(-1), "2026-07-22 15:00:00");
+  assert.equal(model.timestamps.length, 242);
+  assert.equal(afternoonOpen - lunchLeft, 1);
+  assert.equal(lunchRight - afternoonOpen, 1);
+  assert.equal(
+    model.vwap.find((point) => point.timestamp === "2026-07-22 13:01:00")
+      .value,
+    fixture.indicators.one_minute.vwap.find(
+      (point) => point.timestamp === "2026-07-22 13:01:00",
+    ).value,
+  );
+  assert.equal(model.vwap.at(-1).value, null);
+  assert.equal(model.macd.dif.at(-1).value, null);
+  assert.equal(model.price.length, 242);
 });
 
 test("model rejects out-of-order bars and indicator points without a bar", () => {

@@ -64,6 +64,10 @@ const BOLL_COLOR = "#e879f9";
 // 缩放/平移判定阈值（LC 连续逻辑范围跨度差）。纯平移跨度精确不变（浮点误差 ~1e-9），
 // 缩放跨度变化至少数个 K；0.01 仅吸收浮点漂移，可靠区分二者。
 const ZOOM_SPAN_EPSILON = 0.01;
+// Match Chan Viewer's horizontal window policy: never let an interaction or
+// transient zero-width layout collapse a populated chart to a handful of bars.
+const MIN_VISIBLE_BARS = 40;
+const MAX_VISIBLE_BARS = 360;
 const MA_COLORS = {
   ma5: "#f6d365",
   ma10: "#7dd3fc",
@@ -263,15 +267,26 @@ export class SynchronizedChartGroup {
         `Cannot render ${model.kind} data in ${this.kind} chart group`,
       );
     }
-    this.model = model;
-    this.rebuildTimeMaps();
-    this.setSeriesData();
-    this.applyViewport();
+    // setData() can synchronously emit a visible-range notification before
+    // applyViewport() has advanced the logical viewport to the new model.
+    // That notification is a chart-library side effect, not a user pan/zoom.
+    // If it reaches setupViewportTracking it converts FOLLOWING to MANUAL and
+    // pins Live at the old right edge, so later bars exist but stay off-screen.
+    const wasApplyingViewportRange = this.applyingViewportRange;
+    this.applyingViewportRange = true;
+    try {
+      this.model = model;
+      this.rebuildTimeMaps();
+      this.setSeriesData();
+      this.applyViewport();
+    } finally {
+      this.applyingViewportRange = wasApplyingViewportRange;
+    }
   }
 
   // 视口状态机：following 右对齐最新；manual 保留逻辑范围；空数据重置。
-  // 首次 setModel（viewport 为空）从 React 保存的 initialViewport 恢复，使组件重建后
-  // 不依赖图表实例存活即可还原可见范围（UI 规格 §12）。
+  // 5 分钟首次 setModel 可从 React 保存的 initialViewport 恢复；分时始终忽略旧视口，
+  // 展示目标日截至当前的完整交易分钟。
   private applyViewport() {
     if (!this.model) {
       return;
@@ -285,19 +300,33 @@ export class SynchronizedChartGroup {
       return;
     }
     const plotWidth = this.priceChart.timeScale().width();
-    const visibleCount = calculateVisibleCount(
-      plotWidth,
-      this.barSlotWidth,
-    );
+    const visibleCount = this.visibleCount(plotWidth, times.length);
+    const viewportBounds = this.viewportBounds(times.length);
     if (this.viewport === null) {
       this.viewport = restoreViewportFromSnapshot(
-        this.initialViewport ?? null,
+        this.kind === ChartGroupKind.ONE_MINUTE
+          ? null
+          : (this.initialViewport ?? null),
         times,
         visibleCount,
-        { barSlotWidth: this.barSlotWidth },
+        {
+          barSlotWidth: this.barSlotWidth,
+          ...viewportBounds,
+        },
       );
     } else {
       this.viewport = applyModel(this.viewport, times, visibleCount);
+      if (this.viewport.followState === FollowState.MANUAL) {
+        this.viewport = setManualRange(
+          this.viewport,
+          this.viewport.visibleStart,
+          this.viewport.visibleEnd,
+          {
+            allowResumeFollowing: false,
+            ...viewportBounds,
+          },
+        );
+      }
     }
     this.applyVisibleRange();
   }
@@ -319,13 +348,14 @@ export class SynchronizedChartGroup {
       this.reportViewport(true);
       return;
     }
+    const wasApplyingViewportRange = this.applyingViewportRange;
     this.applyingViewportRange = true;
     try {
       this.priceChart.timeScale().setVisibleLogicalRange(
         range as LogicalRange,
       );
     } finally {
-      this.applyingViewportRange = false;
+      this.applyingViewportRange = wasApplyingViewportRange;
     }
     this.reportViewport(true);
   }
@@ -411,9 +441,21 @@ export class SynchronizedChartGroup {
         this.viewport,
         internal.start,
         internal.end,
-        { allowResumeFollowing: !isZoom },
+        {
+          allowResumeFollowing: !isZoom,
+          ...this.viewportBounds(this.viewport.logicalToTime.length),
+        },
       );
-      this.reportViewport();
+      if (
+        this.viewport.visibleStart !== internal.start ||
+        this.viewport.visibleEnd !== internal.end
+      ) {
+        // The library already displayed the over-zoomed range; immediately
+        // restore the bounded range instead of waiting for the next refresh.
+        this.applyVisibleRange();
+      } else {
+        this.reportViewport();
+      }
     };
     this.priceChart.timeScale().subscribeVisibleLogicalRangeChange(handler);
     this.viewportRangeHandler = handler;
@@ -494,17 +536,25 @@ export class SynchronizedChartGroup {
           ).padStart(2, "0")}`;
         },
       },
-      handleScale: {
-        axisPressedMouseMove: { time: true, price: false },
-        mouseWheel: true,
-        pinch: true,
-      },
-      handleScroll: {
-        mouseWheel: true,
-        pressedMouseMove: true,
-        horzTouchDrag: true,
-        vertTouchDrag: false,
-      },
+      // 分时图是“当日已发生的完整交易时间”视图，不允许手势把早盘数据
+      // 滚出屏幕。5 分钟 K 线仍保留 Chan Viewer 风格的缩放和平移。
+      handleScale:
+        this.kind === ChartGroupKind.FIVE_MINUTE
+          ? {
+              axisPressedMouseMove: { time: true, price: false },
+              mouseWheel: true,
+              pinch: true,
+            }
+          : false,
+      handleScroll:
+        this.kind === ChartGroupKind.FIVE_MINUTE
+          ? {
+              mouseWheel: true,
+              pressedMouseMove: true,
+              horzTouchDrag: true,
+              vertTouchDrag: false,
+            }
+          : false,
     });
   }
 
@@ -553,11 +603,16 @@ export class SynchronizedChartGroup {
       this.applyCzscMarkers(time);
       this.setTradeMarkerData();
     } else {
-      const priceData: LineData<Time>[] = this.model.price.flatMap((point) =>
-        "value" in point
-          ? [{ time: time(point.timestamp), value: point.value }]
-          : [],
-      );
+      const priceData: Array<LineData<Time> | WhitespaceData<Time>> =
+        this.model.price.flatMap((point) =>
+          "value" in point
+            ? [
+                point.value === null
+                  ? { time: time(point.timestamp) }
+                  : { time: time(point.timestamp), value: point.value },
+              ]
+            : [],
+        );
       (this.priceSeries as ISeriesApi<"Line">).setData(priceData);
       this.vwapSeries?.setData(
         this.toLineData(this.model.vwap, time),
@@ -570,18 +625,17 @@ export class SynchronizedChartGroup {
         bar.close >= bar.open ? RED : GREEN,
       ]),
     );
-    const volumeData: HistogramData<Time>[] = this.model.volume.flatMap(
+    const volumeData: Array<HistogramData<Time> | WhitespaceData<Time>> =
+      this.model.volume.map(
       (point) =>
         point.value === null
-          ? []
-          : [
-              {
-                time: time(point.timestamp),
-                value: point.value,
-                color: `${directionByTimestamp.get(point.timestamp) ?? MUTED}aa`,
-              },
-            ],
-    );
+          ? { time: time(point.timestamp) }
+          : {
+              time: time(point.timestamp),
+              value: point.value,
+              color: `${directionByTimestamp.get(point.timestamp) ?? MUTED}aa`,
+            },
+      );
     this.volumeSeries.setData(volumeData);
     this.volumeMa5Series?.setData(
       this.toLineData(this.model.volumeMa5, time),
@@ -715,11 +769,16 @@ export class SynchronizedChartGroup {
     this.macdSeriesByTime.clear();
 
     let previous: number | null = null;
-    for (const bar of this.model.bars) {
-      const time = this.model.timeByTimestamp[bar.timestamp];
+    for (const timestamp of this.model.timestamps) {
+      const time = this.model.timeByTimestamp[timestamp];
       this.previousTimeByTime.set(time, previous);
-      this.priceValues.set(time, bar.close);
       previous = time;
+    }
+    for (const bar of this.model.bars) {
+      this.priceValues.set(
+        this.model.timeByTimestamp[bar.timestamp],
+        bar.close,
+      );
     }
     for (const point of this.model.volume) {
       if (point.value !== null) {
@@ -837,6 +896,7 @@ export class SynchronizedChartGroup {
     // ResizeObserver 触发的 applyOptions 也会让 Lightweight Charts 上报可见范围。
     // 这不是用户缩放，不能进入 setupViewportTracking 的 manual/zoom 分支；否则首屏从
     // 极窄的过渡布局扩展到最终宽度时，会把初始化阶段的 1～2 根范围错误锁定下来。
+    const wasApplyingViewportRange = this.applyingViewportRange;
     this.applyingViewportRange = true;
     try {
       for (const [key, chart] of [
@@ -853,7 +913,7 @@ export class SynchronizedChartGroup {
         }
       }
     } finally {
-      this.applyingViewportRange = false;
+      this.applyingViewportRange = wasApplyingViewportRange;
     }
     // following：按新绘图区宽度重算 N 并右对齐；manual 保留逻辑范围不跳回最新。
     if (
@@ -862,12 +922,35 @@ export class SynchronizedChartGroup {
       this.model.timestamps.length > 0
     ) {
       const plotWidth = this.priceChart.timeScale().width();
-      const visibleCount = calculateVisibleCount(
+      const visibleCount = this.visibleCount(
         plotWidth,
-        this.barSlotWidth,
+        this.model.timestamps.length,
       );
       this.viewport = followLatest(this.viewport, visibleCount);
       this.applyVisibleRange();
     }
+  }
+
+  private visibleCount(plotWidth: number, seriesLength: number) {
+    if (this.kind === ChartGroupKind.ONE_MINUTE) {
+      return seriesLength;
+    }
+    return calculateVisibleCount(plotWidth, this.barSlotWidth, {
+      minimum: MIN_VISIBLE_BARS,
+      maximum: MAX_VISIBLE_BARS,
+    });
+  }
+
+  private viewportBounds(seriesLength: number) {
+    if (this.kind === ChartGroupKind.ONE_MINUTE) {
+      return {
+        minimumVisibleCount: seriesLength,
+        maximumVisibleCount: seriesLength,
+      };
+    }
+    return {
+      minimumVisibleCount: MIN_VISIBLE_BARS,
+      maximumVisibleCount: MAX_VISIBLE_BARS,
+    };
   }
 }

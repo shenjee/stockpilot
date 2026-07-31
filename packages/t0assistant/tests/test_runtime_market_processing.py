@@ -1,5 +1,6 @@
 import unittest
 from collections.abc import Mapping
+from types import SimpleNamespace
 
 from packages.marketdata.services.market_context_service import MarketContextService
 from packages.t0assistant.runtime import (
@@ -9,6 +10,7 @@ from packages.t0assistant.runtime import (
     project_market_at,
     project_quote_at,
 )
+from packages.t0assistant.runtime._market_bars import normalize_provider_bar_units
 
 
 def bar(
@@ -49,6 +51,40 @@ def quote(timestamp, latest_price, *, volume_ratio=1.2):
         "order_imbalance": None,
         "turnover_rate": 0.5,
     }
+
+
+class ProviderBarUnitNormalizationTests(unittest.TestCase):
+    def test_tencent_lots_and_ten_thousand_cny_become_shares_and_cny(self):
+        market_data = SimpleNamespace(
+            provider=SimpleNamespace(provider_id="tencent")
+        )
+
+        normalized = normalize_provider_bar_units(
+            [
+                {
+                    "timestamp": "2026-07-24 09:31:00",
+                    "volume": 3_006,
+                    "amount": 2_020.1132,
+                }
+            ],
+            market_data,
+        )
+
+        self.assertEqual(normalized[0]["volume"], 300_600)
+        self.assertAlmostEqual(normalized[0]["amount"], 20_201_132)
+        self.assertAlmostEqual(
+            normalized[0]["amount"] / normalized[0]["volume"],
+            67.203,
+            places=3,
+        )
+
+    def test_standardized_injected_port_passes_through_unchanged(self):
+        rows = [{"volume": 100, "amount": 1_005}]
+
+        normalized = normalize_provider_bar_units(rows, SimpleNamespace())
+
+        self.assertEqual(normalized, rows)
+        self.assertIs(normalized[0], rows[0])
 
 
 class TimestampOnlyFutureRow(Mapping):

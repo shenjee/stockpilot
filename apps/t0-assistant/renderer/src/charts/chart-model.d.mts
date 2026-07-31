@@ -179,7 +179,7 @@ export interface ChartGroupModel {
         close: number;
         closed: boolean;
       }
-    | { timestamp: string; value: number }
+    | { timestamp: string; value: number | null }
   >;
   vwap: IndicatorPoint[];
   movingAverages: {

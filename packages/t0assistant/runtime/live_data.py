@@ -12,7 +12,11 @@ from packages.marketdata.provider_request_queue import ProviderRequestPriority
 from packages.marketdata.services.market_context_service import MarketContextService
 from packages.marketdata.t0_schema import standardize_quote
 
-from ._market_bars import RuntimeMarketDataError, parse_market_timestamp
+from ._market_bars import (
+    RuntimeMarketDataError,
+    normalize_provider_bar_units,
+    parse_market_timestamp,
+)
 from .coordinator import SessionSpec, SessionType
 from .live_session import LiveInitialInputPort, PreparedLiveWarmup
 from .replay_data import (
@@ -273,7 +277,10 @@ class LiveDataPreparator(LiveInitialInputPort):
                 session_validator=session_validator,
                 request_timeout=self._config.request_timeout,
             )
-            rows = _extract_live_rows(result)
+            rows = normalize_provider_bar_units(
+                _extract_live_rows(result),
+                self._market_data,
+            )
             collected.extend(rows)
             normalized = _normalize_preheat_bars(
                 collected,
@@ -312,7 +319,10 @@ class LiveDataPreparator(LiveInitialInputPort):
         )
         rows = [
             row
-            for row in _extract_live_rows(result)
+            for row in normalize_provider_bar_units(
+                _extract_live_rows(result),
+                self._market_data,
+            )
             if _live_bar_is_closed_at(row, observed_at)
         ]
         session = self._market_context.require_session(trade_date, market)
@@ -338,7 +348,10 @@ class LiveDataPreparator(LiveInitialInputPort):
             session_validator=session_validator,
             request_timeout=self._config.request_timeout,
         )
-        rows = _extract_live_rows(result)
+        rows = normalize_provider_bar_units(
+            _extract_live_rows(result),
+            self._market_data,
+        )
         return _normalize_daily_bars(rows, trade_date=session_trade_date)
 
     def _load_quote_snapshots(

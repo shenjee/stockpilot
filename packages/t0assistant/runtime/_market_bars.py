@@ -10,10 +10,44 @@ from packages.marketdata.t0_schema import standardize_bar
 
 
 MARKET_TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
+_TENCENT_VOLUME_SHARES_PER_LOT = 100
+_TENCENT_AMOUNT_CNY_PER_TEN_THOUSAND = 10_000
 
 
 class RuntimeMarketDataError(ValueError):
     """Raised when standardized market input violates runtime invariants."""
+
+
+def normalize_provider_bar_units(
+    rows: Sequence[Mapping[str, Any]],
+    market_data: Any,
+) -> list[Mapping[str, Any]]:
+    """Convert Tencent K-line lots/万元 into the T+0 shares/CNY contract.
+
+    ``KLineDataService`` intentionally persists the provider's reported raw
+    values for compatibility with its existing consumers.  The T+0 runtime,
+    however, computes VWAP as amount / volume, so both operands must enter the
+    runtime in compatible base units.  Keep this adapter narrow: injected
+    standardized ports and non-Tencent providers pass through unchanged.
+    """
+
+    provider = getattr(market_data, "provider", None)
+    if getattr(provider, "provider_id", None) != "tencent":
+        return list(rows)
+
+    normalized: list[Mapping[str, Any]] = []
+    for row in rows:
+        converted = dict(row)
+        volume = converted.get("volume")
+        amount = converted.get("amount")
+        if isinstance(volume, (int, float)) and not isinstance(volume, bool):
+            converted["volume"] = volume * _TENCENT_VOLUME_SHARES_PER_LOT
+        if isinstance(amount, (int, float)) and not isinstance(amount, bool):
+            converted["amount"] = (
+                amount * _TENCENT_AMOUNT_CNY_PER_TEN_THOUSAND
+            )
+        normalized.append(converted)
+    return normalized
 
 
 def parse_market_timestamp(value: Any, *, field: str = "timestamp") -> datetime:
