@@ -834,18 +834,26 @@ export class SynchronizedChartGroup {
   }
 
   private resize() {
-    for (const [key, chart] of [
-      ["price", this.priceChart],
-      ["volume", this.volumeChart],
-      ["macd", this.macdChart],
-    ] as const) {
-      const container = this.containers[key];
-      if (container.clientWidth > 0 && container.clientHeight > 0) {
-        chart.applyOptions({
-          width: container.clientWidth,
-          height: container.clientHeight,
-        });
+    // ResizeObserver 触发的 applyOptions 也会让 Lightweight Charts 上报可见范围。
+    // 这不是用户缩放，不能进入 setupViewportTracking 的 manual/zoom 分支；否则首屏从
+    // 极窄的过渡布局扩展到最终宽度时，会把初始化阶段的 1～2 根范围错误锁定下来。
+    this.applyingViewportRange = true;
+    try {
+      for (const [key, chart] of [
+        ["price", this.priceChart],
+        ["volume", this.volumeChart],
+        ["macd", this.macdChart],
+      ] as const) {
+        const container = this.containers[key];
+        if (container.clientWidth > 0 && container.clientHeight > 0) {
+          chart.applyOptions({
+            width: container.clientWidth,
+            height: container.clientHeight,
+          });
+        }
       }
+    } finally {
+      this.applyingViewportRange = false;
     }
     // following：按新绘图区宽度重算 N 并右对齐；manual 保留逻辑范围不跳回最新。
     if (

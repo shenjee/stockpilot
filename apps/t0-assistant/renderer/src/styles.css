@@ -254,6 +254,19 @@ button { color: inherit; }
   min-height: 0;
   overflow: hidden;
 }
+/* Lightweight Charts 默认署名为 35×19px；保留可见、可点击的 TradingView
+   attribution，同时缩到与图表 10px 字体一致的高度，避免遮挡副图数据。 */
+.chart-canvas a#tv-attr-logo {
+  left: 6px !important;
+  bottom: 6px !important;
+  width: 18px !important;
+  height: 10px !important;
+}
+.chart-canvas a#tv-attr-logo svg {
+  display: block;
+  width: 18px;
+  height: 10px;
+}
 .chart-legend {
   position: absolute;
   top: 34px;
