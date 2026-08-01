@@ -271,6 +271,12 @@ class ReplaySession:
         self._inflight_committed_revision: int | None = None
         self._initial_result: ReplayInitialResult | None = None
         self._last_commit_mono: float = 0.0
+        # Explicit play/pause intent, independent of the transient `paused`
+        # state used while a cursor operation is in flight.  Cursor completion
+        # resumes autoplay only when this intent is still `playing` and the
+        # generation captured at cursor start is unchanged.
+        self._playback_intent = "paused"
+        self._playback_intent_generation = 0
 
         self._owns_scheduler = scheduler is None
         self._scheduler: PlaybackSchedulerPort = (
@@ -453,6 +459,7 @@ class ReplaySession:
             if self._retired:
                 raise ReplaySessionStateError("session is retired")
             if self._state == "playing":
+                self._set_playback_intent_locked("playing")
                 return  # idempotent
             if self._state not in {"ready", "paused"}:
                 raise ReplaySessionStateError(
@@ -463,8 +470,10 @@ class ReplaySession:
             if self._next_bar_time is None:
                 # Already at the sequence end: nothing to play.  Converge once
                 # to paused without consuming a bar or growing the revision.
+                self._set_playback_intent_locked("paused")
                 self._converge_to_paused_locked()
                 return
+            self._set_playback_intent_locked("playing")
             self._state = "playing"
             self._ended_converged = False
             self._last_commit_mono = self._clock.now()
@@ -476,17 +485,27 @@ class ReplaySession:
         self._scheduler.schedule(first_due)
 
     def pause(self) -> None:
-        """Pause auto-playback.  Idempotent from ``ready``/``paused``."""
+        """Pause auto-playback.  Idempotent from ``ready``/``paused``.
+
+        Cursor operations temporarily park the Session in ``paused`` while
+        autoplay intent may still be ``playing``.  An explicit pause in that
+        window must still record the user's pause intent so a later cursor
+        completion does not resume playback.
+        """
 
         with self._lock:
             if self._retired:
                 raise ReplaySessionStateError("session is retired")
             if self._state in {"ready", "paused"}:
-                return  # idempotent no-op
+                # Always accept pause intent, even when already parked for a
+                # cursor operation (contract: playing=false is never busy).
+                self._set_playback_intent_locked("paused")
+                return  # idempotent no-op for session_status / scheduler
             if self._state != "playing":
                 raise ReplaySessionStateError(
                     f"pause requires playing state, not {self._state}"
                 )
+            self._set_playback_intent_locked("paused")
             self._state = "paused"
             self._publish_session_status_locked(
                 "paused", "user_command", None, None
@@ -537,30 +556,41 @@ class ReplaySession:
     def step(self, operation_id: str) -> ReplayStepResult:
         """Advance the cursor by one actual bar synchronously.
 
-        Requires a stationary state (``ready``/``paused``).  When
-        ``next_bar_time`` is ``None`` this is an idempotent no-op: no
-        ``operation_id`` is created, no computation is submitted, no revision is
-        allocated and no event is published.
+        Allowed from ``ready``, ``paused``, or ``playing``.  While playing, the
+        Session cancels auto-scheduling, advances one actual bar, then resumes
+        playback at the prior speed when the step completes successfully and
+        more bars remain.  When ``next_bar_time`` is ``None`` this is an
+        idempotent no-op: no ``operation_id`` is created, no computation is
+        submitted, no revision is allocated and no event is published (playing
+        sessions converge to paused).
         """
 
         if not isinstance(operation_id, str) or not operation_id:
             raise ValueError("operation_id must be a non-empty string")
+        was_playing = False
+        resume_intent_generation = 0
         with self._lock:
             if self._retired:
                 raise ReplaySessionStateError("session is retired")
-            if self._state == "playing":
-                raise ReplaySessionStateError("step is not allowed while playing")
-            if self._state not in {"ready", "paused"}:
+            if self._state not in {"ready", "playing", "paused"}:
                 raise ReplaySessionStateError(
-                    f"step requires ready or paused state, not {self._state}"
+                    f"step requires ready, playing or paused state, not {self._state}"
                 )
+            was_playing = self._state == "playing"
+            resume_intent_generation = self._playback_intent_generation
             if self._next_bar_time is None:
+                if was_playing:
+                    self._scheduler.cancel()
+                    self._set_playback_intent_locked("paused")
+                    self._converge_to_paused_locked()
                 return ReplayStepResult(False, self.revision, None, "no_op")
             if self._inflight_ticket is not None:
                 raise ReplaySessionStateError("replay_busy")
             target = self._next_bar_time
             # Cursor operation begins only after transitioning to paused.
             previous_state = self._state
+            if was_playing:
+                self._scheduler.cancel()
             self._state = "paused"
             if previous_state == "ready":
                 # Replay v1.0: a cursor operation out of ready must first
@@ -585,32 +615,37 @@ class ReplaySession:
                     if self._inflight_ticket == ticket:
                         self._inflight_ticket = None
 
+        result: ReplayStepResult
         try:
             with self._lock:
                 if outcome is None:
                     # Submit or future.result raised; cursor did not advance.
                     if self._retired:
-                        return ReplayStepResult(False, self.revision, operation_id, "dropped")
-                    self._state = "failed"
-                    self._publish_session_status_locked(
-                        "failed", "operation_failed", operation_id, None
-                    )
-                    return ReplayStepResult(False, self.revision, operation_id, "failed")
-                revision = self.revision
-                if outcome.status is ComputationStatus.COMPLETED:
+                        result = ReplayStepResult(
+                            False, self.revision, operation_id, "dropped"
+                        )
+                    else:
+                        self._state = "failed"
+                        self._publish_session_status_locked(
+                            "failed", "operation_failed", operation_id, None
+                        )
+                        result = ReplayStepResult(
+                            False, self.revision, operation_id, "failed"
+                        )
+                elif outcome.status is ComputationStatus.COMPLETED:
                     # commit_result advances the cursor and pipeline atomically.
                     # If it recorded a committed value, the operation succeeded
                     # even if a later pause()/retire() changed the Session state.
                     if self._inflight_committed_ticket == ticket:
                         assert self._inflight_committed_revision is not None
-                        return ReplayStepResult(
+                        result = ReplayStepResult(
                             True,
                             self._inflight_committed_revision,
                             operation_id,
                             "completed",
                             outcome,
                         )
-                    if not self._retired and self._state == "paused":
+                    elif not self._retired and self._state == "paused":
                         # Minimal/fake executors may return COMPLETED without
                         # invoking the task's commit callback.
                         self._commit_advance_locked(
@@ -621,21 +656,25 @@ class ReplaySession:
                             commit_kind="step",
                         )
                         assert self._inflight_committed_revision is not None
-                        return ReplayStepResult(
+                        result = ReplayStepResult(
                             True,
                             self._inflight_committed_revision,
                             operation_id,
                             "completed",
                             outcome,
                         )
-                    # The executor accepted the result but the Session-side
-                    # commit boundary rejected it (e.g. retired between accept
-                    # and commit). Drop without advancing.
-                    return ReplayStepResult(False, self.revision, operation_id, "dropped", outcome)
-                # Non-completed: never commit the cursor or pipeline state.
-                if self._retired:
-                    return ReplayStepResult(False, revision, operation_id, "dropped", outcome)
-                if (
+                    else:
+                        # The executor accepted the result but the Session-side
+                        # commit boundary rejected it (e.g. retired between accept
+                        # and commit). Drop without advancing.
+                        result = ReplayStepResult(
+                            False, self.revision, operation_id, "dropped", outcome
+                        )
+                elif self._retired:
+                    result = ReplayStepResult(
+                        False, self.revision, operation_id, "dropped", outcome
+                    )
+                elif (
                     _outcome_is_failure(outcome)
                     and self._inflight_ticket == ticket
                 ):
@@ -643,12 +682,21 @@ class ReplaySession:
                     self._publish_session_status_locked(
                         "failed", "operation_failed", operation_id, None
                     )
-                    return ReplayStepResult(False, self.revision, operation_id, "failed", outcome)
-                return ReplayStepResult(False, revision, operation_id, "dropped", outcome)
+                    result = ReplayStepResult(
+                        False, self.revision, operation_id, "failed", outcome
+                    )
+                else:
+                    result = ReplayStepResult(
+                        False, self.revision, operation_id, "dropped", outcome
+                    )
         finally:
             with self._lock:
                 if self._inflight_ticket == ticket:
                     self._inflight_ticket = None
+
+        if was_playing and result.outcome_status == "completed":
+            self._resume_playback_after_cursor(resume_intent_generation)
+        return result
 
     def seek(self, target_time: datetime | str, operation_id: str) -> ReplaySeekResult:
         """Seek to a target prefix, rebuilding from preheat when moving back.
@@ -656,6 +704,11 @@ class ReplaySession:
         A newer seek replaces any in-flight cursor operation.  Its result is
         accepted only when its ticket is still current, which prevents an old
         computation from publishing future bars after a backward seek.
+
+        When seek interrupts ``playing``, auto-scheduling stops for the cursor
+        operation; a successful seek then resumes playback at the prior speed
+        when more bars remain.  A seek that began from ``paused``/``ready``
+        stays paused.
         """
 
         if not isinstance(operation_id, str) or not operation_id:
@@ -672,6 +725,8 @@ class ReplaySession:
         else:
             raise TypeError("target_time must be a datetime or market timestamp")
 
+        was_playing = False
+        resume_intent_generation = 0
         with self._lock:
             if self._retired:
                 raise ReplaySessionStateError("session is retired")
@@ -681,6 +736,8 @@ class ReplaySession:
                 )
             if target < self._start_time or target > self._end_time:
                 raise ValueError("target_time must be inside the Replay session")
+            was_playing = self._state == "playing"
+            resume_intent_generation = self._playback_intent_generation
             self._scheduler.cancel()
             self._state = "paused"
             ticket = self._next_ticket
@@ -716,6 +773,7 @@ class ReplaySession:
             pipeline_identity=candidate_identity,
             replace_pipeline=rebuilt,
         )
+        result: ReplaySeekResult
         try:
             with self._lock:
                 if (
@@ -734,14 +792,14 @@ class ReplaySession:
                         replace_pipeline=rebuilt,
                     )
                 if self._inflight_committed_ticket == ticket:
-                    return ReplaySeekResult(
+                    result = ReplaySeekResult(
                         rebuilt,
                         self._inflight_committed_revision or self.revision,
                         operation_id,
                         "completed",
                         outcome,
                     )
-                if (
+                elif (
                     _outcome_is_failure(outcome)
                     and self._inflight_ticket == ticket
                 ):
@@ -749,16 +807,78 @@ class ReplaySession:
                     self._publish_session_status_locked(
                         "failed", "operation_failed", operation_id, None
                     )
-                    return ReplaySeekResult(
+                    result = ReplaySeekResult(
                         rebuilt, self.revision, operation_id, "failed", outcome
                     )
-                return ReplaySeekResult(
-                    rebuilt, self.revision, operation_id, "dropped", outcome
-                )
+                else:
+                    result = ReplaySeekResult(
+                        rebuilt, self.revision, operation_id, "dropped", outcome
+                    )
         finally:
             with self._lock:
                 if self._inflight_ticket == ticket:
                     self._inflight_ticket = None
+
+        if was_playing and result.outcome_status == "completed":
+            self._resume_playback_after_cursor(resume_intent_generation)
+        return result
+
+    def _set_playback_intent_locked(self, intent: str) -> None:
+        if intent not in {"playing", "paused"}:
+            raise ValueError(f"unsupported playback intent: {intent}")
+        if self._playback_intent == intent:
+            return
+        self._playback_intent = intent
+        self._playback_intent_generation += 1
+
+    def _play_if_intent_unchanged_locked(
+        self, intent_generation: int
+    ) -> float | None:
+        """Arm playing when cursor-era play intent is still current.
+
+        Caller must hold ``_lock``.  Returns the first scheduler due time when
+        playback was armed, or ``None`` when resume was skipped.  Unlike
+        :meth:`play`, this never mutates playback intent, so a concurrent
+        ``pause()`` that wins the lock cannot be overwritten after the intent
+        check.
+        """
+
+        if (
+            self._retired
+            or self._playback_intent != "playing"
+            or self._playback_intent_generation != intent_generation
+        ):
+            return None
+        if self._state == "playing":
+            return None
+        if self._state not in {"ready", "paused"}:
+            return None
+        if self._inflight_ticket is not None:
+            return None
+        if self._next_bar_time is None:
+            self._set_playback_intent_locked("paused")
+            self._converge_to_paused_locked()
+            return None
+        self._state = "playing"
+        self._ended_converged = False
+        self._last_commit_mono = self._clock.now()
+        self._publish_session_status_locked(
+            "playing", "user_command", None, None
+        )
+        return self._last_commit_mono + (1.0 / self._playback_speed)
+
+    def _resume_playback_after_cursor(self, intent_generation: int) -> None:
+        """Resume auto-playback only when play intent is unchanged."""
+
+        with self._lock:
+            # Intent check + state transition must stay in one critical section.
+            # Releasing the lock and calling play() would reopen a TOCTOU window
+            # where pause() records paused intent and play() overwrites it.
+            first_due = self._play_if_intent_unchanged_locked(intent_generation)
+        if first_due is None:
+            return
+        self._scheduler.start()
+        self._scheduler.schedule(first_due)
 
     def pump_playback(self) -> PlaybackPumpResult:
         """Perform at most one due playback advance.

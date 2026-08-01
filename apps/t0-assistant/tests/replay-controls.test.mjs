@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 import {
   REPLAY_SPEEDS,
   deriveReplayControls,
+  asReplayOwnedError,
+  isReplayOwnedError,
   marketClockLabel,
   marketTimeFromValue,
   replayFactsFromSnapshot,
@@ -78,6 +80,56 @@ test("busy cursor operation disables all conflicting controls", () => {
   assert.equal(controls.canSeek, false);
   assert.equal(controls.canStep, false);
   assert.equal(controls.canChangeSpeed, false);
+});
+
+test("playing state keeps step and seek enabled when not busy", () => {
+  const playing = structuredClone(fixture.snapshot);
+  playing.session.state = "playing";
+  const controls = deriveReplayControls(replayFactsFromSnapshot(playing));
+  assert.equal(controls.playing, true);
+  assert.equal(controls.canStep, true);
+  assert.equal(controls.canSeek, true);
+  assert.equal(controls.canTogglePlayback, true);
+});
+
+test("isReplayOwnedError isolates Replay failures from Live retry", () => {
+  assert.equal(
+    isReplayOwnedError({
+      error_code: "invalid_replay_state",
+      message: "当前回放状态不允许此操作",
+      retryable: true,
+      affected_capability: "replay",
+    }),
+    true,
+  );
+  assert.equal(
+    isReplayOwnedError({
+      error_code: "live_session_missing",
+      message: "Live Session 不存在或已退休",
+      retryable: true,
+      affected_capability: "live",
+    }),
+    false,
+  );
+  assert.equal(
+    isReplayOwnedError({
+      payload: {
+        error_code: "replay_busy",
+        affected_capability: "replay",
+      },
+    }),
+    true,
+  );
+  assert.equal(
+    isReplayOwnedError(
+      asReplayOwnedError({
+        error_code: "calculation_failed",
+        affected_capability: "five_minute_chart",
+        retryable: true,
+      }),
+    ),
+    true,
+  );
 });
 
 test("invalid or non-active Replay snapshots do not become interactive", () => {

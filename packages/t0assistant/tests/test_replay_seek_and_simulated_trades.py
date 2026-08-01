@@ -109,6 +109,30 @@ class ReplaySeekTests(unittest.TestCase):
         second = _business_snapshot(session.snapshot())
         self.assertEqual(first, second)
 
+    def test_seek_during_playing_cancels_scheduler_and_resumes(self) -> None:
+        prepared = _prepare("1m")
+        clock = SimulatedMonotonicClock()
+        executor = BoundedComputationExecutor(capacity=8, worker_count=1)
+        self.executors.append(executor)
+        session = ReplaySession(
+            "seek-playing",
+            1,
+            prepared,
+            executor,
+            clock=clock,
+            scheduler=NullPlaybackScheduler(),
+            analyzer=_CachingAnalyzer(_default_analyze_5m),
+        )
+        session.play()
+        target = session.start_time + timedelta(minutes=12)
+        result = session.seek(target, "seek-while-playing")
+        self.assertEqual(result.outcome_status, "completed")
+        self.assertEqual(session.current_time, target)
+        self.assertEqual(session.state, "playing")
+        # Playback after resume continues from the seeked cursor.
+        due = session.pump_playback()
+        self.assertIn(due.action, {"not_due", "advanced"})
+
     def test_new_seek_supersedes_late_old_seek(self) -> None:
         prepared = _prepare("1m")
         executor = BoundedComputationExecutor(capacity=8, worker_count=2)

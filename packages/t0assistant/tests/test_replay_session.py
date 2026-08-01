@@ -847,6 +847,245 @@ class PlayPauseTests(_SessionTestBase):
         self.assertEqual(s.current_time, cursor_before)
         self.assertFalse(error_box)
 
+    def test_step_while_playing_advances_one_bar_and_resumes(self) -> None:
+        prepared = _prepare("1m")
+        clock = SimulatedMonotonicClock()
+        s = self._make_session(prepared, clock=clock)
+        s.set_playback_speed(2)
+        s.play()
+        _consume_for_seconds(s, clock, 1.0)
+        self.assertEqual(s.current_time, prepared.actual_bar_times[1])
+        self.assertEqual(s.state, "playing")
+        cursor_before = s.current_time
+        next_before = s.next_bar_time
+
+        for index in range(3):
+            result = s.step(f"op-step-playing-{index}")
+            self.assertTrue(result.advanced)
+            self.assertEqual(result.outcome_status, "completed")
+            self.assertEqual(s.state, "playing")
+            self.assertEqual(s.playback_speed, 2)
+            self.assertEqual(
+                s.current_time,
+                prepared.actual_bar_times[2 + index],
+            )
+
+        self.assertEqual(s.current_time, prepared.actual_bar_times[4])
+        self.assertNotEqual(s.current_time, cursor_before)
+        self.assertNotEqual(s.next_bar_time, next_before)
+        # Auto-play remains armed after the interrupted steps.
+        advanced = _consume_for_seconds(s, clock, clock.now() + 1.0)
+        self.assertEqual(advanced, 2)
+
+    def test_step_while_paused_stays_paused(self) -> None:
+        prepared = _prepare("1m")
+        s = self._make_session(prepared)
+        s.step("op-step-1")
+        self.assertEqual(s.state, "paused")
+        s.step("op-step-2")
+        self.assertEqual(s.state, "paused")
+        self.assertEqual(s.current_time, prepared.actual_bar_times[1])
+
+    def test_step_while_playing_does_not_double_consume_with_pump(self) -> None:
+        prepared = _prepare("1m")
+        clock = SimulatedMonotonicClock()
+        s = self._make_session(prepared, clock=clock)
+        s.play()
+        _consume_for_seconds(s, clock, 1.0)
+        before = s.current_time
+        s.step("op-step-during-play")
+        # A pump tick that became due during the step must not also advance.
+        self.assertEqual(s.pump_playback().action, "not_due")
+        self.assertEqual(
+            s.current_time,
+            prepared.actual_bar_times[prepared.actual_bar_times.index(before) + 1],
+        )
+
+    def test_seek_while_playing_resumes_after_commit(self) -> None:
+        prepared = _prepare("1m")
+        clock = SimulatedMonotonicClock()
+        s = self._make_session(prepared, clock=clock)
+        s.set_playback_speed(5)
+        s.play()
+        _consume_for_seconds(s, clock, 1.0)
+        target = prepared.actual_bar_times[20]
+        result = s.seek(target, "op-seek-playing")
+        self.assertEqual(result.outcome_status, "completed")
+        self.assertEqual(s.current_time, target)
+        self.assertEqual(s.state, "playing")
+        self.assertEqual(s.playback_speed, 5)
+        advanced = _consume_for_seconds(s, clock, clock.now() + 1.0)
+        self.assertEqual(advanced, 5)
+
+    def test_seek_while_paused_stays_paused(self) -> None:
+        prepared = _prepare("1m")
+        s = self._make_session(prepared)
+        s.step("op-step-1")
+        target = prepared.actual_bar_times[10]
+        result = s.seek(target, "op-seek-paused")
+        self.assertEqual(result.outcome_status, "completed")
+        self.assertEqual(s.current_time, target)
+        self.assertEqual(s.state, "paused")
+
+    def test_pause_during_step_while_playing_keeps_paused(self) -> None:
+        prepared = _prepare("1m")
+        gated = _GatedAnalyzer(_CachingAnalyzer(_default_analyze_5m))
+        clock = SimulatedMonotonicClock()
+        s = self._make_session(prepared, clock=clock, analyzer=gated)
+        s.play()
+        _consume_for_seconds(s, clock, 1.0)
+        self.assertEqual(s.state, "playing")
+        gated.block()
+
+        result_box: list = []
+
+        def _step() -> None:
+            result_box.append(s.step("op-step-pause-race"))
+
+        thread = threading.Thread(target=_step, daemon=True)
+        thread.start()
+        self.assertTrue(gated.wait_until_entered())
+        self.assertEqual(s.state, "paused")
+        s.pause()  # must record pause intent while cursor is in flight
+        gated.release()
+        thread.join(timeout=5.0)
+        self.assertEqual(len(result_box), 1)
+        self.assertEqual(result_box[0].outcome_status, "completed")
+        self.assertEqual(s.state, "paused")
+        self.assertEqual(s.pump_playback().action, "no_op")
+
+    def test_pause_during_seek_while_playing_keeps_paused(self) -> None:
+        prepared = _prepare("1m")
+        gated = _GatedAnalyzer(_CachingAnalyzer(_default_analyze_5m))
+        clock = SimulatedMonotonicClock()
+        s = self._make_session(prepared, clock=clock, analyzer=gated)
+        s.play()
+        _consume_for_seconds(s, clock, 1.0)
+        target = prepared.actual_bar_times[15]
+        gated.block()
+
+        result_box: list = []
+
+        def _seek() -> None:
+            result_box.append(s.seek(target, "op-seek-pause-race"))
+
+        thread = threading.Thread(target=_seek, daemon=True)
+        thread.start()
+        self.assertTrue(gated.wait_until_entered())
+        s.pause()
+        gated.release()
+        thread.join(timeout=5.0)
+        self.assertEqual(len(result_box), 1)
+        self.assertEqual(result_box[0].outcome_status, "completed")
+        self.assertEqual(s.current_time, target)
+        self.assertEqual(s.state, "paused")
+
+    def test_pause_between_resume_intent_check_and_play_keeps_paused(self) -> None:
+        """pause() in the old check→play TOCTOU window must still win.
+
+        Forces ``pause()`` after a still-valid playing intent is observed and
+        before playback is armed, matching the race that existed when resume
+        released the lock and delegated to ``play()``.
+        """
+
+        prepared = _prepare("1m")
+        clock = SimulatedMonotonicClock()
+        s = self._make_session(prepared, clock=clock)
+        s.play()
+        _consume_for_seconds(s, clock, 1.0)
+        self.assertEqual(s.state, "playing")
+
+        with s._lock:
+            s._scheduler.cancel()
+            s._state = "paused"
+            gen = s._playback_intent_generation
+            self.assertEqual(s._playback_intent, "playing")
+
+            # Recreate the old window: intent check would pass, then pause
+            # interleaves before arming play.
+            s._lock.release()
+            try:
+                s.pause()
+                self.assertEqual(s.state, "paused")
+                self.assertEqual(s._playback_intent, "paused")
+            finally:
+                s._lock.acquire()
+
+            due = s._play_if_intent_unchanged_locked(gen)
+            self.assertIsNone(due)
+
+        self.assertEqual(s.state, "paused")
+        self.assertEqual(s.pump_playback().action, "no_op")
+
+    def test_resume_after_cursor_does_not_call_play(self) -> None:
+        """Resume must arm playing under the lock, not via public play()."""
+
+        prepared = _prepare("1m")
+        clock = SimulatedMonotonicClock()
+        s = self._make_session(prepared, clock=clock)
+        s.play()
+        _consume_for_seconds(s, clock, 1.0)
+
+        with s._lock:
+            s._scheduler.cancel()
+            s._state = "paused"
+            gen = s._playback_intent_generation
+            self.assertEqual(s._playback_intent, "playing")
+
+        def _forbidden_play() -> None:
+            raise AssertionError("resume must not delegate to play()")
+
+        s.play = _forbidden_play  # type: ignore[method-assign]
+        s._resume_playback_after_cursor(gen)
+        self.assertEqual(s.state, "playing")
+        self.assertNotEqual(s.pump_playback().action, "no_op")
+
+    def test_pause_during_step_resume_toctou_keeps_paused(self) -> None:
+        """Full step path: pause between resume intent check and arming play."""
+
+        prepared = _prepare("1m")
+        gated = _GatedAnalyzer(_CachingAnalyzer(_default_analyze_5m))
+        clock = SimulatedMonotonicClock()
+        s = self._make_session(prepared, clock=clock, analyzer=gated)
+        s.play()
+        _consume_for_seconds(s, clock, 1.0)
+
+        real_play_if = s._play_if_intent_unchanged_locked
+
+        def play_if_with_toctou_gap(intent_generation: int) -> float | None:
+            # Called while resume holds the lock. Release so pause can run in
+            # the historical check→play window, then re-enter the atomic helper.
+            if (
+                s._retired
+                or s._playback_intent != "playing"
+                or s._playback_intent_generation != intent_generation
+            ):
+                return None
+            s._lock.release()
+            try:
+                s.pause()
+            finally:
+                s._lock.acquire()
+            return real_play_if(intent_generation)
+
+        s._play_if_intent_unchanged_locked = play_if_with_toctou_gap  # type: ignore[method-assign]
+
+        gated.block()
+        result_box: list = []
+
+        def _step() -> None:
+            result_box.append(s.step("op-step-resume-toctou"))
+
+        thread = threading.Thread(target=_step, daemon=True)
+        thread.start()
+        self.assertTrue(gated.wait_until_entered())
+        gated.release()
+        thread.join(timeout=5.0)
+        self.assertEqual(len(result_box), 1)
+        self.assertEqual(result_box[0].outcome_status, "completed")
+        self.assertEqual(s.state, "paused")
+        self.assertEqual(s.pump_playback().action, "no_op")
+
 
 # ----------------------------------------------------------------------
 # 5. Speed

@@ -126,6 +126,85 @@ class ReplayApplicationTests(unittest.TestCase):
         finally:
             application.close()
 
+    def test_step_replay_while_playing_succeeds_and_resumes(self) -> None:
+        begin = self.api.dispatch(
+            "begin_replay",
+            {
+                "schema_version": "t0_replay_v1",
+                "request_id": "begin-play-step",
+                "symbol": "sh.600000",
+                "trade_date": "2026-07-24",
+            },
+        )
+        self.assertEqual(begin.status, 200)
+        begin.response_delivered()
+        session_id = begin.payload["session_id"]
+        session = self.application.session(session_id)
+        self.assertIsNotNone(session)
+        assert session is not None
+
+        play = self.api.dispatch(
+            "set_replay_playback",
+            {
+                "schema_version": "t0_replay_v1",
+                "request_id": "play-1",
+                "session_id": session_id,
+                "playing": True,
+            },
+        )
+        self.assertEqual(play.status, 200)
+        self.assertEqual(session.state, "playing")
+        before = session.current_time
+
+        step = self.api.dispatch(
+            "step_replay",
+            {
+                "schema_version": "t0_replay_v1",
+                "request_id": "step-while-playing",
+                "session_id": session_id,
+            },
+        )
+        self.assertEqual(step.status, 200)
+        self.assertIn("operation_id", step.payload)
+        step.response_delivered()
+        self.assertEqual(session.state, "playing")
+        self.assertGreater(session.current_time, before)
+        self.assertFalse(
+            any(
+                event.get("event_type") == "operation_failed"
+                for event in self.events
+            )
+        )
+
+    def test_step_replay_invalid_state_is_synchronous(self) -> None:
+        begin = self.api.dispatch(
+            "begin_replay",
+            {
+                "schema_version": "t0_replay_v1",
+                "request_id": "begin-failed-step",
+                "symbol": "sh.600000",
+                "trade_date": "2026-07-24",
+            },
+        )
+        begin.response_delivered()
+        session_id = begin.payload["session_id"]
+        session = self.application.session(session_id)
+        self.assertIsNotNone(session)
+        assert session is not None
+        session._state = "failed"
+
+        result = self.api.dispatch(
+            "step_replay",
+            {
+                "schema_version": "t0_replay_v1",
+                "request_id": "step-failed-state",
+                "session_id": session_id,
+            },
+        )
+        self.assertEqual(result.status, 409)
+        self.assertEqual(result.payload["error_code"], "invalid_replay_state")
+        self.assertNotIn("operation_id", result.payload)
+
 
 if __name__ == "__main__":
     unittest.main()

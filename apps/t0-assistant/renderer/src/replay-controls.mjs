@@ -88,6 +88,40 @@ export function replayOperationMatches(activeOperationId, candidateOperationId) 
   );
 }
 
+/**
+ * True when an error is owned by the Replay surface and must not enter
+ * `retry_live`. Ownership comes from:
+ * - explicit `source: "replay"` (set for every `onReplayEvent` failure), or
+ * - `affected_capability === "replay"` for synchronous Replay command rejects.
+ *
+ * `affected_capability` alone is insufficient: Replay `calculation_failed`
+ * reports `five_minute_chart`, and Replay `service_unavailable` reports
+ * `service`, but both still arrive on the Replay event channel.
+ */
+export function isReplayOwnedError(error) {
+  const candidate = error?.error ?? error?.payload ?? error;
+  return (
+    candidate !== null &&
+    typeof candidate === "object" &&
+    (candidate?.source === "replay" ||
+      candidate?.affected_capability === "replay")
+  );
+}
+
+/** @deprecated Prefer {@link isReplayOwnedError}. */
+export function isReplayScopedError(error) {
+  return isReplayOwnedError(error);
+}
+
+/**
+ * Tag an application error as Replay-owned without mutating the input.
+ */
+export function asReplayOwnedError(error) {
+  if (!error || typeof error !== "object") return error;
+  if (error.source === "replay") return error;
+  return { ...error, source: "replay" };
+}
+
 export function marketTimeValue(timestamp) {
   const match =
     /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/.exec(

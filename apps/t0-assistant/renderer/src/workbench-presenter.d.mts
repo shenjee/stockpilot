@@ -10,6 +10,8 @@ export interface ApplicationError {
   retryable: boolean;
   affected_capability?: string;
   operation_id?: string;
+  /** Event/command ownership; Replay-channel failures set `source: "replay"`. */
+  source?: "replay" | "live" | "service" | "preferences" | "symbol_selection";
 }
 
 export function standardSecurityFromResponse(

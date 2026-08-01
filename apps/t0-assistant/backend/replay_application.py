@@ -111,6 +111,14 @@ class ReplayApplication:
                 commit=lambda: self._end(session.session_id),
             )
 
+        if command not in {"step_replay", "seek_replay"}:
+            raise ReplayApiError("invalid_request")
+        # Cursor commands are only legal from interactive Session states.
+        # Reject synchronously before allocating an operation_id so
+        # invalid_replay_state stays on the SYNCHRONOUS channel.
+        if session.state not in {"ready", "playing", "paused"}:
+            raise ReplayApiError("invalid_replay_state")
+
         operation_id = f"replay-cursor-{uuid4().hex}"
         if command == "step_replay" and session.next_bar_time is None:
             return ReplayAccepted(session_id=session.session_id)
@@ -196,6 +204,14 @@ class ReplayApplication:
                     revision=result.revision,
                     error=error,
                 )
+        except ReplaySessionStateError as exc:
+            code = "replay_busy" if "busy" in str(exc) else "invalid_replay_state"
+            self._api_or_raise().deliver_operation_failure(
+                operation_id=operation_id,
+                session_id=session.session_id,
+                revision=session.revision + 1,
+                error=ReplayApiError(code),
+            )
         except Exception:
             self._api_or_raise().deliver_operation_failure(
                 operation_id=operation_id,

@@ -610,12 +610,30 @@ created/loading/ready/playing/paused/failed ──────→ retired
   定位，但不是同一个状态值。
 - `step_replay` 在 1 分钟模式推进到下一根实际 1 分钟 K；在降级模式推进到下一根
   实际闭合 5 分钟 K，不为午休或其他无交易时间生成空步骤。
+- `step_replay` 可从 `ready`、`paused` 或 `playing` 执行。当 Session 正在
+  `playing` 时，先取消自动调度并进入游标执行，推进一根实际 K 并发布快照后，若仍有
+  后续 K 则按操作前倍速恢复 `playing`；若操作前为 `paused`/`ready`，完成后保持
+  `paused`。一次点击只消费一根实际 K，不得与自动播放 tick 叠加重复推进。
 - 当 `next_bar_time` 为 `null` 时，`step_replay` 是幂等 no-op：返回
-  同步成功结果，省略 `operation_id`，不增加 revision，也不发布事件。
-- `seek_replay` 自动暂停。向前或向后定位都以目标时点为闭区间上界。
+  同步成功结果，省略 `operation_id`，不增加 revision，也不发布事件；若当时处于
+  `playing`，则收敛到不可继续播放的 `paused`。
+- `seek_replay` 可从 `ready`、`paused` 或 `playing` 执行。定位开始时取消自动调度；
+  向前或向后定位都以目标时点为闭区间上界。若定位前正在 `playing` 且定位成功且仍有
+  后续 K，则从新位置按原倍速恢复播放；若定位前为 `paused`/`ready`，完成后保持
+  `paused`。
 - 向后定位丢弃旧管线实例，从开盘前预热状态顺序重放到目标时点。
 - `step_replay` 和 `seek_replay` 都是游标操作。同一 Session 同时最多执行一个游标
-  操作；开始任一游标操作前先进入 `paused`。
+  操作；开始任一游标操作前先进入 `paused`（含从 `playing` 打断自动调度）。
+- Replay 操作错误由 Replay 上下文处理：不得把 Replay 错误路由到 `retry_live`，也不得
+  因此退休仍有效的 Replay Session。错误归属以命令/事件通道为准（Renderer 对
+  `onReplayEvent` 失败标记 `source: "replay"`），不得仅依赖 `affected_capability`
+  （例如 Replay 的 `calculation_failed` 可能报告 `five_minute_chart`）。
+  `replay_busy` / `invalid_replay_state` 若无法安全重放原游标操作，则不展示误导性的
+  Live「重试」，而是解除 busy/pending 并给出可执行提示。
+- 游标操作执行期间 `set_replay_playback(playing=false)` 始终可接受：即使 Session
+  因游标已短暂处于 `paused`，也应记录暂停意图；游标完成后不得覆盖该暂停意图而自动
+  恢复播放。仅当游标开始时的播放意图仍为 `playing` 且期间未被新的播放/暂停命令
+  改变时，才恢复原倍速自动播放。
 - 新的 `seek_replay` 采用 latest-wins：它使正在执行的旧 seek 或 step 失效，旧
   `operation_id` 的结果即使晚到也不得发布快照。
 - 游标操作执行中收到 `step_replay` 时不排队，返回 `replay_busy`；用户可在当前操作
