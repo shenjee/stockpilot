@@ -831,20 +831,54 @@ class ReplaySession:
         self._playback_intent = intent
         self._playback_intent_generation += 1
 
+    def _play_if_intent_unchanged_locked(
+        self, intent_generation: int
+    ) -> float | None:
+        """Arm playing when cursor-era play intent is still current.
+
+        Caller must hold ``_lock``.  Returns the first scheduler due time when
+        playback was armed, or ``None`` when resume was skipped.  Unlike
+        :meth:`play`, this never mutates playback intent, so a concurrent
+        ``pause()`` that wins the lock cannot be overwritten after the intent
+        check.
+        """
+
+        if (
+            self._retired
+            or self._playback_intent != "playing"
+            or self._playback_intent_generation != intent_generation
+        ):
+            return None
+        if self._state == "playing":
+            return None
+        if self._state not in {"ready", "paused"}:
+            return None
+        if self._inflight_ticket is not None:
+            return None
+        if self._next_bar_time is None:
+            self._set_playback_intent_locked("paused")
+            self._converge_to_paused_locked()
+            return None
+        self._state = "playing"
+        self._ended_converged = False
+        self._last_commit_mono = self._clock.now()
+        self._publish_session_status_locked(
+            "playing", "user_command", None, None
+        )
+        return self._last_commit_mono + (1.0 / self._playback_speed)
+
     def _resume_playback_after_cursor(self, intent_generation: int) -> None:
         """Resume auto-playback only when play intent is unchanged."""
 
         with self._lock:
-            if (
-                self._retired
-                or self._playback_intent != "playing"
-                or self._playback_intent_generation != intent_generation
-            ):
-                return
-        try:
-            self.play()
-        except ReplaySessionStateError:
+            # Intent check + state transition must stay in one critical section.
+            # Releasing the lock and calling play() would reopen a TOCTOU window
+            # where pause() records paused intent and play() overwrites it.
+            first_due = self._play_if_intent_unchanged_locked(intent_generation)
+        if first_due is None:
             return
+        self._scheduler.start()
+        self._scheduler.schedule(first_due)
 
     def pump_playback(self) -> PlaybackPumpResult:
         """Perform at most one due playback advance.
