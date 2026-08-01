@@ -8,6 +8,7 @@ import {
   ChartGroupKind,
   createChartGroupModel,
   formatMarketTick,
+  formatVolumeAxisLabel,
   parseMarketTimestamp,
 } from "../renderer/src/charts/chart-model.mjs";
 
@@ -58,6 +59,14 @@ test("logical ordering has one slot per real bar across overnight gaps", () => {
     ),
     "07-22",
   );
+});
+
+test("volume axis labels use compact Chinese and English units", () => {
+  assert.equal(formatVolumeAxisLabel(4_000_000), "400万");
+  assert.equal(formatVolumeAxisLabel(12_345_678), "1234.57万");
+  assert.equal(formatVolumeAxisLabel(250_000_000), "2.5亿");
+  assert.equal(formatVolumeAxisLabel(4_000_000, "en-US"), "4M");
+  assert.equal(formatVolumeAxisLabel(1_500, "en-US"), "1.5K");
 });
 
 test("5 minute layer preferences control MA, stroke, and pivot model data", () => {

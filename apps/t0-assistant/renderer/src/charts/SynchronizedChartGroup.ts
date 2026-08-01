@@ -18,6 +18,7 @@ import {
 import {
   ChartGroupKind,
   formatMarketTick,
+  formatVolumeAxisLabel,
   type ChartGroupModel,
 } from "./chart-model.mjs";
 import {
@@ -68,6 +69,7 @@ const ZOOM_SPAN_EPSILON = 0.01;
 // transient zero-width layout collapse a populated chart to a handful of bars.
 const MIN_VISIBLE_BARS = 40;
 const MAX_VISIBLE_BARS = 360;
+const DEFAULT_PRICE_SCALE_MIN_WIDTH = 58;
 const MA_COLORS = {
   ma5: "#f6d365",
   ma10: "#7dd3fc",
@@ -137,6 +139,7 @@ export class SynchronizedChartGroup {
   private macdSeriesByTime = new Map<number, NumericSeries>();
   private structureSeries: ISeriesApi<"Line">[] = [];
   private tradeMarkerSeries = new Map<string, ISeriesApi<"Line">>();
+  private alignedPriceScaleWidth = DEFAULT_PRICE_SCALE_MIN_WIDTH;
 
   constructor(options: ChartGroupOptions) {
     this.containers = options.containers;
@@ -231,7 +234,11 @@ export class SynchronizedChartGroup {
     }
 
     this.volumeSeries = this.volumeChart.addHistogramSeries({
-      priceFormat: { type: "volume" },
+      priceFormat: {
+        type: "custom",
+        formatter: formatVolumeAxisLabel,
+        minMove: 1,
+      },
       priceLineVisible: false,
       lastValueVisible: false,
     });
@@ -278,6 +285,7 @@ export class SynchronizedChartGroup {
       this.model = model;
       this.rebuildTimeMaps();
       this.setSeriesData();
+      this.syncRightPriceScaleWidths();
       this.applyViewport();
     } finally {
       this.applyingViewportRange = wasApplyingViewportRange;
@@ -502,7 +510,7 @@ export class SynchronizedChartGroup {
       },
       rightPriceScale: {
         borderColor: "#2a3850",
-        minimumWidth: 58,
+        minimumWidth: DEFAULT_PRICE_SCALE_MIN_WIDTH,
       },
       timeScale: {
         visible: showTimeScale,
@@ -915,6 +923,7 @@ export class SynchronizedChartGroup {
     } finally {
       this.applyingViewportRange = wasApplyingViewportRange;
     }
+    this.syncRightPriceScaleWidths();
     // following：按新绘图区宽度重算 N 并右对齐；manual 保留逻辑范围不跳回最新。
     if (
       this.viewport?.followState === FollowState.FOLLOWING &&
@@ -939,6 +948,32 @@ export class SynchronizedChartGroup {
       minimum: MIN_VISIBLE_BARS,
       maximum: MAX_VISIBLE_BARS,
     });
+  }
+
+  // 三图右轴标签宽度不一致时，timeScale().width() 会不同，K/VOL/MACD 无法垂直对齐。
+  // 先按当前标签测宽，再把 minimumWidth 统一到最大值（含成交量紧凑格式后的兜底）。
+  private syncRightPriceScaleWidths() {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const measured = this.charts.map((chart) =>
+        chart.priceScale("right").width(),
+      );
+      const targetWidth = Math.max(
+        DEFAULT_PRICE_SCALE_MIN_WIDTH,
+        ...measured,
+      );
+      const widthsMatch =
+        measured.every((width) => Math.abs(width - targetWidth) < 0.5) &&
+        Math.abs(targetWidth - this.alignedPriceScaleWidth) < 0.5;
+      if (widthsMatch) {
+        return;
+      }
+      this.alignedPriceScaleWidth = targetWidth;
+      for (const chart of this.charts) {
+        chart.applyOptions({
+          rightPriceScale: { minimumWidth: targetWidth },
+        });
+      }
+    }
   }
 
   private viewportBounds(seriesLength: number) {

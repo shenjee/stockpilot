@@ -17,6 +17,40 @@ export function parseMarketTimestamp(timestamp) {
   return Date.UTC(year, month - 1, day, hour, minute, second) / 1000;
 }
 
+export function formatVolumeAxisLabel(value, locale = "zh-CN") {
+  if (!Number.isFinite(value)) {
+    return "";
+  }
+  const abs = Math.abs(value);
+  if (locale.startsWith("zh")) {
+    if (abs >= 1e8) {
+      return `${formatCompactScaled(value, 1e8)}亿`;
+    }
+    if (abs >= 1e4) {
+      return `${formatCompactScaled(value, 1e4)}万`;
+    }
+    return String(Math.round(value));
+  }
+  if (abs >= 1e9) {
+    return `${formatCompactScaled(value, 1e9)}B`;
+  }
+  if (abs >= 1e6) {
+    return `${formatCompactScaled(value, 1e6)}M`;
+  }
+  if (abs >= 1e3) {
+    return `${formatCompactScaled(value, 1e3)}K`;
+  }
+  return String(Math.round(value));
+}
+
+function formatCompactScaled(value, divisor) {
+  const scaled = value / divisor;
+  if (Math.abs(scaled - Math.round(scaled)) < 1e-6) {
+    return String(Math.round(scaled));
+  }
+  return scaled.toFixed(2).replace(/\.?0+$/, "");
+}
+
 export function formatMarketTick(time, previousTime = null) {
   const current = new Date(Number(time) * 1000);
   const previous =

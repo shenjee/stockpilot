@@ -214,6 +214,10 @@ export function formatMarketTick(
   time: number,
   previousTime?: number | null,
 ): string;
+export function formatVolumeAxisLabel(
+  value: number,
+  locale?: string,
+): string;
 export function createChartGroupModel(
   snapshot: WorkbenchChartSnapshot,
   kind: ChartGroupKindValue,
