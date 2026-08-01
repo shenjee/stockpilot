@@ -28,6 +28,10 @@ import {
 import { PivotZonePrimitive } from "./pivot-zone-primitive";
 import { CzscMarkerPrimitive } from "./czsc-marker-primitive";
 import {
+  DEFAULT_PRICE_SCALE_MIN_WIDTH,
+  syncChartGroupPriceScaleWidths,
+} from "./chart-scale-alignment.mjs";
+import {
   FollowState,
   applyModel,
   calculateVisibleCount,
@@ -69,7 +73,6 @@ const ZOOM_SPAN_EPSILON = 0.01;
 // transient zero-width layout collapse a populated chart to a handful of bars.
 const MIN_VISIBLE_BARS = 40;
 const MAX_VISIBLE_BARS = 360;
-const DEFAULT_PRICE_SCALE_MIN_WIDTH = 58;
 const MA_COLORS = {
   ma5: "#f6d365",
   ma10: "#7dd3fc",
@@ -951,29 +954,27 @@ export class SynchronizedChartGroup {
   }
 
   // 三图右轴标签宽度不一致时，timeScale().width() 会不同，K/VOL/MACD 无法垂直对齐。
-  // 先按当前标签测宽，再把 minimumWidth 统一到最大值（含成交量紧凑格式后的兜底）。
-  private syncRightPriceScaleWidths() {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const measured = this.charts.map((chart) =>
-        chart.priceScale("right").width(),
+  // 以绘图区宽度为收敛目标；右轴 minimumWidth 只是调节手段。
+  private syncRightPriceScaleWidths(): boolean {
+    const result = syncChartGroupPriceScaleWidths(this.charts, {
+      alignedWidth: this.alignedPriceScaleWidth,
+      flush: () => this.flushChartLayout(),
+    });
+    this.alignedPriceScaleWidth = result.alignedPriceScaleWidth;
+    if (!result.converged) {
+      console.warn(
+        "[SynchronizedChartGroup] plot widths failed to converge",
+        result.plotWidths,
       );
-      const targetWidth = Math.max(
-        DEFAULT_PRICE_SCALE_MIN_WIDTH,
-        ...measured,
-      );
-      const widthsMatch =
-        measured.every((width) => Math.abs(width - targetWidth) < 0.5) &&
-        Math.abs(targetWidth - this.alignedPriceScaleWidth) < 0.5;
-      if (widthsMatch) {
-        return;
-      }
-      this.alignedPriceScaleWidth = targetWidth;
-      for (const chart of this.charts) {
-        chart.applyOptions({
-          rightPriceScale: { minimumWidth: targetWidth },
-        });
-      }
     }
+    return result.converged;
+  }
+
+  private flushChartLayout() {
+    const flush = (
+      globalThis as typeof globalThis & { __flushRaf?: () => void }
+    ).__flushRaf;
+    flush?.();
   }
 
   private viewportBounds(seriesLength: number) {
