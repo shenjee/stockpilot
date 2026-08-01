@@ -89,18 +89,37 @@ export function replayOperationMatches(activeOperationId, candidateOperationId) 
 }
 
 /**
- * True when an `application_error` is Replay-scoped. The App's generic banner
- * "重试" calls `retryLive` / `retryService`, which must never handle Replay
- * failures (they would look up a Live Session and surface
- * "Live Session 不存在或已退休").
+ * True when an error is owned by the Replay surface and must not enter
+ * `retry_live`. Ownership comes from:
+ * - explicit `source: "replay"` (set for every `onReplayEvent` failure), or
+ * - `affected_capability === "replay"` for synchronous Replay command rejects.
+ *
+ * `affected_capability` alone is insufficient: Replay `calculation_failed`
+ * reports `five_minute_chart`, and Replay `service_unavailable` reports
+ * `service`, but both still arrive on the Replay event channel.
  */
-export function isReplayScopedError(error) {
+export function isReplayOwnedError(error) {
   const candidate = error?.error ?? error?.payload ?? error;
   return (
     candidate !== null &&
     typeof candidate === "object" &&
-    candidate?.affected_capability === "replay"
+    (candidate?.source === "replay" ||
+      candidate?.affected_capability === "replay")
   );
+}
+
+/** @deprecated Prefer {@link isReplayOwnedError}. */
+export function isReplayScopedError(error) {
+  return isReplayOwnedError(error);
+}
+
+/**
+ * Tag an application error as Replay-owned without mutating the input.
+ */
+export function asReplayOwnedError(error) {
+  if (!error || typeof error !== "object") return error;
+  if (error.source === "replay") return error;
+  return { ...error, source: "replay" };
 }
 
 export function marketTimeValue(timestamp) {

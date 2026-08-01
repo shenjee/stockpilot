@@ -46,8 +46,9 @@ import {
 import { createSerialTaskQueue } from "./serial-task-queue.mjs";
 import {
   REPLAY_SPEEDS,
+  asReplayOwnedError,
   deriveReplayControls,
-  isReplayScopedError,
+  isReplayOwnedError,
   marketClockLabel,
   marketTimeFromValue,
   replayFactsFromSnapshot,
@@ -55,6 +56,7 @@ import {
   replaySessionMatches,
   type ReplayFacts,
 } from "./replay-controls.mjs";
+import { createReplayCursorTracker } from "./replay-cursor-tracker.mjs";
 import {
   TradeDrawer,
   createBoundTradeClient,
@@ -186,7 +188,7 @@ export function App() {
   const serviceGeneration = useRef(initialStatus.service_generation);
   const activeReplaySession = useRef<string | null>(null);
   const activeReplayLoadOperation = useRef<string | null>(null);
-  const activeReplayCursorOperation = useRef<string | null>(null);
+  const replayCursorTracker = useRef(createReplayCursorTracker());
   const resumeReplayAfterSeek = useRef(false);
   const searchRequests = useRef(createLatestRequestTracker());
   const navigationRequests = useRef(createLatestRequestTracker());
@@ -277,7 +279,8 @@ export function App() {
       if (generationChanged) {
         activeReplaySession.current = null;
         activeReplayLoadOperation.current = null;
-        activeReplayCursorOperation.current = null;
+        replayCursorTracker.current.clear();
+        resumeReplayAfterSeek.current = false;
         setReplaySnapshot(null);
         setReplayDate("");
         setReplayLoading(false);
@@ -585,7 +588,8 @@ export function App() {
       }
       if (envelope.event_type === "operation_failed") {
         const error = applicationErrorFrom(envelope.payload);
-        if (error) setBackgroundError(error);
+        // Ownership comes from the Replay event channel, not affected_capability.
+        if (error) setBackgroundError(asReplayOwnedError(error));
         if (
           replayOperationMatches(
             activeReplayLoadOperation.current,
@@ -594,18 +598,18 @@ export function App() {
         ) {
           activeReplayLoadOperation.current = null;
           activeReplaySession.current = null;
-          activeReplayCursorOperation.current = null;
+          replayCursorTracker.current.clear();
           resumeReplayAfterSeek.current = false;
           setReplayLoading(false);
           setReplayBusy(false);
         }
-        if (
-          replayOperationMatches(
-            activeReplayCursorOperation.current,
-            envelope.operation_id,
-          )
-        ) {
-          activeReplayCursorOperation.current = null;
+        const cursorNote = replayCursorTracker.current.noteOutcome(
+          typeof envelope.operation_id === "string"
+            ? envelope.operation_id
+            : null,
+          "failed",
+        );
+        if (cursorNote === "settled") {
           resumeReplayAfterSeek.current = false;
           setReplayBusy(false);
         }
@@ -621,35 +625,21 @@ export function App() {
           activeReplayLoadOperation.current = null;
           setReplayLoading(false);
         }
-        if (
-          replayOperationMatches(
-            activeReplayCursorOperation.current,
-            envelope.operation_id,
-          )
-        ) {
-          activeReplayCursorOperation.current = null;
+        const cursorNote = replayCursorTracker.current.noteOutcome(
+          typeof envelope.operation_id === "string"
+            ? envelope.operation_id
+            : null,
+          "completed",
+        );
+        if (cursorNote === "settled") {
           setReplayBusy(false);
           if (resumeReplayAfterSeek.current) {
             resumeReplayAfterSeek.current = false;
-            const sessionId = activeReplaySession.current;
-            // This effect is mounted once; resume via the session ref rather
-            // than a stale setReplayPlayback closure over replayFacts.
-            if (window.stockpilot && sessionId) {
-              void window.stockpilot
-                .setReplayPlayback({
-                  schema_version: "t0_replay_v1",
-                  request_id: requestId("play-replay"),
-                  session_id: sessionId,
-                  playing: true,
-                })
-                .then((response) => {
-                  const error = applicationErrorFrom(response);
-                  if (error) setBackgroundError(error);
-                })
-                .catch((error: unknown) => {
-                  setBackgroundError(clientError(error, "replay"));
-                });
-            }
+            requestReplayPlayback(
+              activeReplaySession.current,
+              true,
+              (error) => setBackgroundError(error),
+            );
           }
         }
         return;
@@ -1078,14 +1068,29 @@ export function App() {
       }
       return;
     }
-    // Replay failures must not enter Live retry. Transient cursor/state
-    // errors are not safely reissued from the generic banner; clearing the
-    // banner and busy flag restores the Replay controls instead.
-    if (isReplayScopedError(background) || isReplayScopedError(failure?.error)) {
-      activeReplayCursorOperation.current = null;
+    // Replay-owned failures must never enter retry_live. Ownership is based on
+    // the Replay event/command channel (source: "replay"), not only
+    // affected_capability === "replay".
+    const replayOwned =
+      isReplayOwnedError(background) || isReplayOwnedError(failure?.error);
+    if (replayOwned) {
+      replayCursorTracker.current.clear();
       resumeReplayAfterSeek.current = false;
       setReplayBusy(false);
       setReplayPlaybackPending(false);
+      const replayError = background ?? failure?.error;
+      if (replayError?.affected_capability === "service") {
+        setLoading(true);
+        try {
+          await window.stockpilot.retryService();
+        } catch (error) {
+          setBackgroundError(
+            asReplayOwnedError(clientError(error, "service")),
+          );
+        } finally {
+          setLoading(false);
+        }
+      }
       return;
     }
     setLoading(true);
@@ -1144,6 +1149,8 @@ export function App() {
     if (!window.stockpilot || !workbench.security || !replayDate) return;
     setReplayLoading(true);
     setReplayBusy(false);
+    replayCursorTracker.current.clear();
+    resumeReplayAfterSeek.current = false;
     setBackgroundError(null);
     try {
       const response = await window.stockpilot.beginReplay({
@@ -1208,6 +1215,27 @@ export function App() {
     }
   }
 
+  function adoptReplayCursorResponse(operationId: string | null) {
+    const adopted = replayCursorTracker.current.adopt(operationId);
+    if (adopted.status === "no_operation") {
+      setReplayBusy(false);
+      if (resumeReplayAfterSeek.current) {
+        resumeReplayAfterSeek.current = false;
+        void setReplayPlayback(true);
+      }
+      return;
+    }
+    if (adopted.status === "already_settled") {
+      setReplayBusy(false);
+      if (adopted.early === "completed" && resumeReplayAfterSeek.current) {
+        resumeReplayAfterSeek.current = false;
+        void setReplayPlayback(true);
+      } else if (adopted.early === "failed") {
+        resumeReplayAfterSeek.current = false;
+      }
+    }
+  }
+
   async function stepReplay() {
     if (!window.stockpilot || !replayFacts) return;
     setReplayBusy(true);
@@ -1219,12 +1247,11 @@ export function App() {
       });
       const error = applicationErrorFrom(response);
       if (error) throw error;
-      activeReplayCursorOperation.current = responseOperationId(response);
-      if (!activeReplayCursorOperation.current) setReplayBusy(false);
+      adoptReplayCursorResponse(responseOperationId(response));
     } catch (error) {
-      activeReplayCursorOperation.current = null;
+      replayCursorTracker.current.clear();
       setReplayBusy(false);
-      setBackgroundError(clientError(error, "replay"));
+      setBackgroundError(asReplayOwnedError(clientError(error, "replay")));
     }
   }
 
@@ -1240,19 +1267,12 @@ export function App() {
       });
       const error = applicationErrorFrom(response);
       if (error) throw error;
-      activeReplayCursorOperation.current = responseOperationId(response);
-      if (!activeReplayCursorOperation.current) {
-        setReplayBusy(false);
-        if (resumeReplayAfterSeek.current) {
-          resumeReplayAfterSeek.current = false;
-          void setReplayPlayback(true);
-        }
-      }
+      adoptReplayCursorResponse(responseOperationId(response));
     } catch (error) {
-      activeReplayCursorOperation.current = null;
+      replayCursorTracker.current.clear();
       resumeReplayAfterSeek.current = false;
       setReplayBusy(false);
-      setBackgroundError(clientError(error, "replay"));
+      setBackgroundError(asReplayOwnedError(clientError(error, "replay")));
     }
   }
 
@@ -1278,7 +1298,7 @@ export function App() {
     const sessionId = activeReplaySession.current;
     activeReplaySession.current = null;
     activeReplayLoadOperation.current = null;
-    activeReplayCursorOperation.current = null;
+    replayCursorTracker.current.clear();
     resumeReplayAfterSeek.current = false;
     updateWorkbenchFromUser((current) =>
       selectWorkbenchMode(current, WorkbenchMode.LIVE),
@@ -1422,8 +1442,9 @@ export function App() {
           <span>
             {(activeFailure?.error ?? backgroundError)?.message}
           </span>
-          {(activeFailure?.error ?? backgroundError)?.retryable &&
-            !isReplayScopedError(activeFailure?.error ?? backgroundError) && (
+          {shouldShowFeedbackRetry(
+            activeFailure?.error ?? backgroundError,
+          ) && (
             <button type="button" onClick={() => void retryLiveOrService()}>
               重试
             </button>
@@ -2153,8 +2174,10 @@ function serviceStatusError(status: ServiceStatus): ApplicationError {
 
 function clientError(error: unknown, capability: string): ApplicationError {
   const known = applicationErrorFrom(error);
-  if (known) return known;
-  return {
+  if (known) {
+    return capability === "replay" ? asReplayOwnedError(known) : known;
+  }
+  const fallback: ApplicationError = {
     error_code: "client_operation_failed",
     message:
       capability === "preferences"
@@ -2163,6 +2186,36 @@ function clientError(error: unknown, capability: string): ApplicationError {
     retryable: true,
     affected_capability: capability,
   };
+  return capability === "replay" ? asReplayOwnedError(fallback) : fallback;
+}
+
+function shouldShowFeedbackRetry(error: ApplicationError | null | undefined) {
+  if (!error?.retryable) return false;
+  if (!isReplayOwnedError(error)) return true;
+  // Replay-channel service outages may still restart the local service.
+  return error.affected_capability === "service";
+}
+
+function requestReplayPlayback(
+  sessionId: string | null,
+  playing: boolean,
+  onError: (error: ApplicationError) => void,
+) {
+  if (!window.stockpilot || !sessionId) return;
+  void window.stockpilot
+    .setReplayPlayback({
+      schema_version: "t0_replay_v1",
+      request_id: requestId(playing ? "play-replay" : "pause-replay"),
+      session_id: sessionId,
+      playing,
+    })
+    .then((response) => {
+      const error = applicationErrorFrom(response);
+      if (error) onError(asReplayOwnedError(error));
+    })
+    .catch((error: unknown) => {
+      onError(asReplayOwnedError(clientError(error, "replay")));
+    });
 }
 
 function eventEnvelope(event: unknown) {

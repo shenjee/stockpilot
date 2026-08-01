@@ -271,6 +271,12 @@ class ReplaySession:
         self._inflight_committed_revision: int | None = None
         self._initial_result: ReplayInitialResult | None = None
         self._last_commit_mono: float = 0.0
+        # Explicit play/pause intent, independent of the transient `paused`
+        # state used while a cursor operation is in flight.  Cursor completion
+        # resumes autoplay only when this intent is still `playing` and the
+        # generation captured at cursor start is unchanged.
+        self._playback_intent = "paused"
+        self._playback_intent_generation = 0
 
         self._owns_scheduler = scheduler is None
         self._scheduler: PlaybackSchedulerPort = (
@@ -453,6 +459,7 @@ class ReplaySession:
             if self._retired:
                 raise ReplaySessionStateError("session is retired")
             if self._state == "playing":
+                self._set_playback_intent_locked("playing")
                 return  # idempotent
             if self._state not in {"ready", "paused"}:
                 raise ReplaySessionStateError(
@@ -463,8 +470,10 @@ class ReplaySession:
             if self._next_bar_time is None:
                 # Already at the sequence end: nothing to play.  Converge once
                 # to paused without consuming a bar or growing the revision.
+                self._set_playback_intent_locked("paused")
                 self._converge_to_paused_locked()
                 return
+            self._set_playback_intent_locked("playing")
             self._state = "playing"
             self._ended_converged = False
             self._last_commit_mono = self._clock.now()
@@ -476,17 +485,27 @@ class ReplaySession:
         self._scheduler.schedule(first_due)
 
     def pause(self) -> None:
-        """Pause auto-playback.  Idempotent from ``ready``/``paused``."""
+        """Pause auto-playback.  Idempotent from ``ready``/``paused``.
+
+        Cursor operations temporarily park the Session in ``paused`` while
+        autoplay intent may still be ``playing``.  An explicit pause in that
+        window must still record the user's pause intent so a later cursor
+        completion does not resume playback.
+        """
 
         with self._lock:
             if self._retired:
                 raise ReplaySessionStateError("session is retired")
             if self._state in {"ready", "paused"}:
-                return  # idempotent no-op
+                # Always accept pause intent, even when already parked for a
+                # cursor operation (contract: playing=false is never busy).
+                self._set_playback_intent_locked("paused")
+                return  # idempotent no-op for session_status / scheduler
             if self._state != "playing":
                 raise ReplaySessionStateError(
                     f"pause requires playing state, not {self._state}"
                 )
+            self._set_playback_intent_locked("paused")
             self._state = "paused"
             self._publish_session_status_locked(
                 "paused", "user_command", None, None
@@ -549,6 +568,7 @@ class ReplaySession:
         if not isinstance(operation_id, str) or not operation_id:
             raise ValueError("operation_id must be a non-empty string")
         was_playing = False
+        resume_intent_generation = 0
         with self._lock:
             if self._retired:
                 raise ReplaySessionStateError("session is retired")
@@ -557,9 +577,11 @@ class ReplaySession:
                     f"step requires ready, playing or paused state, not {self._state}"
                 )
             was_playing = self._state == "playing"
+            resume_intent_generation = self._playback_intent_generation
             if self._next_bar_time is None:
                 if was_playing:
                     self._scheduler.cancel()
+                    self._set_playback_intent_locked("paused")
                     self._converge_to_paused_locked()
                 return ReplayStepResult(False, self.revision, None, "no_op")
             if self._inflight_ticket is not None:
@@ -673,7 +695,7 @@ class ReplaySession:
                     self._inflight_ticket = None
 
         if was_playing and result.outcome_status == "completed":
-            self._resume_playback_after_cursor()
+            self._resume_playback_after_cursor(resume_intent_generation)
         return result
 
     def seek(self, target_time: datetime | str, operation_id: str) -> ReplaySeekResult:
@@ -704,6 +726,7 @@ class ReplaySession:
             raise TypeError("target_time must be a datetime or market timestamp")
 
         was_playing = False
+        resume_intent_generation = 0
         with self._lock:
             if self._retired:
                 raise ReplaySessionStateError("session is retired")
@@ -714,6 +737,7 @@ class ReplaySession:
             if target < self._start_time or target > self._end_time:
                 raise ValueError("target_time must be inside the Replay session")
             was_playing = self._state == "playing"
+            resume_intent_generation = self._playback_intent_generation
             self._scheduler.cancel()
             self._state = "paused"
             ticket = self._next_ticket
@@ -796,12 +820,27 @@ class ReplaySession:
                     self._inflight_ticket = None
 
         if was_playing and result.outcome_status == "completed":
-            self._resume_playback_after_cursor()
+            self._resume_playback_after_cursor(resume_intent_generation)
         return result
 
-    def _resume_playback_after_cursor(self) -> None:
-        """Resume auto-playback after a cursor op that interrupted ``playing``."""
+    def _set_playback_intent_locked(self, intent: str) -> None:
+        if intent not in {"playing", "paused"}:
+            raise ValueError(f"unsupported playback intent: {intent}")
+        if self._playback_intent == intent:
+            return
+        self._playback_intent = intent
+        self._playback_intent_generation += 1
 
+    def _resume_playback_after_cursor(self, intent_generation: int) -> None:
+        """Resume auto-playback only when play intent is unchanged."""
+
+        with self._lock:
+            if (
+                self._retired
+                or self._playback_intent != "playing"
+                or self._playback_intent_generation != intent_generation
+            ):
+                return
         try:
             self.play()
         except ReplaySessionStateError:

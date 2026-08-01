@@ -625,8 +625,15 @@ created/loading/ready/playing/paused/failed ──────→ retired
 - `step_replay` 和 `seek_replay` 都是游标操作。同一 Session 同时最多执行一个游标
   操作；开始任一游标操作前先进入 `paused`（含从 `playing` 打断自动调度）。
 - Replay 操作错误由 Replay 上下文处理：不得把 Replay 错误路由到 `retry_live`，也不得
-  因此退休仍有效的 Replay Session。`replay_busy` / `invalid_replay_state` 若无法安全
-  重放原游标操作，则不展示误导性的 Live「重试」，而是解除 busy/pending 并给出可执行提示。
+  因此退休仍有效的 Replay Session。错误归属以命令/事件通道为准（Renderer 对
+  `onReplayEvent` 失败标记 `source: "replay"`），不得仅依赖 `affected_capability`
+  （例如 Replay 的 `calculation_failed` 可能报告 `five_minute_chart`）。
+  `replay_busy` / `invalid_replay_state` 若无法安全重放原游标操作，则不展示误导性的
+  Live「重试」，而是解除 busy/pending 并给出可执行提示。
+- 游标操作执行期间 `set_replay_playback(playing=false)` 始终可接受：即使 Session
+  因游标已短暂处于 `paused`，也应记录暂停意图；游标完成后不得覆盖该暂停意图而自动
+  恢复播放。仅当游标开始时的播放意图仍为 `playing` 且期间未被新的播放/暂停命令
+  改变时，才恢复原倍速自动播放。
 - 新的 `seek_replay` 采用 latest-wins：它使正在执行的旧 seek 或 step 失效，旧
   `operation_id` 的结果即使晚到也不得发布快照。
 - 游标操作执行中收到 `step_replay` 时不排队，返回 `replay_busy`；用户可在当前操作

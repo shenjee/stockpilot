@@ -7,7 +7,8 @@ import { fileURLToPath } from "node:url";
 import {
   REPLAY_SPEEDS,
   deriveReplayControls,
-  isReplayScopedError,
+  asReplayOwnedError,
+  isReplayOwnedError,
   marketClockLabel,
   marketTimeFromValue,
   replayFactsFromSnapshot,
@@ -91,9 +92,9 @@ test("playing state keeps step and seek enabled when not busy", () => {
   assert.equal(controls.canTogglePlayback, true);
 });
 
-test("isReplayScopedError isolates Replay failures from Live retry", () => {
+test("isReplayOwnedError isolates Replay failures from Live retry", () => {
   assert.equal(
-    isReplayScopedError({
+    isReplayOwnedError({
       error_code: "invalid_replay_state",
       message: "当前回放状态不允许此操作",
       retryable: true,
@@ -102,7 +103,7 @@ test("isReplayScopedError isolates Replay failures from Live retry", () => {
     true,
   );
   assert.equal(
-    isReplayScopedError({
+    isReplayOwnedError({
       error_code: "live_session_missing",
       message: "Live Session 不存在或已退休",
       retryable: true,
@@ -111,12 +112,22 @@ test("isReplayScopedError isolates Replay failures from Live retry", () => {
     false,
   );
   assert.equal(
-    isReplayScopedError({
+    isReplayOwnedError({
       payload: {
         error_code: "replay_busy",
         affected_capability: "replay",
       },
     }),
+    true,
+  );
+  assert.equal(
+    isReplayOwnedError(
+      asReplayOwnedError({
+        error_code: "calculation_failed",
+        affected_capability: "five_minute_chart",
+        retryable: true,
+      }),
+    ),
     true,
   );
 });

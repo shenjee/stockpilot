@@ -42,7 +42,12 @@ export function replayOperationMatches(
   activeOperationId: string | null,
   candidateOperationId: string | null,
 ): boolean;
+export function isReplayOwnedError(error: unknown): boolean;
+/** @deprecated Prefer {@link isReplayOwnedError}. */
 export function isReplayScopedError(error: unknown): boolean;
+export function asReplayOwnedError<T extends object>(error: T): T & {
+  source: "replay";
+};
 export function marketTimeValue(timestamp: string): number | null;
 export function marketTimeFromValue(value: number): string;
 export function marketClockLabel(timestamp: string): string;

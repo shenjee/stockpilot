@@ -927,6 +927,59 @@ class PlayPauseTests(_SessionTestBase):
         self.assertEqual(s.current_time, target)
         self.assertEqual(s.state, "paused")
 
+    def test_pause_during_step_while_playing_keeps_paused(self) -> None:
+        prepared = _prepare("1m")
+        gated = _GatedAnalyzer(_CachingAnalyzer(_default_analyze_5m))
+        clock = SimulatedMonotonicClock()
+        s = self._make_session(prepared, clock=clock, analyzer=gated)
+        s.play()
+        _consume_for_seconds(s, clock, 1.0)
+        self.assertEqual(s.state, "playing")
+        gated.block()
+
+        result_box: list = []
+
+        def _step() -> None:
+            result_box.append(s.step("op-step-pause-race"))
+
+        thread = threading.Thread(target=_step, daemon=True)
+        thread.start()
+        self.assertTrue(gated.wait_until_entered())
+        self.assertEqual(s.state, "paused")
+        s.pause()  # must record pause intent while cursor is in flight
+        gated.release()
+        thread.join(timeout=5.0)
+        self.assertEqual(len(result_box), 1)
+        self.assertEqual(result_box[0].outcome_status, "completed")
+        self.assertEqual(s.state, "paused")
+        self.assertEqual(s.pump_playback().action, "no_op")
+
+    def test_pause_during_seek_while_playing_keeps_paused(self) -> None:
+        prepared = _prepare("1m")
+        gated = _GatedAnalyzer(_CachingAnalyzer(_default_analyze_5m))
+        clock = SimulatedMonotonicClock()
+        s = self._make_session(prepared, clock=clock, analyzer=gated)
+        s.play()
+        _consume_for_seconds(s, clock, 1.0)
+        target = prepared.actual_bar_times[15]
+        gated.block()
+
+        result_box: list = []
+
+        def _seek() -> None:
+            result_box.append(s.seek(target, "op-seek-pause-race"))
+
+        thread = threading.Thread(target=_seek, daemon=True)
+        thread.start()
+        self.assertTrue(gated.wait_until_entered())
+        s.pause()
+        gated.release()
+        thread.join(timeout=5.0)
+        self.assertEqual(len(result_box), 1)
+        self.assertEqual(result_box[0].outcome_status, "completed")
+        self.assertEqual(s.current_time, target)
+        self.assertEqual(s.state, "paused")
+
 
 # ----------------------------------------------------------------------
 # 5. Speed
