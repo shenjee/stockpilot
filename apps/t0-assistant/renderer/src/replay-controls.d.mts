@@ -42,6 +42,7 @@ export function replayOperationMatches(
   activeOperationId: string | null,
   candidateOperationId: string | null,
 ): boolean;
+export function isReplayScopedError(error: unknown): boolean;
 export function marketTimeValue(timestamp: string): number | null;
 export function marketTimeFromValue(value: number): string;
 export function marketClockLabel(timestamp: string): string;

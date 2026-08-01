@@ -847,6 +847,86 @@ class PlayPauseTests(_SessionTestBase):
         self.assertEqual(s.current_time, cursor_before)
         self.assertFalse(error_box)
 
+    def test_step_while_playing_advances_one_bar_and_resumes(self) -> None:
+        prepared = _prepare("1m")
+        clock = SimulatedMonotonicClock()
+        s = self._make_session(prepared, clock=clock)
+        s.set_playback_speed(2)
+        s.play()
+        _consume_for_seconds(s, clock, 1.0)
+        self.assertEqual(s.current_time, prepared.actual_bar_times[1])
+        self.assertEqual(s.state, "playing")
+        cursor_before = s.current_time
+        next_before = s.next_bar_time
+
+        for index in range(3):
+            result = s.step(f"op-step-playing-{index}")
+            self.assertTrue(result.advanced)
+            self.assertEqual(result.outcome_status, "completed")
+            self.assertEqual(s.state, "playing")
+            self.assertEqual(s.playback_speed, 2)
+            self.assertEqual(
+                s.current_time,
+                prepared.actual_bar_times[2 + index],
+            )
+
+        self.assertEqual(s.current_time, prepared.actual_bar_times[4])
+        self.assertNotEqual(s.current_time, cursor_before)
+        self.assertNotEqual(s.next_bar_time, next_before)
+        # Auto-play remains armed after the interrupted steps.
+        advanced = _consume_for_seconds(s, clock, clock.now() + 1.0)
+        self.assertEqual(advanced, 2)
+
+    def test_step_while_paused_stays_paused(self) -> None:
+        prepared = _prepare("1m")
+        s = self._make_session(prepared)
+        s.step("op-step-1")
+        self.assertEqual(s.state, "paused")
+        s.step("op-step-2")
+        self.assertEqual(s.state, "paused")
+        self.assertEqual(s.current_time, prepared.actual_bar_times[1])
+
+    def test_step_while_playing_does_not_double_consume_with_pump(self) -> None:
+        prepared = _prepare("1m")
+        clock = SimulatedMonotonicClock()
+        s = self._make_session(prepared, clock=clock)
+        s.play()
+        _consume_for_seconds(s, clock, 1.0)
+        before = s.current_time
+        s.step("op-step-during-play")
+        # A pump tick that became due during the step must not also advance.
+        self.assertEqual(s.pump_playback().action, "not_due")
+        self.assertEqual(
+            s.current_time,
+            prepared.actual_bar_times[prepared.actual_bar_times.index(before) + 1],
+        )
+
+    def test_seek_while_playing_resumes_after_commit(self) -> None:
+        prepared = _prepare("1m")
+        clock = SimulatedMonotonicClock()
+        s = self._make_session(prepared, clock=clock)
+        s.set_playback_speed(5)
+        s.play()
+        _consume_for_seconds(s, clock, 1.0)
+        target = prepared.actual_bar_times[20]
+        result = s.seek(target, "op-seek-playing")
+        self.assertEqual(result.outcome_status, "completed")
+        self.assertEqual(s.current_time, target)
+        self.assertEqual(s.state, "playing")
+        self.assertEqual(s.playback_speed, 5)
+        advanced = _consume_for_seconds(s, clock, clock.now() + 1.0)
+        self.assertEqual(advanced, 5)
+
+    def test_seek_while_paused_stays_paused(self) -> None:
+        prepared = _prepare("1m")
+        s = self._make_session(prepared)
+        s.step("op-step-1")
+        target = prepared.actual_bar_times[10]
+        result = s.seek(target, "op-seek-paused")
+        self.assertEqual(result.outcome_status, "completed")
+        self.assertEqual(s.current_time, target)
+        self.assertEqual(s.state, "paused")
+
 
 # ----------------------------------------------------------------------
 # 5. Speed

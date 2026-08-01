@@ -88,6 +88,21 @@ export function replayOperationMatches(activeOperationId, candidateOperationId) 
   );
 }
 
+/**
+ * True when an `application_error` is Replay-scoped. The App's generic banner
+ * "重试" calls `retryLive` / `retryService`, which must never handle Replay
+ * failures (they would look up a Live Session and surface
+ * "Live Session 不存在或已退休").
+ */
+export function isReplayScopedError(error) {
+  const candidate = error?.error ?? error?.payload ?? error;
+  return (
+    candidate !== null &&
+    typeof candidate === "object" &&
+    candidate?.affected_capability === "replay"
+  );
+}
+
 export function marketTimeValue(timestamp) {
   const match =
     /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/.exec(

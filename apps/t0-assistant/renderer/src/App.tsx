@@ -47,6 +47,7 @@ import { createSerialTaskQueue } from "./serial-task-queue.mjs";
 import {
   REPLAY_SPEEDS,
   deriveReplayControls,
+  isReplayScopedError,
   marketClockLabel,
   marketTimeFromValue,
   replayFactsFromSnapshot,
@@ -186,6 +187,7 @@ export function App() {
   const activeReplaySession = useRef<string | null>(null);
   const activeReplayLoadOperation = useRef<string | null>(null);
   const activeReplayCursorOperation = useRef<string | null>(null);
+  const resumeReplayAfterSeek = useRef(false);
   const searchRequests = useRef(createLatestRequestTracker());
   const navigationRequests = useRef(createLatestRequestTracker());
   const preferenceHydrationInFlight = useRef(false);
@@ -593,6 +595,7 @@ export function App() {
           activeReplayLoadOperation.current = null;
           activeReplaySession.current = null;
           activeReplayCursorOperation.current = null;
+          resumeReplayAfterSeek.current = false;
           setReplayLoading(false);
           setReplayBusy(false);
         }
@@ -603,6 +606,7 @@ export function App() {
           )
         ) {
           activeReplayCursorOperation.current = null;
+          resumeReplayAfterSeek.current = false;
           setReplayBusy(false);
         }
         return;
@@ -625,6 +629,28 @@ export function App() {
         ) {
           activeReplayCursorOperation.current = null;
           setReplayBusy(false);
+          if (resumeReplayAfterSeek.current) {
+            resumeReplayAfterSeek.current = false;
+            const sessionId = activeReplaySession.current;
+            // This effect is mounted once; resume via the session ref rather
+            // than a stale setReplayPlayback closure over replayFacts.
+            if (window.stockpilot && sessionId) {
+              void window.stockpilot
+                .setReplayPlayback({
+                  schema_version: "t0_replay_v1",
+                  request_id: requestId("play-replay"),
+                  session_id: sessionId,
+                  playing: true,
+                })
+                .then((response) => {
+                  const error = applicationErrorFrom(response);
+                  if (error) setBackgroundError(error);
+                })
+                .catch((error: unknown) => {
+                  setBackgroundError(clientError(error, "replay"));
+                });
+            }
+          }
         }
         return;
       }
@@ -1052,6 +1078,16 @@ export function App() {
       }
       return;
     }
+    // Replay failures must not enter Live retry. Transient cursor/state
+    // errors are not safely reissued from the generic banner; clearing the
+    // banner and busy flag restores the Replay controls instead.
+    if (isReplayScopedError(background) || isReplayScopedError(failure?.error)) {
+      activeReplayCursorOperation.current = null;
+      resumeReplayAfterSeek.current = false;
+      setReplayBusy(false);
+      setReplayPlaybackPending(false);
+      return;
+    }
     setLoading(true);
     try {
       if (
@@ -1205,9 +1241,16 @@ export function App() {
       const error = applicationErrorFrom(response);
       if (error) throw error;
       activeReplayCursorOperation.current = responseOperationId(response);
-      if (!activeReplayCursorOperation.current) setReplayBusy(false);
+      if (!activeReplayCursorOperation.current) {
+        setReplayBusy(false);
+        if (resumeReplayAfterSeek.current) {
+          resumeReplayAfterSeek.current = false;
+          void setReplayPlayback(true);
+        }
+      }
     } catch (error) {
       activeReplayCursorOperation.current = null;
+      resumeReplayAfterSeek.current = false;
       setReplayBusy(false);
       setBackgroundError(clientError(error, "replay"));
     }
@@ -1236,6 +1279,7 @@ export function App() {
     activeReplaySession.current = null;
     activeReplayLoadOperation.current = null;
     activeReplayCursorOperation.current = null;
+    resumeReplayAfterSeek.current = false;
     updateWorkbenchFromUser((current) =>
       selectWorkbenchMode(current, WorkbenchMode.LIVE),
     );
@@ -1378,7 +1422,8 @@ export function App() {
           <span>
             {(activeFailure?.error ?? backgroundError)?.message}
           </span>
-          {(activeFailure?.error ?? backgroundError)?.retryable && (
+          {(activeFailure?.error ?? backgroundError)?.retryable &&
+            !isReplayScopedError(activeFailure?.error ?? backgroundError) && (
             <button type="button" onClick={() => void retryLiveOrService()}>
               重试
             </button>
@@ -1550,7 +1595,10 @@ export function App() {
           onPlayback={(playing) => void setReplayPlayback(playing)}
           onStep={() => void stepReplay()}
           onSpeed={(speed) => void setReplaySpeed(speed)}
-          onSeek={(targetTime) => void seekReplay(targetTime)}
+          onSeek={(targetTime, options) => {
+            resumeReplayAfterSeek.current = Boolean(options?.resumeAfter);
+            void seekReplay(targetTime);
+          }}
         />
       )}
 
@@ -1627,11 +1675,15 @@ function ReplayControls({
   onPlayback: (playing: boolean) => void;
   onStep: () => void;
   onSpeed: (speed: number) => void;
-  onSeek: (targetTime: string) => void;
+  onSeek: (
+    targetTime: string,
+    options?: { resumeAfter?: boolean },
+  ) => void;
 }) {
   const controls = deriveReplayControls(facts, { busy });
   const [draftProgress, setDraftProgress] = useState<number | null>(null);
   const dragging = useRef(false);
+  const resumeAfterSeek = useRef(false);
   const progress = draftProgress ?? facts?.currentValue ?? 0;
   const shownTime = facts
     ? marketClockLabel(marketTimeFromValue(progress))
@@ -1674,8 +1726,13 @@ function ReplayControls({
 
   function commitSeek() {
     dragging.current = false;
-    if (draftProgress === null || !controls.canSeek) return;
-    onSeek(marketTimeFromValue(draftProgress));
+    if (draftProgress === null || !controls.canSeek) {
+      resumeAfterSeek.current = false;
+      return;
+    }
+    const shouldResume = resumeAfterSeek.current;
+    resumeAfterSeek.current = false;
+    onSeek(marketTimeFromValue(draftProgress), { resumeAfter: shouldResume });
   }
 
   return (
@@ -1720,7 +1777,12 @@ function ReplayControls({
           disabled={!controls.canSeek}
           onPointerDown={() => {
             dragging.current = true;
-            if (controls.playing) onPlayback(false);
+            if (controls.playing) {
+              resumeAfterSeek.current = true;
+              onPlayback(false);
+            } else {
+              resumeAfterSeek.current = false;
+            }
           }}
           onChange={(event) => setDraftProgress(Number(event.target.value))}
           onPointerUp={commitSeek}
