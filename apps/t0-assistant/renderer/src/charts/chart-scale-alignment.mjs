@@ -3,6 +3,7 @@ export const DEFAULT_PRICE_SCALE_MIN_WIDTH = 58;
 export const COMPACT_LABEL_PRICE_SCALE_MIN_WIDTH = 72;
 export const PLOT_WIDTH_ALIGNMENT_TOLERANCE = 1;
 export const MAX_PRICE_SCALE_SYNC_ATTEMPTS = 5;
+export const NON_CONVERGED_PRICE_SCALE_PADDING = 2;
 
 export function plotWidthsAligned(
   widths,
@@ -64,9 +65,33 @@ export function syncChartGroupPriceScaleWidths(charts, options = {}) {
   }
 
   const plotWidths = measurePlotWidths(charts);
+  const aligned = plotWidthsAligned(plotWidths, tolerance);
+  if (aligned) {
+    return {
+      converged: true,
+      plotWidths,
+      alignedPriceScaleWidth: alignedWidth,
+    };
+  }
+
+  const priceScaleWidths = charts.map((chart) =>
+    chart.priceScale("right").width(),
+  );
+  alignedWidth =
+    Math.max(
+      requiredPriceScaleMinimumWidth(priceScaleWidths, alignedWidth),
+      ...priceScaleWidths,
+    ) + NON_CONVERGED_PRICE_SCALE_PADDING;
+  for (const chart of charts) {
+    chart.applyOptions({
+      rightPriceScale: { minimumWidth: alignedWidth },
+    });
+  }
+  options.flush?.();
+  const forcedPlotWidths = measurePlotWidths(charts);
   return {
-    converged: plotWidthsAligned(plotWidths, tolerance),
-    plotWidths,
+    converged: plotWidthsAligned(forcedPlotWidths, tolerance),
+    plotWidths: forcedPlotWidths,
     alignedPriceScaleWidth: alignedWidth,
   };
 }

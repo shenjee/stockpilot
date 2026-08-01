@@ -21,10 +21,6 @@ import {
   formatVolumeAxisLabel,
   type ChartGroupModel,
 } from "./chart-model.mjs";
-import {
-  buildCrosshairFallbackIndex,
-  resolveCrosshairTarget,
-} from "./chart-interaction.mjs";
 import { PivotZonePrimitive } from "./pivot-zone-primitive";
 import { CzscMarkerPrimitive } from "./czsc-marker-primitive";
 import {
@@ -58,7 +54,6 @@ interface ChartGroupOptions {
   onViewportChange?: (snapshot: ChartViewportSnapshot | null) => void;
 }
 
-type NumericSeries = ISeriesApi<"Line"> | ISeriesApi<"Histogram">;
 
 const RED = "#ef5350";
 const GREEN = "#26a69a";
@@ -80,6 +75,11 @@ const MA_COLORS = {
   ma30: "#fb923c",
   ma60: "#f472b6",
 } as const;
+const VOLUME_PRICE_FORMAT = {
+  type: "custom" as const,
+  formatter: formatVolumeAxisLabel,
+  minMove: 1,
+};
 
 export class SynchronizedChartGroup {
   private readonly containers: ChartGroupContainers;
@@ -136,13 +136,11 @@ export class SynchronizedChartGroup {
   private syncingRange = false;
   private syncingCrosshair = false;
   private previousTimeByTime = new Map<number, number | null>();
-  private priceValues = new Map<number, number>();
-  private volumeValues = new Map<number, number>();
-  private macdValues = new Map<number, number>();
-  private macdSeriesByTime = new Map<number, NumericSeries>();
   private structureSeries: ISeriesApi<"Line">[] = [];
   private tradeMarkerSeries = new Map<string, ISeriesApi<"Line">>();
   private alignedPriceScaleWidth = DEFAULT_PRICE_SCALE_MIN_WIDTH;
+  private priceScaleResyncFrame: number | null = null;
+  private crosshairClearFrame: number | null = null;
 
   constructor(options: ChartGroupOptions) {
     this.containers = options.containers;
@@ -152,9 +150,19 @@ export class SynchronizedChartGroup {
     this.onViewportChange = options.onViewportChange;
 
     this.priceChart = this.createChart(options.containers.price, false);
-    this.volumeChart = this.createChart(options.containers.volume, false);
+    this.volumeChart = this.createChart(options.containers.volume, false, {
+      compactVolumeLabels: true,
+    });
     this.macdChart = this.createChart(options.containers.macd, true);
     this.charts = [this.priceChart, this.volumeChart, this.macdChart];
+
+    // VOL histogram 必须是 volume 图上的第一个 series：LC 用 formatterSource[0]
+    // 决定右轴刻度格式。若 MA 线先创建，轴标签会退回 4000000.00 这类宽格式。
+    this.volumeSeries = this.volumeChart.addHistogramSeries({
+      priceFormat: VOLUME_PRICE_FORMAT,
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
 
     if (this.kind === ChartGroupKind.FIVE_MINUTE) {
       this.priceSeries = this.priceChart.addCandlestickSeries({
@@ -206,12 +214,14 @@ export class SynchronizedChartGroup {
       this.volumeMa5Series = this.volumeChart.addLineSeries({
         color: AMBER,
         lineWidth: 1,
+        priceFormat: VOLUME_PRICE_FORMAT,
         priceLineVisible: false,
         lastValueVisible: false,
       });
       this.volumeMa10Series = this.volumeChart.addLineSeries({
         color: BLUE,
         lineWidth: 1,
+        priceFormat: VOLUME_PRICE_FORMAT,
         priceLineVisible: false,
         lastValueVisible: false,
       });
@@ -236,15 +246,6 @@ export class SynchronizedChartGroup {
       this.volumeMa10Series = null;
     }
 
-    this.volumeSeries = this.volumeChart.addHistogramSeries({
-      priceFormat: {
-        type: "custom",
-        formatter: formatVolumeAxisLabel,
-        minMove: 1,
-      },
-      priceLineVisible: false,
-      lastValueVisible: false,
-    });
     this.difSeries = this.macdChart.addLineSeries({
       color: BLUE,
       lineWidth: 1,
@@ -290,6 +291,7 @@ export class SynchronizedChartGroup {
       this.setSeriesData();
       this.syncRightPriceScaleWidths();
       this.applyViewport();
+      this.schedulePriceScaleResync();
     } finally {
       this.applyingViewportRange = wasApplyingViewportRange;
     }
@@ -477,6 +479,11 @@ export class SynchronizedChartGroup {
       clearTimeout(this.reportTimer);
       this.reportTimer = null;
     }
+    if (this.priceScaleResyncFrame !== null) {
+      cancelAnimationFrame(this.priceScaleResyncFrame);
+      this.priceScaleResyncFrame = null;
+    }
+    this.cancelCrosshairClear();
     this.resizeObserver.disconnect();
     for (const [chart, handler] of this.crosshairHandlers) {
       chart.unsubscribeCrosshairMove(handler);
@@ -493,7 +500,11 @@ export class SynchronizedChartGroup {
     this.charts.forEach((chart) => chart.remove());
   }
 
-  private createChart(container: HTMLElement, showTimeScale: boolean) {
+  private createChart(
+    container: HTMLElement,
+    showTimeScale: boolean,
+    options: { compactVolumeLabels?: boolean } = {},
+  ) {
     return createChart(container, {
       width: Math.max(1, container.clientWidth),
       height: Math.max(1, container.clientHeight),
@@ -535,6 +546,10 @@ export class SynchronizedChartGroup {
         },
       },
       localization: {
+        // LC chart-level priceFormatter 只接收 price；此处固定中文 compact 作兜底。
+        ...(options.compactVolumeLabels
+          ? { priceFormatter: (price: number) => formatVolumeAxisLabel(price) }
+          : {}),
         timeFormatter: (time: Time) => {
           const date = new Date(Number(time) * 1000);
           return `${date.getUTCFullYear()}-${String(
@@ -774,47 +789,12 @@ export class SynchronizedChartGroup {
       return;
     }
     this.previousTimeByTime.clear();
-    this.priceValues.clear();
-    this.volumeValues.clear();
-    this.macdValues.clear();
-    this.macdSeriesByTime.clear();
 
     let previous: number | null = null;
     for (const timestamp of this.model.timestamps) {
       const time = this.model.timeByTimestamp[timestamp];
       this.previousTimeByTime.set(time, previous);
       previous = time;
-    }
-    for (const bar of this.model.bars) {
-      this.priceValues.set(
-        this.model.timeByTimestamp[bar.timestamp],
-        bar.close,
-      );
-    }
-    for (const point of this.model.volume) {
-      if (point.value !== null) {
-        this.volumeValues.set(
-          this.model.timeByTimestamp[point.timestamp],
-          point.value,
-        );
-      }
-    }
-    const macdSeries = [
-      this.difSeries,
-      this.deaSeries,
-      this.macdHistogramSeries,
-    ] as const;
-    const macdIndex = buildCrosshairFallbackIndex(
-      [
-        this.model.macd.dif,
-        this.model.macd.dea,
-        this.model.macd.histogram,
-      ],
-      this.model.timeByTimestamp,
-    );
-    this.macdValues = macdIndex.values;
-    for (const [time, seriesIndex] of macdIndex.seriesIndexes) {
-      this.macdSeriesByTime.set(time, macdSeries[seriesIndex]);
     }
   }
 
@@ -842,21 +822,9 @@ export class SynchronizedChartGroup {
 
   private setupCrosshairSynchronization() {
     const targets = [
-      {
-        chart: this.priceChart,
-        series: this.priceSeries,
-        values: this.priceValues,
-      },
-      {
-        chart: this.volumeChart,
-        series: this.volumeSeries,
-        values: this.volumeValues,
-      },
-      {
-        chart: this.macdChart,
-        series: this.difSeries,
-        values: this.macdValues,
-      },
+      { chart: this.priceChart, series: this.priceSeries },
+      { chart: this.volumeChart, series: this.volumeSeries },
+      { chart: this.macdChart, series: this.difSeries },
     ];
 
     for (const source of targets) {
@@ -864,35 +832,21 @@ export class SynchronizedChartGroup {
         if (this.syncingCrosshair) {
           return;
         }
+        if (param.time === undefined) {
+          // 源图 LC 会自动清除自身十字线；兄弟图由 setCrosshairPosition 写入，需延迟清除，
+          // 以便鼠标从一张图移到另一张图时，目标图有机会先触发带 time 的事件并取消清除。
+          this.scheduleCrosshairClear();
+          return;
+        }
+        this.cancelCrosshairClear();
         this.syncingCrosshair = true;
         try {
-          if (param.time === undefined) {
-            targets
-              .filter((target) => target !== source)
-              .forEach((target) => target.chart.clearCrosshairPosition());
-            return;
-          }
-          const numericTime = Number(param.time);
           for (const target of targets) {
             if (target === source) {
               continue;
             }
-            const resolved = resolveCrosshairTarget(
-              target.values,
-              numericTime,
-            );
-            if (resolved.action === "clear") {
-              target.chart.clearCrosshairPosition();
-              continue;
-            }
-            target.chart.setCrosshairPosition(
-              resolved.value,
-              param.time,
-              target === targets[2]
-                ? (this.macdSeriesByTime.get(numericTime) ??
-                    this.difSeries)
-                : (target.series as NumericSeries),
-            );
+            // 十字线是时间标尺：同步只传 time，price 用 0 占位即可。
+            target.chart.setCrosshairPosition(0, param.time, target.series);
           }
         } finally {
           this.syncingCrosshair = false;
@@ -900,6 +854,37 @@ export class SynchronizedChartGroup {
       };
       source.chart.subscribeCrosshairMove(handler);
       this.crosshairHandlers.set(source.chart, handler);
+    }
+  }
+
+  private scheduleCrosshairClear() {
+    if (this.crosshairClearFrame !== null) {
+      return;
+    }
+    this.crosshairClearFrame = requestAnimationFrame(() => {
+      this.crosshairClearFrame = null;
+      this.clearSyncedCrosshairs();
+    });
+  }
+
+  private cancelCrosshairClear() {
+    if (this.crosshairClearFrame !== null) {
+      cancelAnimationFrame(this.crosshairClearFrame);
+      this.crosshairClearFrame = null;
+    }
+  }
+
+  private clearSyncedCrosshairs() {
+    if (this.syncingCrosshair) {
+      return;
+    }
+    this.syncingCrosshair = true;
+    try {
+      for (const chart of this.charts) {
+        chart.clearCrosshairPosition();
+      }
+    } finally {
+      this.syncingCrosshair = false;
     }
   }
 
@@ -941,6 +926,7 @@ export class SynchronizedChartGroup {
       this.viewport = followLatest(this.viewport, visibleCount);
       this.applyVisibleRange();
     }
+    this.schedulePriceScaleResync();
   }
 
   private visibleCount(plotWidth: number, seriesLength: number) {
@@ -971,10 +957,47 @@ export class SynchronizedChartGroup {
   }
 
   private flushChartLayout() {
-    const flush = (
+    const testFlush = (
       globalThis as typeof globalThis & { __flushRaf?: () => void }
     ).__flushRaf;
-    flush?.();
+    if (testFlush) {
+      testFlush();
+    }
+  }
+
+  // 生产环境 LC 在 applyOptions 后需等 rAF 才能完成 layout；首帧 sync 后再调度一次。
+  private schedulePriceScaleResync() {
+    if (this.priceScaleResyncFrame !== null) {
+      cancelAnimationFrame(this.priceScaleResyncFrame);
+    }
+    this.priceScaleResyncFrame = requestAnimationFrame(() => {
+      this.priceScaleResyncFrame = null;
+      this.resyncPriceScaleAfterLayout();
+    });
+  }
+
+  private resyncPriceScaleAfterLayout() {
+    this.syncRightPriceScaleWidths();
+    if (
+      this.viewport?.followState !== FollowState.FOLLOWING ||
+      !this.model ||
+      this.model.timestamps.length === 0
+    ) {
+      return;
+    }
+    const wasApplyingViewportRange = this.applyingViewportRange;
+    this.applyingViewportRange = true;
+    try {
+      const plotWidth = this.priceChart.timeScale().width();
+      const visibleCount = this.visibleCount(
+        plotWidth,
+        this.model.timestamps.length,
+      );
+      this.viewport = followLatest(this.viewport, visibleCount);
+      this.applyVisibleRange();
+    } finally {
+      this.applyingViewportRange = wasApplyingViewportRange;
+    }
   }
 
   private viewportBounds(seriesLength: number) {

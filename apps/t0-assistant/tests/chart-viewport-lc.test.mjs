@@ -305,6 +305,56 @@ test("real LC: zoom at the latest edge stays manual; pan back to the latest edge
   }
 });
 
+test("real LC: volume axis keeps compact labels when MA lines are added first", async () => {
+  const restore = installDom();
+  try {
+    const { createChart } = await import(
+      "../node_modules/lightweight-charts/dist/lightweight-charts.development.mjs"
+    );
+    const time = Date.UTC(2026, 6, 22, 10, 0, 0) / 1000;
+    const container = makeEl("div");
+    container.clientWidth = 800;
+    container.clientHeight = 200;
+    const volumePriceFormat = {
+      type: "custom",
+      formatter: formatVolumeAxisLabel,
+      minMove: 1,
+    };
+    const attachVolumeSeries = (chart) => {
+      const lineSeries = chart.addLineSeries();
+      lineSeries.setData([{ time, value: 3_800_000 }]);
+      chart
+        .addHistogramSeries({ priceFormat: volumePriceFormat })
+        .setData([{ time, value: 4_000_000, color: "#26a69aaa" }]);
+      globalThis.__flushRaf();
+      return lineSeries;
+    };
+
+    const withoutChartFormatter = createChart(container, {
+      width: 800,
+      height: 200,
+    });
+    const defaultLineSeries = attachVolumeSeries(withoutChartFormatter);
+    assert.equal(
+      defaultLineSeries.priceFormatter().format(4_000_000),
+      "4000000.00",
+    );
+
+    const withChartFormatter = createChart(container, {
+      width: 800,
+      height: 200,
+      localization: { priceFormatter: formatVolumeAxisLabel },
+    });
+    attachVolumeSeries(withChartFormatter);
+    assert.equal(
+      withChartFormatter.options().localization.priceFormatter?.(4_000_000),
+      "400万",
+    );
+  } finally {
+    restore();
+  }
+});
+
 test("real LC: synced chart group plot widths align with large volume labels", async () => {
   const restore = installDom();
   try {

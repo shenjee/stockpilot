@@ -6,6 +6,7 @@ import {
   DEFAULT_PRICE_SCALE_MIN_WIDTH,
   plotWidthsAligned,
   requiredPriceScaleMinimumWidth,
+  syncChartGroupPriceScaleWidths,
 } from "../renderer/src/charts/chart-scale-alignment.mjs";
 
 test("plotWidthsAligned accepts sub-pixel drift within tolerance", () => {
@@ -23,4 +24,26 @@ test("requiredPriceScaleMinimumWidth keeps compact-label floor", () => {
     COMPACT_LABEL_PRICE_SCALE_MIN_WIDTH,
   );
   assert.equal(requiredPriceScaleMinimumWidth([90, 58]), 90);
+});
+
+test("syncChartGroupPriceScaleWidths forces alignment when iteration stalls", () => {
+  const charts = [
+    {
+      timeScale: () => ({ width: () => 700 }),
+      priceScale: () => ({ width: () => 58 }),
+      applyOptions: () => {},
+    },
+    {
+      timeScale: () => ({ width: () => 690 }),
+      priceScale: () => ({ width: () => 68 }),
+      applyOptions: () => {},
+    },
+    {
+      timeScale: () => ({ width: () => 680 }),
+      priceScale: () => ({ width: () => 78 }),
+      applyOptions: () => {},
+    },
+  ];
+  const result = syncChartGroupPriceScaleWidths(charts, { maxAttempts: 1 });
+  assert.equal(result.alignedPriceScaleWidth, 80);
 });

@@ -68,10 +68,10 @@ test("volume axis labels use compact Chinese and English units", () => {
   assert.equal(formatVolumeAxisLabel(250_000_000), "2.5亿");
   assert.equal(formatVolumeAxisLabel(9_999), "9999");
   assert.equal(formatVolumeAxisLabel(10_000), "1万");
-  assert.equal(formatVolumeAxisLabel(99_999_999), "10000万");
+  assert.equal(formatVolumeAxisLabel(99_999_999), "1亿");
   assert.equal(formatVolumeAxisLabel(4_000_000, "en-US"), "4M");
   assert.equal(formatVolumeAxisLabel(1_500, "en-US"), "1.5K");
-  assert.equal(formatVolumeAxisLabel(999_999_999, "en-US"), "1000M");
+  assert.equal(formatVolumeAxisLabel(999_999_999, "en-US"), "1B");
   assert.equal(formatVolumeAxisLabel(-100), "");
   assert.equal(formatVolumeAxisLabel(null), "");
   assert.equal(formatVolumeAxisLabel(Number.NaN), "");
