@@ -218,7 +218,33 @@ export function formatVolumeAxisLabel(
   value: number,
   locale?: string,
 ): string;
-export function formatVolumeAxisLabels(prices: number[]): string[];
+export function formatVolumeAxisLabels(prices: readonly number[]): string[];
+export function roundHalfAwayFromZero(
+  value: number,
+  decimalPlaces: number,
+): number;
+export function formatPriceAxisTickLabel(value: number): string;
+export function formatPriceExactLabel(value: number): string;
+export function formatPriceAxisTickLabels(prices: readonly number[]): string[];
+export const PRICE_AXIS_INTEGER_TICK_ABS: 100;
+export const PRICE_AXIS_FINE_MIN_MOVE: 0.01;
+export const PRICE_AXIS_INTEGER_MIN_MOVE: 1;
+export function resolvePriceAxisMinMove(
+  rangeMin: number | null | undefined,
+  rangeMax: number | null | undefined,
+): number;
+export function createPriceExactPriceFormat(minMove?: number): Readonly<{
+  type: "custom";
+  formatter: (value: number) => string;
+  tickmarksFormatter: (prices: readonly number[]) => string[];
+  minMove: number;
+}>;
+export const PRICE_EXACT_PRICE_FORMAT: Readonly<{
+  type: "custom";
+  formatter: (value: number) => string;
+  tickmarksFormatter: (prices: readonly number[]) => string[];
+  minMove: number;
+}>;
 export function createChartGroupModel(
   snapshot: WorkbenchChartSnapshot,
   kind: ChartGroupKindValue,
