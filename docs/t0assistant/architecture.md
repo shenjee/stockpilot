@@ -203,7 +203,7 @@ App Coordinator 在恢复或选择当前股票后创建实盘 Session，并在�
 
 本地服务健康检查与行情轮询分开。
 
-**缓存与日历错误**：上游不可用时优先展示本地缓存并标记数据时间与日期。`data_quality` 与 `calendar_status` **正交**：前者只评价候选行情日的数据完整性（完整 / 降级 / 部分）；后者只评价 Calendar 能否确认 `effective_trade_date`（覆盖从候选日到 `observed_now` 的解析区间）。「可权威认定为最新完整画面」需 `data_quality=full` 且 `calendar_status=available`；Calendar 不足但行情完整时（例如 `full` + `unavailable`）仍展示完整缓存并提示 Calendar 覆盖不足，**不得**因此将 `data_quality` 降为部分。日历覆盖不足时错误能力为 `market_calendar`，不阻塞选股；不将正常休市误报为 Live 加载失败。**仅当宿主已提供 Calendar 同步命令时**才显示「重试日历更新」，否则只说明 Calendar 能力不可用及当前缓存状态。Calendar 持久化与同步见 #133；#130 不等待 #133 即可在 `CalendarQueryPort` 下实现 PR-A。
+**缓存与日历错误**：上游不可用时优先展示本地缓存并标记数据时间与日期。`data_quality` 与 `calendar_status` **正交**：前者只评价候选行情日的数据完整性（完整 / 降级 / 部分）；后者只评价 Calendar 能否确认 `effective_trade_date`（覆盖从候选日到 `observed_now` 的解析区间）。`calendar_status=unavailable` 时，`market_phase` 必须为 `unknown`，不得用 `market_closed` 等具体阶段表示 Calendar 无法判断。「可权威认定为最新完整画面」需 `data_quality=full` 且 `calendar_status=available`；Calendar 不足但行情完整时（例如 `full` + `unavailable`）仍展示完整缓存并提示 Calendar 覆盖不足，**不得**因此将 `data_quality` 降为部分。日历覆盖不足时错误能力为 `market_calendar`，不阻塞选股；不将正常休市误报为 Live 加载失败。**仅当宿主已提供 Calendar 同步命令时**才显示「重试日历更新」，否则只说明 Calendar 能力不可用及当前缓存状态。Calendar 持久化与同步见 #133；#130 不等待 #133 即可在 `CalendarQueryPort` 下实现 PR-A。
 
 ### 7.2 回放 Session
 
