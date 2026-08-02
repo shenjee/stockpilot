@@ -7,6 +7,7 @@ import {
   HistogramSeries,
   LineSeries,
   LineStyle,
+  MismatchDirection,
   type CandlestickData,
   type HistogramData,
   type IChartApi,
@@ -22,15 +23,20 @@ import {
 } from "lightweight-charts";
 import {
   ChartGroupKind,
+  createPriceExactPriceFormat,
   formatMarketTick,
+  formatPriceAxisTickLabels,
+  formatPriceExactLabel,
   formatVolumeAxisLabel,
   formatVolumeAxisLabels,
+  PRICE_EXACT_PRICE_FORMAT,
+  resolvePriceAxisMinMove,
   type ChartGroupModel,
 } from "./chart-model.mjs";
 import { PivotZonePrimitive } from "./pivot-zone-primitive";
 import { CzscMarkerPrimitive } from "./czsc-marker-primitive";
 import {
-  DEFAULT_PRICE_SCALE_MIN_WIDTH,
+  CHART_RIGHT_Y_AXIS_WIDTH,
   syncChartGroupPriceScaleWidths,
 } from "./chart-scale-alignment.mjs";
 import {
@@ -146,8 +152,9 @@ export class SynchronizedChartGroup {
   private structureSeries: ISeriesApi<"Line">[] = [];
   private tradeMarkerSeries = new Map<string, ISeriesApi<"Line">>();
   private tradeMarkerPlugins = new Map<string, ISeriesMarkersPluginApi<Time>>();
-  private alignedPriceScaleWidth = DEFAULT_PRICE_SCALE_MIN_WIDTH;
+  private alignedPriceScaleWidth = CHART_RIGHT_Y_AXIS_WIDTH;
   private priceScaleResyncFrame: number | null = null;
+  private priceAxisMinMoveFrame: number | null = null;
   private crosshairClearFrame: number | null = null;
 
   constructor(options: ChartGroupOptions) {
@@ -157,11 +164,15 @@ export class SynchronizedChartGroup {
     this.initialViewport = options.initialViewport;
     this.onViewportChange = options.onViewportChange;
 
-    this.priceChart = this.createChart(options.containers.price, false);
+    this.priceChart = this.createChart(options.containers.price, false, {
+      exactPriceLabels: true,
+    });
     this.volumeChart = this.createChart(options.containers.volume, false, {
       compactVolumeLabels: true,
     });
-    this.macdChart = this.createChart(options.containers.macd, true);
+    this.macdChart = this.createChart(options.containers.macd, true, {
+      exactPriceLabels: true,
+    });
     this.charts = [this.priceChart, this.volumeChart, this.macdChart];
 
     // VOL histogram 必须是 volume 图上的第一个 series：LC 用 formatterSource[0]
@@ -180,6 +191,7 @@ export class SynchronizedChartGroup {
         borderDownColor: GREEN,
         wickUpColor: RED,
         wickDownColor: GREEN,
+        priceFormat: PRICE_EXACT_PRICE_FORMAT,
         priceLineVisible: false,
       });
       this.vwapSeries = null;
@@ -237,6 +249,7 @@ export class SynchronizedChartGroup {
       this.priceSeries = this.priceChart.addSeries(LineSeries, {
         color: BLUE,
         lineWidth: 2,
+        priceFormat: PRICE_EXACT_PRICE_FORMAT,
         priceLineVisible: false,
       });
       this.vwapSeries = this.priceChart.addSeries(LineSeries, {
@@ -257,16 +270,19 @@ export class SynchronizedChartGroup {
     this.difSeries = this.macdChart.addSeries(LineSeries, {
       color: BLUE,
       lineWidth: 1,
+      priceFormat: PRICE_EXACT_PRICE_FORMAT,
       priceLineVisible: false,
       lastValueVisible: false,
     });
     this.deaSeries = this.macdChart.addSeries(LineSeries, {
       color: AMBER,
       lineWidth: 1,
+      priceFormat: PRICE_EXACT_PRICE_FORMAT,
       priceLineVisible: false,
       lastValueVisible: false,
     });
     this.macdHistogramSeries = this.macdChart.addSeries(HistogramSeries, {
+      priceFormat: PRICE_EXACT_PRICE_FORMAT,
       priceLineVisible: false,
       lastValueVisible: false,
     });
@@ -297,6 +313,7 @@ export class SynchronizedChartGroup {
       this.model = model;
       this.rebuildTimeMaps();
       this.setSeriesData();
+      this.syncPriceAxisMinMove();
       this.syncRightPriceScaleWidths();
       this.applyViewport();
       this.schedulePriceScaleResync();
@@ -477,6 +494,8 @@ export class SynchronizedChartGroup {
       } else {
         this.reportViewport();
       }
+      // 平移/缩放后价格轴自动范围会变；等三图 range sync + LC layout 后再重算 minMove。
+      this.schedulePriceAxisMinMoveSync();
     };
     this.priceChart.timeScale().subscribeVisibleLogicalRangeChange(handler);
     this.viewportRangeHandler = handler;
@@ -490,6 +509,10 @@ export class SynchronizedChartGroup {
     if (this.priceScaleResyncFrame !== null) {
       cancelAnimationFrame(this.priceScaleResyncFrame);
       this.priceScaleResyncFrame = null;
+    }
+    if (this.priceAxisMinMoveFrame !== null) {
+      cancelAnimationFrame(this.priceAxisMinMoveFrame);
+      this.priceAxisMinMoveFrame = null;
     }
     this.cancelCrosshairClear();
     this.resizeObserver.disconnect();
@@ -511,7 +534,7 @@ export class SynchronizedChartGroup {
   private createChart(
     container: HTMLElement,
     showTimeScale: boolean,
-    options: { compactVolumeLabels?: boolean } = {},
+    options: { compactVolumeLabels?: boolean; exactPriceLabels?: boolean } = {},
   ) {
     return createChart(container, {
       width: Math.max(1, container.clientWidth),
@@ -528,13 +551,14 @@ export class SynchronizedChartGroup {
         horzLines: { color: "#182235" },
       },
       crosshair: {
-        mode: CrosshairMode.Normal,
+        // Magnet：水平标签吸附到光标时间对应系列的真实数据值（而非自由 Y 坐标）。
+        mode: CrosshairMode.Magnet,
         vertLine: { color: "#64748b", width: 1, style: 2, labelVisible: true },
         horzLine: { color: "#475569", width: 1, style: 2 },
       },
       rightPriceScale: {
         borderColor: "#2a3850",
-        minimumWidth: DEFAULT_PRICE_SCALE_MIN_WIDTH,
+        minimumWidth: CHART_RIGHT_Y_AXIS_WIDTH,
       },
       timeScale: {
         visible: showTimeScale,
@@ -556,13 +580,17 @@ export class SynchronizedChartGroup {
         },
       },
       localization: {
-        // LC chart-level priceFormatter 只接收 price；此处固定中文 compact 作兜底。
         ...(options.compactVolumeLabels
           ? {
               priceFormatter: (price: number) => formatVolumeAxisLabel(price),
               tickmarksPriceFormatter: formatVolumeAxisLabels,
             }
-          : {}),
+          : options.exactPriceLabels
+            ? {
+                priceFormatter: (price: number) => formatPriceExactLabel(price),
+                tickmarksPriceFormatter: formatPriceAxisTickLabels,
+              }
+            : {}),
         timeFormatter: (time: Time) => {
           const date = new Date(Number(time) * 1000);
           return `${date.getUTCFullYear()}-${String(
@@ -786,8 +814,8 @@ export class SynchronizedChartGroup {
         size: 2,
       };
       const markersPlugin = createSeriesMarkers(series, [seriesMarker]);
-      this.tradeMarkerPlugins.set(marker.trade_id, markersPlugin);
       this.tradeMarkerSeries.set(marker.trade_id, series);
+      this.tradeMarkerPlugins.set(marker.trade_id, markersPlugin);
     }
   }
 
@@ -863,8 +891,12 @@ export class SynchronizedChartGroup {
             if (target === source) {
               continue;
             }
-            // 十字线是时间标尺：同步只传 time，price 用 0 占位即可。
-            target.chart.setCrosshairPosition(0, param.time, target.series);
+            const price = this.seriesValueAtTime(target.series, param.time);
+            if (price === null) {
+              target.chart.clearCrosshairPosition();
+              continue;
+            }
+            target.chart.setCrosshairPosition(price, param.time, target.series);
           }
         } finally {
           this.syncingCrosshair = false;
@@ -873,6 +905,125 @@ export class SynchronizedChartGroup {
       source.chart.subscribeCrosshairMove(handler);
       this.crosshairHandlers.set(source.chart, handler);
     }
+  }
+
+  private seriesValueAtTime(
+    series: ISeriesApi<"Candlestick"> | ISeriesApi<"Line"> | ISeriesApi<"Histogram">,
+    time: Time,
+  ): number | null {
+    const index = this.priceChart.timeScale().timeToIndex(time, true);
+    if (index === null) {
+      return null;
+    }
+    // None：不要回退到邻近 bar，避免 whitespace（如 MACD dif=null）误用上一根数值。
+    const point = series.dataByIndex(index, MismatchDirection.None);
+    if (!point || typeof point !== "object") {
+      return null;
+    }
+    if ("close" in point && typeof point.close === "number") {
+      return point.close;
+    }
+    if ("value" in point && typeof point.value === "number") {
+      return point.value;
+    }
+    return null;
+  }
+
+  // 用户平移/缩放后 LC 会先更新可见逻辑范围，再按可见数据重算价格轴 autoScale。
+  // 用 rAF 等到 layout 完成后再读 getVisibleRange，才能正确在 0.01 ↔ 1 之间切换。
+  private schedulePriceAxisMinMoveSync() {
+    if (this.priceAxisMinMoveFrame !== null) {
+      cancelAnimationFrame(this.priceAxisMinMoveFrame);
+    }
+    this.priceAxisMinMoveFrame = requestAnimationFrame(() => {
+      this.priceAxisMinMoveFrame = null;
+      this.syncPriceAxisMinMove();
+    });
+  }
+
+  private syncPriceAxisMinMove() {
+    const priceMinMove = resolvePriceAxisMinMove(
+      ...this.priceAxisExtent(this.priceSeries),
+    );
+    this.applyPriceExactMinMove(this.priceSeries, priceMinMove);
+
+    const macdExtent = this.macdAxisExtent();
+    const macdMinMove = resolvePriceAxisMinMove(...macdExtent);
+    for (const series of [this.difSeries, this.deaSeries, this.macdHistogramSeries]) {
+      this.applyPriceExactMinMove(series, macdMinMove);
+    }
+  }
+
+  private applyPriceExactMinMove(
+    series: ISeriesApi<"Candlestick"> | ISeriesApi<"Line"> | ISeriesApi<"Histogram">,
+    minMove: number,
+  ) {
+    const current = series.options().priceFormat;
+    if (
+      current.type === "custom" &&
+      typeof current.minMove === "number" &&
+      current.minMove === minMove
+    ) {
+      return;
+    }
+    series.applyOptions({
+      priceFormat: createPriceExactPriceFormat(minMove),
+    });
+  }
+
+  private priceAxisExtent(
+    series: ISeriesApi<"Candlestick"> | ISeriesApi<"Line"> | ISeriesApi<"Histogram">,
+  ): [number | null, number | null] {
+    const visible = series.priceScale().getVisibleRange();
+    if (visible) {
+      return [visible.from, visible.to];
+    }
+    if (!this.model) {
+      return [null, null];
+    }
+    let min = Number.POSITIVE_INFINITY;
+    let max = Number.NEGATIVE_INFINITY;
+    for (const point of this.model.price) {
+      if ("high" in point && typeof point.high === "number") {
+        min = Math.min(min, point.low, point.high);
+        max = Math.max(max, point.low, point.high);
+      } else if ("value" in point && typeof point.value === "number") {
+        min = Math.min(min, point.value);
+        max = Math.max(max, point.value);
+      }
+    }
+    if (!Number.isFinite(min) || !Number.isFinite(max)) {
+      return [null, null];
+    }
+    return [min, max];
+  }
+
+  private macdAxisExtent(): [number | null, number | null] {
+    const visible = this.difSeries.priceScale().getVisibleRange();
+    if (visible) {
+      return [visible.from, visible.to];
+    }
+    if (!this.model) {
+      return [null, null];
+    }
+    let min = Number.POSITIVE_INFINITY;
+    let max = Number.NEGATIVE_INFINITY;
+    for (const series of [
+      this.model.macd.dif,
+      this.model.macd.dea,
+      this.model.macd.histogram,
+    ]) {
+      for (const point of series) {
+        if (typeof point.value === "number" && Number.isFinite(point.value)) {
+          min = Math.min(min, point.value);
+          max = Math.max(max, point.value);
+        }
+      }
+    }
+    if (!Number.isFinite(min) || !Number.isFinite(max)) {
+      return [null, null];
+    }
+    return [min, max];
   }
 
   private scheduleCrosshairClear() {
@@ -995,6 +1146,7 @@ export class SynchronizedChartGroup {
   }
 
   private resyncPriceScaleAfterLayout() {
+    this.syncPriceAxisMinMove();
     this.syncRightPriceScaleWidths();
     if (
       this.viewport?.followState !== FollowState.FOLLOWING ||

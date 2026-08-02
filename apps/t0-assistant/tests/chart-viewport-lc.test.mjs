@@ -16,25 +16,21 @@ import {
   visibleLogicalRange,
 } from "../renderer/src/charts/chart-viewport.mjs";
 import {
+  PRICE_AXIS_FINE_MIN_MOVE,
+  PRICE_AXIS_INTEGER_MIN_MOVE,
+  createPriceExactPriceFormat,
+  formatPriceAxisTickLabel,
+  formatPriceAxisTickLabels,
+  formatPriceExactLabel,
   formatVolumeAxisLabel,
   formatVolumeAxisLabels,
+  resolvePriceAxisMinMove,
 } from "../renderer/src/charts/chart-model.mjs";
 import {
+  CHART_RIGHT_Y_AXIS_WIDTH,
   plotWidthsAligned,
   syncChartGroupPriceScaleWidths,
 } from "../renderer/src/charts/chart-scale-alignment.mjs";
-
-
-function stubCssColor(value) {
-  if (typeof value === "string" && /^rgba?\(/i.test(value)) {
-    return value;
-  }
-  if (typeof value === "string" && /^#([0-9a-f]{6})$/i.test(value)) {
-    const n = Number.parseInt(value.slice(1), 16);
-    return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`;
-  }
-  return "rgb(0, 0, 0)";
-}
 
 // ---- minimal DOM/canvas stub (足以让 lightweight-charts 5.x 初始化与时间轴运算) ----
 const noop = () => {};
@@ -89,6 +85,17 @@ function makeEl(tag) {
   return { tagName: tag, nodeName: tag, nodeType: 1, style: {}, classList, children: [], childNodes: [], clientWidth: 800, clientHeight: 400, ownerDocument: DOC, innerHTML: "", textContent: "", ...elExtras };
 }
 
+function stubCssColor(value) {
+  if (typeof value === "string" && /^rgba?\(/i.test(value)) {
+    return value;
+  }
+  if (typeof value === "string" && /^#([0-9a-f]{6})$/i.test(value)) {
+    const n = Number.parseInt(value.slice(1), 16);
+    return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`;
+  }
+  return "rgb(0, 0, 0)";
+}
+
 function installDom() {
   const saved = {
     document: globalThis.document,
@@ -118,7 +125,7 @@ function installDom() {
   DOC.defaultView = globalThis;
   globalThis.location = { href: "http://localhost/", search: "", hostname: "localhost", pathname: "/" };
   globalThis.history = { pushState: noop, replaceState: noop };
-    // LC 5.x ColorParser reads window.getComputedStyle(el).color as rgb/rgba.
+  // LC 5.x ColorParser reads window.getComputedStyle(el).color as rgb/rgba.
   globalThis.getComputedStyle = (el) => ({
     getPropertyValue: () => "",
     color: stubCssColor(el?.style?.color),
@@ -144,9 +151,9 @@ function installDom() {
 
 async function makeChartWithBars(n) {
   // 相对路径加载开发构建（可读堆栈）；bare specifier 亦可，此处显式指定 dev 构建。
-  const { createChart, CandlestickSeries } = await import(
-    "../node_modules/lightweight-charts/dist/lightweight-charts.development.mjs"
-  );
+  const { createChart, CandlestickSeries, HistogramSeries, LineSeries } = await import(
+      "../node_modules/lightweight-charts/dist/lightweight-charts.development.mjs"
+    );
   const container = makeEl("div");
   const chart = createChart(container, {
     width: 800,
@@ -408,7 +415,7 @@ test("real LC: synced chart group plot widths align with large volume labels", a
       return createChart(container, {
         width,
         height,
-        rightPriceScale: { minimumWidth: 58 },
+        rightPriceScale: { minimumWidth: CHART_RIGHT_Y_AXIS_WIDTH },
       });
     });
     globalThis.__flushRaf();
@@ -448,8 +455,271 @@ test("real LC: synced chart group plot widths align with large volume labels", a
     const result = syncChartGroupPriceScaleWidths(charts, {
       flush: () => globalThis.__flushRaf(),
     });
+    assert.equal(result.alignedPriceScaleWidth, CHART_RIGHT_Y_AXIS_WIDTH);
     assert.equal(result.converged, true, result.plotWidths.join(", "));
     assert.equal(plotWidthsAligned(result.plotWidths), true);
+  } finally {
+    restore();
+  }
+});
+
+test("real LC: render path uses separate exact and tickmark formatters", async () => {
+  const restore = installDom();
+  try {
+    const { createChart, CandlestickSeries, HistogramSeries, LineSeries } = await import(
+      "../node_modules/lightweight-charts/dist/lightweight-charts.development.mjs"
+    );
+    const time = Date.UTC(2026, 6, 22, 10, 0, 0) / 1000;
+    const container = makeEl("div");
+    container.clientWidth = 800;
+    container.clientHeight = 240;
+
+    const exactCalls = [];
+    const tickCalls = [];
+    const exactFormatter = (value) => {
+      exactCalls.push(value);
+      return formatPriceExactLabel(value);
+    };
+    const tickFormatter = (values) => {
+      tickCalls.push(values.map(Number));
+      return formatPriceAxisTickLabels(values);
+    };
+
+    const priceChart = createChart(container, {
+      width: 800,
+      height: 240,
+      localization: {
+        priceFormatter: exactFormatter,
+        tickmarksPriceFormatter: tickFormatter,
+      },
+    });
+    const priceSeries = priceChart.addSeries(LineSeries, {
+      priceFormat: {
+        type: "custom",
+        formatter: exactFormatter,
+        tickmarksFormatter: tickFormatter,
+        minMove: PRICE_AXIS_INTEGER_MIN_MOVE,
+      },
+      lastValueVisible: true,
+    });
+    const data = [];
+    for (let i = 0; i < 40; i += 1) {
+      data.push({ time: time + i * 60, value: 100 + i * 0.4 });
+    }
+    // Last value = 100 so LC last-value label must render via exact formatter.
+    data[data.length - 1] = { time: time + 39 * 60, value: 100 };
+    priceSeries.setData(data);
+    globalThis.__flushRaf();
+    // Force price-scale mark rebuild / last-value formatting through LC internals.
+    priceChart.priceScale("right").applyOptions({ autoScale: true });
+    globalThis.__flushRaf();
+    // Also exercise the crosshair exact-label path without manually calling formatter.
+    priceChart.setCrosshairPosition(100, data[data.length - 1].time, priceSeries);
+    globalThis.__flushRaf();
+
+    assert.ok(tickCalls.length > 0, "tickmarksFormatter should be invoked");
+    for (const batch of tickCalls) {
+      assert.ok(batch.length > 0);
+      for (const value of batch) {
+        if (Math.abs(value) >= 100) {
+          assert.equal(
+            value,
+            Math.round(value),
+            `tick ${value} must be integer when abs >= 100`,
+          );
+        }
+      }
+      const labels = formatPriceAxisTickLabels(batch);
+      assert.equal(new Set(labels).size, labels.length, labels.join(","));
+    }
+
+    assert.ok(
+      exactCalls.some((value) => formatPriceExactLabel(value) === "100.00"),
+      `exact formatter path must format 100 as 100.00; calls=${exactCalls.join(",")}`,
+    );
+    assert.equal(formatPriceExactLabel(100), "100.00");
+    assert.equal(formatPriceAxisTickLabel(100), "100");
+  } finally {
+    restore();
+  }
+});
+
+test("real LC: pan across 100 threshold switches minMove 0.01↔1", async () => {
+  const restore = installDom();
+  try {
+    const { createChart, LineSeries } = await import(
+      "../node_modules/lightweight-charts/dist/lightweight-charts.development.mjs"
+    );
+    const time = Date.UTC(2026, 6, 22, 10, 0, 0) / 1000;
+    const container = makeEl("div");
+    container.clientWidth = 800;
+    container.clientHeight = 320;
+    const chart = createChart(container, { width: 800, height: 320 });
+    const series = chart.addSeries(LineSeries, {
+      priceFormat: createPriceExactPriceFormat(PRICE_AXIS_FINE_MIN_MOVE),
+    });
+    const data = [];
+    for (let i = 0; i < 100; i += 1) {
+      const value = i < 50 ? 50 + (i % 10) * 0.3 : 100.1 + (i % 10) * 0.4;
+      data.push({ time: time + i * 60, value });
+    }
+    series.setData(data);
+    globalThis.__flushRaf();
+
+    // Mirrors SynchronizedChartGroup: after visible-range change, rAF then
+    // recompute minMove from the auto-scaled visible price range.
+    const syncMinMoveAfterRange = () => {
+      requestAnimationFrame(() => {
+        const visible = series.priceScale().getVisibleRange();
+        const minMove = resolvePriceAxisMinMove(
+          visible?.from ?? null,
+          visible?.to ?? null,
+        );
+        series.applyOptions({
+          priceFormat: createPriceExactPriceFormat(minMove),
+        });
+      });
+      globalThis.__flushRaf();
+      return series.options().priceFormat.minMove;
+    };
+
+    chart.timeScale().setVisibleLogicalRange({ from: 0, to: 20 });
+    assert.equal(syncMinMoveAfterRange(), PRICE_AXIS_FINE_MIN_MOVE);
+
+    chart.timeScale().setVisibleLogicalRange({ from: 70, to: 90 });
+    assert.equal(syncMinMoveAfterRange(), PRICE_AXIS_INTEGER_MIN_MOVE);
+
+    chart.timeScale().setVisibleLogicalRange({ from: 5, to: 25 });
+    assert.equal(syncMinMoveAfterRange(), PRICE_AXIS_FINE_MIN_MOVE);
+  } finally {
+    restore();
+  }
+});
+
+test("real LC: abs>=100 range keeps integer ticks via minMove=1", async () => {
+  const restore = installDom();
+  try {
+    const { createChart, LineSeries } = await import(
+      "../node_modules/lightweight-charts/dist/lightweight-charts.development.mjs"
+    );
+    const time = Date.UTC(2026, 6, 22, 10, 0, 0) / 1000;
+    const container = makeEl("div");
+    container.clientWidth = 800;
+    container.clientHeight = 320;
+    const tickBatches = [];
+    const chart = createChart(container, { width: 800, height: 320 });
+    const series = chart.addSeries(LineSeries, {
+      priceFormat: createPriceExactPriceFormat(PRICE_AXIS_INTEGER_MIN_MOVE),
+    });
+    const data = [];
+    for (let i = 0; i < 80; i += 1) {
+      data.push({ time: time + i * 60, value: 100.1 + (i % 10) * 0.05 });
+    }
+    series.setData(data);
+    series.applyOptions({
+      priceFormat: {
+        type: "custom",
+        formatter: formatPriceExactLabel,
+        tickmarksFormatter: (values) => {
+          tickBatches.push(values.map(Number));
+          return formatPriceAxisTickLabels(values);
+        },
+        minMove: resolvePriceAxisMinMove(100.1, 100.55),
+      },
+    });
+    globalThis.__flushRaf();
+    chart.priceScale("right").applyOptions({ autoScale: true });
+    globalThis.__flushRaf();
+    assert.ok(tickBatches.length > 0);
+    for (const batch of tickBatches) {
+      for (let i = 0; i < batch.length; i += 1) {
+        const value = batch[i];
+        assert.equal(value, Math.round(value), `non-integer tick ${value}`);
+        if (i > 0) {
+          assert.ok(
+            Math.abs(batch[i] - batch[i - 1]) >= 1 - 1e-9,
+            `tick step too small: ${batch[i - 1]} -> ${batch[i]}`,
+          );
+        }
+      }
+      const labels = formatPriceAxisTickLabels(batch);
+      assert.equal(new Set(labels).size, labels.length);
+      for (let i = 0; i < batch.length; i += 1) {
+        assert.equal(labels[i], String(Math.round(batch[i])));
+      }
+    }
+  } finally {
+    restore();
+  }
+});
+
+test("real LC: fixed right axis width stays stable across repeated sync", async () => {
+  const restore = installDom();
+  try {
+    const { createChart, CandlestickSeries, HistogramSeries, LineSeries } = await import(
+      "../node_modules/lightweight-charts/dist/lightweight-charts.development.mjs"
+    );
+    const width = 800;
+    const height = 200;
+    const time = Date.UTC(2026, 6, 22, 10, 0, 0) / 1000;
+    const charts = ["price", "volume", "macd"].map(() => {
+      const container = makeEl("div");
+      container.clientWidth = width;
+      container.clientHeight = height;
+      return createChart(container, {
+        width,
+        height,
+        layout: { fontSize: 10 },
+        rightPriceScale: { minimumWidth: CHART_RIGHT_Y_AXIS_WIDTH },
+      });
+    });
+    const priceSeries = charts[0].addSeries(LineSeries, {
+      priceFormat: createPriceExactPriceFormat(PRICE_AXIS_INTEGER_MIN_MOVE),
+      lastValueVisible: true,
+    });
+    priceSeries.setData([{ time, value: 9999.99 }]);
+    charts[1]
+      .addSeries(HistogramSeries, {
+        priceFormat: {
+          type: "custom",
+          formatter: formatVolumeAxisLabel,
+          tickmarksFormatter: formatVolumeAxisLabels,
+          minMove: 1,
+        },
+        lastValueVisible: true,
+      })
+      .setData([{ time, value: 12_345_700, color: "#26a69aaa" }]); // 1234.57万
+    charts[2]
+      .addSeries(LineSeries, {
+        priceFormat: createPriceExactPriceFormat(PRICE_AXIS_INTEGER_MIN_MOVE),
+        lastValueVisible: true,
+      })
+      .setData([{ time, value: -9999.99 }]);
+    globalThis.__flushRaf();
+
+    const observedRightWidths = [];
+    const observedPlotWidths = [];
+    for (let tick = 0; tick < 8; tick += 1) {
+      priceSeries.setData([
+        {
+          time: time + tick * 60,
+          value: tick % 2 === 0 ? 9999.99 : -9999.99,
+        },
+      ]);
+      const result = syncChartGroupPriceScaleWidths(charts, {
+        flush: () => globalThis.__flushRaf(),
+      });
+      observedRightWidths.push(...result.rightPriceScaleWidths);
+      observedPlotWidths.push(...result.plotWidths);
+      assert.equal(result.converged, true, result.rightPriceScaleWidths.join(","));
+      assert.deepEqual(
+        result.rightPriceScaleWidths,
+        Array(3).fill(CHART_RIGHT_Y_AXIS_WIDTH),
+      );
+      assert.equal(plotWidthsAligned(result.plotWidths), true);
+    }
+    assert.ok(observedRightWidths.every((value) => value === CHART_RIGHT_Y_AXIS_WIDTH));
+    assert.ok(observedPlotWidths.every((value) => value === observedPlotWidths[0]));
   } finally {
     restore();
   }

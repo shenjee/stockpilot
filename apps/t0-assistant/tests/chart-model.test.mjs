@@ -6,10 +6,19 @@ import test from "node:test";
 
 import {
   ChartGroupKind,
+  PRICE_AXIS_FINE_MIN_MOVE,
+  PRICE_AXIS_INTEGER_MIN_MOVE,
+  PRICE_EXACT_PRICE_FORMAT,
   createChartGroupModel,
+  createPriceExactPriceFormat,
   formatMarketTick,
+  formatPriceAxisTickLabel,
+  formatPriceAxisTickLabels,
+  formatPriceExactLabel,
   formatVolumeAxisLabel,
   parseMarketTimestamp,
+  resolvePriceAxisMinMove,
+  roundHalfAwayFromZero,
 } from "../renderer/src/charts/chart-model.mjs";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
@@ -75,6 +84,69 @@ test("volume axis labels use compact Chinese and English units", () => {
   assert.equal(formatVolumeAxisLabel(-100), "");
   assert.equal(formatVolumeAxisLabel(null), "");
   assert.equal(formatVolumeAxisLabel(Number.NaN), "");
+});
+
+test("price axis tick labels round before applying display branches", () => {
+  assert.equal(formatPriceAxisTickLabel(99.994), "99.99");
+  assert.equal(formatPriceAxisTickLabel(99.996), "100");
+  assert.equal(formatPriceAxisTickLabel(-99.995), "-100");
+  assert.equal(formatPriceAxisTickLabel(100.4), "100");
+  assert.equal(formatPriceAxisTickLabel(100.6), "101");
+  assert.equal(formatPriceAxisTickLabel(100.5), "101");
+  assert.equal(formatPriceAxisTickLabel(-100.5), "-101");
+  assert.equal(formatPriceAxisTickLabel(-100.6), "-101");
+  assert.equal(formatPriceAxisTickLabel(12.34), "12.34");
+  assert.equal(formatPriceAxisTickLabel(-5.2), "-5.20");
+});
+
+test("price exact labels always keep two decimal places", () => {
+  assert.equal(formatPriceExactLabel(949.91), "949.91");
+  assert.equal(formatPriceExactLabel(100), "100.00");
+  assert.equal(formatPriceExactLabel(-12.3), "-12.30");
+  assert.equal(formatPriceExactLabel(99.996), "100.00");
+});
+
+test("PRICE_EXACT_PRICE_FORMAT separates exact and tickmark formatters", () => {
+  assert.equal(PRICE_EXACT_PRICE_FORMAT.formatter(100), "100.00");
+  assert.deepEqual(PRICE_EXACT_PRICE_FORMAT.tickmarksFormatter([100, 99.5]), [
+    "100",
+    "99.50",
+  ]);
+  assert.deepEqual(formatPriceAxisTickLabels([100.6, -5.2]), ["101", "-5.20"]);
+});
+
+test("roundHalfAwayFromZero avoids binary float boundary drift", () => {
+  assert.equal(roundHalfAwayFromZero(99.994, 2), 99.99);
+  assert.equal(roundHalfAwayFromZero(99.996, 2), 100);
+  assert.equal(roundHalfAwayFromZero(-99.995, 2), -100);
+  assert.equal(roundHalfAwayFromZero(1.005, 2), 1.01);
+  assert.equal(roundHalfAwayFromZero(-1.005, 2), -1.01);
+  assert.equal(formatPriceExactLabel(1.005), "1.01");
+  assert.equal(formatPriceExactLabel(-1.005), "-1.01");
+});
+
+test("roundHalfAwayFromZero handles scientific-notation magnitudes", () => {
+  assert.equal(roundHalfAwayFromZero(1e-7, 2), 0);
+  assert.equal(roundHalfAwayFromZero(-1e-7, 2), 0);
+  assert.equal(roundHalfAwayFromZero(9e-7, 2), 0);
+  assert.equal(roundHalfAwayFromZero(-9e-7, 2), 0);
+  assert.equal(formatPriceExactLabel(1e-7), "0.00");
+  assert.equal(formatPriceExactLabel(-1e-7), "0.00");
+  assert.equal(formatPriceExactLabel(9e-7), "0.00");
+  assert.equal(formatPriceExactLabel(-9e-7), "0.00");
+  assert.equal(roundHalfAwayFromZero(1e21, 2), 1e21);
+  assert.equal(roundHalfAwayFromZero(-1e21, 2), -1e21);
+});
+
+test("resolvePriceAxisMinMove forces integer ticks when abs range reaches 100", () => {
+  assert.equal(resolvePriceAxisMinMove(12, 34), PRICE_AXIS_FINE_MIN_MOVE);
+  assert.equal(resolvePriceAxisMinMove(99.5, 99.9), PRICE_AXIS_FINE_MIN_MOVE);
+  assert.equal(resolvePriceAxisMinMove(100, 120), PRICE_AXIS_INTEGER_MIN_MOVE);
+  assert.equal(resolvePriceAxisMinMove(-150, -80), PRICE_AXIS_INTEGER_MIN_MOVE);
+  assert.equal(
+    createPriceExactPriceFormat(PRICE_AXIS_INTEGER_MIN_MOVE).minMove,
+    1,
+  );
 });
 
 test("5 minute layer preferences control MA, stroke, and pivot model data", () => {

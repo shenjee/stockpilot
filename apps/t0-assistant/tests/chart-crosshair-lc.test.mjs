@@ -3,21 +3,17 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  CHART_RIGHT_Y_AXIS_WIDTH,
   plotWidthsAligned,
   syncChartGroupPriceScaleWidths,
 } from "../renderer/src/charts/chart-scale-alignment.mjs";
-
-
-function stubCssColor(value) {
-  if (typeof value === "string" && /^rgba?\(/i.test(value)) {
-    return value;
-  }
-  if (typeof value === "string" && /^#([0-9a-f]{6})$/i.test(value)) {
-    const n = Number.parseInt(value.slice(1), 16);
-    return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`;
-  }
-  return "rgb(0, 0, 0)";
-}
+import {
+  PRICE_EXACT_PRICE_FORMAT,
+  formatPriceAxisTickLabels,
+  formatPriceExactLabel,
+  formatVolumeAxisLabel,
+  formatVolumeAxisLabels,
+} from "../renderer/src/charts/chart-model.mjs";
 
 const noop = () => {};
 const classList = { add: noop, remove: noop, contains: () => false, toggle: noop };
@@ -106,6 +102,17 @@ function makeEl(tag) {
   };
 }
 
+function stubCssColor(value) {
+  if (typeof value === "string" && /^rgba?\(/i.test(value)) {
+    return value;
+  }
+  if (typeof value === "string" && /^#([0-9a-f]{6})$/i.test(value)) {
+    const n = Number.parseInt(value.slice(1), 16);
+    return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`;
+  }
+  return "rgb(0, 0, 0)";
+}
+
 function installDom() {
   const saved = {
     document: globalThis.document,
@@ -140,6 +147,7 @@ function installDom() {
     pathname: "/",
   };
   globalThis.history = { pushState: noop, replaceState: noop };
+  // LC 5.x ColorParser reads window.getComputedStyle(el).color as rgb/rgba.
   globalThis.getComputedStyle = (el) => ({
     getPropertyValue: () => "",
     color: stubCssColor(el?.style?.color),
@@ -176,7 +184,28 @@ function installDom() {
   };
 }
 
-function attachTimeOnlyCrosshairSync({ charts, priceSeries, volumeSeries, difSeries }) {
+function seriesValueAtTime(charts, series, time, MismatchDirection) {
+  const index = charts[0].timeScale().timeToIndex(time, true);
+  if (index === null) {
+    return null;
+  }
+  const point = series.dataByIndex(index, MismatchDirection.None);
+  if (!point || typeof point !== "object") {
+    return null;
+  }
+  if ("close" in point && typeof point.close === "number") {
+    return point.close;
+  }
+  if ("value" in point && typeof point.value === "number") {
+    return point.value;
+  }
+  return null;
+}
+
+function attachTimeOnlyCrosshairSync(
+  { charts, priceSeries, volumeSeries, difSeries },
+  MismatchDirection,
+) {
   const targets = [
     { chart: charts[0], series: priceSeries },
     { chart: charts[1], series: volumeSeries },
@@ -229,7 +258,17 @@ function attachTimeOnlyCrosshairSync({ charts, priceSeries, volumeSeries, difSer
           if (target === source) {
             continue;
           }
-          target.chart.setCrosshairPosition(0, param.time, target.series);
+          const price = seriesValueAtTime(
+            charts,
+            target.series,
+            param.time,
+            MismatchDirection,
+          );
+          if (price === null) {
+            target.chart.clearCrosshairPosition();
+            continue;
+          }
+          target.chart.setCrosshairPosition(price, param.time, target.series);
         }
       } finally {
         syncing = false;
@@ -240,6 +279,10 @@ function attachTimeOnlyCrosshairSync({ charts, priceSeries, volumeSeries, difSer
   }
 
   return {
+    simulateMove(sourceIndex, time) {
+      handlers[sourceIndex]({ time });
+      globalThis.__flushRaf();
+    },
     simulateLeave(sourceIndex) {
       handlers[sourceIndex]({ time: undefined });
       globalThis.__flushRaf();
@@ -249,19 +292,37 @@ function attachTimeOnlyCrosshairSync({ charts, priceSeries, volumeSeries, difSer
 
 function buildThreeChartFixture(lc, bars) {
   const { createChart, CandlestickSeries, HistogramSeries, LineSeries } = lc;
-  const charts = ["price", "volume", "macd"].map(() => {
+  const volumePriceFormat = {
+    type: "custom",
+    formatter: formatVolumeAxisLabel,
+    tickmarksFormatter: formatVolumeAxisLabels,
+    minMove: 1,
+  };
+  const charts = ["price", "volume", "macd"].map((kind) => {
     const container = makeEl("div");
     container.clientWidth = 800;
     container.clientHeight = 200;
     return createChart(container, {
       width: 800,
       height: 200,
-      rightPriceScale: { minimumWidth: 58 },
+      rightPriceScale: { minimumWidth: CHART_RIGHT_Y_AXIS_WIDTH },
+      localization:
+        kind === "volume"
+          ? {
+              priceFormatter: formatVolumeAxisLabel,
+              tickmarksPriceFormatter: formatVolumeAxisLabels,
+            }
+          : {
+              priceFormatter: formatPriceExactLabel,
+              tickmarksPriceFormatter: formatPriceAxisTickLabels,
+            },
     });
   });
   globalThis.__flushRaf();
 
-  const priceSeries = charts[0].addSeries(CandlestickSeries);
+  const priceSeries = charts[0].addSeries(CandlestickSeries, {
+    priceFormat: PRICE_EXACT_PRICE_FORMAT,
+  });
   priceSeries.setData(
     bars.map(({ time, open, high, low, close }) => ({
       time,
@@ -271,7 +332,9 @@ function buildThreeChartFixture(lc, bars) {
       close,
     })),
   );
-  const volumeSeries = charts[1].addSeries(HistogramSeries);
+  const volumeSeries = charts[1].addSeries(HistogramSeries, {
+    priceFormat: volumePriceFormat,
+  });
   volumeSeries.setData(
     bars.map(({ time, volume, close, open }) => ({
       time,
@@ -279,7 +342,9 @@ function buildThreeChartFixture(lc, bars) {
       color: close >= open ? "#26a69aaa" : "#ef5350aa",
     })),
   );
-  const difSeries = charts[2].addSeries(LineSeries);
+  const difSeries = charts[2].addSeries(LineSeries, {
+    priceFormat: PRICE_EXACT_PRICE_FORMAT,
+  });
   difSeries.setData(
     bars.map(({ time, dif }) => (dif === null ? { time } : { time, value: dif })),
   );
@@ -315,20 +380,36 @@ test("real LC: MACD accepts time-only crosshair when dif is null", async () => {
         dif: null,
       },
     ];
-    const { charts, difSeries } = buildThreeChartFixture(lc, bars);
+    const { charts, priceSeries, volumeSeries, difSeries } =
+      buildThreeChartFixture(lc, bars);
+
+    assert.equal(
+      seriesValueAtTime(charts, difSeries, time, lc.MismatchDirection),
+      null,
+    );
 
     let macdCleared = false;
+    const macdSetCalls = [];
     const originalClear = charts[2].clearCrosshairPosition.bind(charts[2]);
+    const originalSet = charts[2].setCrosshairPosition.bind(charts[2]);
     charts[2].clearCrosshairPosition = () => {
       macdCleared = true;
       originalClear();
     };
+    charts[2].setCrosshairPosition = (...args) => {
+      macdSetCalls.push(args);
+      return originalSet(...args);
+    };
 
-    assert.doesNotThrow(() => {
-      charts[2].setCrosshairPosition(0, time, difSeries);
-      globalThis.__flushRaf();
-    });
-    assert.equal(macdCleared, false);
+    const sync = attachTimeOnlyCrosshairSync(
+      { charts, priceSeries, volumeSeries, difSeries },
+      lc.MismatchDirection,
+    );
+    // 从价格图触发同步 handler；dif=null 时应 clear，且不得 setCrosshairPosition(0, ...)。
+    sync.simulateMove(0, time);
+
+    assert.equal(macdCleared, true);
+    assert.equal(macdSetCalls.length, 0, JSON.stringify(macdSetCalls));
     assert.notEqual(charts[2].timeScale().timeToCoordinate(time), null);
   } finally {
     restore();
@@ -362,10 +443,7 @@ test("real LC: time-only crosshair sync keeps sibling charts at the same time co
         dif: null,
       },
     ];
-    const { charts, priceSeries, volumeSeries, difSeries } = buildThreeChartFixture(
-      lc,
-      bars,
-    );
+    const { charts, priceSeries, volumeSeries, difSeries } = buildThreeChartFixture(lc, bars);
 
     syncChartGroupPriceScaleWidths(charts, {
       flush: () => globalThis.__flushRaf(),
@@ -373,8 +451,9 @@ test("real LC: time-only crosshair sync keeps sibling charts at the same time co
 
     assert.doesNotThrow(() => {
       charts[0].setCrosshairPosition(10.32, time, priceSeries);
-      charts[1].setCrosshairPosition(0, time, volumeSeries);
-      charts[2].setCrosshairPosition(0, time, difSeries);
+      charts[1].setCrosshairPosition(48000, time, volumeSeries);
+      // dif 缺失：清除而非写入假价格。
+      charts[2].clearCrosshairPosition();
       globalThis.__flushRaf();
     });
 
@@ -420,17 +499,17 @@ test("real LC: leaving all charts clears synced crosshairs", async () => {
         dif: null,
       },
     ];
-    const { charts, priceSeries, volumeSeries, difSeries } = buildThreeChartFixture(
-      lc,
-      bars,
-    );
+    const { charts, priceSeries, volumeSeries, difSeries } = buildThreeChartFixture(lc, bars);
 
-    const sync = attachTimeOnlyCrosshairSync({
-      charts,
-      priceSeries,
-      volumeSeries,
-      difSeries,
-    });
+    const sync = attachTimeOnlyCrosshairSync(
+      {
+        charts,
+        priceSeries,
+        volumeSeries,
+        difSeries,
+      },
+      lc.MismatchDirection,
+    );
 
     charts[0].setCrosshairPosition(10.32, time, priceSeries);
     globalThis.__flushRaf();
@@ -468,10 +547,7 @@ test("real LC: aligned plot widths map the same time to the same x coordinate", 
       volume: 120_000 + index * 1000,
       dif: index % 5 === 0 ? null : 0.01 * index,
     }));
-    const { charts, priceSeries, volumeSeries, difSeries } = buildThreeChartFixture(
-      lc,
-      bars,
-    );
+    const { charts, priceSeries, volumeSeries, difSeries } = buildThreeChartFixture(lc, bars);
 
     const syncResult = syncChartGroupPriceScaleWidths(charts, {
       flush: () => globalThis.__flushRaf(),
@@ -479,12 +555,15 @@ test("real LC: aligned plot widths map the same time to the same x coordinate", 
     assert.equal(syncResult.converged, true, syncResult.plotWidths.join(", "));
     assert.equal(plotWidthsAligned(syncResult.plotWidths), true);
 
-    attachTimeOnlyCrosshairSync({
-      charts,
-      priceSeries,
-      volumeSeries,
-      difSeries,
-    });
+    attachTimeOnlyCrosshairSync(
+      {
+        charts,
+        priceSeries,
+        volumeSeries,
+        difSeries,
+      },
+      lc.MismatchDirection,
+    );
     charts[0].setCrosshairPosition(10.5, time, priceSeries);
     globalThis.__flushRaf();
 

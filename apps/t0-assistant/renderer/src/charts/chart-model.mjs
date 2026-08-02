@@ -17,6 +17,117 @@ export function parseMarketTimestamp(timestamp) {
   return Date.UTC(year, month - 1, day, hour, minute, second) / 1000;
 }
 
+/**
+ * Multiply `value` by 10**power via exponential mantissa/exponent adjustment.
+ * Avoids both binary `value * 10**n` drift and illegal strings like `1e-7e2`.
+ */
+function scaleByPowerOf10(value, power) {
+  if (value === 0) {
+    return 0;
+  }
+  if (!Number.isFinite(value)) {
+    return value;
+  }
+  const exponential = value.toExponential();
+  const eIndex = exponential.indexOf("e");
+  const mantissa = exponential.slice(0, eIndex);
+  const exponent = Number(exponential.slice(eIndex + 1)) + power;
+  return Number(`${mantissa}e${exponent}`);
+}
+
+/**
+ * Half-away-from-zero decimal rounding that does not rely on `value * 10**n`
+ * binary products (those fail cases like 1.005 → 1.00) and remains valid for
+ * values whose default string form is scientific notation (e.g. 1e-7).
+ */
+export function roundHalfAwayFromZero(value, decimalPlaces) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return Number.NaN;
+  }
+  if (!Number.isInteger(decimalPlaces) || decimalPlaces < 0) {
+    return Number.NaN;
+  }
+  const sign = value < 0 ? -1 : 1;
+  const absolute = Math.abs(value);
+  const shifted = scaleByPowerOf10(absolute, decimalPlaces);
+  if (!Number.isFinite(shifted)) {
+    return Number.NaN;
+  }
+  const rounded = Math.round(shifted);
+  const result = sign * scaleByPowerOf10(rounded, -decimalPlaces);
+  // Avoid signed zero from `sign * 0` so labels/tests see a plain 0.
+  return result === 0 ? 0 : result;
+}
+
+export function formatPriceAxisTickLabel(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "";
+  }
+  const rounded = roundHalfAwayFromZero(value, 2);
+  if (Math.abs(rounded) < 100) {
+    return rounded.toFixed(2);
+  }
+  return String(roundHalfAwayFromZero(rounded, 0));
+}
+
+export function formatPriceExactLabel(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "";
+  }
+  return roundHalfAwayFromZero(value, 2).toFixed(2);
+}
+
+export function formatPriceAxisTickLabels(prices) {
+  if (!Array.isArray(prices)) {
+    return [];
+  }
+  return prices.map((price) => formatPriceAxisTickLabel(price));
+}
+
+/** Integer tick generation threshold used with LC `minMove` (see ui_layout_spec §4.3). */
+export const PRICE_AXIS_INTEGER_TICK_ABS = 100;
+export const PRICE_AXIS_FINE_MIN_MOVE = 0.01;
+export const PRICE_AXIS_INTEGER_MIN_MOVE = 1;
+
+/**
+ * LC uses series `minMove` as the tick-generation base. When the visible scale
+ * can contain marks with abs >= 100, force minMove=1 so marks are integers and
+ * labels stay aligned with grid lines after integer formatting.
+ */
+export function resolvePriceAxisMinMove(rangeMin, rangeMax) {
+  const candidates = [rangeMin, rangeMax].filter(
+    (value) => typeof value === "number" && Number.isFinite(value),
+  );
+  if (candidates.length === 0) {
+    return PRICE_AXIS_FINE_MIN_MOVE;
+  }
+  const maxAbs = Math.max(...candidates.map((value) => Math.abs(value)));
+  return maxAbs >= PRICE_AXIS_INTEGER_TICK_ABS
+    ? PRICE_AXIS_INTEGER_MIN_MOVE
+    : PRICE_AXIS_FINE_MIN_MOVE;
+}
+
+export function createPriceExactPriceFormat(minMove = PRICE_AXIS_FINE_MIN_MOVE) {
+  return Object.freeze({
+    type: "custom",
+    formatter: formatPriceExactLabel,
+    tickmarksFormatter: formatPriceAxisTickLabels,
+    minMove,
+  });
+}
+
+// Default dual format for series construction; minMove is refined after data/layout.
+export const PRICE_EXACT_PRICE_FORMAT = createPriceExactPriceFormat(
+  PRICE_AXIS_FINE_MIN_MOVE,
+);
+
+export function formatVolumeAxisLabels(prices) {
+  if (!Array.isArray(prices)) {
+    return [];
+  }
+  return prices.map((price) => formatVolumeAxisLabel(price));
+}
+
 export function formatVolumeAxisLabel(value, locale = "zh-CN") {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return "";
@@ -27,11 +138,12 @@ export function formatVolumeAxisLabel(value, locale = "zh-CN") {
   if (value === 0) {
     return "0";
   }
-  // chart-level priceFormatter 只接收 price；locale 默认 zh-CN，国际化需包闭包注入。
-  // LC 5.x tickmarksFormatter 可能传入数组 index 作为第二参数，需兜底。
+  // LC 5.x may call formatter via prices.map(formatter), which passes the array
+  // index as the second argument; only treat real locale strings as locales.
   if (typeof locale !== "string") {
     locale = "zh-CN";
   }
+  // chart-level priceFormatter 只接收 price；locale 默认 zh-CN，国际化需包闭包注入。
   if (locale.startsWith("zh")) {
     if (value >= 1e8) {
       return `${formatCompactScaled(value, 1e8)}亿`;
@@ -57,13 +169,6 @@ export function formatVolumeAxisLabel(value, locale = "zh-CN") {
     return `${formatCompactScaled(value, 1e3)}K`;
   }
   return String(Math.round(value));
-}
-
-export function formatVolumeAxisLabels(prices) {
-  if (!Array.isArray(prices)) {
-    return [];
-  }
-  return prices.map((price) => formatVolumeAxisLabel(price));
 }
 
 function formatCompactScaled(value, divisor) {

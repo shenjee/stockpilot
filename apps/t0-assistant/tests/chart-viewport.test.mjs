@@ -331,7 +331,7 @@ test("logical slots have no gaps across an overnight break", () => {
 });
 
 // --- 适配层：内部排他范围 <-> Lightweight Charts 连续逻辑范围 ---
-// 实测 lightweight-charts 4.x：自然最新 to = length-1；setVisibleLogicalRange
+// 实测 lightweight-charts 5.x：自然最新 to = length-1；setVisibleLogicalRange
 // 原样保留整数/小数；to = length 会产生右侧空槽。适配层据此转换。
 
 test("toChartLogicalRange maps exclusive internal range to LC range without a right empty slot", () => {
