@@ -129,6 +129,55 @@ class ResolveLiveMarketContextTests(unittest.TestCase):
         self.assertEqual(resolved.calendar_status, "unavailable")
         self.assertEqual(resolved.market_phase, "unknown")
 
+    def test_weekend_with_unknown_gap_is_not_authoritative(self) -> None:
+        """Last evidence Wednesday + unknown Thu/Fri + Saturday must be unavailable."""
+
+        from packages.marketdata.calendar_query import MarketContextCalendarAdapter
+        from packages.marketdata.services.market_context_service import (
+            MarketContextService,
+        )
+
+        context = MarketContextService(
+            ["2026-07-22"],
+            coverage_start="2026-07-22",
+            coverage_end="2026-07-25",
+        )
+        calendar = MarketContextCalendarAdapter(
+            context,
+            authoritative_through="2026-07-22",
+        )
+        resolved = resolve_live_market_context(
+            calendar,
+            observed_now=datetime(2026, 7, 25, 11, 0, 0),
+            market="sh",
+        )
+        self.assertEqual(resolved.effective_trade_date.isoformat(), "2026-07-22")
+        self.assertEqual(resolved.calendar_status, "unavailable")
+        self.assertEqual(resolved.market_phase, "unknown")
+
+    def test_non_authoritative_scaffold_never_reports_available(self) -> None:
+        from packages.marketdata.calendar_query import MarketContextCalendarAdapter
+        from packages.marketdata.services.market_context_service import (
+            MarketContextService,
+        )
+
+        context = MarketContextService(
+            ["2026-09-29", "2026-09-30", "2026-10-01", "2026-10-02"],
+            coverage_start="2026-09-29",
+            coverage_end="2026-10-02",
+        )
+        calendar = MarketContextCalendarAdapter(
+            context,
+            evidence_authoritative=False,
+        )
+        resolved = resolve_live_market_context(
+            calendar,
+            observed_now=datetime(2026, 10, 2, 10, 0, 0),
+            market="sh",
+        )
+        self.assertEqual(resolved.calendar_status, "unavailable")
+        self.assertEqual(resolved.market_phase, "unknown")
+
 
 if __name__ == "__main__":
     unittest.main()

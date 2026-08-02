@@ -64,6 +64,10 @@ class MarketContextCalendarAdapter:
     trading-day set is treated as a confirmed closed day (holiday / weekend
     already handled). Weekdays after that bound return ``unknown`` so Live can
     degrade with ``calendar_status=unavailable`` instead of inventing opens.
+
+    When ``evidence_authoritative`` is false (non-benchmark / cold-start
+    scaffold), every in-coverage day is ``unknown`` so Live never claims
+    ``calendar_status=available`` from synthetic weekdays or sparse securities.
     """
 
     def __init__(
@@ -71,10 +75,12 @@ class MarketContextCalendarAdapter:
         market_context: MarketContextService,
         *,
         authoritative_through: date | str | None = None,
+        evidence_authoritative: bool = True,
     ) -> None:
         if not isinstance(market_context, MarketContextService):
             raise TypeError("market_context must be a MarketContextService")
         self._context = market_context
+        self._evidence_authoritative = bool(evidence_authoritative)
         self._authoritative_through = (
             market_context.coverage_end
             if authoritative_through is None
@@ -93,6 +99,10 @@ class MarketContextCalendarAdapter:
     def authoritative_through(self) -> date:
         return self._authoritative_through
 
+    @property
+    def evidence_authoritative(self) -> bool:
+        return self._evidence_authoritative
+
     def covers(self, trade_date: date | str) -> bool:
         value = _as_date(trade_date)
         return self._context.coverage_start <= value <= self._context.coverage_end
@@ -101,6 +111,9 @@ class MarketContextCalendarAdapter:
         _require_supported_market(market)
         value = _as_date(trade_date)
         if not self.covers(value):
+            return "unknown"
+        if not self._evidence_authoritative:
+            # Scaffold / sparse fallback must not mint open/closed authority.
             return "unknown"
         if self._context.is_trading_day(value, market):
             return "open"

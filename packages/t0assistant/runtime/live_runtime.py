@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-from datetime import date, datetime
+from dataclasses import dataclass, replace
+from datetime import date, datetime, time
 from threading import Event, RLock, Thread, current_thread
 from typing import Callable, Mapping, Protocol, Sequence
+
+from packages.marketdata.calendar_query import CalendarQueryPort
+from packages.marketdata.services.market_context_service import MarketSession
 
 from .computation_executor import BoundedComputationExecutor
 from .coordinator import SessionSpec
@@ -58,6 +61,11 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
     The short locked section only merges normalized rows and rebuilds the
     shared workbench projection from that coherent prefix.
 
+    ``market_phase`` advances on a dedicated, lock-serialized path that runs
+    before provider I/O and publishes at most one full snapshot per transition.
+    That keeps Calendar phase orthogonal to quote/1m/5m success and prevents
+    concurrent workers from republishing inverted full snapshots.
+
     Until PR-B atomic day switching, refresh is pinned to the prepared
     ``market_session.trade_date`` so a pre-open Session cannot ingest the next
     session's rows after 09:30.
@@ -68,14 +76,26 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
         source: LiveBranchDataPort,
         *,
         analyzer: CzscAnalyzerPort | None = None,
+        calendar: CalendarQueryPort | None = None,
+        on_projection_refresh: Callable[[LiveSnapshotCandidate], None] | None = None,
     ) -> None:
         self._source = source
         self._analyzer = analyzer
+        self._calendar = calendar
+        self._on_projection_refresh = on_projection_refresh
         self._lock = RLock()
         self._session = None
         self._market_input: PipelineMarketInput | None = None
         self._calendar_status = "available"
         self._market_phase = "closed"
+
+    def set_on_projection_refresh(
+        self,
+        handler: Callable[[LiveSnapshotCandidate], None] | None,
+    ) -> None:
+        """Publish full snapshots when pinned-day ``market_phase`` advances."""
+
+        self._on_projection_refresh = handler
 
     def prepare(
         self,
@@ -103,12 +123,16 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
         observed_at: datetime,
         latest_data_time: datetime | None,
     ) -> LiveRefreshResult:
+        # Phase is Calendar/wall-clock state: advance it even when every market
+        # branch later fails, and claim the transition under the lock so only
+        # one worker publishes the full snapshot for that transition.
+        self._publish_phase_if_advanced(spec, observed_at)
+
         with self._lock:
             if self._market_input is None or self._session is None:
                 raise RuntimeError("Live refresh cannot run before initial prepare")
             trade_date = self._session.trade_date
-            calendar_status = self._calendar_status
-            market_phase = self._market_phase
+
         if kind is LiveRefreshKind.QUOTE:
             rows = tuple(
                 self._source.load_refresh_quotes(spec, trade_date=trade_date)
@@ -129,11 +153,12 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             rows,
             closed_only=kind is LiveRefreshKind.OFFICIAL_FIVE_MINUTE,
         )
-        if (
+        data_changed = not (
             data_time is None
             or latest_data_time is not None
             and data_time <= latest_data_time
-        ):
+        )
+        if not data_changed:
             return LiveRefreshResult.no_change()
 
         with self._lock:
@@ -163,19 +188,74 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
                 analyzer=self._analyzer,
             ).preview(preview_at)
             self._market_input = updated_input
+            calendar_status = self._calendar_status
+            market_phase = self._market_phase
 
-        snapshot = LiveSnapshotCandidate(
+        candidate = LiveSnapshotCandidate(
             session_id=spec.session_id,
             generation=spec.generation,
             symbol=spec.symbol,
             pipeline_result=result,
             calendar_status=calendar_status,
             market_phase=market_phase,
-        ).build_projection(0).to_dict()
+        )
+        snapshot = candidate.build_projection(0).to_dict()
         return LiveRefreshResult(
             data_time=data_time,
             updates=_branch_updates(kind, spec, snapshot),
         )
+
+    def _publish_phase_if_advanced(
+        self,
+        spec: SessionSpec,
+        observed_at: datetime,
+    ) -> None:
+        """Commit and publish at most one view-status transition before I/O.
+
+        Atomically updates ``market_phase`` and ``calendar_status`` together.
+        The handler runs while the state lock is held so publish order matches
+        the cache commit that produced the candidate. Handlers must not re-enter
+        :meth:`refresh`.
+        """
+
+        with self._lock:
+            if self._market_input is None or self._session is None:
+                raise RuntimeError("Live refresh cannot run before initial prepare")
+            resolved = _resolve_pinned_live_view(
+                self._session,
+                observed_at=observed_at,
+                calendar_status=self._calendar_status,
+                calendar=self._calendar,
+            )
+            if (
+                resolved.market_phase == self._market_phase
+                and resolved.calendar_status == self._calendar_status
+            ):
+                return
+            self._market_phase = resolved.market_phase
+            self._calendar_status = resolved.calendar_status
+            preview_at = observed_at
+            if observed_at.date() != self._session.trade_date:
+                preview_at = self._session.end
+            result = WorkbenchPipeline(
+                session=self._session,
+                market_input_port=_FixedMarketInput(self._market_input),
+                analyzer=self._analyzer,
+            ).preview(preview_at)
+            candidate = LiveSnapshotCandidate(
+                session_id=spec.session_id,
+                generation=spec.generation,
+                symbol=spec.symbol,
+                pipeline_result=result,
+                calendar_status=resolved.calendar_status,
+                market_phase=resolved.market_phase,
+            )
+            handler = self._on_projection_refresh
+            if handler is not None:
+                # Bind full-snapshot publish to this commit so a slower worker
+                # cannot later overwrite a newer coherent cache with an older
+                # phase candidate built before sibling merges.
+                handler(candidate)
 
 
 class _FixedMarketInput(MarketInputPort):
@@ -220,6 +300,8 @@ class LiveRuntimeSession:
         self._scheduler: LiveRefreshScheduler | None = None
         self._executor: BoundedComputationExecutor | None = None
         self._poll_thread: Thread | None = None
+        if isinstance(input_port, BranchingLiveInput):
+            input_port.set_on_projection_refresh(on_snapshot_candidate)
         self._initial = LiveSession(
             spec,
             input_port,
@@ -310,6 +392,59 @@ class LiveRuntimeSession:
             scheduler = self.refresh_scheduler
             if scheduler is not None:
                 scheduler.run_due(self._clock())
+
+
+@dataclass(frozen=True, slots=True)
+class _PinnedLiveView:
+    """Wall-clock view status for a Session still pinned to its prepare day."""
+
+    market_phase: str
+    calendar_status: str
+
+
+def _resolve_pinned_live_view(
+    session: MarketSession,
+    *,
+    observed_at: datetime,
+    calendar_status: str,
+    calendar: CalendarQueryPort | None = None,
+) -> _PinnedLiveView:
+    """Resolve pinned-day ``market_phase`` and ``calendar_status`` together.
+
+    Trade-date switching remains PR-B. Cross-day classification consults the
+    calendar: confirmed closed days stay ``market_closed`` with
+    ``calendar_status=available``; ``day_status=unknown`` (coverage gap) must
+    degrade to ``unavailable`` + ``unknown``. Without open evidence, never
+    claim ``pre_open``.
+    """
+
+    if calendar_status == "unavailable":
+        return _PinnedLiveView(market_phase="unknown", calendar_status="unavailable")
+    observed_date = observed_at.date()
+    if observed_date == session.trade_date:
+        return _PinnedLiveView(
+            market_phase=session.phase_at(observed_at),
+            calendar_status="available",
+        )
+    if observed_date < session.trade_date:
+        return _PinnedLiveView(market_phase="pre_open", calendar_status="available")
+    if calendar is None:
+        # Cannot verify coverage; do not keep a stale available claim.
+        return _PinnedLiveView(market_phase="unknown", calendar_status="unavailable")
+    day_status = calendar.day_status(observed_date, session.market)
+    if day_status == "open":
+        phase = (
+            "pre_open"
+            if observed_at.time() < time(9, 30)
+            else "market_closed"
+        )
+        return _PinnedLiveView(market_phase=phase, calendar_status="available")
+    if day_status == "closed":
+        return _PinnedLiveView(
+            market_phase="market_closed",
+            calendar_status="available",
+        )
+    return _PinnedLiveView(market_phase="unknown", calendar_status="unavailable")
 
 
 def _timestamp(value: object) -> datetime | None:

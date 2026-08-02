@@ -14,7 +14,10 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Callable
 
-from packages.marketdata.calendar_query import MarketContextCalendarAdapter
+from packages.marketdata.calendar_query import (
+    CalendarQueryPort,
+    MarketContextCalendarAdapter,
+)
 from packages.marketdata.market_data import TencentStockDataProvider
 from packages.marketdata.repositories.kline_store import KLineStore
 from packages.marketdata.runtime_paths import RuntimePaths
@@ -52,10 +55,12 @@ class LiveSessionFactory:
         input_port: LiveBranchDataPort,
         *,
         analyzer: CzscAnalyzerPort | None = None,
+        calendar: CalendarQueryPort | None = None,
         auto_poll: bool = True,
     ) -> None:
         self._input_port = input_port
         self._analyzer = analyzer
+        self._calendar = calendar
         self._auto_poll = auto_poll
         self._candidate_handler: Callable[[Any], None] | None = None
         self._incremental_handler: Callable[[LiveIncrementalUpdate], object] | None = None
@@ -95,6 +100,7 @@ class LiveSessionFactory:
         runtime_input = BranchingLiveInput(
             self._input_port,
             analyzer=self._analyzer,
+            calendar=self._calendar,
         )
         session = LiveRuntimeSession(
             spec,
@@ -569,19 +575,22 @@ def create_live_application_api(
         app_db_path or paths.db_dir / "t0_assistant.sqlite"
     )
     preferences = PreferenceService(SqlitePreferenceRepository(database))
+    calendar = MarketContextCalendarAdapter(
+        context,
+        authoritative_through=authoritative_through,
+        evidence_authoritative=authoritative_through is not None,
+    )
     preparator = LiveDataPreparator(
         market_data,
         context,
-        calendar=MarketContextCalendarAdapter(
-            context,
-            authoritative_through=authoritative_through,
-        ),
+        calendar=calendar,
         quote_reader=resolved_provider,
     )
     api = LiveApplicationApi(
         service_generation=service_generation,
         session_factory=LiveSessionFactory(
-            preparator
+            preparator,
+            calendar=calendar,
         ),
         preference_service=preferences,
         event_publisher=event_publisher,

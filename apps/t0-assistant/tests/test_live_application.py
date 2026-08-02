@@ -115,6 +115,8 @@ class _DeterministicLiveInput:
             market_session=self.context.require_session("2026-07-24", "sh"),
             target_time=target,
             market_input_port=_MarketInput(target, market_input),
+            calendar_status="available",
+            market_phase="morning",
         )
 
     def queue_refresh(self, branch: str, *outcomes: object) -> None:

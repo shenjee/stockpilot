@@ -63,6 +63,20 @@ class CalendarQueryAdapterTests(unittest.TestCase):
         self.assertEqual(calendar.day_status("2026-10-01", "sh"), "unknown")
         self.assertEqual(calendar.day_status("2026-10-02", "sh"), "unknown")
 
+    def test_non_authoritative_scaffold_marks_every_day_unknown(self) -> None:
+        context = MarketContextService(
+            ["2026-09-30", "2026-10-01", "2026-10-02"],
+            coverage_start="2026-09-30",
+            coverage_end="2026-10-02",
+        )
+        calendar = MarketContextCalendarAdapter(
+            context,
+            evidence_authoritative=False,
+        )
+        self.assertEqual(calendar.day_status("2026-10-01", "sh"), "unknown")
+        self.assertEqual(calendar.day_status("2026-10-02", "sh"), "unknown")
+        self.assertFalse(calendar.evidence_authoritative)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -7,7 +7,7 @@ or maintain holiday rules (#133 owns Calendar data sources).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Literal
 
 from packages.marketdata.calendar_query import (
@@ -57,7 +57,8 @@ def resolve_live_market_context(
     - Trading day before 09:30 → previous trading day, ``pre_open``.
     - Trading day morning / lunch / afternoon / closed → that day.
     - Weekend / holiday → previous trading day, ``market_closed``.
-    - Observed date outside coverage → best-effort last open day in coverage,
+    - Observed date outside coverage, unknown day, or unknown gap between the
+      candidate day and ``observed_now`` → best-effort last open day with
       ``calendar_status=unavailable``, ``market_phase=unknown``.
     """
 
@@ -86,21 +87,19 @@ def resolve_live_market_context(
                 raise LiveMarketViewError(
                     "no previous trading day available before pre-open"
                 )
-            return ResolvedLiveMarketContext(
+            return _finalize_resolved(
+                calendar,
                 observed_now=observed_now,
                 market=normalized_market,
                 effective_trade_date=previous,
-                market_session=calendar.require_session(previous, normalized_market),
                 market_phase="pre_open",
-                calendar_status="available",
             )
-        return ResolvedLiveMarketContext(
+        return _finalize_resolved(
+            calendar,
             observed_now=observed_now,
             market=normalized_market,
             effective_trade_date=observed_date,
-            market_session=session,
             market_phase=phase,
-            calendar_status="available",
         )
 
     previous = calendar.previous_trading_day(observed_date, normalized_market)
@@ -108,14 +107,73 @@ def resolve_live_market_context(
         raise LiveMarketViewError(
             "no previous trading day available for closed market day"
         )
-    return ResolvedLiveMarketContext(
+    return _finalize_resolved(
+        calendar,
         observed_now=observed_now,
         market=normalized_market,
         effective_trade_date=previous,
-        market_session=calendar.require_session(previous, normalized_market),
         market_phase="market_closed",
+    )
+
+
+def _finalize_resolved(
+    calendar: CalendarQueryPort,
+    *,
+    observed_now: datetime,
+    market: str,
+    effective_trade_date: date,
+    market_phase: LiveMarketPhase,
+) -> ResolvedLiveMarketContext:
+    """Attach calendar_status after validating the full resolution interval."""
+
+    observed_date = observed_now.date()
+    if not _resolution_interval_is_known(
+        calendar,
+        start=effective_trade_date,
+        end=observed_date,
+        market=market,
+    ):
+        return ResolvedLiveMarketContext(
+            observed_now=observed_now,
+            market=market,
+            effective_trade_date=effective_trade_date,
+            market_session=calendar.require_session(effective_trade_date, market),
+            market_phase="unknown",
+            calendar_status="unavailable",
+        )
+    return ResolvedLiveMarketContext(
+        observed_now=observed_now,
+        market=market,
+        effective_trade_date=effective_trade_date,
+        market_session=calendar.require_session(effective_trade_date, market),
+        market_phase=market_phase,
         calendar_status="available",
     )
+
+
+def _resolution_interval_is_known(
+    calendar: CalendarQueryPort,
+    *,
+    start: date,
+    end: date,
+    market: str,
+) -> bool:
+    """Return whether every day from ``start`` through ``end`` is known.
+
+    ``calendar_status=available`` requires the full parse interval from the
+    candidate effective trade date to ``observed_now``'s local date. Any
+    ``unknown`` day (including gaps after last benchmark evidence) makes the
+    view non-authoritative.
+    """
+
+    if end < start:
+        start, end = end, start
+    cursor = start
+    while cursor <= end:
+        if calendar.day_status(cursor, market) == "unknown":
+            return False
+        cursor += timedelta(days=1)
+    return True
 
 
 def _resolve_calendar_unavailable(
