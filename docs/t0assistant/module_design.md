@@ -7,7 +7,7 @@
 | 产品 | StockPilot 盘中 T+0 助手 |
 | 文档类型 | 前端与 Python 模块设计 |
 | 状态 | 产品模块设计基线 |
-| 更新日期 | 2026-07-21 |
+| 更新日期 | 2026-08-02 |
 | 系统架构 | [`architecture.md`](./architecture.md) |
 | 上位需求 | [`t0_assistant_prd.md`](./t0_assistant_prd.md) |
 | UI/UX 基线 | [`ui_layout_spec.md`](./ui_layout_spec.md) |
@@ -267,7 +267,7 @@ Replay Python API 的实现任务必须提供并测试一份“错误码 → 默
 
 | 模块 | 职责 |
 | --- | --- |
-| Live Session | 绑定创建时的股票且不在原实例上切股；使用系统时钟调度快照、1m、正式 5m 更新；回放期间继续后台运行 |
+| Live Session | 绑定创建时的股票且不在原实例上切股；通过 Live Market View 解析 `effective_trade_date` 与轮询档位；使用系统时钟调度快照、1m、正式 5m 更新；09:30 原子切日；回放期间继续后台运行 |
 | Replay Session | 绑定 App 当前股票和目标日期；按市场交易日历确定回放起止边界，在 ready 前准备目标日完整序列，维护下一根实际 K 的时间，按实际序列播放、暂停、单步与定位，维护模拟成交 |
 | Clock Port | 向处理管线提供“当前时刻”；实现系统时钟与可控模拟时钟 |
 | Market Input Port | 向处理管线提供标准行情序列；实现实时与历史输入 |
@@ -369,9 +369,11 @@ App Coordinator 负责 Session 级故障恢复：Replay 失败时只销毁 Repla
 ### 6.2 放入 `packages/` 的代码
 
 - 标准行情 schema、交易时段、聚合、缓存服务与 provider adapter；
+- 权威交易日历（Calendar domain/repository/sources，见 #133）；
 - BOLL、MA、VOL MA、MACD 和 VWAP 等可复用指标；
 - CZSC 稳定适配和绘图 primitives；
 - Live/Replay 共用的输入端口、时钟端口、处理管线和确定性回放能力；
+- Live Market View（`live_market_view.py`）：消费 Calendar Port / `MarketContextService` 或注入 Fixture 与证券数据，解析有效目标交易日、展示维度、分支 as_of 与轮询档位；不自行同步日历（完整 Calendar 见 #133，不阻塞 #130）；
 - Provider 请求队列、计算执行边界和数据库写入协调等可独立测试的资源控制能力；
 - 成交、收费、5 分钟归桶等与 UI 无关的业务规则；
 - Repository 接口、SQLite 实现和迁移；

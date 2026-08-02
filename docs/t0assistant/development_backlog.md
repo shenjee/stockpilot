@@ -7,9 +7,9 @@
 | 产品 | StockPilot 盘中 T+0 助手 |
 | 文档类型 | 可执行开发 Backlog 与依赖基线 |
 | 状态 | 待创建 GitHub Epic / Issue |
-| 版本 | v1.6 |
-| 更新日期 | 2026-07-22 |
-| 上位需求 | [`t0_assistant_prd.md`](./t0_assistant_prd.md) v0.43 |
+| 版本 | v1.7 |
+| 更新日期 | 2026-08-02 |
+| 上位需求 | [`t0_assistant_prd.md`](./t0_assistant_prd.md) v0.44 |
 | 架构基线 | [`architecture.md`](./architecture.md) |
 | 模块基线 | [`module_design.md`](./module_design.md) |
 | UI 基线 | [`ui_layout_spec.md`](./ui_layout_spec.md) |
@@ -182,6 +182,7 @@ T0-013～T0-015 是 Codex 轨道；T0-016～T0-020 是 Claude 轨道。Epic 名�
 | T0-025 | 实现旧数据保留、退避、手工重试和 Session 级恢复 | Claude / Backend + runtime | FR-04 | T0-024 | Provider/分析失败不清空成功状态；Replay/Live 故障隔离；重试可恢复干净实例 |
 | T0-026 | 实现事件 revision、乱序拒绝和快照重建 | Claude / Backend | FR-04/07 | T0-003, T0-019, T0-021 | revision 单调；事件缺口停止应用后续增量并允许重新取完整快照；旧 Session 不能覆盖新状态 |
 | T0-027 | 集成选股、启动恢复、切股和真实 Live Pipeline | Claude / Backend + runtime | FR-01/03/04 | T0-007, T0-022～T0-026 | 首次空态、恢复最后股票、切股退休旧 Session、回放期间 Live 继续后台更新均可测试 |
+| [#130](https://github.com/shenjee/stockpilot/issues/130) | 实盘页展示截至当前的最新有效交易日行情 | 跨模块 | FR-03/04 | T0-023, T0-024, T0-011 | 统一 `effective_trade_date`、09:30 原子切日、phase-aware 轮询、缓存分级与 Renderer 状态；跨 T0-023/024/051 的最终验收。PR-A 使用 `MarketContextService`/Calendar Port/Fixture，**不阻塞于 #133**。关联：#133 |
 
 ### Epic E：Electron 桌面容器与 React 工作台
 
@@ -383,6 +384,8 @@ T0-044～T0-050 → T0-053 → T0-054 → T0-055
 成交链在 T0-053 前成为晚到的硬前置。T0-048 是 Replay 引擎链与 Live 刷新链的汇合点，
 必须同时等到 T0-046、T0-024 和 T0-026 完成，不能把它视为仅在 T0-046 后即可启动的
 普通并行分支。
+
+**#130（有效目标交易日）** 为跨模块功能 Issue，统一 Live 产品行为与最终验收，增强范围覆盖 T0-023（初始准备与有效目标日）、T0-024（刷新、轮询与跨日切换）和 T0-051（Renderer 状态）。建议分三期交付：PR-A 使用 `MarketContextService`/Calendar Port/Fixture 的 resolver + 闭市日加载 + 最小可见性；PR-B 09:30 切日与 phase-aware polling；PR-C 契约、Renderer 与 E2E。#133 后续替换或扩充 Calendar 数据来源，不改变 resolver 语义，**不阻塞 PR-A**。关联 Issue：#133。
 
 ### 6.2 初始 Ready Queue
 
