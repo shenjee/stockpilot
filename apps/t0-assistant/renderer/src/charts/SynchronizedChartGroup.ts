@@ -1,12 +1,17 @@
 import {
+  CandlestickSeries,
   ColorType,
-  CrosshairMode,
   createChart,
+  createSeriesMarkers,
+  CrosshairMode,
+  HistogramSeries,
+  LineSeries,
   LineStyle,
   type CandlestickData,
   type HistogramData,
   type IChartApi,
   type ISeriesApi,
+  type ISeriesMarkersPluginApi,
   type LineData,
   type LogicalRange,
   type MouseEventParams,
@@ -19,6 +24,7 @@ import {
   ChartGroupKind,
   formatMarketTick,
   formatVolumeAxisLabel,
+  formatVolumeAxisLabels,
   type ChartGroupModel,
 } from "./chart-model.mjs";
 import { PivotZonePrimitive } from "./pivot-zone-primitive";
@@ -78,6 +84,7 @@ const MA_COLORS = {
 const VOLUME_PRICE_FORMAT = {
   type: "custom" as const,
   formatter: formatVolumeAxisLabel,
+  tickmarksFormatter: formatVolumeAxisLabels,
   minMove: 1,
 };
 
@@ -138,6 +145,7 @@ export class SynchronizedChartGroup {
   private previousTimeByTime = new Map<number, number | null>();
   private structureSeries: ISeriesApi<"Line">[] = [];
   private tradeMarkerSeries = new Map<string, ISeriesApi<"Line">>();
+  private tradeMarkerPlugins = new Map<string, ISeriesMarkersPluginApi<Time>>();
   private alignedPriceScaleWidth = DEFAULT_PRICE_SCALE_MIN_WIDTH;
   private priceScaleResyncFrame: number | null = null;
   private crosshairClearFrame: number | null = null;
@@ -158,14 +166,14 @@ export class SynchronizedChartGroup {
 
     // VOL histogram 必须是 volume 图上的第一个 series：LC 用 formatterSource[0]
     // 决定右轴刻度格式。若 MA 线先创建，轴标签会退回 4000000.00 这类宽格式。
-    this.volumeSeries = this.volumeChart.addHistogramSeries({
+    this.volumeSeries = this.volumeChart.addSeries(HistogramSeries, {
       priceFormat: VOLUME_PRICE_FORMAT,
       priceLineVisible: false,
       lastValueVisible: false,
     });
 
     if (this.kind === ChartGroupKind.FIVE_MINUTE) {
-      this.priceSeries = this.priceChart.addCandlestickSeries({
+      this.priceSeries = this.priceChart.addSeries(CandlestickSeries, {
         upColor: RED,
         downColor: GREEN,
         borderUpColor: RED,
@@ -178,7 +186,7 @@ export class SynchronizedChartGroup {
       for (const [period, color] of Object.entries(MA_COLORS) as Array<
         [keyof typeof MA_COLORS, string]
       >) {
-        this.movingAverageSeries[period] = this.priceChart.addLineSeries({
+        this.movingAverageSeries[period] = this.priceChart.addSeries(LineSeries, {
           color,
           lineWidth: 1,
           priceLineVisible: false,
@@ -186,20 +194,20 @@ export class SynchronizedChartGroup {
         });
       }
       // BOLL 三条线默认显示，无独立开关。
-      this.bollUpperSeries = this.priceChart.addLineSeries({
+      this.bollUpperSeries = this.priceChart.addSeries(LineSeries, {
         color: BOLL_COLOR,
         lineWidth: 1,
         priceLineVisible: false,
         lastValueVisible: false,
       });
-      this.bollMiddleSeries = this.priceChart.addLineSeries({
+      this.bollMiddleSeries = this.priceChart.addSeries(LineSeries, {
         color: BOLL_COLOR,
         lineWidth: 1,
         lineStyle: LineStyle.Dashed,
         priceLineVisible: false,
         lastValueVisible: false,
       });
-      this.bollLowerSeries = this.priceChart.addLineSeries({
+      this.bollLowerSeries = this.priceChart.addSeries(LineSeries, {
         color: BOLL_COLOR,
         lineWidth: 1,
         priceLineVisible: false,
@@ -208,17 +216,17 @@ export class SynchronizedChartGroup {
       // 笔中枢以填充矩形原语表达，替换歧义的双线实现。
       this.pivotZonePrimitive = new PivotZonePrimitive();
       this.priceSeries.attachPrimitive(this.pivotZonePrimitive);
-      // CZSC 买卖点按 (time, price) 精确定位，替换内置 setMarkers 的 belowBar/aboveBar。
+      // CZSC 买卖点按 (time, price) 精确定位，不依赖内置 markers 的 bar 相对定位。
       this.czscMarkerPrimitive = new CzscMarkerPrimitive();
       this.priceSeries.attachPrimitive(this.czscMarkerPrimitive);
-      this.volumeMa5Series = this.volumeChart.addLineSeries({
+      this.volumeMa5Series = this.volumeChart.addSeries(LineSeries, {
         color: AMBER,
         lineWidth: 1,
         priceFormat: VOLUME_PRICE_FORMAT,
         priceLineVisible: false,
         lastValueVisible: false,
       });
-      this.volumeMa10Series = this.volumeChart.addLineSeries({
+      this.volumeMa10Series = this.volumeChart.addSeries(LineSeries, {
         color: BLUE,
         lineWidth: 1,
         priceFormat: VOLUME_PRICE_FORMAT,
@@ -226,12 +234,12 @@ export class SynchronizedChartGroup {
         lastValueVisible: false,
       });
     } else {
-      this.priceSeries = this.priceChart.addLineSeries({
+      this.priceSeries = this.priceChart.addSeries(LineSeries, {
         color: BLUE,
         lineWidth: 2,
         priceLineVisible: false,
       });
-      this.vwapSeries = this.priceChart.addLineSeries({
+      this.vwapSeries = this.priceChart.addSeries(LineSeries, {
         color: AMBER,
         lineWidth: 1,
         priceLineVisible: false,
@@ -246,19 +254,19 @@ export class SynchronizedChartGroup {
       this.volumeMa10Series = null;
     }
 
-    this.difSeries = this.macdChart.addLineSeries({
+    this.difSeries = this.macdChart.addSeries(LineSeries, {
       color: BLUE,
       lineWidth: 1,
       priceLineVisible: false,
       lastValueVisible: false,
     });
-    this.deaSeries = this.macdChart.addLineSeries({
+    this.deaSeries = this.macdChart.addSeries(LineSeries, {
       color: AMBER,
       lineWidth: 1,
       priceLineVisible: false,
       lastValueVisible: false,
     });
-    this.macdHistogramSeries = this.macdChart.addHistogramSeries({
+    this.macdHistogramSeries = this.macdChart.addSeries(HistogramSeries, {
       priceLineVisible: false,
       lastValueVisible: false,
     });
@@ -512,6 +520,8 @@ export class SynchronizedChartGroup {
         background: { type: ColorType.Solid, color: "#0d1421" },
         textColor: MUTED,
         fontSize: 10,
+        // LC 5.x default; keeps TradingView attribution link on the chart pane.
+        attributionLogo: true,
       },
       grid: {
         vertLines: { color: "#182235" },
@@ -548,7 +558,10 @@ export class SynchronizedChartGroup {
       localization: {
         // LC chart-level priceFormatter 只接收 price；此处固定中文 compact 作兜底。
         ...(options.compactVolumeLabels
-          ? { priceFormatter: (price: number) => formatVolumeAxisLabel(price) }
+          ? {
+              priceFormatter: (price: number) => formatVolumeAxisLabel(price),
+              tickmarksPriceFormatter: formatVolumeAxisLabels,
+            }
           : {}),
         timeFormatter: (time: Time) => {
           const date = new Date(Number(time) * 1000);
@@ -697,7 +710,7 @@ export class SynchronizedChartGroup {
     if (!this.model) return;
 
     for (const stroke of this.model.strokes) {
-      const series = this.priceChart.addLineSeries({
+      const series = this.priceChart.addSeries(LineSeries, {
         color: stroke.color ?? BLUE,
         lineWidth: 2,
         lineStyle: stroke.dashed ? LineStyle.Dashed : LineStyle.Solid,
@@ -741,6 +754,10 @@ export class SynchronizedChartGroup {
   }
 
   private setTradeMarkerData() {
+    for (const plugin of this.tradeMarkerPlugins.values()) {
+      plugin.detach();
+    }
+    this.tradeMarkerPlugins.clear();
     for (const series of this.tradeMarkerSeries.values()) {
       this.priceChart.removeSeries(series);
     }
@@ -751,7 +768,7 @@ export class SynchronizedChartGroup {
     }
 
     for (const marker of this.model.tradeMarkers) {
-      const series = this.priceChart.addLineSeries({
+      const series = this.priceChart.addSeries(LineSeries, {
         color: marker.color,
         lineVisible: false,
         lastValueVisible: false,
@@ -768,7 +785,8 @@ export class SynchronizedChartGroup {
         text: marker.label,
         size: 2,
       };
-      series.setMarkers([seriesMarker]);
+      const markersPlugin = createSeriesMarkers(series, [seriesMarker]);
+      this.tradeMarkerPlugins.set(marker.trade_id, markersPlugin);
       this.tradeMarkerSeries.set(marker.trade_id, series);
     }
   }

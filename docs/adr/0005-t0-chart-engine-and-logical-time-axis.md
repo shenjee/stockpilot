@@ -4,6 +4,10 @@
 - Date: 2026-07-20
 - Owners: T+0 Assistant frontend
 - Evidence target: `docs/spikes/0005-t0-chart-engine-and-logical-time-axis.md`
+- Amendment: the Lightweight Charts **4.x version pin** is superseded by
+  [`0009-upgrade-lightweight-charts-to-5.md`](./0009-upgrade-lightweight-charts-to-5.md)
+  (`lightweight-charts 5.2.0`). Logical-index and chart-group ownership decisions
+  in this ADR remain accepted.
 
 ## Context
 
@@ -71,8 +75,11 @@ follow/manual state model.
 
 ## Decision
 
-Use **Lightweight Charts 4.x with project-owned logical indices and an explicit
+Use **Lightweight Charts with project-owned logical indices and an explicit
 chart-group state machine**.
+
+The originally accepted engine major was 4.x; production now follows ADR 0009 and
+pins **Lightweight Charts 5.2.0**.
 
 Regardless of library choice, the project owns these abstractions:
 

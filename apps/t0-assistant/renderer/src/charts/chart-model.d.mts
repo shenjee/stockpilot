@@ -218,6 +218,7 @@ export function formatVolumeAxisLabel(
   value: number,
   locale?: string,
 ): string;
+export function formatVolumeAxisLabels(prices: number[]): string[];
 export function createChartGroupModel(
   snapshot: WorkbenchChartSnapshot,
   kind: ChartGroupKindValue,
