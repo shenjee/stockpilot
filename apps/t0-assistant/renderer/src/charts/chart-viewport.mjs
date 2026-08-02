@@ -161,7 +161,7 @@ export function visibleLogicalRange(state) {
 // 适配层：内部排他范围 [visibleStart, visibleEnd) 与 Lightweight Charts 连续逻辑范围
 // {from, to} 之间的转换。二者数值不能直接复用，否则引入一位偏移。
 //
-// 实测（lightweight-charts 4.x，headless 跑通）：
+// 实测（lightweight-charts 5.x，headless 跑通；与 4.x 逻辑范围语义一致）：
 // - setData 后自然最新位置（rightOffset=0）getVisibleLogicalRange().to = length - 1。
 // - setVisibleLogicalRange({from,to}) 后读回与 subscribe 回调均为原 {from,to}（整数/小数保留）。
 // - to = length 对应 rightOffset = 1（右侧一个空槽）；to = length - 1 对应无空槽、最后一根贴右。

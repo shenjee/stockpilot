@@ -1,22 +1,23 @@
 /**
  * CZSC 候选买卖点原语。
  *
- * Lightweight Charts 4.x 的内置 setMarkers 只能按 belowBar/aboveBar 定位，无法落在
- * 候选点的实际价格上；同一根 K 上不同价格的同侧信号也会被合并。这里用 series primitive
- * 在价格面板按 (time, price) 精确绘制箭头 + 标签：买点在价格下方指向上、卖点在价格上方
- * 指向下，与 packages/chantheory/plotting.py 的 y=base_point.price 锚点一致。
+ * Lightweight Charts 内置 markers 只能按 belowBar/aboveBar（或价格位）定位时，
+ * 仍不足以表达候选点业务语义的完整自定义绘制；同一根 K 上不同价格的同侧信号
+ * 也需要独立呈现。这里用 series primitive 在价格面板按 (time, price) 精确绘制
+ * 箭头 + 标签：买点在价格下方指向上、卖点在价格上方指向下，与
+ * packages/chantheory/plotting.py 的 y=base_point.price 锚点一致。
  *
  * 数据内但离屏的时间/价格会返回越界坐标（画布裁剪）；数据外返回 null 时跳过该标记。
  */
 import type {
   Coordinate,
   IChartApi,
+  IPrimitivePaneRenderer,
+  IPrimitivePaneView,
   ISeriesApi,
   ISeriesPrimitive,
-  ISeriesPrimitivePaneRenderer,
-  ISeriesPrimitivePaneView,
+  PrimitivePaneViewZOrder,
   SeriesAttachedParameter,
-  SeriesPrimitivePaneViewZOrder,
   SeriesType,
   Time,
 } from "lightweight-charts";
@@ -49,7 +50,7 @@ const LABEL_GAP = 2;
 
 type PriceSeries = ISeriesApi<"Candlestick"> | ISeriesApi<"Line">;
 
-class CzscMarkerRenderer implements ISeriesPrimitivePaneRenderer {
+class CzscMarkerRenderer implements IPrimitivePaneRenderer {
   constructor(
     private readonly markers: readonly CzscMarkerPrimitiveData[],
     private readonly chart: IChartApi,
@@ -120,15 +121,15 @@ class CzscMarkerRenderer implements ISeriesPrimitivePaneRenderer {
   }
 }
 
-class CzscMarkerPaneView implements ISeriesPrimitivePaneView {
+class CzscMarkerPaneView implements IPrimitivePaneView {
   constructor(private readonly primitive: CzscMarkerPrimitive) {}
 
-  zOrder(): SeriesPrimitivePaneViewZOrder {
+  zOrder(): PrimitivePaneViewZOrder {
     // 绘制在 K 线之上，保证买卖点可见。
     return "top";
   }
 
-  renderer(): ISeriesPrimitivePaneRenderer | null {
+  renderer(): IPrimitivePaneRenderer | null {
     const chart = this.primitive.getChart();
     const series = this.primitive.getSeries();
     if (!chart || !series) {
@@ -166,7 +167,7 @@ export class CzscMarkerPrimitive implements ISeriesPrimitive {
     // 渲染器在 draw 时即时读取最新 markers，无需缓存视图。
   }
 
-  paneViews(): readonly ISeriesPrimitivePaneView[] {
+  paneViews(): readonly IPrimitivePaneView[] {
     return [this.paneView];
   }
 

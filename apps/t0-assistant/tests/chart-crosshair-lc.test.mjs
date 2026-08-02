@@ -7,6 +7,18 @@ import {
   syncChartGroupPriceScaleWidths,
 } from "../renderer/src/charts/chart-scale-alignment.mjs";
 
+
+function stubCssColor(value) {
+  if (typeof value === "string" && /^rgba?\(/i.test(value)) {
+    return value;
+  }
+  if (typeof value === "string" && /^#([0-9a-f]{6})$/i.test(value)) {
+    const n = Number.parseInt(value.slice(1), 16);
+    return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`;
+  }
+  return "rgb(0, 0, 0)";
+}
+
 const noop = () => {};
 const classList = { add: noop, remove: noop, contains: () => false, toggle: noop };
 const mql = {
@@ -128,7 +140,10 @@ function installDom() {
     pathname: "/",
   };
   globalThis.history = { pushState: noop, replaceState: noop };
-  globalThis.getComputedStyle = () => ({ getPropertyValue: () => "" });
+  globalThis.getComputedStyle = (el) => ({
+    getPropertyValue: () => "",
+    color: stubCssColor(el?.style?.color),
+  });
   globalThis.ResizeObserver = class {
     observe() {}
     unobserve() {}
@@ -232,7 +247,8 @@ function attachTimeOnlyCrosshairSync({ charts, priceSeries, volumeSeries, difSer
   };
 }
 
-function buildThreeChartFixture(createChart, bars) {
+function buildThreeChartFixture(lc, bars) {
+  const { createChart, CandlestickSeries, HistogramSeries, LineSeries } = lc;
   const charts = ["price", "volume", "macd"].map(() => {
     const container = makeEl("div");
     container.clientWidth = 800;
@@ -245,7 +261,7 @@ function buildThreeChartFixture(createChart, bars) {
   });
   globalThis.__flushRaf();
 
-  const priceSeries = charts[0].addCandlestickSeries();
+  const priceSeries = charts[0].addSeries(CandlestickSeries);
   priceSeries.setData(
     bars.map(({ time, open, high, low, close }) => ({
       time,
@@ -255,7 +271,7 @@ function buildThreeChartFixture(createChart, bars) {
       close,
     })),
   );
-  const volumeSeries = charts[1].addHistogramSeries();
+  const volumeSeries = charts[1].addSeries(HistogramSeries);
   volumeSeries.setData(
     bars.map(({ time, volume, close, open }) => ({
       time,
@@ -263,7 +279,7 @@ function buildThreeChartFixture(createChart, bars) {
       color: close >= open ? "#26a69aaa" : "#ef5350aa",
     })),
   );
-  const difSeries = charts[2].addLineSeries();
+  const difSeries = charts[2].addSeries(LineSeries);
   difSeries.setData(
     bars.map(({ time, dif }) => (dif === null ? { time } : { time, value: dif })),
   );
@@ -275,7 +291,7 @@ function buildThreeChartFixture(createChart, bars) {
 test("real LC: MACD accepts time-only crosshair when dif is null", async () => {
   const restore = installDom();
   try {
-    const { createChart } = await import(
+    const lc = await import(
       "../node_modules/lightweight-charts/dist/lightweight-charts.development.mjs"
     );
     const time = Date.UTC(2026, 6, 22, 10, 10, 0) / 1000;
@@ -299,7 +315,7 @@ test("real LC: MACD accepts time-only crosshair when dif is null", async () => {
         dif: null,
       },
     ];
-    const { charts, difSeries } = buildThreeChartFixture(createChart, bars);
+    const { charts, difSeries } = buildThreeChartFixture(lc, bars);
 
     let macdCleared = false;
     const originalClear = charts[2].clearCrosshairPosition.bind(charts[2]);
@@ -322,7 +338,7 @@ test("real LC: MACD accepts time-only crosshair when dif is null", async () => {
 test("real LC: time-only crosshair sync keeps sibling charts at the same time coordinate", async () => {
   const restore = installDom();
   try {
-    const { createChart } = await import(
+    const lc = await import(
       "../node_modules/lightweight-charts/dist/lightweight-charts.development.mjs"
     );
     const time = Date.UTC(2026, 6, 22, 10, 10, 0) / 1000;
@@ -347,7 +363,7 @@ test("real LC: time-only crosshair sync keeps sibling charts at the same time co
       },
     ];
     const { charts, priceSeries, volumeSeries, difSeries } = buildThreeChartFixture(
-      createChart,
+      lc,
       bars,
     );
 
@@ -380,7 +396,7 @@ test("real LC: time-only crosshair sync keeps sibling charts at the same time co
 test("real LC: leaving all charts clears synced crosshairs", async () => {
   const restore = installDom();
   try {
-    const { createChart } = await import(
+    const lc = await import(
       "../node_modules/lightweight-charts/dist/lightweight-charts.development.mjs"
     );
     const time = Date.UTC(2026, 6, 22, 10, 10, 0) / 1000;
@@ -405,7 +421,7 @@ test("real LC: leaving all charts clears synced crosshairs", async () => {
       },
     ];
     const { charts, priceSeries, volumeSeries, difSeries } = buildThreeChartFixture(
-      createChart,
+      lc,
       bars,
     );
 
@@ -439,7 +455,7 @@ test("real LC: leaving all charts clears synced crosshairs", async () => {
 test("real LC: aligned plot widths map the same time to the same x coordinate", async () => {
   const restore = installDom();
   try {
-    const { createChart } = await import(
+    const lc = await import(
       "../node_modules/lightweight-charts/dist/lightweight-charts.development.mjs"
     );
     const time = Date.UTC(2026, 6, 22, 10, 10, 0) / 1000;
@@ -453,7 +469,7 @@ test("real LC: aligned plot widths map the same time to the same x coordinate", 
       dif: index % 5 === 0 ? null : 0.01 * index,
     }));
     const { charts, priceSeries, volumeSeries, difSeries } = buildThreeChartFixture(
-      createChart,
+      lc,
       bars,
     );
 

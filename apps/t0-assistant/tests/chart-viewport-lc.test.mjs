@@ -17,13 +17,26 @@ import {
 } from "../renderer/src/charts/chart-viewport.mjs";
 import {
   formatVolumeAxisLabel,
+  formatVolumeAxisLabels,
 } from "../renderer/src/charts/chart-model.mjs";
 import {
   plotWidthsAligned,
   syncChartGroupPriceScaleWidths,
 } from "../renderer/src/charts/chart-scale-alignment.mjs";
 
-// ---- minimal DOM/canvas stub (足以让 lightweight-charts 4.x 初始化与时间轴运算) ----
+
+function stubCssColor(value) {
+  if (typeof value === "string" && /^rgba?\(/i.test(value)) {
+    return value;
+  }
+  if (typeof value === "string" && /^#([0-9a-f]{6})$/i.test(value)) {
+    const n = Number.parseInt(value.slice(1), 16);
+    return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`;
+  }
+  return "rgb(0, 0, 0)";
+}
+
+// ---- minimal DOM/canvas stub (足以让 lightweight-charts 5.x 初始化与时间轴运算) ----
 const noop = () => {};
 const classList = { add: noop, remove: noop, contains: () => false, toggle: noop };
 const mql = {
@@ -105,7 +118,11 @@ function installDom() {
   DOC.defaultView = globalThis;
   globalThis.location = { href: "http://localhost/", search: "", hostname: "localhost", pathname: "/" };
   globalThis.history = { pushState: noop, replaceState: noop };
-  globalThis.getComputedStyle = () => ({ getPropertyValue: () => "" });
+    // LC 5.x ColorParser reads window.getComputedStyle(el).color as rgb/rgba.
+  globalThis.getComputedStyle = (el) => ({
+    getPropertyValue: () => "",
+    color: stubCssColor(el?.style?.color),
+  });
   globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
   // 同步驱动 rAF：LC 的 invalidate mask 在 rAF 回调中处理，no-op 会使
   // setVisibleLogicalRange 不生效。这里排空队列（有界防死循环）。
@@ -127,7 +144,7 @@ function installDom() {
 
 async function makeChartWithBars(n) {
   // 相对路径加载开发构建（可读堆栈）；bare specifier 亦可，此处显式指定 dev 构建。
-  const { createChart } = await import(
+  const { createChart, CandlestickSeries } = await import(
     "../node_modules/lightweight-charts/dist/lightweight-charts.development.mjs"
   );
   const container = makeEl("div");
@@ -148,7 +165,7 @@ async function makeChartWithBars(n) {
       close: 10.5 + i * 0.01,
     });
   }
-  const series = chart.addCandlestickSeries();
+  const series = chart.addSeries(CandlestickSeries);
   series.setData(data);
   globalThis.__flushRaf();
   return chart;
@@ -308,7 +325,7 @@ test("real LC: zoom at the latest edge stays manual; pan back to the latest edge
 test("real LC: volume axis keeps compact labels when MA lines are added first", async () => {
   const restore = installDom();
   try {
-    const { createChart } = await import(
+    const { createChart, CandlestickSeries, HistogramSeries, LineSeries } = await import(
       "../node_modules/lightweight-charts/dist/lightweight-charts.development.mjs"
     );
     const time = Date.UTC(2026, 6, 22, 10, 0, 0) / 1000;
@@ -318,13 +335,14 @@ test("real LC: volume axis keeps compact labels when MA lines are added first", 
     const volumePriceFormat = {
       type: "custom",
       formatter: formatVolumeAxisLabel,
+      tickmarksFormatter: formatVolumeAxisLabels,
       minMove: 1,
     };
     const attachVolumeSeries = (chart) => {
-      const lineSeries = chart.addLineSeries();
+      const lineSeries = chart.addSeries(LineSeries);
       lineSeries.setData([{ time, value: 3_800_000 }]);
       chart
-        .addHistogramSeries({ priceFormat: volumePriceFormat })
+        .addSeries(HistogramSeries, { priceFormat: volumePriceFormat })
         .setData([{ time, value: 4_000_000, color: "#26a69aaa" }]);
       globalThis.__flushRaf();
       return lineSeries;
@@ -343,7 +361,10 @@ test("real LC: volume axis keeps compact labels when MA lines are added first", 
     const withChartFormatter = createChart(container, {
       width: 800,
       height: 200,
-      localization: { priceFormatter: formatVolumeAxisLabel },
+      localization: {
+        priceFormatter: formatVolumeAxisLabel,
+        tickmarksPriceFormatter: formatVolumeAxisLabels,
+      },
     });
     attachVolumeSeries(withChartFormatter);
     assert.equal(
@@ -358,7 +379,7 @@ test("real LC: volume axis keeps compact labels when MA lines are added first", 
 test("real LC: synced chart group plot widths align with large volume labels", async () => {
   const restore = installDom();
   try {
-    const { createChart } = await import(
+    const { createChart, CandlestickSeries, HistogramSeries, LineSeries } = await import(
       "../node_modules/lightweight-charts/dist/lightweight-charts.development.mjs"
     );
     const width = 800;
@@ -392,7 +413,7 @@ test("real LC: synced chart group plot widths align with large volume labels", a
     });
     globalThis.__flushRaf();
 
-    charts[0].addCandlestickSeries().setData(
+    charts[0].addSeries(CandlestickSeries).setData(
       bars.map(({ time, open, high, low, close }) => ({
         time,
         open,
@@ -401,10 +422,11 @@ test("real LC: synced chart group plot widths align with large volume labels", a
         close,
       })),
     );
-    charts[1].addHistogramSeries({
+    charts[1].addSeries(HistogramSeries, {
       priceFormat: {
         type: "custom",
         formatter: formatVolumeAxisLabel,
+        tickmarksFormatter: formatVolumeAxisLabels,
         minMove: 1,
       },
     }).setData(
@@ -414,7 +436,7 @@ test("real LC: synced chart group plot widths align with large volume labels", a
         color: close >= open ? "#26a69aaa" : "#ef5350aa",
       })),
     );
-    charts[2].addHistogramSeries().setData(
+    charts[2].addSeries(HistogramSeries).setData(
       bars.map(({ time, macd }) => ({
         time,
         value: macd,

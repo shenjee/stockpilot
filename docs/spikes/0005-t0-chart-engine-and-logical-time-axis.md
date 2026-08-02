@@ -263,3 +263,24 @@ dist/assets/index-adgXV7xU.js  193.23 kB │ gzip: 59.10 kB │ map: 505.00 kB
 | 性能原始数据 | ❌ 未生成（需在真实浏览器环境测量） |
 | 截图对比 | ❌ 未生成 |
 | PR | ✅ [#31](https://github.com/shenjee/stockpilot/pull/31) |
+
+---
+
+## 11. 后续迁移记录（LC 5.2.0）
+
+> 本 Spike 当时验证的是 `lightweight-charts 4.2.0`。生产基线已按 ADR 0009 /
+> Issue #124 迁移到稳定版 **`lightweight-charts 5.2.0`**。
+
+迁移验收要点（实现位于 `apps/t0-assistant`，不再修改本 Spike 原型目录）：
+
+| 项 | 结论 |
+|---|---|
+| npm 依赖锁定 | `apps/t0-assistant/package.json` / lockfile → `5.2.0` |
+| Series API | `addSeries(CandlestickSeries\|LineSeries\|HistogramSeries, …)` |
+| Markers | 成交标记改用 `createSeriesMarkers` |
+| Primitives | `IPrimitivePaneView` / `IPrimitivePaneRenderer` / `PrimitivePaneViewZOrder` |
+| 双格式 | `formatter`（精确两位）+ `tickmarksFormatter`（普通刻度规则） |
+| 回归 | 视口、十字光标、固定右轴宽、绘图区对齐的真实 LC 测试继续覆盖 |
+
+逻辑时间轴、FOLLOWING/MANUAL 状态机与“项目拥有视口状态”的结论不变；仅引擎主版本与
+公开 API 形状按 ADR 0009 更新。

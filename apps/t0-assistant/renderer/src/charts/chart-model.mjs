@@ -28,6 +28,10 @@ export function formatVolumeAxisLabel(value, locale = "zh-CN") {
     return "0";
   }
   // chart-level priceFormatter 只接收 price；locale 默认 zh-CN，国际化需包闭包注入。
+  // LC 5.x tickmarksFormatter 可能传入数组 index 作为第二参数，需兜底。
+  if (typeof locale !== "string") {
+    locale = "zh-CN";
+  }
   if (locale.startsWith("zh")) {
     if (value >= 1e8) {
       return `${formatCompactScaled(value, 1e8)}亿`;
@@ -53,6 +57,13 @@ export function formatVolumeAxisLabel(value, locale = "zh-CN") {
     return `${formatCompactScaled(value, 1e3)}K`;
   }
   return String(Math.round(value));
+}
+
+export function formatVolumeAxisLabels(prices) {
+  if (!Array.isArray(prices)) {
+    return [];
+  }
+  return prices.map((price) => formatVolumeAxisLabel(price));
 }
 
 function formatCompactScaled(value, divisor) {

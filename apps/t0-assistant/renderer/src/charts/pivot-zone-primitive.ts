@@ -1,7 +1,7 @@
 /**
  * 笔中枢（pivot zone）图层原语。
  *
- * Lightweight Charts 4.x 没有原生矩形/box 基元；用 series primitive 在价格
+ * Lightweight Charts 没有原生矩形/box 基元；用 series primitive 在价格
  * 面板上绘制半透明填充矩形表达中枢区域，避免“两条普通指标线”造成的歧义。
  * active 与 inactive 中枢使用不同填充/边框样式以可辨识。
  *
@@ -12,12 +12,12 @@
 import type {
   Coordinate,
   IChartApi,
+  IPrimitivePaneRenderer,
+  IPrimitivePaneView,
   ISeriesApi,
   ISeriesPrimitive,
-  ISeriesPrimitivePaneRenderer,
-  ISeriesPrimitivePaneView,
+  PrimitivePaneViewZOrder,
   SeriesAttachedParameter,
-  SeriesPrimitivePaneViewZOrder,
   SeriesType,
   Time,
 } from "lightweight-charts";
@@ -49,7 +49,7 @@ const INACTIVE_BORDER = "rgba(148, 163, 184, 0.55)";
 
 type PriceSeries = ISeriesApi<"Candlestick"> | ISeriesApi<"Line">;
 
-class PivotZoneRenderer implements ISeriesPrimitivePaneRenderer {
+class PivotZoneRenderer implements IPrimitivePaneRenderer {
   constructor(
     private readonly zones: readonly PivotZonePrimitiveData[],
     private readonly chart: IChartApi,
@@ -110,15 +110,15 @@ class PivotZoneRenderer implements ISeriesPrimitivePaneRenderer {
   }
 }
 
-class PivotZonePaneView implements ISeriesPrimitivePaneView {
+class PivotZonePaneView implements IPrimitivePaneView {
   constructor(private readonly primitive: PivotZonePrimitive) {}
 
-  zOrder(): SeriesPrimitivePaneViewZOrder {
+  zOrder(): PrimitivePaneViewZOrder {
     // 绘制在 K 线之下、网格之上，保证 K 线可见。
     return "bottom";
   }
 
-  renderer(): ISeriesPrimitivePaneRenderer | null {
+  renderer(): IPrimitivePaneRenderer | null {
     const chart = this.primitive.getChart();
     const series = this.primitive.getSeries();
     if (!chart || !series) {
@@ -156,7 +156,7 @@ export class PivotZonePrimitive implements ISeriesPrimitive {
     // 渲染器在 draw 时即时读取最新 zones，无需缓存视图。
   }
 
-  paneViews(): readonly ISeriesPrimitivePaneView[] {
+  paneViews(): readonly IPrimitivePaneView[] {
     return [this.paneView];
   }
 

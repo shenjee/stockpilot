@@ -29,6 +29,7 @@ ADR 只固化具有长期影响的技术选择；实现细节、短期任务进�
 | [0006](./0006-electron-managed-python-process.md) | Accepted | Electron 管理 Python 服务生命周期 | Electron/Python Spike |
 | [0007](./0007-local-python-transport.md) | Accepted | Electron 与 Python 的本地请求/事件传输 | Electron/Python Spike；依赖 0006 的进程边界 |
 | [0008](./0008-czsc-update-and-rebuild-strategy.md) | Accepted | 5 分钟 CZSC 使用 full project-level rebuild | 发布前修复项目环境并执行性能回归 |
+| [0009](./0009-upgrade-lightweight-charts-to-5.md) | Accepted | T+0 图表引擎升级到 Lightweight Charts 5.2.0 | #124；替代 0005 的 4.x 版本选择 |
 
 ## T+0 Assistant 决策顺序
 
