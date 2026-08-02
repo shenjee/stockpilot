@@ -130,11 +130,16 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             # merging the cached prefix and rebuilding the projection are
             # serialized so two successful branches cannot publish projections
             # from torn combinations of cached inputs.
+            # Preview must stay on the effective session day (weekend / pre-open
+            # wall clocks resolve to a prior trade_date via Live Market View).
+            preview_at = observed_at
+            if observed_at.date() != self._session.trade_date:
+                preview_at = self._session.end
             result = WorkbenchPipeline(
                 session=self._session,
                 market_input_port=_FixedMarketInput(updated_input),
                 analyzer=self._analyzer,
-            ).preview(observed_at)
+            ).preview(preview_at)
             self._market_input = updated_input
 
         snapshot = LiveSnapshotCandidate(

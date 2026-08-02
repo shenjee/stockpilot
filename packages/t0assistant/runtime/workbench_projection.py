@@ -236,9 +236,15 @@ def _validate_session_consistency(
     )
 
     if session.session_type == "live":
-        if session.trade_date is not None:
+        # Live exposes effective_trade_date for minimal visibility (#130 PR-A).
+        # Null remains accepted for transitional snapshots; when present it must
+        # match the pipeline computation day.
+        if (
+            session.trade_date is not None
+            and session.trade_date != result_trade_date
+        ):
             raise WorkbenchProjectionError(
-                "live session trade_date must be null"
+                "live session.trade_date must match pipeline_result.trade_date"
             )
     else:  # replay or historical
         if session.trade_date is None:

@@ -511,7 +511,7 @@ class ValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(WorkbenchProjectionError, "session_id"):
             build_workbench_projection(result, session)
 
-    def test_live_rejects_non_null_trade_date(self) -> None:
+    def test_live_accepts_matching_effective_trade_date(self) -> None:
         result = _make_pipeline_result()
         session = SessionProjectionInput(
             session_id="live-1",
@@ -521,7 +521,20 @@ class ValidationTests(unittest.TestCase):
             state="ready",
             revision=1,
         )
-        with self.assertRaisesRegex(WorkbenchProjectionError, "live"):
+        snapshot = build_workbench_projection(result, session).to_dict()
+        self.assertEqual(snapshot["session"]["trade_date"], "2026-07-22")
+
+    def test_live_rejects_mismatched_trade_date(self) -> None:
+        result = _make_pipeline_result()
+        session = SessionProjectionInput(
+            session_id="live-1",
+            session_type="live",
+            symbol="sh.600000",
+            trade_date="2026-07-23",
+            state="ready",
+            revision=1,
+        )
+        with self.assertRaisesRegex(WorkbenchProjectionError, "trade_date"):
             build_workbench_projection(result, session)
 
     def test_replay_requires_replay_metadata(self) -> None:

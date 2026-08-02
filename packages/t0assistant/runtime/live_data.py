@@ -4,10 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, time
 from math import ceil
 from typing import Any, Protocol
 
+from packages.marketdata.calendar_query import (
+    CalendarQueryPort,
+    MarketContextCalendarAdapter,
+)
 from packages.marketdata.provider_request_queue import ProviderRequestPriority
 from packages.marketdata.services.market_context_service import MarketContextService
 from packages.marketdata.t0_schema import standardize_quote
@@ -18,6 +22,11 @@ from ._market_bars import (
     parse_market_timestamp,
 )
 from .coordinator import SessionSpec, SessionType
+from .live_market_view import (
+    LiveMarketViewError,
+    ResolvedLiveMarketContext,
+    resolve_live_market_context,
+)
 from .live_session import LiveInitialInputPort, PreparedLiveWarmup
 from .replay_data import (
     _InMemoryMarketInputPort,
@@ -37,6 +46,10 @@ class LiveDataError(RuntimeMarketDataError):
 
 class LiveDataUnavailableError(LiveDataError):
     """The first Live snapshot cannot be prepared from current market data."""
+
+
+class LiveCalendarUnavailableError(LiveDataError):
+    """Calendar coverage is insufficient to authoritatively resolve Live."""
 
 
 class LiveMarketDataPort(Protocol):
@@ -81,6 +94,7 @@ class LiveDataPreparator(LiveInitialInputPort):
         market_data: LiveMarketDataPort,
         market_context: MarketContextService,
         *,
+        calendar: CalendarQueryPort | None = None,
         quote_reader: LiveQuotePort | None = None,
         clock: Callable[[], datetime] | None = None,
         session_validator_factory: Callable[[SessionSpec], Callable[[], bool] | None]
@@ -91,6 +105,7 @@ class LiveDataPreparator(LiveInitialInputPort):
             raise TypeError("market_context must be a MarketContextService")
         self._market_data = market_data
         self._market_context = market_context
+        self._calendar = calendar or MarketContextCalendarAdapter(market_context)
         self._quote_reader = quote_reader
         self._clock = clock or datetime.now
         self._session_validator_factory = session_validator_factory
@@ -112,9 +127,11 @@ class LiveDataPreparator(LiveInitialInputPort):
         resolved_symbol, code, market = _parse_symbol(spec.symbol)
         session_validator = self._session_validator(spec)
         observed_now = self._resolve_observed_now()
-
-        session = self._market_context.require_session(observed_now.date(), market)
+        resolved = self._resolve_market_context(observed_now=observed_now, market=market)
+        session = resolved.market_session
         trade_date_str = session.trade_date.isoformat()
+        # Bar closure filter uses wall clock; target_time stays on effective day.
+        bar_observed_at = _bar_filter_observed_at(observed_now, session.trade_date)
 
         preheat_bars = self._load_preheat_5m(
             code=code,
@@ -129,7 +146,7 @@ class LiveDataPreparator(LiveInitialInputPort):
             trade_date=trade_date_str,
             timeframe="1m",
             session_validator=session_validator,
-            observed_at=observed_now,
+            observed_at=bar_observed_at,
         )
         official_5m = self._load_target_day_bars(
             code=code,
@@ -137,7 +154,7 @@ class LiveDataPreparator(LiveInitialInputPort):
             trade_date=trade_date_str,
             timeframe="5m",
             session_validator=session_validator,
-            observed_at=observed_now,
+            observed_at=bar_observed_at,
         )
         daily_history = self._load_daily_history(
             code=code,
@@ -151,13 +168,15 @@ class LiveDataPreparator(LiveInitialInputPort):
         target_time = _select_target_time(
             observed_now=observed_now,
             trade_date=session.trade_date,
+            session_end=session.end,
             bars_1m=bars_1m,
             official_5m=official_5m,
             quote_snapshots=quote_snapshots,
         )
         if target_time is None:
             raise LiveDataUnavailableError(
-                "live initial load requires a quote or intraday bars for the current trade_date"
+                "live initial load requires a quote or intraday bars for the "
+                f"effective trade_date {trade_date_str}"
             )
 
         market_input_port = _InMemoryMarketInputPort(
@@ -189,14 +208,15 @@ class LiveDataPreparator(LiveInitialInputPort):
             raise LiveDataError("refresh timeframe must be '1m' or '5m'")
         _, code, market = self._refresh_identity(spec)
         observed_now = self._resolve_observed_now()
-        session = self._market_context.require_session(observed_now.date(), market)
+        resolved = self._resolve_market_context(observed_now=observed_now, market=market)
+        session = resolved.market_session
         return self._load_target_day_bars(
             code=code,
             market=market,
             trade_date=session.trade_date.isoformat(),
             timeframe=timeframe,
             session_validator=self._session_validator(spec),
-            observed_at=observed_now,
+            observed_at=_bar_filter_observed_at(observed_now, session.trade_date),
         )
 
     def load_refresh_quotes(
@@ -227,6 +247,21 @@ class LiveDataPreparator(LiveInitialInputPort):
             )
         return observed_now
 
+    def _resolve_market_context(
+        self,
+        *,
+        observed_now: datetime,
+        market: str,
+    ) -> ResolvedLiveMarketContext:
+        try:
+            return resolve_live_market_context(
+                self._calendar,
+                observed_now=observed_now,
+                market=market,
+            )
+        except LiveMarketViewError as exc:
+            raise LiveCalendarUnavailableError(str(exc)) from exc
+
     def _session_validator(
         self,
         spec: SessionSpec,
@@ -245,7 +280,7 @@ class LiveDataPreparator(LiveInitialInputPort):
         session_validator: Callable[[], bool] | None,
     ) -> tuple[Mapping[str, Any], ...]:
         collected: list[Mapping[str, Any]] = []
-        batch_end = self._market_context.previous_trading_day(
+        batch_end = self._calendar.previous_trading_day(
             session.trade_date,
             market,
         )
@@ -259,7 +294,7 @@ class LiveDataPreparator(LiveInitialInputPort):
             batch_days = max(3, ceil(remaining / 48) + 2)
             batch_start = batch_end
             for _ in range(batch_days - 1):
-                previous = self._market_context.previous_trading_day(
+                previous = self._calendar.previous_trading_day(
                     batch_start,
                     market,
                 )
@@ -286,7 +321,7 @@ class LiveDataPreparator(LiveInitialInputPort):
                 collected,
                 session_start=session.start,
             )
-            batch_end = self._market_context.previous_trading_day(
+            batch_end = self._calendar.previous_trading_day(
                 batch_start,
                 market,
             )
@@ -325,7 +360,7 @@ class LiveDataPreparator(LiveInitialInputPort):
             )
             if _live_bar_is_closed_at(row, observed_at)
         ]
-        session = self._market_context.require_session(trade_date, market)
+        session = self._calendar.require_session(trade_date, market)
         return _normalize_target_day_bars(rows, session=session)
 
     def _load_daily_history(
@@ -389,6 +424,7 @@ def _select_target_time(
     *,
     observed_now: datetime,
     trade_date: date,
+    session_end: datetime,
     bars_1m: Sequence[Mapping[str, Any]],
     official_5m: Sequence[Mapping[str, Any]],
     quote_snapshots: Sequence[Mapping[str, Any]],
@@ -411,7 +447,18 @@ def _select_target_time(
     if not candidates:
         return None
     latest = max(candidates)
+    if observed_now.date() != trade_date:
+        # Closed / holiday / pre-open view of a prior session: stay on that day.
+        return min(latest, session_end)
     return observed_now if observed_now >= latest else latest
+
+
+def _bar_filter_observed_at(observed_now: datetime, trade_date: date) -> datetime:
+    """Allow closed bars from an earlier effective day when wall clock is later."""
+
+    if observed_now.date() == trade_date:
+        return observed_now
+    return datetime.combine(trade_date, time(23, 59, 59))
 
 
 def _extract_live_rows(result: Any) -> list[Mapping[str, Any]]:

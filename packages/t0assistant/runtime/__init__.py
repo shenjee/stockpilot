@@ -52,12 +52,18 @@ from .historical_snapshot import (
     build_historical_snapshot,
 )
 from .live_data import (
+    LiveCalendarUnavailableError,
     LiveDataError,
     LiveDataPreparator,
     LiveDataUnavailableError,
     LiveMarketDataPort,
     LivePreparationConfig,
     LiveQuotePort,
+)
+from .live_market_view import (
+    LiveMarketViewError,
+    ResolvedLiveMarketContext,
+    resolve_live_market_context,
 )
 from .live_projection_store import (
     LiveAcceptedEvent,
@@ -153,10 +159,13 @@ __all__ = [
     "DynamicFiveMinuteAggregator",
     "HistoricalDataUnavailableError",
     "HistoricalSnapshotError",
+    "LiveCalendarUnavailableError",
     "LiveDataError",
     "LiveDataPreparator",
     "LiveDataUnavailableError",
+    "LiveMarketViewError",
     "LiveAcceptedEvent",
+    "ResolvedLiveMarketContext",
     "LiveIncrementalUpdate",
     "LiveInitialInputPort",
     "LiveBranchDataPort",
@@ -226,4 +235,5 @@ __all__ = [
     "new_task_id",
     "project_market_at",
     "project_quote_at",
+    "resolve_live_market_context",
 ]

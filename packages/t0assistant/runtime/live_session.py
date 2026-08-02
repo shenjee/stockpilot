@@ -16,7 +16,7 @@ through the backend event boundary.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from threading import Condition, Event, RLock, Thread, current_thread
 from typing import Callable, Protocol
 
@@ -76,11 +76,17 @@ class LiveSnapshotCandidate:
     def build_projection(self, revision: int) -> WorkbenchProjection:
         """Build a full workbench snapshot once a revision is assigned."""
 
+        result_trade_date = self.pipeline_result.trade_date
+        trade_date = (
+            result_trade_date.isoformat()
+            if isinstance(result_trade_date, date)
+            else result_trade_date
+        )
         session = SessionProjectionInput(
             session_id=self.session_id,
             session_type="live",
             symbol=self.symbol,
-            trade_date=None,
+            trade_date=trade_date,
             state=self.state,
             revision=revision,
         )
