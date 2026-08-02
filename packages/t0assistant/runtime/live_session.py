@@ -43,6 +43,8 @@ class PreparedLiveWarmup:
     market_session: MarketSession
     target_time: datetime
     market_input_port: MarketInputPort
+    calendar_status: str = "available"
+    market_phase: str = "closed"
 
 
 class LiveInitialInputPort(Protocol):
@@ -72,6 +74,8 @@ class LiveSnapshotCandidate:
     symbol: str
     pipeline_result: PipelineResult
     state: str = "ready"
+    calendar_status: str = "available"
+    market_phase: str = "closed"
 
     def build_projection(self, revision: int) -> WorkbenchProjection:
         """Build a full workbench snapshot once a revision is assigned."""
@@ -90,7 +94,15 @@ class LiveSnapshotCandidate:
             state=self.state,
             revision=revision,
         )
-        return build_workbench_projection(self.pipeline_result, session)
+        return build_workbench_projection(
+            self.pipeline_result,
+            session,
+            live_market_view={
+                "effective_trade_date": trade_date,
+                "calendar_status": self.calendar_status,
+                "market_phase": self.market_phase,
+            },
+        )
 
 
 LiveSnapshotCandidateHandler = Callable[[LiveSnapshotCandidate], None]
@@ -218,6 +230,8 @@ class LiveSession:
                     generation=self._spec.generation,
                     symbol=self._spec.symbol,
                     pipeline_result=result,
+                    calendar_status=prepared.calendar_status,
+                    market_phase=prepared.market_phase,
                 )
                 if self._retired.is_set():
                     return

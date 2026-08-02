@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime
+from datetime import date, datetime
 from threading import Event, RLock, Thread, current_thread
 from typing import Callable, Mapping, Protocol, Sequence
 
@@ -39,11 +39,14 @@ class LiveBranchDataPort(LiveInitialInputPort, Protocol):
         spec: SessionSpec,
         *,
         timeframe: str,
+        trade_date: date | str,
     ) -> Sequence[Mapping[str, object]]: ...
 
     def load_refresh_quotes(
         self,
         spec: SessionSpec,
+        *,
+        trade_date: date | str,
     ) -> Sequence[Mapping[str, object]]: ...
 
 
@@ -54,6 +57,10 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
     cannot prevent the scheduler's other workers from reading their sources.
     The short locked section only merges normalized rows and rebuilds the
     shared workbench projection from that coherent prefix.
+
+    Until PR-B atomic day switching, refresh is pinned to the prepared
+    ``market_session.trade_date`` so a pre-open Session cannot ingest the next
+    session's rows after 09:30.
     """
 
     def __init__(
@@ -67,6 +74,8 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
         self._lock = RLock()
         self._session = None
         self._market_input: PipelineMarketInput | None = None
+        self._calendar_status = "available"
+        self._market_phase = "closed"
 
     def prepare(
         self,
@@ -82,6 +91,8 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
         with self._lock:
             self._session = prepared.market_session
             self._market_input = market_input
+            self._calendar_status = prepared.calendar_status
+            self._market_phase = prepared.market_phase
         return prepared
 
     def refresh(
@@ -92,8 +103,16 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
         observed_at: datetime,
         latest_data_time: datetime | None,
     ) -> LiveRefreshResult:
+        with self._lock:
+            if self._market_input is None or self._session is None:
+                raise RuntimeError("Live refresh cannot run before initial prepare")
+            trade_date = self._session.trade_date
+            calendar_status = self._calendar_status
+            market_phase = self._market_phase
         if kind is LiveRefreshKind.QUOTE:
-            rows = tuple(self._source.load_refresh_quotes(spec))
+            rows = tuple(
+                self._source.load_refresh_quotes(spec, trade_date=trade_date)
+            )
         else:
             rows = tuple(
                 self._source.load_refresh_bars(
@@ -103,6 +122,7 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
                         if kind is LiveRefreshKind.ONE_MINUTE
                         else "5m"
                     ),
+                    trade_date=trade_date,
                 )
             )
         data_time = _latest_row_time(
@@ -119,6 +139,9 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
         with self._lock:
             if self._market_input is None or self._session is None:
                 raise RuntimeError("Live refresh cannot run before initial prepare")
+            if self._session.trade_date != trade_date:
+                # Prepared day changed under us; drop this branch read.
+                return LiveRefreshResult.no_change()
             if kind is LiveRefreshKind.QUOTE:
                 updated_input = replace(self._market_input, quote_snapshots=rows)
             elif kind is LiveRefreshKind.ONE_MINUTE:
@@ -130,8 +153,7 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             # merging the cached prefix and rebuilding the projection are
             # serialized so two successful branches cannot publish projections
             # from torn combinations of cached inputs.
-            # Preview must stay on the effective session day (weekend / pre-open
-            # wall clocks resolve to a prior trade_date via Live Market View).
+            # Preview must stay on the prepared effective session day.
             preview_at = observed_at
             if observed_at.date() != self._session.trade_date:
                 preview_at = self._session.end
@@ -147,6 +169,8 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             generation=spec.generation,
             symbol=spec.symbol,
             pipeline_result=result,
+            calendar_status=calendar_status,
+            market_phase=market_phase,
         ).build_projection(0).to_dict()
         return LiveRefreshResult(
             data_time=data_time,

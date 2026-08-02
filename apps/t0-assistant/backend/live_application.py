@@ -14,6 +14,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Callable
 
+from packages.marketdata.calendar_query import MarketContextCalendarAdapter
 from packages.marketdata.market_data import TencentStockDataProvider
 from packages.marketdata.repositories.kline_store import KLineStore
 from packages.marketdata.runtime_paths import RuntimePaths
@@ -38,9 +39,9 @@ from packages.t0assistant.runtime import (
 )
 
 try:
-    from backend.historical_snapshot_api import _build_market_context
+    from backend.historical_snapshot_api import _build_live_market_context
 except ImportError:
-    from historical_snapshot_api import _build_market_context
+    from historical_snapshot_api import _build_live_market_context
 
 
 class LiveSessionFactory:
@@ -554,7 +555,7 @@ def create_live_application_api(
     paths.ensure_dirs()
     resolved_provider = provider or TencentStockDataProvider()
     store = KLineStore(market_db_path or paths.db_dir / "market_data.sqlite")
-    context = _build_market_context(
+    context, authoritative_through = _build_live_market_context(
         resolved_provider,
         store,
         (clock or date.today)(),
@@ -571,6 +572,10 @@ def create_live_application_api(
     preparator = LiveDataPreparator(
         market_data,
         context,
+        calendar=MarketContextCalendarAdapter(
+            context,
+            authoritative_through=authoritative_through,
+        ),
         quote_reader=resolved_provider,
     )
     api = LiveApplicationApi(

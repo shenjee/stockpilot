@@ -55,6 +55,15 @@ def _weekday_dates(start: date, end: date) -> list[date]:
     ]
 
 
+def _benchmark_cached_dates(store: KLineStore) -> list[str]:
+    """Return cached benchmark (or any) trade dates without network I/O."""
+
+    cached_dates = store.trade_dates(_BENCHMARK_CODE, market=_BENCHMARK_MARKET)
+    if not cached_dates:
+        cached_dates = store.all_trade_dates()
+    return list(cached_dates)
+
+
 def _build_market_context(
     provider: TencentStockDataProvider,
     store: KLineStore,
@@ -70,15 +79,14 @@ def _build_market_context(
     ``historical_data_unavailable`` when the provider cannot supply bars.
 
     This synchronous path intentionally avoids network I/O so service startup
-    stays fast and reliable.
+    stays fast and reliable.  Live must not use this builder — see
+    :func:`_build_live_market_context`.
     """
 
     coverage_end = today
     coverage_start = today - timedelta(days=_BENCHMARK_LOOKBACK_DAYS)
 
-    cached_dates = store.trade_dates(_BENCHMARK_CODE, market=_BENCHMARK_MARKET)
-    if not cached_dates:
-        cached_dates = store.all_trade_dates()
+    cached_dates = _benchmark_cached_dates(store)
 
     if cached_dates:
         first_cached = date.fromisoformat(cached_dates[0])
@@ -94,6 +102,48 @@ def _build_market_context(
         trading_days=[value.isoformat() for value in trading_days],
         coverage_start=trading_days[0].isoformat(),
         coverage_end=coverage_end.isoformat(),
+    )
+
+
+def _build_live_market_context(
+    provider: TencentStockDataProvider,
+    store: KLineStore,
+    today: date,
+) -> tuple[MarketContextService, date]:
+    """Build Live calendar evidence without synthesizing weekday opens.
+
+    Unlike :func:`_build_market_context`, this does **not** union every weekday
+    into ``trading_days``.  Working-day holidays (National Day, Spring Festival,
+    etc.) therefore stay closed when absent from the benchmark cache, so Live
+    Market View can fall back to the previous trading day (#130).
+
+    Returns ``(context, authoritative_through)``.  ``authoritative_through`` is
+    the last cached open day when evidence exists; weekdays after that bound
+    are ``day_status=unknown`` for the Calendar adapter.
+    """
+
+    del provider  # reserved for future live calendar enrichment; no I/O here
+    coverage_end = today
+    coverage_start = today - timedelta(days=_BENCHMARK_LOOKBACK_DAYS)
+    cached_dates = _benchmark_cached_dates(store)
+
+    if cached_dates:
+        cached_day_set = {date.fromisoformat(value) for value in cached_dates}
+        coverage_start = min(coverage_start, min(cached_day_set))
+        trading_days = sorted(cached_day_set)
+        authoritative_through = trading_days[-1]
+    else:
+        # Cold start with no benchmark evidence: weekday best-effort only.
+        trading_days = _weekday_dates(coverage_start, coverage_end)
+        authoritative_through = coverage_end
+
+    return (
+        MarketContextService(
+            trading_days=[value.isoformat() for value in trading_days],
+            coverage_start=trading_days[0].isoformat(),
+            coverage_end=coverage_end.isoformat(),
+        ),
+        authoritative_through,
     )
 
 

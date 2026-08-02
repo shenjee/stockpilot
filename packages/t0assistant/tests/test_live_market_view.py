@@ -105,6 +105,30 @@ class ResolveLiveMarketContextTests(unittest.TestCase):
                 market="sh",
             )
 
+    def test_unknown_weekday_after_authoritative_through(self) -> None:
+        from packages.marketdata.calendar_query import MarketContextCalendarAdapter
+        from packages.marketdata.services.market_context_service import (
+            MarketContextService,
+        )
+
+        context = MarketContextService(
+            ["2026-09-29", "2026-09-30"],
+            coverage_start="2026-09-29",
+            coverage_end="2026-10-02",
+        )
+        calendar = MarketContextCalendarAdapter(
+            context,
+            authoritative_through="2026-09-30",
+        )
+        resolved = resolve_live_market_context(
+            calendar,
+            observed_now=datetime(2026, 10, 2, 10, 0, 0),
+            market="sh",
+        )
+        self.assertEqual(resolved.effective_trade_date.isoformat(), "2026-09-30")
+        self.assertEqual(resolved.calendar_status, "unavailable")
+        self.assertEqual(resolved.market_phase, "unknown")
+
 
 if __name__ == "__main__":
     unittest.main()

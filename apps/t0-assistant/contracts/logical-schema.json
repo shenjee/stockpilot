@@ -204,6 +204,18 @@
         "meta": {"type": "object"}
       }
     },
+    "live_market_view": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["effective_trade_date", "calendar_status", "market_phase"],
+      "properties": {
+        "effective_trade_date": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+        "calendar_status": {"enum": ["available", "unavailable"]},
+        "market_phase": {
+          "enum": ["unknown", "pre_open", "morning", "lunch_break", "afternoon", "closed", "market_closed"]
+        }
+      }
+    },
     "workbench_snapshot": {
       "type": "object",
       "additionalProperties": false,
@@ -215,7 +227,8 @@
         "market": {"$ref": "#/$defs/market"},
         "indicators": {"$ref": "#/$defs/indicators"},
         "chan_analysis": {"$ref": "#/$defs/chan_analysis"},
-        "warnings": {"type": "array", "items": {"$ref": "#/$defs/warning"}}
+        "warnings": {"type": "array", "items": {"$ref": "#/$defs/warning"}},
+        "live_market_view": {"$ref": "#/$defs/live_market_view"}
       }
     }
   }

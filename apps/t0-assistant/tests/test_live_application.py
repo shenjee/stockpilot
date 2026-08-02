@@ -120,8 +120,8 @@ class _DeterministicLiveInput:
     def queue_refresh(self, branch: str, *outcomes: object) -> None:
         self.refresh_outcomes[branch].extend(outcomes)
 
-    def load_refresh_bars(self, spec, *, timeframe):
-        self.refresh_requests.append(timeframe)
+    def load_refresh_bars(self, spec, *, timeframe, trade_date):
+        self.refresh_requests.append((timeframe, str(trade_date)))
         return self._refresh_value(
             timeframe,
             (
@@ -131,8 +131,8 @@ class _DeterministicLiveInput:
             ),
         )
 
-    def load_refresh_quotes(self, spec):
-        self.refresh_requests.append("quote")
+    def load_refresh_quotes(self, spec, *, trade_date):
+        self.refresh_requests.append(("quote", str(trade_date)))
         return self._refresh_value("quote", [])
 
     def _refresh_value(self, branch, default):

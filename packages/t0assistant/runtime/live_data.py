@@ -194,6 +194,8 @@ class LiveDataPreparator(LiveInitialInputPort):
             market_session=session,
             target_time=target_time,
             market_input_port=market_input_port,
+            calendar_status=resolved.calendar_status,
+            market_phase=resolved.market_phase,
         )
 
     def load_refresh_bars(
@@ -201,35 +203,48 @@ class LiveDataPreparator(LiveInitialInputPort):
         spec: SessionSpec,
         *,
         timeframe: str,
+        trade_date: date | str,
     ) -> tuple[Mapping[str, Any], ...]:
-        """Read one normalized intraday branch without coupling refreshes."""
+        """Read one normalized intraday branch without coupling refreshes.
+
+        ``trade_date`` must be the Session's prepared effective trade date.
+        Refresh must not re-resolve the wall-clock effective day until PR-B
+        atomic day switching owns that transition.
+        """
 
         if timeframe not in {"1m", "5m"}:
             raise LiveDataError("refresh timeframe must be '1m' or '5m'")
         _, code, market = self._refresh_identity(spec)
         observed_now = self._resolve_observed_now()
-        resolved = self._resolve_market_context(observed_now=observed_now, market=market)
-        session = resolved.market_session
+        pinned_trade_date = _as_trade_date(trade_date)
         return self._load_target_day_bars(
             code=code,
             market=market,
-            trade_date=session.trade_date.isoformat(),
+            trade_date=pinned_trade_date.isoformat(),
             timeframe=timeframe,
             session_validator=self._session_validator(spec),
-            observed_at=_bar_filter_observed_at(observed_now, session.trade_date),
+            observed_at=_bar_filter_observed_at(observed_now, pinned_trade_date),
         )
 
     def load_refresh_quotes(
         self,
         spec: SessionSpec,
+        *,
+        trade_date: date | str,
     ) -> tuple[Mapping[str, Any], ...]:
-        """Read only the normalized quote branch."""
+        """Read only the normalized quote branch for the prepared trade date."""
 
         _, code, market = self._refresh_identity(spec)
-        return self._load_quote_snapshots(
+        pinned_trade_date = _as_trade_date(trade_date)
+        snapshots = self._load_quote_snapshots(
             code=code,
             market=market,
             suppress_errors=False,
+        )
+        return tuple(
+            row
+            for row in snapshots
+            if _quote_belongs_to_trade_date(row, pinned_trade_date)
         )
 
     def _refresh_identity(self, spec: SessionSpec) -> tuple[str, str, str]:
@@ -459,6 +474,25 @@ def _bar_filter_observed_at(observed_now: datetime, trade_date: date) -> datetim
     if observed_now.date() == trade_date:
         return observed_now
     return datetime.combine(trade_date, time(23, 59, 59))
+
+
+def _as_trade_date(value: date | str) -> date:
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    try:
+        return date.fromisoformat(str(value))
+    except (TypeError, ValueError) as exc:
+        raise LiveDataError("trade_date must use YYYY-MM-DD") from exc
+
+
+def _quote_belongs_to_trade_date(row: Mapping[str, Any], trade_date: date) -> bool:
+    timestamp = row.get("timestamp")
+    if not isinstance(timestamp, str):
+        return False
+    try:
+        return parse_market_timestamp(timestamp).date() == trade_date
+    except (TypeError, ValueError):
+        return False
 
 
 def _extract_live_rows(result: Any) -> list[Mapping[str, Any]]:

@@ -524,6 +524,56 @@ class ValidationTests(unittest.TestCase):
         snapshot = build_workbench_projection(result, session).to_dict()
         self.assertEqual(snapshot["session"]["trade_date"], "2026-07-22")
 
+    def test_live_market_view_dimensions_are_projected(self) -> None:
+        result = _make_pipeline_result()
+        session = SessionProjectionInput(
+            session_id="live-1",
+            session_type="live",
+            symbol="sh.600000",
+            trade_date="2026-07-22",
+            state="ready",
+            revision=1,
+        )
+        snapshot = build_workbench_projection(
+            result,
+            session,
+            live_market_view={
+                "effective_trade_date": "2026-07-22",
+                "calendar_status": "unavailable",
+                "market_phase": "unknown",
+            },
+        ).to_dict()
+        self.assertEqual(
+            snapshot["live_market_view"],
+            {
+                "effective_trade_date": "2026-07-22",
+                "calendar_status": "unavailable",
+                "market_phase": "unknown",
+            },
+        )
+        _logical_validator("workbench_snapshot").validate(snapshot)
+
+    def test_live_market_view_rejects_unavailable_without_unknown_phase(self) -> None:
+        result = _make_pipeline_result()
+        session = SessionProjectionInput(
+            session_id="live-1",
+            session_type="live",
+            symbol="sh.600000",
+            trade_date="2026-07-22",
+            state="ready",
+            revision=1,
+        )
+        with self.assertRaisesRegex(WorkbenchProjectionError, "market_phase"):
+            build_workbench_projection(
+                result,
+                session,
+                live_market_view={
+                    "effective_trade_date": "2026-07-22",
+                    "calendar_status": "unavailable",
+                    "market_phase": "market_closed",
+                },
+            )
+
     def test_live_rejects_mismatched_trade_date(self) -> None:
         result = _make_pipeline_result()
         session = SessionProjectionInput(

@@ -68,15 +68,16 @@ def resolve_live_market_context(
     normalized_market = str(market).strip().lower()
     observed_date = observed_now.date()
 
-    if not calendar.covers(observed_date):
-        return _resolve_outside_coverage(
+    day_status = calendar.day_status(observed_date, normalized_market)
+    if day_status == "unknown":
+        return _resolve_calendar_unavailable(
             calendar,
             observed_now=observed_now,
             observed_date=observed_date,
             market=normalized_market,
         )
 
-    if calendar.is_trading_day(observed_date, normalized_market):
+    if day_status == "open":
         session = calendar.require_session(observed_date, normalized_market)
         phase = session.phase_at(observed_now)
         if phase == "pre_open":
@@ -117,18 +118,20 @@ def resolve_live_market_context(
     )
 
 
-def _resolve_outside_coverage(
+def _resolve_calendar_unavailable(
     calendar: CalendarQueryPort,
     *,
     observed_now: datetime,
     observed_date: date,
     market: str,
 ) -> ResolvedLiveMarketContext:
-    anchor = (
-        calendar.coverage_end
-        if observed_date > calendar.coverage_end
-        else calendar.coverage_start
-    )
+    if observed_date > calendar.coverage_end:
+        anchor = calendar.coverage_end
+    elif observed_date < calendar.coverage_start:
+        anchor = calendar.coverage_start
+    else:
+        # Inside coverage but day_status is unknown (e.g. past last evidenced open).
+        anchor = observed_date
     previous = last_trading_day_on_or_before(calendar, anchor, market)
     if previous is None:
         raise LiveMarketViewError(

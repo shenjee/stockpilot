@@ -58,12 +58,28 @@ class CalendarQueryPort(Protocol):
 
 
 class MarketContextCalendarAdapter:
-    """Adapt an existing ``MarketContextService`` to ``CalendarQueryPort``."""
+    """Adapt an existing ``MarketContextService`` to ``CalendarQueryPort``.
 
-    def __init__(self, market_context: MarketContextService) -> None:
+    ``authoritative_through`` marks the last date for which absence from the
+    trading-day set is treated as a confirmed closed day (holiday / weekend
+    already handled). Weekdays after that bound return ``unknown`` so Live can
+    degrade with ``calendar_status=unavailable`` instead of inventing opens.
+    """
+
+    def __init__(
+        self,
+        market_context: MarketContextService,
+        *,
+        authoritative_through: date | str | None = None,
+    ) -> None:
         if not isinstance(market_context, MarketContextService):
             raise TypeError("market_context must be a MarketContextService")
         self._context = market_context
+        self._authoritative_through = (
+            market_context.coverage_end
+            if authoritative_through is None
+            else _as_date(authoritative_through)
+        )
 
     @property
     def coverage_start(self) -> date:
@@ -73,15 +89,27 @@ class MarketContextCalendarAdapter:
     def coverage_end(self) -> date:
         return self._context.coverage_end
 
+    @property
+    def authoritative_through(self) -> date:
+        return self._authoritative_through
+
     def covers(self, trade_date: date | str) -> bool:
         value = _as_date(trade_date)
         return self._context.coverage_start <= value <= self._context.coverage_end
 
     def day_status(self, trade_date: date | str, market: str) -> CalendarDayStatus:
         _require_supported_market(market)
-        if not self.covers(trade_date):
+        value = _as_date(trade_date)
+        if not self.covers(value):
             return "unknown"
-        return "open" if self._context.is_trading_day(trade_date, market) else "closed"
+        if self._context.is_trading_day(value, market):
+            return "open"
+        if value.weekday() >= 5:
+            return "closed"
+        # Weekday missing from the authoritative trading-day set.
+        if value <= self._authoritative_through:
+            return "closed"
+        return "unknown"
 
     def is_trading_day(self, trade_date: date | str, market: str) -> bool:
         return self._context.is_trading_day(trade_date, market)

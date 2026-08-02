@@ -48,6 +48,21 @@ class CalendarQueryAdapterTests(unittest.TestCase):
             "2026-07-24",
         )
 
+    def test_authoritative_through_marks_later_weekdays_unknown(self) -> None:
+        context = MarketContextService(
+            ["2026-09-29", "2026-09-30"],
+            coverage_start="2026-09-29",
+            coverage_end="2026-10-02",
+        )
+        calendar = MarketContextCalendarAdapter(
+            context,
+            authoritative_through="2026-09-30",
+        )
+        self.assertEqual(calendar.day_status("2026-09-30", "sh"), "open")
+        # Weekday holiday-like gap after last evidenced open day.
+        self.assertEqual(calendar.day_status("2026-10-01", "sh"), "unknown")
+        self.assertEqual(calendar.day_status("2026-10-02", "sh"), "unknown")
+
 
 if __name__ == "__main__":
     unittest.main()
