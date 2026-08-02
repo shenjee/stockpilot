@@ -496,22 +496,6 @@ button { color: inherit; }
   min-width: 66px;
   appearance: auto;
 }
-.workspace-state {
-  position: absolute;
-  inset: 0;
-  z-index: 10;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 9px;
-  border: 1px solid var(--panel-border);
-  border-radius: 8px;
-  background: rgb(12 17 27 / 94%);
-  color: #cbd5e1;
-  text-align: center;
-}
-.workspace-state span { color: #718198; font-size: 13px; }
 .loading-indicator {
   position: fixed;
   inset: 50% auto auto 50%;

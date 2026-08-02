@@ -1404,8 +1404,6 @@ export function App() {
     });
   };
   const layoutMode = workbenchLayoutMode(workbench);
-  const showFixture = !window.stockpilot;
-  const showEmpty = !showFixture && !workbench.security && !loading;
   const dailyBars = latestDailyBars(snapshot);
 
   const replayMode = workbench.mode === WorkbenchMode.REPLAY;
@@ -1590,12 +1588,6 @@ export function App() {
           status={status}
         />
 
-        {showEmpty && (
-          <div className="workspace-state empty-state">
-            <strong>选择一只股票开始看盘</strong>
-            <span>在顶部输入证券代码、名称或拼音首字母，并从结果中选择。</span>
-          </div>
-        )}
         {loading && (
           <div className="loading-indicator" role="status">
             正在加载…
@@ -1873,7 +1865,7 @@ function WorkbenchToolbar({
         <input
           id="security-search"
           value={query}
-          placeholder="代码 / 名称 / 拼音"
+          placeholder="代码/名称/拼音首字母"
           autoComplete="off"
           aria-autocomplete="list"
           aria-expanded={showResults}
