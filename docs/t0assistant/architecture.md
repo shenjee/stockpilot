@@ -185,7 +185,7 @@ Electron main
 
 App Coordinator 在恢复或选择当前股票后创建实盘 Session，并在用户查看回放时让它继续后台运行。Session 创建后绑定的股票不可修改；切换股票时，Coordinator 退休旧 Session、使其未完成任务失效，再为新股票创建具有新实例标识的 Live Session。
 
-**有效目标交易日**：Live 不以自然日作为唯一交易日。`Live Market View`（`packages/t0assistant/runtime/live_market_view.py`）结合 Calendar Port、`MarketContextService` 或测试注入的固定 Fixture、现实时钟和证券数据，解析 `effective_trade_date`、市场阶段、证券可用性、各分支 `*_as_of` 和轮询档位。完整 Calendar 持久化与同步见 #133（关联 Issue，**不阻塞** #130）；#130 只消费宿主已提供的已知交易日期、时段与覆盖范围。Pipeline 的 `session.trade_date` 与 `target_time` 均须落在 `effective_trade_date` 内；`target_time.date() == session.trade_date` 校验不放宽。自然日周六展示周五行情时，Session 计算交易日为周五，而非周六。
+**有效目标交易日**：Live 不以自然日作为唯一交易日。`Live Market View`（`packages/t0assistant/runtime/live_market_view.py`）**仅**通过 `CalendarQueryPort`、现实时钟和证券数据，解析 `effective_trade_date`、市场阶段、证券可用性、各分支 `*_as_of` 和轮询档位。当前生产适配器基于 `MarketContextService`；测试适配器注入固定 Calendar Fixture；#133 替换或增强生产适配器背后的数据来源（关联 Issue，**不阻塞** #130）。Pipeline 的 `session.trade_date` 与 `target_time` 均须落在 `effective_trade_date` 内；`target_time.date() == session.trade_date` 校验不放宽。自然日周六展示周五行情时，Session 计算交易日为周五，而非周六。
 
 **分支刷新**：Live 分别更新实时快照、1 分钟 K 和已闭合 5 分钟 K。在同一 `effective_trade_date` 内，三个数据时间可以短暂不一致；不得跨交易日混用。行情快照时间取自快照本身。
 
@@ -203,7 +203,7 @@ App Coordinator 在恢复或选择当前股票后创建实盘 Session，并在�
 
 本地服务健康检查与行情轮询分开。
 
-**缓存与日历错误**：上游不可用时优先展示本地完整/降级/部分缓存并标记数据时间与日期。**完整缓存**除行情文件完整外，还要求 Calendar 已知覆盖范围包含从候选 `effective_trade_date` 到 `observed_now` 本地日期之间的完整解析区间，并能确认当前市场阶段及此前最近交易日。日历覆盖不足时错误能力为 `market_calendar`，不阻塞选股；不将正常休市误报为 Live 加载失败。有缓存时展示最近缓存并提示 Calendar 覆盖不足；**仅当宿主已提供 Calendar 同步命令时**才显示「重试日历更新」，否则只说明 Calendar 能力不可用及当前缓存状态，不提供无效按钮。Calendar 持久化与同步见 #133；#130 不等待 #133 即可在已知 Calendar 输入下实现 PR-A。
+**缓存与日历错误**：上游不可用时优先展示本地缓存并标记数据时间与日期。`data_quality` 与 `calendar_status` **正交**：前者只评价候选行情日的数据完整性（完整 / 降级 / 部分）；后者只评价 Calendar 能否确认 `effective_trade_date`（覆盖从候选日到 `observed_now` 的解析区间）。「可权威认定为最新完整画面」需 `data_quality=full` 且 `calendar_status=available`；Calendar 不足但行情完整时（例如 `full` + `unavailable`）仍展示完整缓存并提示 Calendar 覆盖不足，**不得**因此将 `data_quality` 降为部分。日历覆盖不足时错误能力为 `market_calendar`，不阻塞选股；不将正常休市误报为 Live 加载失败。**仅当宿主已提供 Calendar 同步命令时**才显示「重试日历更新」，否则只说明 Calendar 能力不可用及当前缓存状态。Calendar 持久化与同步见 #133；#130 不等待 #133 即可在 `CalendarQueryPort` 下实现 PR-A。
 
 ### 7.2 回放 Session
 

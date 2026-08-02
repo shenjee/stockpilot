@@ -369,11 +369,11 @@ App Coordinator 负责 Session 级故障恢复：Replay 失败时只销毁 Repla
 ### 6.2 放入 `packages/` 的代码
 
 - 标准行情 schema、交易时段、聚合、缓存服务与 provider adapter；
-- 权威交易日历（Calendar domain/repository/sources，见 #133）；
+- 权威交易日历（`CalendarQueryPort` 及生产/测试适配器；Calendar 持久化与同步见 #133）；
 - BOLL、MA、VOL MA、MACD 和 VWAP 等可复用指标；
 - CZSC 稳定适配和绘图 primitives；
 - Live/Replay 共用的输入端口、时钟端口、处理管线和确定性回放能力；
-- Live Market View（`live_market_view.py`）：消费 Calendar Port / `MarketContextService` 或注入 Fixture 与证券数据，解析有效目标交易日、展示维度、分支 as_of 与轮询档位；不自行同步日历（完整 Calendar 见 #133，不阻塞 #130）；
+- Live Market View（`live_market_view.py`）：**仅**依赖 `CalendarQueryPort` 与证券数据，解析有效目标交易日、展示维度、分支 as_of 与轮询档位；不自行同步日历（#133 增强生产适配器，不阻塞 #130）；
 - Provider 请求队列、计算执行边界和数据库写入协调等可独立测试的资源控制能力；
 - 成交、收费、5 分钟归桶等与 UI 无关的业务规则；
 - Repository 接口、SQLite 实现和迁移；
