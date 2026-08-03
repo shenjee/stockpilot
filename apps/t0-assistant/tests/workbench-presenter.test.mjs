@@ -12,6 +12,7 @@ import {
   operationMatchesEnvelope,
   quoteRows,
   securitiesFromSearchResponse,
+  securityCategoryLabel,
   standardSecurityFromResponse,
 } from "../renderer/src/workbench-presenter.mjs";
 
@@ -185,6 +186,64 @@ test("fuzzy search responses retain all valid standard identities", () => {
   assert.deepEqual(
     securitiesFromSearchResponse({ data: { securities } }),
     securities,
+  );
+});
+
+test("securityCategoryLabel maps standard fields to market classification labels", () => {
+  // 沪市 A 股 -> 沪市
+  assert.equal(
+    securityCategoryLabel({
+      symbol: "sh.600000",
+      code: "600000",
+      market: "sh",
+      name: "浦发银行",
+      security_type: "a_share",
+    }),
+    "沪市",
+  );
+  // 深市 A 股 (e.g. 300113) -> 深市
+  assert.equal(
+    securityCategoryLabel({
+      symbol: "sz.300113",
+      code: "300113",
+      market: "sz",
+      name: "顺网科技",
+      security_type: "a_share",
+    }),
+    "深市",
+  );
+  // 沪市 ETF -> 基金
+  assert.equal(
+    securityCategoryLabel({
+      symbol: "sh.510300",
+      code: "510300",
+      market: "sh",
+      name: "沪深300ETF",
+      security_type: "etf",
+    }),
+    "基金",
+  );
+  // 深市 ETF -> 基金
+  assert.equal(
+    securityCategoryLabel({
+      symbol: "sz.159915",
+      code: "159915",
+      market: "sz",
+      name: "创业板ETF",
+      security_type: "etf",
+    }),
+    "基金",
+  );
+  // 000001 深市 -> 深市
+  assert.equal(
+    securityCategoryLabel({
+      symbol: "sz.000001",
+      code: "000001",
+      market: "sz",
+      name: "平安银行",
+      security_type: "a_share",
+    }),
+    "深市",
   );
 });
 

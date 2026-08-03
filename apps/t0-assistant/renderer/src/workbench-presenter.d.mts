@@ -20,6 +20,17 @@ export function standardSecurityFromResponse(
 export function securitiesFromSearchResponse(
   response: unknown,
 ): SecurityIdentity[];
+
+/**
+ * Map a standard security identity to a market classification label.
+ *
+ * Uses the authoritative `market` and `security_type` fields rather than
+ * code-prefix inference, per issue #131:
+ *   - security_type = etf           -> 基金 (covers SH/SZ listed ETFs only)
+ *   - a_share + market = sh         -> 沪市
+ *   - a_share + market = sz         -> 深市
+ */
+export function securityCategoryLabel(security: SecurityIdentity): string;
 export function isCompleteWorkbenchSnapshot(
   candidate: unknown,
 ): candidate is WorkbenchChartSnapshot;

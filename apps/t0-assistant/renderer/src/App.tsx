@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import chartFixture from "../../contracts/fixtures/chart-groups-v1.json";
 import { ChartGroup } from "./charts/ChartGroup";
 import {
@@ -42,6 +48,7 @@ import {
   operationMatchesEnvelope,
   quoteRows,
   securitiesFromSearchResponse,
+  securityCategoryLabel,
   type ApplicationError,
 } from "./workbench-presenter.mjs";
 import { createSerialTaskQueue } from "./serial-task-queue.mjs";
@@ -1864,8 +1871,61 @@ function WorkbenchToolbar({
   onSelect: (security: SecurityIdentity) => void;
   onMode: (mode: "live" | "replay") => void;
 }) {
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const [dismissed, setDismissed] = useState(false);
+  const resultsRef = useRef<HTMLDivElement>(null);
+
+  // Reset keyboard cursor and dismissed flag whenever the result set or query
+  // changes so the user always starts fresh.
+  useEffect(() => {
+    setActiveIndex(-1);
+  }, [suggestions]);
+
+  useEffect(() => {
+    setDismissed(false);
+  }, [query]);
+
+  // Keep the highlighted option scrolled into view during keyboard navigation.
+  useEffect(() => {
+    if (activeIndex < 0 || !resultsRef.current) return;
+    const active = resultsRef.current.querySelector<HTMLElement>(
+      `[data-index="${activeIndex}"]`,
+    );
+    active?.scrollIntoView({ block: "nearest" });
+  }, [activeIndex]);
+
   const showResults =
-    searching || Boolean(searchMessage) || suggestions.length > 0;
+    !dismissed &&
+    (searching || Boolean(searchMessage) || suggestions.length > 0);
+
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
+    if (event.key === "ArrowDown") {
+      if (suggestions.length === 0) return;
+      event.preventDefault();
+      setDismissed(false);
+      setActiveIndex((current) =>
+        current >= suggestions.length - 1 ? 0 : current + 1,
+      );
+    } else if (event.key === "ArrowUp") {
+      if (suggestions.length === 0) return;
+      event.preventDefault();
+      setDismissed(false);
+      setActiveIndex((current) =>
+        current <= 0 ? suggestions.length - 1 : current - 1,
+      );
+    } else if (event.key === "Enter") {
+      if (suggestions.length === 0) return;
+      event.preventDefault();
+      const target = activeIndex >= 0 ? activeIndex : 0;
+      onSelect(suggestions[target]);
+    } else if (event.key === "Escape") {
+      if (!showResults) return;
+      event.preventDefault();
+      setDismissed(true);
+      setActiveIndex(-1);
+    }
+  }
+
   return (
     <header className="toolbar" data-testid="toolbar">
       <div className="security-picker">
@@ -1880,22 +1940,37 @@ function WorkbenchToolbar({
           aria-autocomplete="list"
           aria-expanded={showResults}
           aria-controls="security-results"
+          aria-activedescendant={
+            activeIndex >= 0
+              ? `security-option-${activeIndex}`
+              : undefined
+          }
           onChange={(event) => onQuery(event.target.value)}
+          onKeyDown={handleKeyDown}
         />
         {showResults && (
-          <div id="security-results" className="search-results" role="listbox">
+          <div
+            id="security-results"
+            className="search-results"
+            role="listbox"
+            ref={resultsRef}
+          >
             {searching && <div className="search-hint">正在搜索…</div>}
             {!searching &&
-              suggestions.map((security) => (
+              suggestions.map((security, index) => (
                 <button
                   type="button"
                   role="option"
+                  id={`security-option-${index}`}
+                  data-index={index}
                   key={security.symbol}
+                  aria-selected={index === activeIndex}
+                  className={index === activeIndex ? "is-active" : undefined}
                   onClick={() => onSelect(security)}
                 >
                   <span>{security.code}</span>
                   <strong>{security.name}</strong>
-                  <small>{security.security_type === "etf" ? "ETF" : "A 股"}</small>
+                  <small>{securityCategoryLabel(security)}</small>
                 </button>
               ))}
             {!searching && searchMessage && (
@@ -2176,7 +2251,7 @@ function responseSessionId(response: unknown) {
 
 function preferencesFromResponse(response: unknown) {
   if (!response || typeof response !== "object") return null;
-  const data = (response as { data?: unknown }).data ?? response;
+  const data = (response as { data?: unknown; snapshot?: unknown }).data ?? response;
   if (!data || typeof data !== "object") return null;
   const candidate =
     (data as { preferences?: unknown }).preferences ??
