@@ -1235,7 +1235,7 @@ def _validate_app_command_request(
         "retryable": False,
         "affected_capability": (
             "preferences"
-            if url_command in {"get_preferences", "save_preferences"}
+            if url_command in {"get_preferences", "save_preferences", "save_last_symbol"}
             else "symbol_selection"
             if url_command == "select_security"
             else "live"

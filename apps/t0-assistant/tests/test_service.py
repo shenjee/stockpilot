@@ -915,6 +915,52 @@ class _HandlerRouteTest(unittest.TestCase):
         api.dispatch.assert_called_once()
         self.assertEqual(api.dispatch.call_args[0][0], "save_last_symbol")
 
+    def test_save_last_symbol_validation_failure_maps_to_preferences(self) -> None:
+        from email.message import Message
+
+        server = MagicMock()
+        server.token = "test-token"
+        server.service_generation = 1
+        server.live_application_api = MagicMock()
+        body = json.dumps(
+            {
+                "schema_version": "t0_app_v1",
+                "request_id": "save-last-bad",
+                "command": "save_last_symbol",
+                "session_id": None,
+                "payload": {"symbol": "invalid"},
+            }
+        ).encode()
+        headers = Message()
+        headers["Host"] = "127.0.0.1"
+        headers["Authorization"] = "Bearer test-token"
+        headers["Content-Type"] = "application/json"
+        headers["Content-Length"] = str(len(body))
+
+        handler = _Handler.__new__(_Handler)
+        handler.server = server
+        handler.client_address = ("127.0.0.1", 0)
+        handler.protocol_version = "HTTP/1.1"
+        handler.request_version = "HTTP/1.1"
+        handler.requestline = "POST /api/commands/save_last_symbol HTTP/1.1"
+        handler.path = "/api/commands/save_last_symbol"
+        handler.headers = headers
+        handler.rfile = io.BytesIO(body)
+        handler.wfile = io.BytesIO()
+        handler._headers_buffer = []
+        handler.close_connection = False
+        handler.do_POST()
+
+        response = handler.wfile.getvalue()
+        header, _, body_bytes = response.partition(b"\r\n\r\n")
+        status_line = header.splitlines()[0].decode()
+        self.assertIn("400", status_line)
+        payload = json.loads(body_bytes)
+        self.assertFalse(payload["accepted"])
+        self.assertEqual(payload["error"]["error_code"], "invalid_request")
+        self.assertEqual(payload["error"]["affected_capability"], "preferences")
+        server.live_application_api.dispatch.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
