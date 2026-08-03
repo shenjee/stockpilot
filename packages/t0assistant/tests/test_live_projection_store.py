@@ -9,6 +9,7 @@ the ``get_live_snapshot`` rebaseline contract, and concurrency safety.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, datetime
 from threading import Thread
 import unittest
@@ -221,6 +222,8 @@ class _StoreFixture:
         prepared = PreparedLiveWarmup(
             market_session=self.market_session,
             target_time=self.target_time,
+            observed_now=self.target_time,
+            market_candidate_trade_date=self.market_session.trade_date,
             market_input_port=_SinglePort(self.target_time, self._market_input(symbol)),
         )
         pipeline = WorkbenchPipeline(
@@ -534,6 +537,36 @@ class LiveProjectionStoreTests(unittest.TestCase):
         self.assertEqual(snapshot["market"]["bars_1m"][-1]["close"], 10.09)
         self.assertEqual(snapshot["session"]["revision"], 1)
 
+    def test_live_market_view_updated_applies_to_authoritative_state(self) -> None:
+        self.coordinator.set_accepted("live-1", 1)
+        self.store.accept_candidate(self.fixture.candidate(session_id="live-1", generation=1))
+        payload = {
+            "effective_trade_date": "2026-07-24",
+            "calendar_status": "available",
+            "market_phase": "morning",
+            "symbol_availability": "available",
+            "data_quality": "partial",
+            "polling_profile": "active",
+            "quote_as_of": "2026-07-24 09:32:03",
+            "bars_1m_as_of": "2026-07-24 09:32:00",
+            "bars_5m_as_of": None,
+            "daily_as_of": None,
+            "one_minute_indicators_as_of": "2026-07-24 09:32:00",
+            "five_minute_indicators_as_of": None,
+            "czsc_as_of": None,
+        }
+        event = self.store.accept_incremental(
+            LiveIncrementalUpdate(
+                session_id="live-1",
+                generation=1,
+                event_type="live_market_view_updated",
+                payload=payload,
+            )
+        )
+        self.assertIsNotNone(event)
+        snapshot = self.store.get_live_snapshot(session_id="live-1", generation=1)
+        self.assertEqual(snapshot["live_market_view"]["quote_as_of"], "2026-07-24 09:32:03")
+
     def test_indicators_merge_and_chan_replacement_apply_to_authoritative_state(self) -> None:
         self.coordinator.set_accepted("live-1", 1)
         self.store.accept_candidate(self.fixture.candidate(session_id="live-1", generation=1))
@@ -779,6 +812,146 @@ class LiveProjectionStoreTests(unittest.TestCase):
         self.assertEqual(sorted(revisions), list(range(len(revisions))))
         self.assertEqual(len(set(revisions)), len(revisions))
         self.assertEqual(self.store.current_revision, len(revisions) - 1)
+
+    def test_stale_epoch_incremental_rejected_after_new_baseline(self) -> None:
+        self.coordinator.set_accepted("live-1", 1)
+        baseline = self.fixture.candidate(session_id="live-1", generation=1)
+        self.store.accept_candidate(baseline)
+        revision_after_baseline = self.store.current_revision
+        self.assertEqual(self.store.published_market_epoch, 0)
+
+        stale = LiveIncrementalUpdate(
+            session_id="live-1",
+            generation=1,
+            event_type="market_update",
+            payload={
+                "target": "quote",
+                "bars": [],
+                "quote": _quote("2026-07-24 09:30:03", 10.03),
+            },
+            market_epoch=0,
+        )
+        switched = self.fixture.candidate(session_id="live-1", generation=1)
+        switched = LiveSnapshotCandidate(
+            session_id=switched.session_id,
+            generation=switched.generation,
+            symbol=switched.symbol,
+            pipeline_result=switched.pipeline_result,
+            market_epoch=1,
+        )
+        switch_event = self.store.accept_candidate(switched)
+
+        self.assertIsNotNone(switch_event)
+        self.assertEqual(self.store.published_market_epoch, 1)
+        rejected = self.store.accept_incremental(stale)
+        self.assertIsNone(rejected)
+        self.assertEqual(self.store.current_revision, revision_after_baseline + 1)
+
+    def test_incremental_rejected_before_matching_baseline_epoch(self) -> None:
+        self.coordinator.set_accepted("live-1", 1)
+        self.store.accept_candidate(
+            self.fixture.candidate(session_id="live-1", generation=1)
+        )
+        revision_after_baseline = self.store.current_revision
+
+        ahead = LiveIncrementalUpdate(
+            session_id="live-1",
+            generation=1,
+            event_type="market_update",
+            payload={
+                "target": "quote",
+                "bars": [],
+                "quote": _quote("2026-07-24 09:30:03", 10.03),
+            },
+            market_epoch=1,
+        )
+        self.assertIsNone(self.store.accept_incremental(ahead))
+        self.assertEqual(self.store.current_revision, revision_after_baseline)
+        self.assertEqual(self.store.published_market_epoch, 0)
+
+    def test_stale_full_candidate_cannot_roll_back_published_epoch(self) -> None:
+        self.coordinator.set_accepted("live-1", 1)
+        baseline = self.fixture.candidate(session_id="live-1", generation=1)
+        self.store.accept_candidate(baseline)
+        switched = replace(
+            self.fixture.candidate(session_id="live-1", generation=1),
+            market_epoch=1,
+        )
+        self.store.accept_candidate(switched)
+
+        revision = self.store.current_revision
+        snapshot = self.store.get_live_snapshot(session_id="live-1", generation=1)
+
+        rejected = self.store.accept_candidate(baseline)
+
+        self.assertIsNone(rejected)
+        self.assertEqual(self.store.current_revision, revision)
+        self.assertEqual(self.store.published_market_epoch, 1)
+        self.assertEqual(
+            self.store.get_live_snapshot(session_id="live-1", generation=1),
+            snapshot,
+        )
+
+    def test_concurrent_stale_candidate_cannot_roll_back_new_epoch(self) -> None:
+        self.coordinator.set_accepted("live-1", 1)
+        baseline = self.fixture.candidate(session_id="live-1", generation=1)
+        switched = replace(
+            self.fixture.candidate(session_id="live-1", generation=1),
+            market_epoch=1,
+        )
+        self.store.accept_candidate(baseline)
+        revision_after_switch: list[int] = []
+        errors: list[BaseException] = []
+
+        def publish_new_epoch() -> None:
+            try:
+                event = self.store.accept_candidate(switched)
+                if event is not None:
+                    revision_after_switch.append(event.revision)
+            except BaseException as exc:
+                errors.append(exc)
+
+        def publish_stale_epoch() -> None:
+            try:
+                self.store.accept_candidate(baseline)
+            except BaseException as exc:
+                errors.append(exc)
+
+        new_thread = Thread(target=publish_new_epoch)
+        stale_thread = Thread(target=publish_stale_epoch)
+        new_thread.start()
+        new_thread.join(timeout=2)
+        stale_thread.start()
+        stale_thread.join(timeout=2)
+
+        self.assertEqual(errors, [])
+        self.assertEqual(revision_after_switch, [1])
+        self.assertEqual(self.store.published_market_epoch, 1)
+        self.assertEqual(self.store.current_revision, 1)
+
+    def test_stale_epoch_operation_failure_rejected_after_day_switch(self) -> None:
+        self.coordinator.set_accepted("live-1", 1)
+        self.store.accept_candidate(
+            self.fixture.candidate(session_id="live-1", generation=1)
+        )
+        switched = replace(
+            self.fixture.candidate(session_id="live-1", generation=1),
+            market_epoch=1,
+        )
+        self.store.accept_candidate(switched)
+        revision = self.store.current_revision
+
+        rejected = self.store.accept_operation_failure(
+            session_id="live-1",
+            generation=1,
+            operation_id="refresh-quote",
+            market_epoch=0,
+            payload={"error_code": "calculation_failed"},
+        )
+
+        self.assertIsNone(rejected)
+        self.assertEqual(self.store.current_revision, revision)
+        self.assertEqual(self.store.published_market_epoch, 1)
 
 
 if __name__ == "__main__":

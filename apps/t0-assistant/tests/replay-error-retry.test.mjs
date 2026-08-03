@@ -13,6 +13,7 @@ import {
 
 function shouldShowFeedbackRetry(error) {
   if (!error?.retryable) return false;
+  if (error.affected_capability === "market_calendar") return false;
   if (!isReplayOwnedError(error)) return true;
   return error.affected_capability === "service";
 }
@@ -91,6 +92,16 @@ test("any onReplayEvent operation_failed is tagged Replay-owned", () => {
     message: "操作已被更新的定位取代",
   });
   assert.equal(routeRetry(fromReplayChannel), "dismiss_replay");
+});
+
+test("calendar errors do not show the generic Live retry button", () => {
+  assert.equal(
+    shouldShowFeedbackRetry({
+      retryable: true,
+      affected_capability: "market_calendar",
+    }),
+    false,
+  );
 });
 
 test("Live and service errors still use their own retry actions", () => {

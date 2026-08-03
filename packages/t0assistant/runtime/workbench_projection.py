@@ -100,6 +100,8 @@ def build_workbench_projection(
     pipeline_result: PipelineResult,
     session: SessionProjectionInput,
     replay: ReplayProjectionInput | None = None,
+    *,
+    live_market_view: Mapping[str, Any] | None = None,
 ) -> WorkbenchProjection:
     """Atomically build a complete Workbench Snapshot from a successful pipeline result.
 
@@ -107,12 +109,15 @@ def build_workbench_projection(
         pipeline_result: a fully computed :class:`PipelineResult`.  Only its
             public fields are projected; ``closed_5m_prefix`` and ``daily_bar``
             are deliberately excluded from the output.
-        session: explicit Session metadata.  For ``live`` the ``trade_date``
-            must be ``None``; for ``replay`` it must equal
-            ``pipeline_result.trade_date``.
+        session: explicit Session metadata.  For ``live``, ``trade_date`` may
+            be the effective trade date or ``None``; for ``replay`` it must
+            equal ``pipeline_result.trade_date``.
         replay: Replay cursor metadata supplied by the caller.  Must be
             ``None`` for ``live`` and a :class:`ReplayProjectionInput` for
             ``replay``.
+        live_market_view: optional Live Market View dimensions (#130). Present
+            for live snapshots so Renderer can distinguish authoritative days
+            from best-effort calendar coverage.
 
     Raises:
         WorkbenchProjectionError: if any consistency check fails.  No partial
@@ -125,6 +130,7 @@ def build_workbench_projection(
     _validate_session_fields(session)
     _validate_session_consistency(session, pipeline_result)
     _validate_replay_input(session, replay, pipeline_result.target_time)
+    _validate_live_market_view(session, live_market_view)
 
     replay_payload: dict[str, Any] | None = None
     if session.session_type == "replay":
@@ -164,6 +170,8 @@ def build_workbench_projection(
         "chan_analysis": pipeline_result.chan_analysis,
         "warnings": list(pipeline_result.warnings),
     }
+    if live_market_view is not None:
+        payload["live_market_view"] = dict(live_market_view)
 
     _validate_payload(payload, session.session_type)
 
@@ -236,9 +244,15 @@ def _validate_session_consistency(
     )
 
     if session.session_type == "live":
-        if session.trade_date is not None:
+        # Live exposes effective_trade_date for minimal visibility (#130 PR-A).
+        # Null remains accepted for transitional snapshots; when present it must
+        # match the pipeline computation day.
+        if (
+            session.trade_date is not None
+            and session.trade_date != result_trade_date
+        ):
             raise WorkbenchProjectionError(
-                "live session trade_date must be null"
+                "live session.trade_date must match pipeline_result.trade_date"
             )
     else:  # replay or historical
         if session.trade_date is None:
@@ -362,6 +376,91 @@ def _validate_replay_input(
         raise WorkbenchProjectionError(
             f"replay.playing ({replay.playing}) must equal "
             f"session.state == 'playing' ({expected_playing})"
+        )
+
+
+def _validate_live_market_view(
+    session: SessionProjectionInput,
+    live_market_view: Mapping[str, Any] | None,
+) -> None:
+    """Validate optional Live Market View dimensions when present."""
+
+    if live_market_view is None:
+        return
+    if session.session_type != "live":
+        raise WorkbenchProjectionError(
+            "live_market_view is only valid for live sessions"
+        )
+    required = {
+        "effective_trade_date",
+        "calendar_status",
+        "market_phase",
+        "symbol_availability",
+        "data_quality",
+        "polling_profile",
+        "quote_as_of",
+        "bars_1m_as_of",
+        "bars_5m_as_of",
+        "daily_as_of",
+        "one_minute_indicators_as_of",
+        "five_minute_indicators_as_of",
+        "czsc_as_of",
+    }
+    missing = required - set(live_market_view)
+    if missing:
+        raise WorkbenchProjectionError(
+            "live_market_view is missing required fields: "
+            + ", ".join(sorted(missing))
+        )
+    extra = set(live_market_view) - required - {"market_closed_reason"}
+    if extra:
+        raise WorkbenchProjectionError(
+            "live_market_view contains unsupported fields: "
+            + ", ".join(sorted(extra))
+        )
+    if live_market_view.get("effective_trade_date") != session.trade_date:
+        raise WorkbenchProjectionError(
+            "live_market_view.effective_trade_date must match session.trade_date"
+        )
+    if live_market_view.get("calendar_status") not in {"available", "unavailable"}:
+        raise WorkbenchProjectionError("live_market_view.calendar_status is invalid")
+    if live_market_view.get("market_phase") not in {
+        "unknown",
+        "pre_open",
+        "morning",
+        "lunch_break",
+        "afternoon",
+        "closed",
+        "market_closed",
+    }:
+        raise WorkbenchProjectionError("live_market_view.market_phase is invalid")
+    if live_market_view.get("symbol_availability") not in {
+        "available",
+        "no_current_data",
+        "suspended",
+    }:
+        raise WorkbenchProjectionError(
+            "live_market_view.symbol_availability is invalid"
+        )
+    if live_market_view.get("data_quality") not in {"full", "degraded", "partial"}:
+        raise WorkbenchProjectionError("live_market_view.data_quality is invalid")
+    if live_market_view.get("polling_profile") not in {"active", "reduced", "idle"}:
+        raise WorkbenchProjectionError("live_market_view.polling_profile is invalid")
+    if (
+        live_market_view.get("calendar_status") == "unavailable"
+        and live_market_view.get("market_phase") != "unknown"
+    ):
+        raise WorkbenchProjectionError(
+            "calendar_status=unavailable requires market_phase=unknown"
+        )
+    if (
+        live_market_view.get("calendar_status") == "available"
+        and live_market_view.get("market_phase") == "market_closed"
+        and live_market_view.get("market_closed_reason")
+        not in {"weekend", "holiday"}
+    ):
+        raise WorkbenchProjectionError(
+            "market_phase=market_closed requires market_closed_reason"
         )
 
 

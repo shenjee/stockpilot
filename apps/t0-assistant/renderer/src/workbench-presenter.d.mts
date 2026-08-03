@@ -45,6 +45,10 @@ export function applicationErrorFrom(
 export function quoteRows(
   quote: unknown,
 ): Array<[label: string, value: string]>;
+export function liveMarketViewLines(
+  view: unknown,
+  options?: { replayMode?: boolean },
+): Array<[label: string, value: string]>;
 export function latestDailyBars(
   snapshot: WorkbenchChartSnapshot,
   limit?: number,

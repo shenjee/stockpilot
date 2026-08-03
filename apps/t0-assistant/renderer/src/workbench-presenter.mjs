@@ -76,6 +76,9 @@ export function canHydratePreferences(status, hydrated) {
 }
 
 export function liveOperationFailurePresentation(mode, error) {
+  if (error?.affected_capability === "market_calendar") {
+    return { blocking: false, error };
+  }
   if (mode !== "replay") {
     return { blocking: true, error };
   }
@@ -113,6 +116,89 @@ export function quoteRows(quote) {
     ["委比", formatPercent(quote?.order_imbalance)],
     ["行情时间", formatTimestamp(quote?.timestamp)],
   ];
+}
+
+const MARKET_PHASE_LABELS = {
+  unknown: "市场阶段未知",
+  pre_open: "盘前",
+  morning: "上午交易",
+  lunch_break: "午间休市",
+  afternoon: "下午交易",
+  closed: "已收盘",
+  market_closed: "休市",
+};
+
+const DATA_QUALITY_LABELS = {
+  full: "数据完整",
+  degraded: "无完整 1 分钟",
+  partial: "数据部分",
+};
+
+const POLLING_PROFILE_LABELS = {
+  active: "轮询中",
+  reduced: "低频轮询",
+  idle: "暂停轮询",
+};
+
+const SYMBOL_AVAILABILITY_LABELS = {
+  available: "当日行情可用",
+  no_current_data: "暂无当日行情",
+  suspended: "停牌",
+};
+
+export function liveMarketViewLines(view, { replayMode = false } = {}) {
+  if (!view || typeof view !== "object" || replayMode) {
+    return [];
+  }
+  const lines = [];
+  const tradeDate = view.effective_trade_date;
+  if (typeof tradeDate === "string" && tradeDate.length >= 10) {
+    lines.push(["展示交易日", tradeDate]);
+  }
+  const phase = MARKET_PHASE_LABELS[view.market_phase];
+  if (phase) {
+    lines.push(["市场阶段", phase]);
+  }
+  if (view.calendar_status === "unavailable") {
+    lines.push(["交易日历", "覆盖不足"]);
+  }
+  const availability = SYMBOL_AVAILABILITY_LABELS[view.symbol_availability];
+  if (availability && view.symbol_availability !== "available") {
+    lines.push(["证券状态", availability]);
+  }
+  const quality = DATA_QUALITY_LABELS[view.data_quality];
+  if (quality && view.data_quality !== "full") {
+    lines.push(["缓存质量", quality]);
+  }
+  const polling = POLLING_PROFILE_LABELS[view.polling_profile];
+  if (polling) {
+    lines.push(["刷新状态", polling]);
+  }
+  const snapshotAsOf = latestBranchAsOf(view);
+  if (snapshotAsOf !== "--") {
+    lines.push(["快照截止", snapshotAsOf]);
+  }
+  return lines;
+}
+
+function latestBranchAsOf(view) {
+  const candidates = [
+    view.quote_as_of,
+    view.bars_1m_as_of,
+    view.bars_5m_as_of,
+    view.daily_as_of,
+  ].filter((value) => typeof value === "string" && value.length >= 19);
+  if (candidates.length === 0) {
+    return "--";
+  }
+  candidates.sort();
+  return formatBranchAsOf(candidates[candidates.length - 1]);
+}
+
+function formatBranchAsOf(value) {
+  return typeof value === "string" && value.length >= 19
+    ? value.slice(5, 19)
+    : "--";
 }
 
 export function latestDailyBars(snapshot, limit = 60) {

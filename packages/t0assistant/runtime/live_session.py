@@ -16,13 +16,22 @@ through the backend event boundary.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from threading import Condition, Event, RLock, Thread, current_thread
 from typing import Callable, Protocol
 
 from packages.marketdata.services.market_context_service import MarketSession
 
 from .coordinator import SessionSpec, SessionType
+from .live_market_view import (
+    MINIMUM_PREHEAT_5M,
+    MarketClosedReason,
+    PollingProfile,
+    SymbolAvailability,
+    build_live_market_view,
+    resolve_initial_polling_profile,
+    resolve_market_closed_reason,
+)
 from .pipeline import CzscAnalyzerPort, MarketInputPort, PipelineResult, WorkbenchPipeline
 from .workbench_projection import WorkbenchProjection, build_workbench_projection
 from .workbench_projection import SessionProjectionInput
@@ -43,6 +52,11 @@ class PreparedLiveWarmup:
     market_session: MarketSession
     target_time: datetime
     market_input_port: MarketInputPort
+    observed_now: datetime
+    market_candidate_trade_date: date
+    calendar_status: str = "available"
+    market_phase: str = "closed"
+    symbol_availability: SymbolAvailability | None = None
 
 
 class LiveInitialInputPort(Protocol):
@@ -72,19 +86,69 @@ class LiveSnapshotCandidate:
     symbol: str
     pipeline_result: PipelineResult
     state: str = "ready"
+    calendar_status: str = "available"
+    market_phase: str = "closed"
+    market_epoch: int = 0
+    polling_profile: PollingProfile = "active"
+    market_candidate_trade_date: date | None = None
+    symbol_availability: SymbolAvailability | None = None
+    market_closed_reason: MarketClosedReason | None = None
 
     def build_projection(self, revision: int) -> WorkbenchProjection:
         """Build a full workbench snapshot once a revision is assigned."""
 
+        result_trade_date = self.pipeline_result.trade_date
+        trade_date = (
+            result_trade_date.isoformat()
+            if isinstance(result_trade_date, date)
+            else result_trade_date
+        )
         session = SessionProjectionInput(
             session_id=self.session_id,
             session_type="live",
             symbol=self.symbol,
-            trade_date=None,
+            trade_date=trade_date,
             state=self.state,
             revision=revision,
         )
-        return build_workbench_projection(self.pipeline_result, session)
+        preview = self.pipeline_result.to_dict()
+        live_market_view = build_live_market_view(
+            effective_trade_date=trade_date,
+            market_candidate_trade_date=self.market_candidate_trade_date,
+            calendar_status=self.calendar_status,  # type: ignore[arg-type]
+            market_phase=self.market_phase,  # type: ignore[arg-type]
+            polling_profile=self.polling_profile,
+            market={
+                "bars_1m": preview["bars_1m"],
+                "bars_5m": preview["bars_5m"],
+                "daily_bars": preview["daily_bars"],
+                "quote": preview["quote"],
+            },
+            indicators={
+                "one_minute": preview["indicators_1m"],
+                "five_minute": preview["indicators_5m"],
+            },
+            chan_analysis=preview["chan_analysis"],
+            closed_5m_prefix=self.pipeline_result.closed_5m_prefix,
+            closed_5m_prefix_count=len(self.pipeline_result.closed_5m_prefix),
+            target_time=self.pipeline_result.target_time,
+            market_session=MarketSession(
+                market=str(self.symbol).split(".", 1)[0],
+                trade_date=(
+                    self.pipeline_result.trade_date
+                    if isinstance(self.pipeline_result.trade_date, date)
+                    else date.fromisoformat(str(self.pipeline_result.trade_date))
+                ),
+            ),
+            symbol_availability=self.symbol_availability,
+            market_closed_reason=self.market_closed_reason,
+            minimum_preheat_5m=MINIMUM_PREHEAT_5M,
+        )
+        return build_workbench_projection(
+            self.pipeline_result,
+            session,
+            live_market_view=live_market_view,
+        )
 
 
 LiveSnapshotCandidateHandler = Callable[[LiveSnapshotCandidate], None]
@@ -212,6 +276,22 @@ class LiveSession:
                     generation=self._spec.generation,
                     symbol=self._spec.symbol,
                     pipeline_result=result,
+                    calendar_status=prepared.calendar_status,
+                    market_phase=prepared.market_phase,
+                    market_candidate_trade_date=prepared.market_candidate_trade_date,
+                    symbol_availability=prepared.symbol_availability,
+                    polling_profile=resolve_initial_polling_profile(
+                        market_phase=prepared.market_phase,  # type: ignore[arg-type]
+                        calendar_status=prepared.calendar_status,  # type: ignore[arg-type]
+                        pinned_trade_date=prepared.market_session.trade_date,
+                        market_candidate_trade_date=prepared.market_candidate_trade_date,
+                        observed_now=prepared.observed_now,
+                    ),
+                    market_closed_reason=resolve_market_closed_reason(
+                        observed_now=prepared.observed_now,
+                        market_phase=prepared.market_phase,  # type: ignore[arg-type]
+                        calendar_status=prepared.calendar_status,  # type: ignore[arg-type]
+                    ),
                 )
                 if self._retired.is_set():
                     return
@@ -279,4 +359,8 @@ class LiveSession:
         if prepared.target_time.tzinfo is not None:
             raise LiveSessionValidationError(
                 "prepared target_time must be a naive Asia/Shanghai timestamp"
+            )
+        if prepared.observed_now.tzinfo is not None:
+            raise LiveSessionValidationError(
+                "prepared observed_now must be a naive Asia/Shanghai timestamp"
             )

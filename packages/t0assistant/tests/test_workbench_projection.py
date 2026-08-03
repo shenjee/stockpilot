@@ -511,7 +511,7 @@ class ValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(WorkbenchProjectionError, "session_id"):
             build_workbench_projection(result, session)
 
-    def test_live_rejects_non_null_trade_date(self) -> None:
+    def test_live_accepts_matching_effective_trade_date(self) -> None:
         result = _make_pipeline_result()
         session = SessionProjectionInput(
             session_id="live-1",
@@ -521,7 +521,87 @@ class ValidationTests(unittest.TestCase):
             state="ready",
             revision=1,
         )
-        with self.assertRaisesRegex(WorkbenchProjectionError, "live"):
+        snapshot = build_workbench_projection(result, session).to_dict()
+        self.assertEqual(snapshot["session"]["trade_date"], "2026-07-22")
+
+    def test_live_market_view_dimensions_are_projected(self) -> None:
+        result = _make_pipeline_result()
+        session = SessionProjectionInput(
+            session_id="live-1",
+            session_type="live",
+            symbol="sh.600000",
+            trade_date="2026-07-22",
+            state="ready",
+            revision=1,
+        )
+        snapshot = build_workbench_projection(
+            result,
+            session,
+            live_market_view={
+                "effective_trade_date": "2026-07-22",
+                "calendar_status": "unavailable",
+                "market_phase": "unknown",
+                "symbol_availability": "available",
+                "data_quality": "partial",
+                "polling_profile": "idle",
+                "quote_as_of": None,
+                "bars_1m_as_of": None,
+                "bars_5m_as_of": None,
+                "daily_as_of": None,
+                "one_minute_indicators_as_of": None,
+                "five_minute_indicators_as_of": None,
+                "czsc_as_of": None,
+            },
+        ).to_dict()
+        self.assertEqual(
+            snapshot["live_market_view"]["effective_trade_date"],
+            "2026-07-22",
+        )
+        self.assertEqual(snapshot["live_market_view"]["calendar_status"], "unavailable")
+        _logical_validator("workbench_snapshot").validate(snapshot)
+
+    def test_live_market_view_rejects_unavailable_without_unknown_phase(self) -> None:
+        result = _make_pipeline_result()
+        session = SessionProjectionInput(
+            session_id="live-1",
+            session_type="live",
+            symbol="sh.600000",
+            trade_date="2026-07-22",
+            state="ready",
+            revision=1,
+        )
+        with self.assertRaisesRegex(WorkbenchProjectionError, "market_phase"):
+            build_workbench_projection(
+                result,
+                session,
+                live_market_view={
+                    "effective_trade_date": "2026-07-22",
+                    "calendar_status": "unavailable",
+                    "market_phase": "market_closed",
+                    "symbol_availability": "available",
+                    "data_quality": "partial",
+                    "polling_profile": "idle",
+                    "quote_as_of": None,
+                    "bars_1m_as_of": None,
+                    "bars_5m_as_of": None,
+                    "daily_as_of": None,
+                    "one_minute_indicators_as_of": None,
+                    "five_minute_indicators_as_of": None,
+                    "czsc_as_of": None,
+                },
+            )
+
+    def test_live_rejects_mismatched_trade_date(self) -> None:
+        result = _make_pipeline_result()
+        session = SessionProjectionInput(
+            session_id="live-1",
+            session_type="live",
+            symbol="sh.600000",
+            trade_date="2026-07-23",
+            state="ready",
+            revision=1,
+        )
+        with self.assertRaisesRegex(WorkbenchProjectionError, "trade_date"):
             build_workbench_projection(result, session)
 
     def test_replay_requires_replay_metadata(self) -> None:

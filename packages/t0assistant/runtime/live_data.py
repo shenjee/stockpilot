@@ -4,10 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, time
 from math import ceil
 from typing import Any, Protocol
 
+from packages.marketdata.calendar_query import (
+    CalendarQueryPort,
+    MarketContextCalendarAdapter,
+)
 from packages.marketdata.provider_request_queue import ProviderRequestPriority
 from packages.marketdata.services.market_context_service import MarketContextService
 from packages.marketdata.t0_schema import standardize_quote
@@ -18,6 +22,13 @@ from ._market_bars import (
     parse_market_timestamp,
 )
 from .coordinator import SessionSpec, SessionType
+from .live_market_view import (
+    LiveMarketViewError,
+    ResolvedLiveMarketContext,
+    assess_symbol_availability,
+    resolve_live_market_context,
+    resolve_security_data_trade_date,
+)
 from .live_session import LiveInitialInputPort, PreparedLiveWarmup
 from .replay_data import (
     _InMemoryMarketInputPort,
@@ -37,6 +48,10 @@ class LiveDataError(RuntimeMarketDataError):
 
 class LiveDataUnavailableError(LiveDataError):
     """The first Live snapshot cannot be prepared from current market data."""
+
+
+class LiveCalendarUnavailableError(LiveDataError):
+    """Calendar coverage is insufficient to authoritatively resolve Live."""
 
 
 class LiveMarketDataPort(Protocol):
@@ -69,6 +84,7 @@ class LivePreparationConfig:
 
     daily_history_days: int = 120
     intraday_limit: int = 300
+    max_security_day_lookback: int = 10
     request_priority: ProviderRequestPriority = ProviderRequestPriority.LIVE
     request_timeout: float | None = 15.0
 
@@ -81,6 +97,7 @@ class LiveDataPreparator(LiveInitialInputPort):
         market_data: LiveMarketDataPort,
         market_context: MarketContextService,
         *,
+        calendar: CalendarQueryPort | None = None,
         quote_reader: LiveQuotePort | None = None,
         clock: Callable[[], datetime] | None = None,
         session_validator_factory: Callable[[SessionSpec], Callable[[], bool] | None]
@@ -91,6 +108,7 @@ class LiveDataPreparator(LiveInitialInputPort):
             raise TypeError("market_context must be a MarketContextService")
         self._market_data = market_data
         self._market_context = market_context
+        self._calendar = calendar or MarketContextCalendarAdapter(market_context)
         self._quote_reader = quote_reader
         self._clock = clock or datetime.now
         self._session_validator_factory = session_validator_factory
@@ -112,58 +130,53 @@ class LiveDataPreparator(LiveInitialInputPort):
         resolved_symbol, code, market = _parse_symbol(spec.symbol)
         session_validator = self._session_validator(spec)
         observed_now = self._resolve_observed_now()
+        resolved = self._resolve_market_context(observed_now=observed_now, market=market)
+        market_candidate_session = resolved.market_session
+        market_candidate_date = market_candidate_session.trade_date
 
-        session = self._market_context.require_session(observed_now.date(), market)
-        trade_date_str = session.trade_date.isoformat()
+        quote_snapshots = self._load_quote_snapshots(code=code, market=market)
+        (
+            effective_session,
+            bars_1m,
+            official_5m,
+            daily_history,
+            target_time,
+        ) = self._resolve_effective_security_day(
+            code=code,
+            market=market,
+            start_date=market_candidate_date,
+            start_session=market_candidate_session,
+            observed_now=observed_now,
+            quote_snapshots=quote_snapshots,
+            session_validator=session_validator,
+        )
+        if target_time is None:
+            raise LiveDataUnavailableError(
+                "live initial load requires a quote or intraday bars for the "
+                f"effective trade_date {market_candidate_date.isoformat()}"
+            )
 
         preheat_bars = self._load_preheat_5m(
             code=code,
             market=market,
-            session=session,
+            session=effective_session,
             minimum_preheat_5m=minimum_preheat_5m,
             session_validator=session_validator,
         )
-        bars_1m = self._load_target_day_bars(
-            code=code,
-            market=market,
-            trade_date=trade_date_str,
-            timeframe="1m",
-            session_validator=session_validator,
-            observed_at=observed_now,
-        )
-        official_5m = self._load_target_day_bars(
-            code=code,
-            market=market,
-            trade_date=trade_date_str,
-            timeframe="5m",
-            session_validator=session_validator,
-            observed_at=observed_now,
-        )
-        daily_history = self._load_daily_history(
-            code=code,
-            market=market,
-            trade_date=trade_date_str,
-            session_trade_date=session.trade_date,
-            session_validator=session_validator,
-        )
-        quote_snapshots = self._load_quote_snapshots(code=code, market=market)
         previous_close = _derive_previous_close(daily_history, preheat_bars)
-        target_time = _select_target_time(
-            observed_now=observed_now,
-            trade_date=session.trade_date,
-            bars_1m=bars_1m,
-            official_5m=official_5m,
-            quote_snapshots=quote_snapshots,
+        symbol_availability = assess_symbol_availability(
+            market_candidate_trade_date=market_candidate_date,
+            security_data_trade_date=resolve_security_data_trade_date(
+                bars_1m,
+                official_5m,
+                quote_snapshots,
+            ),
         )
-        if target_time is None:
-            raise LiveDataUnavailableError(
-                "live initial load requires a quote or intraday bars for the current trade_date"
-            )
 
         market_input_port = _InMemoryMarketInputPort(
             symbol=resolved_symbol,
-            trade_date=trade_date_str,
-            session=session,
+            trade_date=effective_session.trade_date.isoformat(),
+            session=effective_session,
             preheat_5m_bars=_freeze_rows(preheat_bars),
             bars_1m=_freeze_rows(bars_1m),
             official_5m_bars=_freeze_rows(official_5m),
@@ -172,9 +185,14 @@ class LiveDataPreparator(LiveInitialInputPort):
             previous_close=previous_close,
         )
         return PreparedLiveWarmup(
-            market_session=session,
+            market_session=effective_session,
             target_time=target_time,
+            observed_now=observed_now,
+            market_candidate_trade_date=market_candidate_date,
             market_input_port=market_input_port,
+            calendar_status=resolved.calendar_status,
+            market_phase=resolved.market_phase,
+            symbol_availability=symbol_availability,
         )
 
     def load_refresh_bars(
@@ -182,34 +200,48 @@ class LiveDataPreparator(LiveInitialInputPort):
         spec: SessionSpec,
         *,
         timeframe: str,
+        trade_date: date | str,
     ) -> tuple[Mapping[str, Any], ...]:
-        """Read one normalized intraday branch without coupling refreshes."""
+        """Read one normalized intraday branch without coupling refreshes.
+
+        ``trade_date`` must be the Session's prepared effective trade date.
+        Day switching re-prepares through ``BranchingLiveInput`` when PR-B
+        detects post-open evidence for the calendar target day.
+        """
 
         if timeframe not in {"1m", "5m"}:
             raise LiveDataError("refresh timeframe must be '1m' or '5m'")
         _, code, market = self._refresh_identity(spec)
         observed_now = self._resolve_observed_now()
-        session = self._market_context.require_session(observed_now.date(), market)
+        pinned_trade_date = _as_trade_date(trade_date)
         return self._load_target_day_bars(
             code=code,
             market=market,
-            trade_date=session.trade_date.isoformat(),
+            trade_date=pinned_trade_date.isoformat(),
             timeframe=timeframe,
             session_validator=self._session_validator(spec),
-            observed_at=observed_now,
+            observed_at=_bar_filter_observed_at(observed_now, pinned_trade_date),
         )
 
     def load_refresh_quotes(
         self,
         spec: SessionSpec,
+        *,
+        trade_date: date | str,
     ) -> tuple[Mapping[str, Any], ...]:
-        """Read only the normalized quote branch."""
+        """Read only the normalized quote branch for the prepared trade date."""
 
         _, code, market = self._refresh_identity(spec)
-        return self._load_quote_snapshots(
+        pinned_trade_date = _as_trade_date(trade_date)
+        snapshots = self._load_quote_snapshots(
             code=code,
             market=market,
             suppress_errors=False,
+        )
+        return tuple(
+            row
+            for row in snapshots
+            if _quote_belongs_to_trade_date(row, pinned_trade_date)
         )
 
     def _refresh_identity(self, spec: SessionSpec) -> tuple[str, str, str]:
@@ -227,6 +259,21 @@ class LiveDataPreparator(LiveInitialInputPort):
             )
         return observed_now
 
+    def _resolve_market_context(
+        self,
+        *,
+        observed_now: datetime,
+        market: str,
+    ) -> ResolvedLiveMarketContext:
+        try:
+            return resolve_live_market_context(
+                self._calendar,
+                observed_now=observed_now,
+                market=market,
+            )
+        except LiveMarketViewError as exc:
+            raise LiveCalendarUnavailableError(str(exc)) from exc
+
     def _session_validator(
         self,
         spec: SessionSpec,
@@ -234,6 +281,147 @@ class LiveDataPreparator(LiveInitialInputPort):
         if self._session_validator_factory is None:
             return None
         return self._session_validator_factory(spec)
+
+    def _resolve_effective_security_day(
+        self,
+        *,
+        code: str,
+        market: str,
+        start_date: date,
+        start_session,
+        observed_now: datetime,
+        quote_snapshots: tuple[Mapping[str, Any], ...],
+        session_validator: Callable[[], bool] | None,
+    ) -> tuple[
+        Any,
+        tuple[Mapping[str, Any], ...],
+        tuple[Mapping[str, Any], ...],
+        tuple[Mapping[str, Any], ...],
+        datetime | None,
+    ]:
+        """Find the latest day with intraday evidence within a bounded lookback."""
+
+        empty_bars: tuple[Mapping[str, Any], ...] = ()
+        empty_daily: tuple[Mapping[str, Any], ...] = ()
+        lookback = self._config.max_security_day_lookback
+        if lookback <= 0:
+            raise LiveDataError("max_security_day_lookback must be positive")
+
+        earliest_date = _earliest_security_lookback_date(
+            self._calendar,
+            start_date=start_date,
+            market=market,
+            max_trading_days=lookback,
+        )
+        discovery_1m = self._load_intraday_discovery_range(
+            code=code,
+            market=market,
+            start_date=earliest_date,
+            end_date=start_date,
+            timeframe="1m",
+            session_validator=session_validator,
+        )
+        discovery_5m = self._load_intraday_discovery_range(
+            code=code,
+            market=market,
+            start_date=earliest_date,
+            end_date=start_date,
+            timeframe="5m",
+            session_validator=session_validator,
+        )
+        candidate_dates = _candidate_dates_with_intraday_evidence(
+            self._calendar,
+            discovery_1m,
+            discovery_5m,
+            market=market,
+            observed_now=observed_now,
+            quote_snapshots=quote_snapshots,
+            earliest=earliest_date,
+            latest=start_date,
+        )
+        for effective_date in candidate_dates:
+            effective_session = self._calendar.require_session(effective_date, market)
+            trade_date_str = effective_date.isoformat()
+            bar_observed_at = _bar_filter_observed_at(observed_now, effective_date)
+            bars_1m = self._load_target_day_bars(
+                code=code,
+                market=market,
+                trade_date=trade_date_str,
+                timeframe="1m",
+                session_validator=session_validator,
+                observed_at=bar_observed_at,
+            )
+            official_5m = self._load_target_day_bars(
+                code=code,
+                market=market,
+                trade_date=trade_date_str,
+                timeframe="5m",
+                session_validator=session_validator,
+                observed_at=bar_observed_at,
+            )
+            target_time = _select_target_time(
+                observed_now=observed_now,
+                trade_date=effective_date,
+                session_end=effective_session.end,
+                bars_1m=bars_1m,
+                official_5m=official_5m,
+                quote_snapshots=quote_snapshots,
+            )
+            if target_time is None:
+                continue
+            daily_history = self._load_daily_history(
+                code=code,
+                market=market,
+                trade_date=trade_date_str,
+                session_trade_date=effective_date,
+                session_validator=session_validator,
+            )
+            return (
+                effective_session,
+                bars_1m,
+                official_5m,
+                daily_history,
+                target_time,
+            )
+        return start_session, empty_bars, empty_bars, empty_daily, None
+
+    def _load_intraday_discovery_range(
+        self,
+        *,
+        code: str,
+        market: str,
+        start_date: date,
+        end_date: date,
+        timeframe: str,
+        session_validator: Callable[[], bool] | None,
+    ) -> tuple[Mapping[str, Any], ...]:
+        """Fetch one intraday range to locate the latest day with security data."""
+
+        if timeframe not in {"1m", "5m"}:
+            raise LiveDataError("discovery timeframe must be '1m' or '5m'")
+        bars_per_day = 240 if timeframe == "1m" else 48
+        span_days = max(1, (end_date - start_date).days + 1)
+        limit = max(
+            self._config.intraday_limit,
+            self._config.max_security_day_lookback * bars_per_day,
+            span_days * bars_per_day,
+        )
+        result = self._market_data.get_klines_result(
+            code=code,
+            end_date=end_date.isoformat(),
+            market=market,
+            timeframe=timeframe,
+            start_date=start_date.isoformat(),
+            limit=limit,
+            request_priority=self._config.request_priority,
+            session_validator=session_validator,
+            request_timeout=self._config.request_timeout,
+        )
+        rows = normalize_provider_bar_units(
+            _extract_live_rows(result),
+            self._market_data,
+        )
+        return tuple(rows)
 
     def _load_preheat_5m(
         self,
@@ -245,7 +433,7 @@ class LiveDataPreparator(LiveInitialInputPort):
         session_validator: Callable[[], bool] | None,
     ) -> tuple[Mapping[str, Any], ...]:
         collected: list[Mapping[str, Any]] = []
-        batch_end = self._market_context.previous_trading_day(
+        batch_end = self._calendar.previous_trading_day(
             session.trade_date,
             market,
         )
@@ -259,7 +447,7 @@ class LiveDataPreparator(LiveInitialInputPort):
             batch_days = max(3, ceil(remaining / 48) + 2)
             batch_start = batch_end
             for _ in range(batch_days - 1):
-                previous = self._market_context.previous_trading_day(
+                previous = self._calendar.previous_trading_day(
                     batch_start,
                     market,
                 )
@@ -286,7 +474,7 @@ class LiveDataPreparator(LiveInitialInputPort):
                 collected,
                 session_start=session.start,
             )
-            batch_end = self._market_context.previous_trading_day(
+            batch_end = self._calendar.previous_trading_day(
                 batch_start,
                 market,
             )
@@ -325,7 +513,7 @@ class LiveDataPreparator(LiveInitialInputPort):
             )
             if _live_bar_is_closed_at(row, observed_at)
         ]
-        session = self._market_context.require_session(trade_date, market)
+        session = self._calendar.require_session(trade_date, market)
         return _normalize_target_day_bars(rows, session=session)
 
     def _load_daily_history(
@@ -385,10 +573,76 @@ class LiveDataPreparator(LiveInitialInputPort):
         return tuple(snapshots)
 
 
+def _earliest_security_lookback_date(
+    calendar: CalendarQueryPort,
+    *,
+    start_date: date,
+    market: str,
+    max_trading_days: int,
+) -> date:
+    earliest = start_date
+    for _ in range(max(0, max_trading_days - 1)):
+        previous = calendar.previous_trading_day(earliest, market)
+        if previous is None:
+            break
+        earliest = previous
+    return earliest
+
+
+def _candidate_dates_with_intraday_evidence(
+    calendar: CalendarQueryPort,
+    *row_groups: Sequence[Mapping[str, Any]],
+    market: str,
+    observed_now: datetime,
+    quote_snapshots: Sequence[Mapping[str, Any]],
+    earliest: date,
+    latest: date,
+) -> list[date]:
+    """Return trading-day candidates with valid intraday evidence, newest first."""
+
+    candidates: set[date] = set()
+    for rows in row_groups:
+        for row in rows:
+            timestamp = row.get("timestamp", row.get("date"))
+            if not isinstance(timestamp, str):
+                continue
+            try:
+                parsed = parse_market_timestamp(timestamp)
+            except (TypeError, ValueError):
+                continue
+            row_date = parsed.date()
+            if row_date < earliest or row_date > latest:
+                continue
+            if not calendar.is_trading_day(row_date, market):
+                continue
+            session = calendar.require_session(row_date, market)
+            if not session.is_trading_time(parsed):
+                continue
+            bar_observed_at = _bar_filter_observed_at(observed_now, row_date)
+            if not _live_bar_is_closed_at(row, bar_observed_at):
+                continue
+            candidates.add(row_date)
+    for row in quote_snapshots:
+        timestamp = row.get("timestamp")
+        if not isinstance(timestamp, str):
+            continue
+        try:
+            row_date = parse_market_timestamp(timestamp).date()
+        except (TypeError, ValueError):
+            continue
+        if row_date < earliest or row_date > latest:
+            continue
+        if not calendar.is_trading_day(row_date, market):
+            continue
+        candidates.add(row_date)
+    return sorted(candidates, reverse=True)
+
+
 def _select_target_time(
     *,
     observed_now: datetime,
     trade_date: date,
+    session_end: datetime,
     bars_1m: Sequence[Mapping[str, Any]],
     official_5m: Sequence[Mapping[str, Any]],
     quote_snapshots: Sequence[Mapping[str, Any]],
@@ -411,7 +665,37 @@ def _select_target_time(
     if not candidates:
         return None
     latest = max(candidates)
+    if observed_now.date() != trade_date:
+        # Closed / holiday / pre-open view of a prior session: stay on that day.
+        return min(latest, session_end)
     return observed_now if observed_now >= latest else latest
+
+
+def _bar_filter_observed_at(observed_now: datetime, trade_date: date) -> datetime:
+    """Allow closed bars from an earlier effective day when wall clock is later."""
+
+    if observed_now.date() == trade_date:
+        return observed_now
+    return datetime.combine(trade_date, time(23, 59, 59))
+
+
+def _as_trade_date(value: date | str) -> date:
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    try:
+        return date.fromisoformat(str(value))
+    except (TypeError, ValueError) as exc:
+        raise LiveDataError("trade_date must use YYYY-MM-DD") from exc
+
+
+def _quote_belongs_to_trade_date(row: Mapping[str, Any], trade_date: date) -> bool:
+    timestamp = row.get("timestamp")
+    if not isinstance(timestamp, str):
+        return False
+    try:
+        return parse_market_timestamp(timestamp).date() == trade_date
+    except (TypeError, ValueError):
+        return False
 
 
 def _extract_live_rows(result: Any) -> list[Mapping[str, Any]]:

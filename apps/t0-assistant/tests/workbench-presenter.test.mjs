@@ -7,6 +7,7 @@ import {
   createLatestRequestTracker,
   isCompleteWorkbenchSnapshot,
   latestDailyBars,
+  liveMarketViewLines,
   liveOperationFailurePresentation,
   operationMatchesEnvelope,
   quoteRows,
@@ -84,6 +85,35 @@ test("Live failures become non-blocking while Replay owns the visible workbench"
       message: "后台 Live 行情加载失败，请重试；当前回放不受影响",
     },
   });
+});
+
+test("calendar failures stay non-blocking in Live mode", () => {
+  const error = {
+    error_code: "calendar_unavailable",
+    message: "交易日历覆盖不足，无法权威解析有效交易日",
+    retryable: false,
+    affected_capability: "market_calendar",
+  };
+  assert.deepEqual(liveOperationFailurePresentation("live", error), {
+    blocking: false,
+    error,
+  });
+});
+
+test("live market view uses latest branch as_of when quote is missing", () => {
+  const lines = liveMarketViewLines({
+    effective_trade_date: "2026-07-24",
+    calendar_status: "available",
+    market_phase: "market_closed",
+    symbol_availability: "available",
+    data_quality: "full",
+    polling_profile: "idle",
+    quote_as_of: null,
+    bars_1m_as_of: "2026-07-24 15:00:00",
+    bars_5m_as_of: "2026-07-24 15:00:00",
+    daily_as_of: "2026-07-24 15:00:00",
+  });
+  assert.equal(lines.find(([label]) => label === "快照截止")?.[1], "07-24 15:00:00");
 });
 
 test("a later search invalidates an older in-flight result", () => {
@@ -191,6 +221,28 @@ test("the quote sidebar keeps every field and renders missing values in place", 
   assert.equal(rows.find(([label]) => label === "量比")[1], "--");
   assert.equal(rows.find(([label]) => label === "委比")[1], "--");
   assert.equal(rows.find(([label]) => label === "涨跌幅")[1], "+0.80%");
+});
+
+test("live market view lines expose trade date, phase, polling and cache status", () => {
+  const lines = liveMarketViewLines({
+    effective_trade_date: "2026-07-24",
+    calendar_status: "available",
+    market_phase: "market_closed",
+    symbol_availability: "available",
+    data_quality: "full",
+    polling_profile: "idle",
+    quote_as_of: "2026-07-24 15:00:03",
+  });
+  assert.deepEqual(
+    lines.map(([label]) => label),
+    ["展示交易日", "市场阶段", "刷新状态", "快照截止"],
+  );
+  assert.equal(lines[0][1], "2026-07-24");
+  assert.equal(lines[1][1], "休市");
+  assert.equal(lines[2][1], "暂停轮询");
+  assert.equal(lines[3][1], "07-24 15:00:03");
+  assert.deepEqual(liveMarketViewLines(null), []);
+  assert.deepEqual(liveMarketViewLines({}, { replayMode: true }), []);
 });
 
 test("daily chart selection is bounded and application errors share one path", () => {

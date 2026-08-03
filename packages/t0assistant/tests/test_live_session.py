@@ -142,6 +142,8 @@ class LiveSessionTests(unittest.TestCase):
         self.prepared = PreparedLiveWarmup(
             market_session=self.market_session,
             target_time=self.target_time,
+            observed_now=self.target_time,
+            market_candidate_trade_date=self.market_session.trade_date,
             market_input_port=_SingleInputPort(self.target_time, market_input),
         )
         self.spec = SessionSpec(
@@ -329,6 +331,54 @@ class LiveSessionTests(unittest.TestCase):
         self.assertTrue(session.wait_for_completion(timeout=1))
         self.assertEqual(port.requests, [(self.spec, 500)])
         self.assertEqual(len(candidates), 1)
+
+    def test_initial_snapshot_uses_reduced_polling_when_awaiting_day_switch(
+        self,
+    ) -> None:
+        calendar = MarketContextService(["2026-07-24", "2026-07-27"])
+        friday_session = calendar.require_session("2026-07-24", "sh")
+        target_time = datetime(2026, 7, 24, 15, 0)
+        market_input = PipelineMarketInput(
+            symbol="sh.600000",
+            trade_date=date(2026, 7, 24),
+            previous_close=10.0,
+            preheat_5m_bars=[
+                _bar("2026-07-23 14:55:00", 10.0, 10.1, 9.9, 10.02, 1000, 10020),
+                _bar("2026-07-23 15:00:00", 10.02, 10.08, 10.0, 10.05, 1200, 12060),
+            ],
+            bars_1m=[
+                _bar("2026-07-24 15:00:00", 10.05, 10.08, 10.0, 10.06, 800, 8048),
+            ],
+            official_5m_bars=[
+                _bar("2026-07-24 15:00:00", 10.05, 10.08, 10.0, 10.06, 800, 8048),
+            ],
+            daily_bars_history=[],
+            quote_snapshots=[],
+        )
+        prepared = PreparedLiveWarmup(
+            market_session=friday_session,
+            target_time=target_time,
+            observed_now=datetime(2026, 7, 27, 9, 31, 0),
+            market_candidate_trade_date=date(2026, 7, 27),
+            market_input_port=_SingleInputPort(target_time, market_input),
+            calendar_status="available",
+            market_phase="morning",
+            symbol_availability="no_current_data",
+        )
+        candidates = []
+        session = LiveSession(
+            self.spec,
+            _PreparedPort(prepared),
+            on_snapshot_candidate=candidates.append,
+            analyzer=lambda bars, symbol: _chan(symbol),
+        )
+        self.assertTrue(session.wait_for_completion(timeout=1))
+        self.assertEqual(candidates[0].polling_profile, "reduced")
+        projection = candidates[0].build_projection(1)
+        self.assertEqual(
+            projection.to_dict()["live_market_view"]["polling_profile"],
+            "reduced",
+        )
 
     def test_rejects_non_live_session_specs(self) -> None:
         bad = SessionSpec(

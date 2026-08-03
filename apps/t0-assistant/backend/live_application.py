@@ -14,6 +14,10 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Callable
 
+from packages.marketdata.calendar_query import (
+    CalendarQueryPort,
+    MarketContextCalendarAdapter,
+)
 from packages.marketdata.market_data import TencentStockDataProvider
 from packages.marketdata.repositories.kline_store import KLineStore
 from packages.marketdata.runtime_paths import RuntimePaths
@@ -29,6 +33,7 @@ from packages.t0assistant.runtime import (
     CoordinatorStateError,
     CzscAnalyzerPort,
     LiveBranchDataPort,
+    LiveCalendarUnavailableError,
     LiveDataPreparator,
     LiveIncrementalUpdate,
     LiveProjectionStore,
@@ -38,9 +43,9 @@ from packages.t0assistant.runtime import (
 )
 
 try:
-    from backend.historical_snapshot_api import _build_market_context
+    from backend.historical_snapshot_api import _build_live_market_context
 except ImportError:
-    from historical_snapshot_api import _build_market_context
+    from historical_snapshot_api import _build_live_market_context
 
 
 class LiveSessionFactory:
@@ -51,15 +56,20 @@ class LiveSessionFactory:
         input_port: LiveBranchDataPort,
         *,
         analyzer: CzscAnalyzerPort | None = None,
+        calendar: CalendarQueryPort | None = None,
         auto_poll: bool = True,
     ) -> None:
         self._input_port = input_port
         self._analyzer = analyzer
+        self._calendar = calendar
         self._auto_poll = auto_poll
         self._candidate_handler: Callable[[Any], None] | None = None
         self._incremental_handler: Callable[[LiveIncrementalUpdate], object] | None = None
         self._refresh_failure_handler: (
-            Callable[[SessionSpec, LiveRefreshKind, BaseException], None] | None
+            Callable[
+                [SessionSpec, LiveRefreshKind, BaseException, int | None], None
+            ]
+            | None
         ) = None
         self._state_handler: Callable[[SessionSpec, str, str], None] | None = None
         self._latest_session: LiveRuntimeSession | None = None
@@ -74,7 +84,7 @@ class LiveSessionFactory:
         candidate_handler: Callable[[Any], None],
         incremental_handler: Callable[[LiveIncrementalUpdate], object],
         refresh_failure_handler: Callable[
-            [SessionSpec, LiveRefreshKind, BaseException], None
+            [SessionSpec, LiveRefreshKind, BaseException, int | None], None
         ],
         state_handler: Callable[[SessionSpec, str, str], None],
     ) -> None:
@@ -94,14 +104,15 @@ class LiveSessionFactory:
         runtime_input = BranchingLiveInput(
             self._input_port,
             analyzer=self._analyzer,
+            calendar=self._calendar,
         )
         session = LiveRuntimeSession(
             spec,
             runtime_input,
             on_snapshot_candidate=self._candidate_handler,
             on_incremental_update=self._incremental_handler,
-            on_refresh_failure=lambda kind, failure: self._refresh_failure_handler(
-                spec, kind, failure
+            on_refresh_failure=lambda kind, failure, market_epoch=None: (
+                self._refresh_failure_handler(spec, kind, failure, market_epoch)
             ),
             on_state_change=lambda state, reason: self._state_handler(
                 spec, state, reason
@@ -133,6 +144,7 @@ class LiveApplicationApi:
         self._service_generation = service_generation
         self._preference_service = preference_service
         self._event_publisher = event_publisher
+        self._session_factory = session_factory
         # Production composition assigns the shared SQLite connection here.
         # Its lifetime deliberately matches this API object and therefore the
         # local service process; repositories do not own/close it separately.
@@ -380,6 +392,7 @@ class LiveApplicationApi:
         spec: SessionSpec,
         kind: LiveRefreshKind,
         failure: BaseException,
+        market_epoch: int | None = None,
     ) -> None:
         operation_id = f"live-refresh-{kind.value}-{spec.session_id}"
         capabilities = {
@@ -391,6 +404,7 @@ class LiveApplicationApi:
             session_id=spec.session_id,
             generation=spec.generation,
             operation_id=operation_id,
+            market_epoch=market_epoch,
             payload={
                 "error_code": "calculation_failed",
                 "category": "calculation",
@@ -415,17 +429,32 @@ class LiveApplicationApi:
         if state != "failed":
             return
         operation_id = self._operation_id(spec.session_id)
+        failure = self._session_factory.latest_session
+        calendar_failure = (
+            isinstance(failure, LiveRuntimeSession)
+            and isinstance(failure.failure, LiveCalendarUnavailableError)
+        )
         accepted = self._store.accept_operation_failure(
             session_id=spec.session_id,
             generation=spec.generation,
             operation_id=operation_id,
             payload={
-                "error_code": "calculation_failed",
-                "category": "calculation",
+                "error_code": (
+                    "calendar_unavailable"
+                    if calendar_failure
+                    else "calculation_failed"
+                ),
+                "category": "data" if calendar_failure else "calculation",
                 "severity": "error",
-                "retryable": True,
-                "affected_capability": "live",
-                "message": "Live 行情加载失败，请重试",
+                "retryable": False if calendar_failure else True,
+                "affected_capability": (
+                    "market_calendar" if calendar_failure else "live"
+                ),
+                "message": (
+                    "交易日历覆盖不足，无法权威解析有效交易日"
+                    if calendar_failure
+                    else "Live 行情加载失败，请重试"
+                ),
                 "request_id": operation_id,
                 "operation_id": operation_id,
                 "details": {},
@@ -554,7 +583,7 @@ def create_live_application_api(
     paths.ensure_dirs()
     resolved_provider = provider or TencentStockDataProvider()
     store = KLineStore(market_db_path or paths.db_dir / "market_data.sqlite")
-    context = _build_market_context(
+    context, authoritative_through = _build_live_market_context(
         resolved_provider,
         store,
         (clock or date.today)(),
@@ -568,15 +597,22 @@ def create_live_application_api(
         app_db_path or paths.db_dir / "t0_assistant.sqlite"
     )
     preferences = PreferenceService(SqlitePreferenceRepository(database))
+    calendar = MarketContextCalendarAdapter(
+        context,
+        authoritative_through=authoritative_through,
+        evidence_authoritative=authoritative_through is not None,
+    )
     preparator = LiveDataPreparator(
         market_data,
         context,
+        calendar=calendar,
         quote_reader=resolved_provider,
     )
     api = LiveApplicationApi(
         service_generation=service_generation,
         session_factory=LiveSessionFactory(
-            preparator
+            preparator,
+            calendar=calendar,
         ),
         preference_service=preferences,
         event_publisher=event_publisher,

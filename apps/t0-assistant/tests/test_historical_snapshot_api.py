@@ -18,6 +18,7 @@ from backend.historical_snapshot_api import (  # noqa: E402
     HistoricalSnapshotApi,
     HistoricalDataUnavailableError,
     HistoricalSnapshotError,
+    _build_live_market_context,
     create_historical_snapshot_api,
 )
 from packages.marketdata.market_data import TencentStockDataProvider  # noqa: E402
@@ -596,6 +597,45 @@ class CreateHistoricalSnapshotApiTests(unittest.TestCase):
                 "historical_data_unavailable",
             )
             self.assertEqual(response["error"]["category"], "data")
+
+
+class LiveMarketContextBuilderTests(unittest.TestCase):
+    def test_live_builder_does_not_synthesize_weekday_holidays(self) -> None:
+        store = MagicMock(spec=KLineStore)
+        store.trade_dates.return_value = ["2026-09-29", "2026-09-30"]
+        store.all_trade_dates.return_value = ["2026-10-01"]
+
+        context, authoritative_through = _build_live_market_context(
+            MagicMock(),
+            store,
+            date(2026, 10, 2),
+        )
+
+        self.assertEqual(authoritative_through, date(2026, 9, 30))
+        self.assertTrue(context.is_trading_day("2026-09-30", "sh"))
+        self.assertFalse(context.is_trading_day("2026-10-01", "sh"))
+        self.assertFalse(context.is_trading_day("2026-10-02", "sh"))
+        # Sparse all_trade_dates must not become Live authority.
+        store.all_trade_dates.assert_not_called()
+        # Coverage still reaches today so Live can classify post-evidence days.
+        self.assertEqual(context.coverage_end, date(2026, 10, 2))
+
+    def test_live_builder_empty_cache_is_non_authoritative_scaffold(self) -> None:
+        store = MagicMock(spec=KLineStore)
+        store.trade_dates.return_value = []
+        store.all_trade_dates.return_value = []
+
+        context, authoritative_through = _build_live_market_context(
+            MagicMock(),
+            store,
+            date(2026, 10, 2),
+        )
+
+        self.assertIsNone(authoritative_through)
+        # Scaffold may contain weekdays for mechanics, but must not be marked
+        # authoritative by the Live host (authoritative_through is None).
+        self.assertTrue(context.is_trading_day("2026-10-01", "sh"))
+        self.assertTrue(context.is_trading_day("2026-10-02", "sh"))
 
 
 if __name__ == "__main__":
