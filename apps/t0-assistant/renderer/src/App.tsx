@@ -109,7 +109,12 @@ const emptyChartSnapshot: WorkbenchChartSnapshot = {
       },
     },
   },
-  chan_analysis: { strokes: [], pivot_zones: [] },
+  chan_analysis: {
+    strokes: [],
+    pivot_zones: [],
+    candidate_buy_points: [],
+    candidate_sell_points: [],
+  },
 };
 
 interface ActiveFailure {

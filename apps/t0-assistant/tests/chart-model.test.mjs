@@ -47,6 +47,44 @@ test("5 minute model consumes contract series and appends only dynamic volume", 
   );
 });
 
+test("fixture chan_analysis is complete and rendered in 5 minute model", () => {
+  assert.ok(
+    fixture.chan_analysis,
+    "fixture must include chan_analysis (issue #134)",
+  );
+  assert.ok(
+    Array.isArray(fixture.chan_analysis.strokes) &&
+      fixture.chan_analysis.strokes.length > 0,
+    "fixture chan_analysis.strokes must be non-empty",
+  );
+  assert.ok(
+    Array.isArray(fixture.chan_analysis.pivot_zones) &&
+      fixture.chan_analysis.pivot_zones.length > 0,
+    "fixture chan_analysis.pivot_zones must be non-empty",
+  );
+  assert.ok(
+    Array.isArray(fixture.chan_analysis.candidate_buy_points) &&
+      fixture.chan_analysis.candidate_buy_points.length > 0,
+    "fixture chan_analysis.candidate_buy_points must be non-empty",
+  );
+  assert.ok(
+    Array.isArray(fixture.chan_analysis.candidate_sell_points),
+    "fixture chan_analysis.candidate_sell_points must be present",
+  );
+
+  const model = createChartGroupModel(
+    fixture,
+    ChartGroupKind.FIVE_MINUTE,
+    { strokes: true, pivot_zones: true },
+  );
+  assert.equal(model.strokes.length, fixture.chan_analysis.strokes.length);
+  assert.equal(
+    model.pivotZones.length,
+    fixture.chan_analysis.pivot_zones.length,
+  );
+  assert.ok(model.czscMarkers.length > 0, "czscMarkers must be non-empty");
+});
+
 test("logical ordering has one slot per real bar across overnight gaps", () => {
   const model = createChartGroupModel(
     fixture,
