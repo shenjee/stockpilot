@@ -290,6 +290,12 @@ class WorkbenchPipeline:
         )
 
         chan_analysis = self._analyzer(closed_5m, market_input.symbol)
+        if not isinstance(chan_analysis, Mapping):
+            raise WorkbenchPipelineError(
+                "analyzer must satisfy the CzscAnalyzerPort contract and return "
+                "a dict chan_analysis payload (e.g. AnalysisResult.to_dict()), "
+                f"got {type(chan_analysis).__name__}"
+            )
 
         return PipelineResult(
             target_time=resolved_target,
