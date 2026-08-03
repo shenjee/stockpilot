@@ -49,6 +49,12 @@ jobs:
           cache: npm
           cache-dependency-path: apps/t0-assistant/package-lock.json
       - run: npm ci
+      - name: Run chart regression tests
+        run: >
+          node --test
+          tests/chart-model.test.mjs
+          tests/chart-primitives-lc.test.mjs
+          tests/chart-snapshot-smoke.test.mjs
       - run: npm run smoke:renderer
 
   electron-smoke:

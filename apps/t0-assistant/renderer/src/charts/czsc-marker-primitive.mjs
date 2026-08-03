@@ -8,39 +8,11 @@
  * packages/chantheory/plotting.py 的 y=base_point.price 锚点一致。
  *
  * 数据内但离屏的时间/价格会返回越界坐标（画布裁剪）；数据外返回 null 时跳过该标记。
+ *
+ * 本文件是 production 实现，由 renderer/src/charts/SynchronizedChartGroup.ts
+ * 和 tests/chart-primitives-lc.test.mjs 共同消费（Issue #134 回归保护）。
+ * 不要在测试中复制本实现。
  */
-import type {
-  Coordinate,
-  IChartApi,
-  IPrimitivePaneRenderer,
-  IPrimitivePaneView,
-  ISeriesApi,
-  ISeriesPrimitive,
-  PrimitivePaneViewZOrder,
-  SeriesAttachedParameter,
-  SeriesType,
-  Time,
-} from "lightweight-charts";
-
-export interface CzscMarkerPrimitiveData {
-  time: Time;
-  price: number;
-  side: "buy" | "sell";
-  label: string;
-}
-
-interface BitmapCoordinateScope {
-  context: CanvasRenderingContext2D;
-  horizontalPixelRatio: number;
-  verticalPixelRatio: number;
-}
-
-interface CanvasRenderingTarget {
-  useBitmapCoordinateSpace(
-    fn: (scope: BitmapCoordinateScope) => void,
-  ): void;
-}
-
 const BUY_COLOR = "#22c55e";
 const SELL_COLOR = "#ef4444";
 const ARROW_SIZE = 7;
@@ -48,16 +20,14 @@ const ARROW_GAP = 2;
 const LABEL_FONT = 10;
 const LABEL_GAP = 2;
 
-type PriceSeries = ISeriesApi<"Candlestick"> | ISeriesApi<"Line">;
+class CzscMarkerRenderer {
+  constructor(markers, chart, series) {
+    this.markers = markers;
+    this.chart = chart;
+    this.series = series;
+  }
 
-class CzscMarkerRenderer implements IPrimitivePaneRenderer {
-  constructor(
-    private readonly markers: readonly CzscMarkerPrimitiveData[],
-    private readonly chart: IChartApi,
-    private readonly series: PriceSeries,
-  ) {}
-
-  draw(target: CanvasRenderingTarget): void {
+  draw(target) {
     if (this.markers.length === 0) {
       return;
     }
@@ -81,8 +51,8 @@ class CzscMarkerRenderer implements IPrimitivePaneRenderer {
         if (x === null || y === null) {
           continue;
         }
-        const cx = (x as Coordinate) * hRatio;
-        const cy = (y as Coordinate) * vRatio;
+        const cx = x * hRatio;
+        const cy = y * vRatio;
         const color = marker.side === "buy" ? BUY_COLOR : SELL_COLOR;
         ctx.fillStyle = color;
         ctx.strokeStyle = color;
@@ -121,15 +91,17 @@ class CzscMarkerRenderer implements IPrimitivePaneRenderer {
   }
 }
 
-class CzscMarkerPaneView implements IPrimitivePaneView {
-  constructor(private readonly primitive: CzscMarkerPrimitive) {}
+class CzscMarkerPaneView {
+  constructor(primitive) {
+    this.primitive = primitive;
+  }
 
-  zOrder(): PrimitivePaneViewZOrder {
-    // 绘制在 K 线之上，保证买卖点可见。
+  // 绘制在 K 线之上，保证买卖点可见。
+  zOrder() {
     return "top";
   }
 
-  renderer(): IPrimitivePaneRenderer | null {
+  renderer() {
     const chart = this.primitive.getChart();
     const series = this.primitive.getSeries();
     if (!chart || !series) {
@@ -139,47 +111,48 @@ class CzscMarkerPaneView implements IPrimitivePaneView {
   }
 }
 
-export class CzscMarkerPrimitive implements ISeriesPrimitive {
-  private chart?: IChartApi;
-  private series?: PriceSeries;
-  private requestUpdate?: () => void;
-  private markers: readonly CzscMarkerPrimitiveData[] = [];
-  private readonly paneView = new CzscMarkerPaneView(this);
+export class CzscMarkerPrimitive {
+  constructor() {
+    this.chart = undefined;
+    this.series = undefined;
+    this.requestUpdate = undefined;
+    this.markers = [];
+    this.paneView = new CzscMarkerPaneView(this);
+  }
 
-  attached(params: SeriesAttachedParameter<Time, SeriesType>): void {
+  attached(params) {
     this.chart = params.chart;
-    this.series = params.series as PriceSeries;
+    this.series = params.series;
     this.requestUpdate = params.requestUpdate;
   }
 
-  detached(): void {
+  detached() {
     this.chart = undefined;
     this.series = undefined;
     this.requestUpdate = undefined;
   }
 
-  setMarkers(markers: readonly CzscMarkerPrimitiveData[]): void {
+  setMarkers(markers) {
     this.markers = markers;
     this.requestUpdate?.();
   }
 
-  updateAllViews(): void {
-    // 渲染器在 draw 时即时读取最新 markers，无需缓存视图。
-  }
+  // 渲染器在 draw 时即时读取最新 markers，无需缓存视图。
+  updateAllViews() {}
 
-  paneViews(): readonly IPrimitivePaneView[] {
+  paneViews() {
     return [this.paneView];
   }
 
-  getMarkers(): readonly CzscMarkerPrimitiveData[] {
+  getMarkers() {
     return this.markers;
   }
 
-  getChart(): IChartApi | undefined {
+  getChart() {
     return this.chart;
   }
 
-  getSeries(): PriceSeries | undefined {
+  getSeries() {
     return this.series;
   }
 }

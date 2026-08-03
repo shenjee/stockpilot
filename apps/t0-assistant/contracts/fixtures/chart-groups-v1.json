@@ -26,6 +26,62 @@
       {"timestamp":"2026-07-22 13:04:00","open":10.32,"high":10.35,"low":10.31,"close":10.34,"volume":14100,"amount":145794,"closed":true}
     ]
   },
+  "chan_analysis": {
+    "strokes": [
+      {
+        "start_timestamp": "2026-07-21 14:45:00",
+        "end_timestamp": "2026-07-21 15:00:00",
+        "start_price": 10.00,
+        "end_price": 10.10,
+        "confirmed": true
+      },
+      {
+        "start_timestamp": "2026-07-22 09:35:00",
+        "end_timestamp": "2026-07-22 09:50:00",
+        "start_price": 10.16,
+        "end_price": 10.18,
+        "confirmed": true
+      },
+      {
+        "start_timestamp": "2026-07-22 09:50:00",
+        "end_timestamp": "2026-07-22 10:05:00",
+        "start_price": 10.18,
+        "end_price": 10.30,
+        "confirmed": false
+      }
+    ],
+    "pivot_zones": [
+      {
+        "start_timestamp": "2026-07-22 09:35:00",
+        "end_timestamp": "2026-07-22 09:55:00",
+        "high": 10.20,
+        "low": 10.14,
+        "active": true
+      }
+    ],
+    "candidate_buy_points": [
+      {
+        "id": "bp-001",
+        "point_type": "first_buy",
+        "timestamp": "2026-07-22 09:55:00",
+        "price": 10.17,
+        "reference_id": "stroke-002",
+        "confirmed": true,
+        "reason": "downward_stroke_inside_pivot_zone"
+      }
+    ],
+    "candidate_sell_points": [
+      {
+        "id": "sp-001",
+        "point_type": "first_sell",
+        "timestamp": "2026-07-22 10:00:00",
+        "price": 10.30,
+        "reference_id": "stroke-003",
+        "confirmed": false,
+        "reason": "upward_stroke_extension"
+      }
+    ]
+  },
   "indicators": {
     "five_minute": {
       "volume": {
