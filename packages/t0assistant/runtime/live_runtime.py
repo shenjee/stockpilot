@@ -23,11 +23,13 @@ from .live_refresh import (
 )
 from .live_market_view import (
     CloseReconcileStatus,
+    LiveMarketViewError,
     MarketClosedReason,
     PollingProfile,
     day_switch_evidence_date,
     day_switch_target_date,
     is_awaiting_day_switch,
+    resolve_live_market_context,
     resolve_market_closed_reason,
     resolve_polling_profile,
     should_run_close_reconciliation,
@@ -379,6 +381,7 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             calendar_status=calendar_status,
             market_phase=market_phase,
             market_epoch=committed_epoch,
+            market_candidate_trade_date=self._market_candidate_trade_date(observed_at),
             **_live_view_extras(
                 self,
                 observed_at=observed_at,
@@ -439,6 +442,7 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
                 calendar_status=resolved.calendar_status,
                 market_phase=resolved.market_phase,
                 market_epoch=market_epoch,
+                market_candidate_trade_date=self._market_candidate_trade_date(observed_at),
                 **_live_view_extras(
                     self,
                     observed_at=observed_at,
@@ -593,11 +597,15 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             pipeline_result=result,
             calendar_status=prepared.calendar_status,
             market_phase=prepared.market_phase,
+            market_candidate_trade_date=prepared.market_candidate_trade_date,
+            symbol_availability=prepared.symbol_availability,
             **_live_view_extras(
                 self,
                 observed_at=prepared.target_time,
                 calendar_status=prepared.calendar_status,
                 market_phase=prepared.market_phase,
+                pinned_trade_date=prepared.market_session.trade_date,
+                awaiting_day_switch=False,
             ),
         )
 
@@ -620,6 +628,23 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             self._close_reconcile_next_retry_at = None
 
         return replace(candidate, market_epoch=new_epoch)
+
+
+    def _market_candidate_trade_date(self, observed_at: datetime) -> date | None:
+        with self._lock:
+            calendar = self._calendar
+            market = self._market
+            session = self._session
+        if calendar is None or market is None:
+            return session.trade_date if session is not None else None
+        try:
+            return resolve_live_market_context(
+                calendar,
+                observed_now=observed_at,
+                market=market,
+            ).effective_trade_date
+        except LiveMarketViewError:
+            return session.trade_date if session is not None else None
 
 
 class _FixedMarketInput(MarketInputPort):
@@ -815,9 +840,52 @@ def _live_view_extras(
     observed_at: datetime,
     calendar_status: str,
     market_phase: str,
+    pinned_trade_date: date | None = None,
+    awaiting_day_switch: bool | None = None,
 ) -> dict[str, PollingProfile | MarketClosedReason | None]:
+    with input_port._lock:
+        calendar = input_port._calendar
+        market = input_port._market
+        session = input_port._session
+        close_reconcile_status = input_port._close_reconcile_status
+        close_reconcile_next_retry_at = input_port._close_reconcile_next_retry_at
+    effective_pinned = (
+        pinned_trade_date
+        if pinned_trade_date is not None
+        else (session.trade_date if session is not None else observed_at.date())
+    )
+    effective_market = market or (
+        session.market if session is not None else "sh"
+    )
+    if awaiting_day_switch is None:
+        awaiting = (
+            calendar is not None
+            and session is not None
+            and is_awaiting_day_switch(
+                calendar,
+                observed_at=observed_at,
+                pinned_trade_date=session.trade_date,
+                market=effective_market,
+                calendar_status=calendar_status,  # type: ignore[arg-type]
+            )
+        )
+    else:
+        awaiting = awaiting_day_switch
     return {
-        "polling_profile": input_port.polling_profile(observed_at),
+        "polling_profile": resolve_polling_profile(
+            market_phase=market_phase,  # type: ignore[arg-type]
+            calendar_status=calendar_status,  # type: ignore[arg-type]
+            pinned_trade_date=effective_pinned,
+            observed_at=observed_at,
+            calendar=calendar,
+            market=effective_market,
+            awaiting_day_switch=awaiting,
+            close_reconcile_status=close_reconcile_status,
+            close_reconcile_retry_due=(
+                close_reconcile_next_retry_at is None
+                or observed_at >= close_reconcile_next_retry_at
+            ),
+        ),
         "market_closed_reason": _market_closed_reason(
             observed_at,
             market_phase,

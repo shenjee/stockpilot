@@ -223,6 +223,7 @@ class _StoreFixture:
             market_session=self.market_session,
             target_time=self.target_time,
             observed_now=self.target_time,
+            market_candidate_trade_date=self.market_session.trade_date,
             market_input_port=_SinglePort(self.target_time, self._market_input(symbol)),
         )
         pipeline = WorkbenchPipeline(

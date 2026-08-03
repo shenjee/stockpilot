@@ -52,8 +52,10 @@ class PreparedLiveWarmup:
     target_time: datetime
     market_input_port: MarketInputPort
     observed_now: datetime
+    market_candidate_trade_date: date
     calendar_status: str = "available"
     market_phase: str = "closed"
+    symbol_availability: SymbolAvailability | None = None
 
 
 class LiveInitialInputPort(Protocol):
@@ -87,6 +89,7 @@ class LiveSnapshotCandidate:
     market_phase: str = "closed"
     market_epoch: int = 0
     polling_profile: PollingProfile = "active"
+    market_candidate_trade_date: date | None = None
     symbol_availability: SymbolAvailability | None = None
     market_closed_reason: MarketClosedReason | None = None
 
@@ -110,6 +113,7 @@ class LiveSnapshotCandidate:
         preview = self.pipeline_result.to_dict()
         live_market_view = build_live_market_view(
             effective_trade_date=trade_date,
+            market_candidate_trade_date=self.market_candidate_trade_date,
             calendar_status=self.calendar_status,  # type: ignore[arg-type]
             market_phase=self.market_phase,  # type: ignore[arg-type]
             polling_profile=self.polling_profile,
@@ -273,6 +277,8 @@ class LiveSession:
                     pipeline_result=result,
                     calendar_status=prepared.calendar_status,
                     market_phase=prepared.market_phase,
+                    market_candidate_trade_date=prepared.market_candidate_trade_date,
+                    symbol_availability=prepared.symbol_availability,
                     polling_profile=(
                         "idle"
                         if prepared.market_phase

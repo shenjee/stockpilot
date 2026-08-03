@@ -103,6 +103,7 @@ class _SwitchableSource:
                 market_session=self.friday,
                 target_time=datetime(2026, 7, 24, 15, 0),
                 observed_now=datetime(2026, 7, 24, 15, 0),
+                market_candidate_trade_date=date(2026, 7, 24),
                 market_input_port=_Port(market_input),
                 calendar_status="available",
                 market_phase="closed",
@@ -112,6 +113,7 @@ class _SwitchableSource:
             market_session=self.monday,
             target_time=datetime(2026, 7, 27, 9, 31),
             observed_now=datetime(2026, 7, 27, 9, 31),
+            market_candidate_trade_date=date(2026, 7, 27),
             market_input_port=_Port(market_input),
             calendar_status="available",
             market_phase="morning",
@@ -272,6 +274,7 @@ class AtomicDaySwitchTests(unittest.TestCase):
             "2026-07-27",
         )
         self.assertEqual(switched[0][0].market_phase, "morning")
+        self.assertEqual(switched[0][0].polling_profile, "active")
         self.assertEqual(source.prepare_calls, 2)
 
     def test_first_closed_one_minute_triggers_switch(self) -> None:
@@ -697,6 +700,7 @@ class CloseReconciliationRetryTests(unittest.TestCase):
                     market_session=self.friday,
                     target_time=datetime(2026, 7, 24, 15, 6),
                     observed_now=datetime(2026, 7, 24, 15, 6),
+                    market_candidate_trade_date=date(2026, 7, 24),
                     market_input_port=_Port(market_input),
                     calendar_status="available",
                     market_phase="closed",

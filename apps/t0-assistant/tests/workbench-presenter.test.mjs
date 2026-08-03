@@ -91,13 +91,29 @@ test("calendar failures stay non-blocking in Live mode", () => {
   const error = {
     error_code: "calendar_unavailable",
     message: "交易日历覆盖不足，无法权威解析有效交易日",
-    retryable: true,
+    retryable: false,
     affected_capability: "market_calendar",
   };
   assert.deepEqual(liveOperationFailurePresentation("live", error), {
     blocking: false,
     error,
   });
+});
+
+test("live market view uses latest branch as_of when quote is missing", () => {
+  const lines = liveMarketViewLines({
+    effective_trade_date: "2026-07-24",
+    calendar_status: "available",
+    market_phase: "market_closed",
+    symbol_availability: "available",
+    data_quality: "full",
+    polling_profile: "idle",
+    quote_as_of: null,
+    bars_1m_as_of: "2026-07-24 15:00:00",
+    bars_5m_as_of: "2026-07-24 15:00:00",
+    daily_as_of: "2026-07-24 15:00:00",
+  });
+  assert.equal(lines.find(([label]) => label === "快照截止")?.[1], "07-24 15:00:00");
 });
 
 test("a later search invalidates an older in-flight result", () => {

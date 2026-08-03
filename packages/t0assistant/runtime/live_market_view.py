@@ -379,8 +379,9 @@ def should_run_close_reconciliation(
 def resolve_security_data_trade_date(
     bars_1m: Sequence[Mapping[str, object]],
     bars_5m: Sequence[Mapping[str, object]],
+    quote_snapshots: Sequence[Mapping[str, object]] = (),
 ) -> date | None:
-    """Return the latest intraday date present in the security snapshot."""
+    """Return the latest quote or intraday date present in the security snapshot."""
 
     latest: date | None = None
     for rows in (bars_1m, bars_5m):
@@ -391,6 +392,13 @@ def resolve_security_data_trade_date(
             row_date = timestamp.date()
             if latest is None or row_date > latest:
                 latest = row_date
+    for row in quote_snapshots:
+        timestamp = row_timestamp(row)
+        if timestamp is None:
+            continue
+        row_date = timestamp.date()
+        if latest is None or row_date > latest:
+            latest = row_date
     return latest
 
 
@@ -440,7 +448,8 @@ def _bars_complete_to(
         if moment.date() == trade_date and moment <= cutoff
     ]
     if not expected:
-        return False
+        # Before the first bar of this timeframe should close, emptiness is normal.
+        return True
     present = {
         timestamp
         for row in rows
@@ -563,6 +572,7 @@ def build_live_market_view(
     closed_5m_prefix_count: int,
     target_time: datetime,
     market_session: MarketSession,
+    market_candidate_trade_date: date | str | None = None,
     symbol_availability: SymbolAvailability | None = None,
     market_closed_reason: MarketClosedReason | None = None,
     minimum_preheat_5m: int = MINIMUM_PREHEAT_5M,
@@ -575,6 +585,15 @@ def build_live_market_view(
         else date.fromisoformat(str(effective_trade_date))
     )
     trade_date_text = trade_date.isoformat()
+    candidate_date = (
+        trade_date
+        if market_candidate_trade_date is None
+        else (
+            market_candidate_trade_date
+            if isinstance(market_candidate_trade_date, date)
+            else date.fromisoformat(str(market_candidate_trade_date))
+        )
+    )
     bars_1m = market.get("bars_1m")
     bars_5m = market.get("bars_5m")
     daily_bars = market.get("daily_bars")
@@ -582,14 +601,16 @@ def build_live_market_view(
     bars_1m_rows = bars_1m if isinstance(bars_1m, list) else ()
     bars_5m_rows = bars_5m if isinstance(bars_5m, list) else ()
     daily_rows = daily_bars if isinstance(daily_bars, list) else ()
+    quote_rows = (quote,) if isinstance(quote, Mapping) else ()
     closed_5m_rows = tuple(closed_5m_prefix)
 
     security_data_trade_date = resolve_security_data_trade_date(
         bars_1m_rows,
         bars_5m_rows,
+        quote_rows,
     )
     resolved_symbol_availability = symbol_availability or assess_symbol_availability(
-        market_candidate_trade_date=trade_date,
+        market_candidate_trade_date=candidate_date,
         security_data_trade_date=security_data_trade_date,
     )
     data_quality = assess_data_quality(

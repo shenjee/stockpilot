@@ -25,7 +25,9 @@ from .coordinator import SessionSpec, SessionType
 from .live_market_view import (
     LiveMarketViewError,
     ResolvedLiveMarketContext,
+    assess_symbol_availability,
     resolve_live_market_context,
+    resolve_security_data_trade_date,
 )
 from .live_session import LiveInitialInputPort, PreparedLiveWarmup
 from .replay_data import (
@@ -128,61 +130,52 @@ class LiveDataPreparator(LiveInitialInputPort):
         session_validator = self._session_validator(spec)
         observed_now = self._resolve_observed_now()
         resolved = self._resolve_market_context(observed_now=observed_now, market=market)
-        session = resolved.market_session
-        trade_date_str = session.trade_date.isoformat()
-        # Bar closure filter uses wall clock; target_time stays on effective day.
-        bar_observed_at = _bar_filter_observed_at(observed_now, session.trade_date)
+        market_candidate_session = resolved.market_session
+        market_candidate_date = market_candidate_session.trade_date
 
-        preheat_bars = self._load_preheat_5m(
-            code=code,
-            market=market,
-            session=session,
-            minimum_preheat_5m=minimum_preheat_5m,
-            session_validator=session_validator,
-        )
-        bars_1m = self._load_target_day_bars(
-            code=code,
-            market=market,
-            trade_date=trade_date_str,
-            timeframe="1m",
-            session_validator=session_validator,
-            observed_at=bar_observed_at,
-        )
-        official_5m = self._load_target_day_bars(
-            code=code,
-            market=market,
-            trade_date=trade_date_str,
-            timeframe="5m",
-            session_validator=session_validator,
-            observed_at=bar_observed_at,
-        )
-        daily_history = self._load_daily_history(
-            code=code,
-            market=market,
-            trade_date=trade_date_str,
-            session_trade_date=session.trade_date,
-            session_validator=session_validator,
-        )
         quote_snapshots = self._load_quote_snapshots(code=code, market=market)
-        previous_close = _derive_previous_close(daily_history, preheat_bars)
-        target_time = _select_target_time(
+        (
+            effective_session,
+            bars_1m,
+            official_5m,
+            daily_history,
+            target_time,
+        ) = self._resolve_effective_security_day(
+            code=code,
+            market=market,
+            start_date=market_candidate_date,
+            start_session=market_candidate_session,
             observed_now=observed_now,
-            trade_date=session.trade_date,
-            session_end=session.end,
-            bars_1m=bars_1m,
-            official_5m=official_5m,
             quote_snapshots=quote_snapshots,
+            session_validator=session_validator,
         )
         if target_time is None:
             raise LiveDataUnavailableError(
                 "live initial load requires a quote or intraday bars for the "
-                f"effective trade_date {trade_date_str}"
+                f"effective trade_date {market_candidate_date.isoformat()}"
             )
+
+        preheat_bars = self._load_preheat_5m(
+            code=code,
+            market=market,
+            session=effective_session,
+            minimum_preheat_5m=minimum_preheat_5m,
+            session_validator=session_validator,
+        )
+        previous_close = _derive_previous_close(daily_history, preheat_bars)
+        symbol_availability = assess_symbol_availability(
+            market_candidate_trade_date=market_candidate_date,
+            security_data_trade_date=resolve_security_data_trade_date(
+                bars_1m,
+                official_5m,
+                quote_snapshots,
+            ),
+        )
 
         market_input_port = _InMemoryMarketInputPort(
             symbol=resolved_symbol,
-            trade_date=trade_date_str,
-            session=session,
+            trade_date=effective_session.trade_date.isoformat(),
+            session=effective_session,
             preheat_5m_bars=_freeze_rows(preheat_bars),
             bars_1m=_freeze_rows(bars_1m),
             official_5m_bars=_freeze_rows(official_5m),
@@ -191,12 +184,14 @@ class LiveDataPreparator(LiveInitialInputPort):
             previous_close=previous_close,
         )
         return PreparedLiveWarmup(
-            market_session=session,
+            market_session=effective_session,
             target_time=target_time,
             observed_now=observed_now,
+            market_candidate_trade_date=market_candidate_date,
             market_input_port=market_input_port,
             calendar_status=resolved.calendar_status,
             market_phase=resolved.market_phase,
+            symbol_availability=symbol_availability,
         )
 
     def load_refresh_bars(
@@ -285,6 +280,78 @@ class LiveDataPreparator(LiveInitialInputPort):
         if self._session_validator_factory is None:
             return None
         return self._session_validator_factory(spec)
+
+    def _resolve_effective_security_day(
+        self,
+        *,
+        code: str,
+        market: str,
+        start_date: date,
+        start_session,
+        observed_now: datetime,
+        quote_snapshots: tuple[Mapping[str, Any], ...],
+        session_validator: Callable[[], bool] | None,
+    ) -> tuple[
+        Any,
+        tuple[Mapping[str, Any], ...],
+        tuple[Mapping[str, Any], ...],
+        tuple[Mapping[str, Any], ...],
+        datetime | None,
+    ]:
+        """Walk back from the market candidate day to the latest day with data."""
+
+        search_date = start_date
+        search_session = start_session
+        empty_bars: tuple[Mapping[str, Any], ...] = ()
+        empty_daily: tuple[Mapping[str, Any], ...] = ()
+        while search_date is not None:
+            trade_date_str = search_date.isoformat()
+            bar_observed_at = _bar_filter_observed_at(observed_now, search_date)
+            bars_1m = self._load_target_day_bars(
+                code=code,
+                market=market,
+                trade_date=trade_date_str,
+                timeframe="1m",
+                session_validator=session_validator,
+                observed_at=bar_observed_at,
+            )
+            official_5m = self._load_target_day_bars(
+                code=code,
+                market=market,
+                trade_date=trade_date_str,
+                timeframe="5m",
+                session_validator=session_validator,
+                observed_at=bar_observed_at,
+            )
+            daily_history = self._load_daily_history(
+                code=code,
+                market=market,
+                trade_date=trade_date_str,
+                session_trade_date=search_date,
+                session_validator=session_validator,
+            )
+            target_time = _select_target_time(
+                observed_now=observed_now,
+                trade_date=search_date,
+                session_end=search_session.end,
+                bars_1m=bars_1m,
+                official_5m=official_5m,
+                quote_snapshots=quote_snapshots,
+            )
+            if target_time is not None:
+                return (
+                    search_session,
+                    bars_1m,
+                    official_5m,
+                    daily_history,
+                    target_time,
+                )
+            previous = self._calendar.previous_trading_day(search_date, market)
+            if previous is None:
+                break
+            search_date = previous
+            search_session = self._calendar.require_session(previous, market)
+        return start_session, empty_bars, empty_bars, empty_daily, None
 
     def _load_preheat_5m(
         self,

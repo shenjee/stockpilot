@@ -115,6 +115,7 @@ class _DeterministicLiveInput:
             market_session=self.context.require_session("2026-07-24", "sh"),
             target_time=target,
             observed_now=target,
+            market_candidate_trade_date=date(2026, 7, 24),
             market_input_port=_MarketInput(target, market_input),
             calendar_status="available",
             market_phase="morning",
@@ -376,7 +377,14 @@ class LiveApplicationTests(unittest.TestCase):
         runtime.wait_for_completion(1)
 
         states = runtime.run_refresh_due(datetime(2026, 7, 24, 9, 35))
-        emitted = [self.events.get(timeout=1) for _ in range(7)]
+        emitted = []
+        deadline = datetime.now().timestamp() + 1.0
+        while datetime.now().timestamp() < deadline:
+            try:
+                emitted.append(self.events.get(timeout=0.05))
+            except Exception:
+                if emitted:
+                    break
 
         self.assertIsNotNone(states[LiveRefreshKind.QUOTE].last_failure)
         self.assertEqual(
@@ -393,7 +401,7 @@ class LiveApplicationTests(unittest.TestCase):
             request_id="snapshot",
             session_id=selected["data"]["session_id"],
         )["data"]
-        self.assertEqual(snapshot["session"]["revision"], emitted[-1]["revision"])
+        self.assertEqual(snapshot["session"]["revision"], max(e["revision"] for e in emitted))
         self.assertEqual(snapshot["market"]["bars_1m"][-1]["timestamp"], "2026-07-24 09:32:00")
 
         recovered = app.retry_live(

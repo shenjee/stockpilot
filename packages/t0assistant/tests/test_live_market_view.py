@@ -255,6 +255,34 @@ class LiveMarketViewProjectionTests(unittest.TestCase):
             date(2026, 7, 24),
         )
 
+    def test_resolve_security_data_trade_date_uses_target_day_quote(self) -> None:
+        self.assertEqual(
+            resolve_security_data_trade_date(
+                [],
+                [],
+                [{"timestamp": "2026-07-24 09:31:30"}],
+            ),
+            date(2026, 7, 24),
+        )
+
+    def test_assess_data_quality_full_when_no_closed_5m_expected_yet(self) -> None:
+        session = MarketSession(market="sh", trade_date=date(2026, 7, 27))
+        target_time = datetime(2026, 7, 27, 9, 31)
+        bars_1m = [_bar("2026-07-27 09:31:00")]
+        self.assertEqual(
+            assess_data_quality(
+                closed_5m_prefix_count=500,
+                bars_1m=bars_1m,
+                bars_5m=[],
+                daily_rows=[],
+                trade_date=date(2026, 7, 27),
+                market_session=session,
+                target_time=target_time,
+                market_phase="morning",
+            ),
+            "full",
+        )
+
     def test_assess_data_quality_requires_complete_intraday_not_single_bar(self) -> None:
         session = self.session
         bars_1m = [_bar("2026-07-24 09:31:00")]
@@ -330,7 +358,7 @@ class LiveMarketViewProjectionTests(unittest.TestCase):
             market_session=session,
         )
         self.assertEqual(payload["effective_trade_date"], "2026-07-24")
-        self.assertEqual(payload["data_quality"], "partial")
+        self.assertEqual(payload["data_quality"], "full")
         self.assertEqual(payload["quote_as_of"], "2026-07-24 09:31:03")
         self.assertEqual(payload["bars_1m_as_of"], "2026-07-24 09:31:00")
         self.assertEqual(payload["one_minute_indicators_as_of"], "2026-07-24 09:31:00")

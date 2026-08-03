@@ -174,11 +174,25 @@ export function liveMarketViewLines(view, { replayMode = false } = {}) {
   if (polling) {
     lines.push(["刷新状态", polling]);
   }
-  const quoteAsOf = formatBranchAsOf(view.quote_as_of);
-  if (quoteAsOf !== "--") {
-    lines.push(["快照截止", quoteAsOf]);
+  const snapshotAsOf = latestBranchAsOf(view);
+  if (snapshotAsOf !== "--") {
+    lines.push(["快照截止", snapshotAsOf]);
   }
   return lines;
+}
+
+function latestBranchAsOf(view) {
+  const candidates = [
+    view.quote_as_of,
+    view.bars_1m_as_of,
+    view.bars_5m_as_of,
+    view.daily_as_of,
+  ].filter((value) => typeof value === "string" && value.length >= 19);
+  if (candidates.length === 0) {
+    return "--";
+  }
+  candidates.sort();
+  return formatBranchAsOf(candidates[candidates.length - 1]);
 }
 
 function formatBranchAsOf(value) {

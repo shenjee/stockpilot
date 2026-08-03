@@ -143,6 +143,7 @@ class LiveSessionTests(unittest.TestCase):
             market_session=self.market_session,
             target_time=self.target_time,
             observed_now=self.target_time,
+            market_candidate_trade_date=self.market_session.trade_date,
             market_input_port=_SingleInputPort(self.target_time, market_input),
         )
         self.spec = SessionSpec(

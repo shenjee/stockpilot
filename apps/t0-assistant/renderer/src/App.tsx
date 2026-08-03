@@ -2209,6 +2209,7 @@ function clientError(error: unknown, capability: string): ApplicationError {
 
 function shouldShowFeedbackRetry(error: ApplicationError | null | undefined) {
   if (!error?.retryable) return false;
+  if (error.affected_capability === "market_calendar") return false;
   if (!isReplayOwnedError(error)) return true;
   // Replay-channel service outages may still restart the local service.
   return error.affected_capability === "service";

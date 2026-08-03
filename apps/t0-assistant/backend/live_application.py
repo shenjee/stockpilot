@@ -446,7 +446,7 @@ class LiveApplicationApi:
                 ),
                 "category": "data" if calendar_failure else "calculation",
                 "severity": "error",
-                "retryable": True,
+                "retryable": False if calendar_failure else True,
                 "affected_capability": (
                     "market_calendar" if calendar_failure else "live"
                 ),
