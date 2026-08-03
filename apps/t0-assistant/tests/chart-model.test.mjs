@@ -68,9 +68,23 @@ test("fixture chan_analysis is complete and rendered in 5 minute model", () => {
     "fixture chan_analysis.candidate_buy_points must be non-empty",
   );
   assert.ok(
-    Array.isArray(fixture.chan_analysis.candidate_sell_points),
-    "fixture chan_analysis.candidate_sell_points must be present",
+    Array.isArray(fixture.chan_analysis.candidate_sell_points) &&
+      fixture.chan_analysis.candidate_sell_points.length > 0,
+    "fixture chan_analysis.candidate_sell_points must be non-empty",
   );
+  // CandidatePoint 契约校验（issue #135 code review）
+  for (const point of fixture.chan_analysis.candidate_buy_points) {
+    assert.ok(point.id, "candidate_buy_point must have id");
+    assert.ok(point.reference_id, "candidate_buy_point must have reference_id");
+    assert.equal(typeof point.confirmed, "boolean", "candidate_buy_point.confirmed must be boolean");
+    assert.ok(point.reason, "candidate_buy_point must have reason");
+  }
+  for (const point of fixture.chan_analysis.candidate_sell_points) {
+    assert.ok(point.id, "candidate_sell_point must have id");
+    assert.ok(point.reference_id, "candidate_sell_point must have reference_id");
+    assert.equal(typeof point.confirmed, "boolean", "candidate_sell_point.confirmed must be boolean");
+    assert.ok(point.reason, "candidate_sell_point must have reason");
+  }
 
   const model = createChartGroupModel(
     fixture,
@@ -82,7 +96,19 @@ test("fixture chan_analysis is complete and rendered in 5 minute model", () => {
     model.pivotZones.length,
     fixture.chan_analysis.pivot_zones.length,
   );
-  assert.ok(model.czscMarkers.length > 0, "czscMarkers must be non-empty");
+  // 分别验证买点和卖点均存在（issue #135 code review）
+  const buyMarkers = model.czscMarkers.filter((m) => m.side === "buy");
+  const sellMarkers = model.czscMarkers.filter((m) => m.side === "sell");
+  assert.ok(buyMarkers.length > 0, "must have at least one buy marker");
+  assert.ok(
+    buyMarkers.some((m) => m.label.includes("1B")),
+    "buy markers must include 1B",
+  );
+  assert.ok(sellMarkers.length > 0, "must have at least one sell marker");
+  assert.ok(
+    sellMarkers.some((m) => m.label.includes("1S")),
+    "sell markers must include 1S",
+  );
 });
 
 test("logical ordering has one slot per real bar across overnight gaps", () => {
@@ -327,14 +353,14 @@ test("CZSC candidate points map to 1B/1S/2B/2S/3B/3S and preserve price", () => 
   const layered = structuredClone(fixture);
   layered.chan_analysis = {
     candidate_buy_points: [
-      { point_type: "first_buy", timestamp: "2026-07-22 09:55:00", price: 10.1 },
-      { point_type: "second_buy", timestamp: "2026-07-22 09:55:00", price: 10.1 },
-      { point_type: "third_buy", timestamp: "2026-07-22 10:05:00", price: 10.3 },
-      { point_type: "structure_buy_candidate", timestamp: "2026-07-22 10:10:00", price: 10.4 },
+      { id: "bp-001", point_type: "first_buy", timestamp: "2026-07-22 09:55:00", price: 10.1, reference_id: "s1", confirmed: true, reason: "test" },
+      { id: "bp-002", point_type: "second_buy", timestamp: "2026-07-22 09:55:00", price: 10.1, reference_id: "s1", confirmed: true, reason: "test" },
+      { id: "bp-003", point_type: "third_buy", timestamp: "2026-07-22 10:05:00", price: 10.3, reference_id: "s2", confirmed: false, reason: "test" },
+      { id: "bp-004", point_type: "structure_buy_candidate", timestamp: "2026-07-22 10:10:00", price: 10.4, reference_id: "s2", confirmed: false, reason: "test" },
     ],
     candidate_sell_points: [
-      { point_type: "first_sell", timestamp: "2026-07-22 10:00:00", price: 10.5 },
-      { point_type: "unknown_type", timestamp: "2026-07-22 10:05:00", price: 10.3 },
+      { id: "sp-001", point_type: "first_sell", timestamp: "2026-07-22 10:00:00", price: 10.5, reference_id: "s3", confirmed: true, reason: "test" },
+      { id: "sp-002", point_type: "unknown_type", timestamp: "2026-07-22 10:05:00", price: 10.3, reference_id: "s3", confirmed: false, reason: "test" },
     ],
   };
 
@@ -352,8 +378,8 @@ test("CZSC markers at the same time but different prices are not merged", () => 
   const layered = structuredClone(fixture);
   layered.chan_analysis = {
     candidate_buy_points: [
-      { point_type: "first_buy", timestamp: "2026-07-22 09:55:00", price: 10.1 },
-      { point_type: "third_buy", timestamp: "2026-07-22 09:55:00", price: 10.4 },
+      { id: "bp-001", point_type: "first_buy", timestamp: "2026-07-22 09:55:00", price: 10.1, reference_id: "s1", confirmed: true, reason: "test" },
+      { id: "bp-002", point_type: "third_buy", timestamp: "2026-07-22 09:55:00", price: 10.4, reference_id: "s1", confirmed: false, reason: "test" },
     ],
     candidate_sell_points: [],
   };
@@ -370,10 +396,10 @@ test("CZSC markers with invalid or missing price are dropped", () => {
   const layered = structuredClone(fixture);
   layered.chan_analysis = {
     candidate_buy_points: [
-      { point_type: "first_buy", timestamp: "2026-07-22 09:55:00" }, // 缺 price
-      { point_type: "second_buy", timestamp: "2026-07-22 10:00:00", price: NaN },
-      { point_type: "third_buy", timestamp: "2026-07-22 10:05:00", price: "10.3" }, // 非数字
-      { point_type: "first_buy", timestamp: "2026-07-22 10:10:00", price: Infinity },
+      { id: "bp-001", point_type: "first_buy", timestamp: "2026-07-22 09:55:00", reference_id: "s1", confirmed: true, reason: "test" }, // 缺 price
+      { id: "bp-002", point_type: "second_buy", timestamp: "2026-07-22 10:00:00", price: NaN, reference_id: "s1", confirmed: true, reason: "test" },
+      { id: "bp-003", point_type: "third_buy", timestamp: "2026-07-22 10:05:00", price: "10.3", reference_id: "s2", confirmed: false, reason: "test" }, // 非数字
+      { id: "bp-004", point_type: "first_buy", timestamp: "2026-07-22 10:10:00", price: Infinity, reference_id: "s2", confirmed: false, reason: "test" },
     ],
     candidate_sell_points: [],
   };
@@ -387,7 +413,7 @@ test("CZSC markers and BOLL are absent for the intraday group", () => {
   const layered = structuredClone(fixture);
   layered.chan_analysis = {
     candidate_buy_points: [
-      { point_type: "first_buy", timestamp: "2026-07-22 09:55:00", price: 10.1 },
+      { id: "bp-001", point_type: "first_buy", timestamp: "2026-07-22 09:55:00", price: 10.1, reference_id: "s1", confirmed: true, reason: "test" },
     ],
   };
   const model = createChartGroupModel(layered, ChartGroupKind.ONE_MINUTE);
@@ -456,7 +482,7 @@ test("replay asOf truncation drops bars, indicators, and CZSC layers after curre
       },
     ],
     candidate_buy_points: [
-      { point_type: "first_buy", timestamp: "2026-07-22 10:05:00", price: 10.3 },
+      { id: "bp-001", point_type: "first_buy", timestamp: "2026-07-22 10:05:00", price: 10.3, reference_id: "s1", confirmed: true, reason: "test" },
     ],
   };
 

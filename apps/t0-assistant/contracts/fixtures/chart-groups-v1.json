@@ -61,16 +61,24 @@
     ],
     "candidate_buy_points": [
       {
+        "id": "bp-001",
         "point_type": "first_buy",
         "timestamp": "2026-07-22 09:55:00",
-        "price": 10.17
+        "price": 10.17,
+        "reference_id": "stroke-002",
+        "confirmed": true,
+        "reason": "downward_stroke_inside_pivot_zone"
       }
     ],
     "candidate_sell_points": [
       {
+        "id": "sp-001",
         "point_type": "first_sell",
         "timestamp": "2026-07-22 10:00:00",
-        "price": 10.30
+        "price": 10.30,
+        "reference_id": "stroke-003",
+        "confirmed": false,
+        "reason": "upward_stroke_extension"
       }
     ]
   },
