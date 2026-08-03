@@ -65,7 +65,10 @@ class LiveSessionFactory:
         self._candidate_handler: Callable[[Any], None] | None = None
         self._incremental_handler: Callable[[LiveIncrementalUpdate], object] | None = None
         self._refresh_failure_handler: (
-            Callable[[SessionSpec, LiveRefreshKind, BaseException], None] | None
+            Callable[
+                [SessionSpec, LiveRefreshKind, BaseException, int | None], None
+            ]
+            | None
         ) = None
         self._state_handler: Callable[[SessionSpec, str, str], None] | None = None
         self._latest_session: LiveRuntimeSession | None = None
@@ -80,7 +83,7 @@ class LiveSessionFactory:
         candidate_handler: Callable[[Any], None],
         incremental_handler: Callable[[LiveIncrementalUpdate], object],
         refresh_failure_handler: Callable[
-            [SessionSpec, LiveRefreshKind, BaseException], None
+            [SessionSpec, LiveRefreshKind, BaseException, int | None], None
         ],
         state_handler: Callable[[SessionSpec, str, str], None],
     ) -> None:
@@ -107,8 +110,8 @@ class LiveSessionFactory:
             runtime_input,
             on_snapshot_candidate=self._candidate_handler,
             on_incremental_update=self._incremental_handler,
-            on_refresh_failure=lambda kind, failure: self._refresh_failure_handler(
-                spec, kind, failure
+            on_refresh_failure=lambda kind, failure, market_epoch=None: (
+                self._refresh_failure_handler(spec, kind, failure, market_epoch)
             ),
             on_state_change=lambda state, reason: self._state_handler(
                 spec, state, reason
@@ -387,6 +390,7 @@ class LiveApplicationApi:
         spec: SessionSpec,
         kind: LiveRefreshKind,
         failure: BaseException,
+        market_epoch: int | None = None,
     ) -> None:
         operation_id = f"live-refresh-{kind.value}-{spec.session_id}"
         capabilities = {
@@ -398,6 +402,7 @@ class LiveApplicationApi:
             session_id=spec.session_id,
             generation=spec.generation,
             operation_id=operation_id,
+            market_epoch=market_epoch,
             payload={
                 "error_code": "calculation_failed",
                 "category": "calculation",

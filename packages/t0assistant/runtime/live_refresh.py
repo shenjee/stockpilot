@@ -168,7 +168,9 @@ class LiveRefreshInputPort(Protocol):
 
 
 LiveRefreshUpdateHandler = Callable[[LiveIncrementalUpdate], object]
-LiveRefreshFailureHandler = Callable[[LiveRefreshKind, BaseException], None]
+LiveRefreshFailureHandler = Callable[
+    [LiveRefreshKind, BaseException, int | None], None
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -406,7 +408,7 @@ class LiveRefreshScheduler:
         polling_profile: PollingProfile | None = None,
     ) -> None:
         profile = polling_profile or self.polling_profile
-        futures = []
+        futures: list[tuple[LiveRefreshKind, object, int | None]] = []
         for kind in kinds:
             with self._lock:
                 if self._retired or kind in self._active_kinds:
@@ -419,6 +421,7 @@ class LiveRefreshScheduler:
                     polling_profile=profile,
                 )
                 watermark = state.latest_data_time
+                task_epoch = self._current_market_epoch()
             task = ComputationTask(
                 task_id=new_task_id(),
                 session_id=self._spec.session_id,
@@ -436,13 +439,18 @@ class LiveRefreshScheduler:
                 is_session_valid=lambda: not self.retired,
             )
             try:
-                futures.append((kind, self._executor.submit(task)))
+                futures.append((kind, self._executor.submit(task), task_epoch))
             except BaseException as exc:
                 with self._lock:
                     self._active_kinds.discard(kind)
-                self._record_failure(kind, observed_at, exc)
+                self._record_failure(
+                    kind,
+                    observed_at,
+                    exc,
+                    market_epoch=task_epoch,
+                )
 
-        for kind, future in futures:
+        for kind, future, task_epoch in futures:
             try:
                 outcome = future.result()
                 if outcome.status is ComputationStatus.FAILED:
@@ -452,7 +460,12 @@ class LiveRefreshScheduler:
                     continue
                 self._accept_result(kind, observed_at, outcome.value)
             except BaseException as exc:
-                self._record_failure(kind, observed_at, exc)
+                self._record_failure(
+                    kind,
+                    observed_at,
+                    exc,
+                    market_epoch=task_epoch,
+                )
             finally:
                 with self._lock:
                     self._active_kinds.discard(kind)
@@ -550,7 +563,13 @@ class LiveRefreshScheduler:
         kind: LiveRefreshKind,
         observed_at: datetime,
         failure: BaseException,
+        *,
+        market_epoch: int | None = None,
     ) -> None:
+        if market_epoch is not None:
+            current_epoch = self._current_market_epoch()
+            if current_epoch is not None and market_epoch != current_epoch:
+                return
         with self._lock:
             if self._retired:
                 return
@@ -566,7 +585,7 @@ class LiveRefreshScheduler:
             )
         if self._on_failure is not None:
             try:
-                self._on_failure(kind, failure)
+                self._on_failure(kind, failure, market_epoch)
             except Exception:
                 logger.exception(
                     "live refresh failure callback raised",

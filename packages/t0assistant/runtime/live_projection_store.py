@@ -196,6 +196,12 @@ class LiveProjectionStore:
             with self._lock:
                 session_key = (candidate.session_id, candidate.generation)
                 if (
+                    self._current_session == session_key
+                    and self._published_market_epoch is not None
+                    and candidate.market_epoch < self._published_market_epoch
+                ):
+                    return
+                if (
                     self._current_session is None
                     or self._current_session != session_key
                 ):
@@ -315,6 +321,7 @@ class LiveProjectionStore:
         generation: int,
         operation_id: str,
         payload: dict[str, Any],
+        market_epoch: int | None = None,
     ) -> LiveAcceptedEvent | None:
         """Publish a recoverable failure without replacing market facts.
 
@@ -322,6 +329,10 @@ class LiveProjectionStore:
         revision.  A newly selected/rebuilt Session can fail before producing
         any baseline; its failure is still published at revision ``0`` while
         an older successful snapshot remains retained for later recovery.
+
+        ``market_epoch`` stamps the Live market epoch the failure belongs to.
+        Failures whose epoch does not match the latest accepted full snapshot
+        epoch are rejected inside the atomic commit boundary.
         """
 
         if not session_id or not operation_id:
@@ -333,6 +344,13 @@ class LiveProjectionStore:
         def commit() -> None:
             with self._lock:
                 session_key = (session_id, generation)
+                if (
+                    self._current_session == session_key
+                    and self._published_market_epoch is not None
+                    and market_epoch is not None
+                    and market_epoch != self._published_market_epoch
+                ):
+                    return
                 current_payload = self._current_payload
                 current_revision = self._current_revision
                 if (

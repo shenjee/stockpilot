@@ -620,7 +620,9 @@ class LiveRuntimeSession:
         *,
         on_snapshot_candidate: Callable[[LiveSnapshotCandidate], None],
         on_incremental_update: Callable[[LiveIncrementalUpdate], object],
-        on_refresh_failure: Callable[[LiveRefreshKind, BaseException], None],
+        on_refresh_failure: Callable[
+            [LiveRefreshKind, BaseException, int | None], None
+        ],
         on_state_change: Callable[[str, str], None] | None = None,
         analyzer: CzscAnalyzerPort | None = None,
         intervals: LiveRefreshIntervals = LiveRefreshIntervals(),
