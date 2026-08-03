@@ -1020,6 +1020,53 @@ class LiveDataPreparatorTests(unittest.TestCase):
         self.assertEqual(prepared.symbol_availability, "no_current_data")
         self.assertEqual(prepared.market_phase, "morning")
 
+    def test_prepare_skips_unclosed_future_discovery_bucket_for_earlier_day(
+        self,
+    ) -> None:
+        market_context = MarketContextService(
+            ["2026-07-23", "2026-07-24", "2026-07-27"],
+            coverage_start="2026-07-23",
+            coverage_end="2026-07-27",
+        )
+        market_data = _FakeMarketData(
+            {
+                ("1m", "2026-07-27"): [
+                    _bar("2026-07-27 09:32:00", 10.1, 10.12, 10.05, 10.11, 80, 808.8),
+                ],
+                ("1m", "2026-07-24"): [
+                    _bar("2026-07-24 15:00:00", 10.04, 10.05, 10.03, 10.05, 40, 402.0),
+                ],
+                ("5m", "2026-07-23"): [
+                    _bar("2026-07-23 14:55:00", 10.0, 10.1, 9.9, 10.02, 100, 1002),
+                    _bar("2026-07-23 15:00:00", 10.02, 10.08, 10.0, 10.05, 120, 1206),
+                ],
+                ("5m", "2026-07-22"): [
+                    _bar("2026-07-22 14:55:00", 9.9, 10.0, 9.88, 9.96, 140, 1394.4),
+                    _bar("2026-07-22 15:00:00", 9.96, 10.0, 9.94, 10.0, 160, 1600),
+                ],
+                ("5m", "2026-07-24"): [
+                    _bar("2026-07-24 15:00:00", 10.04, 10.05, 10.03, 10.05, 40, 402.0),
+                ],
+                ("day", None): [
+                    _bar("2026-07-24", 10.0, 10.1, 9.9, 10.05, 5400, 54540),
+                ],
+            }
+        )
+        preparator = LiveDataPreparator(
+            market_data,
+            market_context,
+            quote_reader=_FakeQuoteReader(None),
+            clock=lambda: datetime(2026, 7, 27, 9, 31, 0),
+            config=LivePreparationConfig(daily_history_days=10, intraday_limit=20),
+        )
+
+        prepared = preparator.prepare(self.spec, minimum_preheat_5m=2)
+
+        self.assertEqual(prepared.market_candidate_trade_date.isoformat(), "2026-07-27")
+        self.assertEqual(prepared.market_session.trade_date.isoformat(), "2026-07-24")
+        self.assertEqual(prepared.symbol_availability, "no_current_data")
+        self.assertEqual(prepared.target_time, datetime(2026, 7, 24, 15, 0))
+
     def test_prepare_security_lookback_is_bounded_and_uses_range_discovery(self) -> None:
         trading_days = [
             f"2026-07-{day:02d}"

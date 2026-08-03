@@ -329,59 +329,61 @@ class LiveDataPreparator(LiveInitialInputPort):
             timeframe="5m",
             session_validator=session_validator,
         )
-        effective_date = _latest_date_with_intraday_evidence(
+        candidate_dates = _candidate_dates_with_intraday_evidence(
+            self._calendar,
             discovery_1m,
             discovery_5m,
+            market=market,
+            observed_now=observed_now,
             quote_snapshots=quote_snapshots,
             earliest=earliest_date,
             latest=start_date,
         )
-        if effective_date is None:
-            return start_session, empty_bars, empty_bars, empty_daily, None
-
-        effective_session = self._calendar.require_session(effective_date, market)
-        trade_date_str = effective_date.isoformat()
-        bar_observed_at = _bar_filter_observed_at(observed_now, effective_date)
-        bars_1m = self._load_target_day_bars(
-            code=code,
-            market=market,
-            trade_date=trade_date_str,
-            timeframe="1m",
-            session_validator=session_validator,
-            observed_at=bar_observed_at,
-        )
-        official_5m = self._load_target_day_bars(
-            code=code,
-            market=market,
-            trade_date=trade_date_str,
-            timeframe="5m",
-            session_validator=session_validator,
-            observed_at=bar_observed_at,
-        )
-        daily_history = self._load_daily_history(
-            code=code,
-            market=market,
-            trade_date=trade_date_str,
-            session_trade_date=effective_date,
-            session_validator=session_validator,
-        )
-        target_time = _select_target_time(
-            observed_now=observed_now,
-            trade_date=effective_date,
-            session_end=effective_session.end,
-            bars_1m=bars_1m,
-            official_5m=official_5m,
-            quote_snapshots=quote_snapshots,
-        )
-        if target_time is None:
-            return start_session, empty_bars, empty_bars, empty_daily, None
-        return (
-            effective_session,
-            bars_1m,
-            official_5m,
-            daily_history,
-            target_time,
-        )
+        for effective_date in candidate_dates:
+            effective_session = self._calendar.require_session(effective_date, market)
+            trade_date_str = effective_date.isoformat()
+            bar_observed_at = _bar_filter_observed_at(observed_now, effective_date)
+            bars_1m = self._load_target_day_bars(
+                code=code,
+                market=market,
+                trade_date=trade_date_str,
+                timeframe="1m",
+                session_validator=session_validator,
+                observed_at=bar_observed_at,
+            )
+            official_5m = self._load_target_day_bars(
+                code=code,
+                market=market,
+                trade_date=trade_date_str,
+                timeframe="5m",
+                session_validator=session_validator,
+                observed_at=bar_observed_at,
+            )
+            target_time = _select_target_time(
+                observed_now=observed_now,
+                trade_date=effective_date,
+                session_end=effective_session.end,
+                bars_1m=bars_1m,
+                official_5m=official_5m,
+                quote_snapshots=quote_snapshots,
+            )
+            if target_time is None:
+                continue
+            daily_history = self._load_daily_history(
+                code=code,
+                market=market,
+                trade_date=trade_date_str,
+                session_trade_date=effective_date,
+                session_validator=session_validator,
+            )
+            return (
+                effective_session,
+                bars_1m,
+                official_5m,
+                daily_history,
+                target_time,
+            )
+        return start_session, empty_bars, empty_bars, empty_daily, None
 
     def _load_intraday_discovery_range(
         self,
@@ -587,24 +589,39 @@ def _earliest_security_lookback_date(
     return earliest
 
 
-def _latest_date_with_intraday_evidence(
+def _candidate_dates_with_intraday_evidence(
+    calendar: CalendarQueryPort,
     *row_groups: Sequence[Mapping[str, Any]],
+    market: str,
+    observed_now: datetime,
     quote_snapshots: Sequence[Mapping[str, Any]],
     earliest: date,
     latest: date,
-) -> date | None:
-    candidates: list[date] = []
+) -> list[date]:
+    """Return trading-day candidates with valid intraday evidence, newest first."""
+
+    candidates: set[date] = set()
     for rows in row_groups:
         for row in rows:
             timestamp = row.get("timestamp", row.get("date"))
             if not isinstance(timestamp, str):
                 continue
             try:
-                row_date = parse_market_timestamp(timestamp).date()
+                parsed = parse_market_timestamp(timestamp)
             except (TypeError, ValueError):
                 continue
-            if earliest <= row_date <= latest:
-                candidates.append(row_date)
+            row_date = parsed.date()
+            if row_date < earliest or row_date > latest:
+                continue
+            if not calendar.is_trading_day(row_date, market):
+                continue
+            session = calendar.require_session(row_date, market)
+            if not session.is_trading_time(parsed):
+                continue
+            bar_observed_at = _bar_filter_observed_at(observed_now, row_date)
+            if not _live_bar_is_closed_at(row, bar_observed_at):
+                continue
+            candidates.add(row_date)
     for row in quote_snapshots:
         timestamp = row.get("timestamp")
         if not isinstance(timestamp, str):
@@ -613,9 +630,12 @@ def _latest_date_with_intraday_evidence(
             row_date = parse_market_timestamp(timestamp).date()
         except (TypeError, ValueError):
             continue
-        if earliest <= row_date <= latest:
-            candidates.append(row_date)
-    return max(candidates) if candidates else None
+        if row_date < earliest or row_date > latest:
+            continue
+        if not calendar.is_trading_day(row_date, market):
+            continue
+        candidates.add(row_date)
+    return sorted(candidates, reverse=True)
 
 
 def _select_target_time(
