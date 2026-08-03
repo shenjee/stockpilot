@@ -541,16 +541,23 @@ class ValidationTests(unittest.TestCase):
                 "effective_trade_date": "2026-07-22",
                 "calendar_status": "unavailable",
                 "market_phase": "unknown",
+                "symbol_availability": "available",
+                "data_quality": "partial",
+                "polling_profile": "idle",
+                "quote_as_of": None,
+                "bars_1m_as_of": None,
+                "bars_5m_as_of": None,
+                "daily_as_of": None,
+                "one_minute_indicators_as_of": None,
+                "five_minute_indicators_as_of": None,
+                "czsc_as_of": None,
             },
         ).to_dict()
         self.assertEqual(
-            snapshot["live_market_view"],
-            {
-                "effective_trade_date": "2026-07-22",
-                "calendar_status": "unavailable",
-                "market_phase": "unknown",
-            },
+            snapshot["live_market_view"]["effective_trade_date"],
+            "2026-07-22",
         )
+        self.assertEqual(snapshot["live_market_view"]["calendar_status"], "unavailable")
         _logical_validator("workbench_snapshot").validate(snapshot)
 
     def test_live_market_view_rejects_unavailable_without_unknown_phase(self) -> None:
@@ -571,6 +578,16 @@ class ValidationTests(unittest.TestCase):
                     "effective_trade_date": "2026-07-22",
                     "calendar_status": "unavailable",
                     "market_phase": "market_closed",
+                    "symbol_availability": "available",
+                    "data_quality": "partial",
+                    "polling_profile": "idle",
+                    "quote_as_of": None,
+                    "bars_1m_as_of": None,
+                    "bars_5m_as_of": None,
+                    "daily_as_of": None,
+                    "one_minute_indicators_as_of": None,
+                    "five_minute_indicators_as_of": None,
+                    "czsc_as_of": None,
                 },
             )
 

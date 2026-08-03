@@ -207,14 +207,91 @@
     "live_market_view": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["effective_trade_date", "calendar_status", "market_phase"],
+      "required": [
+        "effective_trade_date",
+        "calendar_status",
+        "market_phase",
+        "symbol_availability",
+        "data_quality",
+        "polling_profile",
+        "quote_as_of",
+        "bars_1m_as_of",
+        "bars_5m_as_of",
+        "daily_as_of",
+        "one_minute_indicators_as_of",
+        "five_minute_indicators_as_of",
+        "czsc_as_of"
+      ],
       "properties": {
         "effective_trade_date": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
         "calendar_status": {"enum": ["available", "unavailable"]},
         "market_phase": {
           "enum": ["unknown", "pre_open", "morning", "lunch_break", "afternoon", "closed", "market_closed"]
+        },
+        "symbol_availability": {
+          "enum": ["available", "no_current_data", "suspended"]
+        },
+        "data_quality": {"enum": ["full", "degraded", "partial"]},
+        "polling_profile": {"enum": ["active", "reduced", "idle"]},
+        "quote_as_of": {
+          "oneOf": [
+            {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$"},
+            {"type": "null"}
+          ]
+        },
+        "bars_1m_as_of": {
+          "oneOf": [
+            {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$"},
+            {"type": "null"}
+          ]
+        },
+        "bars_5m_as_of": {
+          "oneOf": [
+            {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$"},
+            {"type": "null"}
+          ]
+        },
+        "daily_as_of": {
+          "oneOf": [
+            {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$"},
+            {"type": "null"}
+          ]
+        },
+        "one_minute_indicators_as_of": {
+          "oneOf": [
+            {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$"},
+            {"type": "null"}
+          ]
+        },
+        "five_minute_indicators_as_of": {
+          "oneOf": [
+            {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$"},
+            {"type": "null"}
+          ]
+        },
+        "czsc_as_of": {
+          "oneOf": [
+            {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$"},
+            {"type": "null"}
+          ]
+        },
+        "market_closed_reason": {"enum": ["weekend", "holiday"]}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"calendar_status": {"const": "unavailable"}}},
+          "then": {"properties": {"market_phase": {"const": "unknown"}}}
+        },
+        {
+          "if": {
+            "properties": {
+              "calendar_status": {"const": "available"},
+              "market_phase": {"const": "market_closed"}
+            }
+          },
+          "then": {"required": ["market_closed_reason"]}
         }
-      }
+      ]
     },
     "workbench_snapshot": {
       "type": "object",

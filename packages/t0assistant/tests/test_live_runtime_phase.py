@@ -63,6 +63,7 @@ class _PhaseSource:
         return PreparedLiveWarmup(
             market_session=self.session,
             target_time=datetime(2026, 7, 24, 9, 31),
+            observed_now=datetime(2026, 7, 24, 9, 31),
             market_input_port=_Port(),
             calendar_status="available",
             market_phase="morning",

@@ -45,7 +45,12 @@ from .live_session import LiveSnapshotCandidate
 SCHEMA_VERSION = "t0_app_v1"
 
 _INCREMENTAL_EVENT_TYPES = frozenset(
-    {"market_update", "indicators_updated", "chan_analysis_replaced"}
+    {
+        "market_update",
+        "indicators_updated",
+        "chan_analysis_replaced",
+        "live_market_view_updated",
+    }
 )
 _MARKET_TARGETS = frozenset({"quote", "bars_1m", "bars_5m", "daily_bars"})
 
@@ -495,6 +500,8 @@ def _apply_incremental(
             )
     elif event_type == "indicators_updated":
         _merge_indicators(target["indicators"], payload)
+    elif event_type == "live_market_view_updated":
+        target["live_market_view"] = copy.deepcopy(payload)
     else:  # chan_analysis_replaced
         target["chan_analysis"] = copy.deepcopy(payload)
 
@@ -655,6 +662,9 @@ def _build_incremental_validators() -> dict[str, Draft202012Validator]:
         ),
         "chan_analysis_replaced": Draft202012Validator(
             {"$ref": f"{logic_id}#/$defs/chan_analysis"}, registry=registry
+        ),
+        "live_market_view_updated": Draft202012Validator(
+            {"$ref": f"{logic_id}#/$defs/live_market_view"}, registry=registry
         ),
     }
     return validators

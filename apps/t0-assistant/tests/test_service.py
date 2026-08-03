@@ -354,6 +354,7 @@ class _LiveSnapshotMixin:
         prepared = PreparedLiveWarmup(
             market_session=market_session,
             target_time=target_time,
+            observed_now=target_time,
             market_input_port=_SinglePort(),
         )
         pipeline = WorkbenchPipeline(

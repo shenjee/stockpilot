@@ -33,6 +33,7 @@ from packages.t0assistant.runtime import (
     CoordinatorStateError,
     CzscAnalyzerPort,
     LiveBranchDataPort,
+    LiveCalendarUnavailableError,
     LiveDataPreparator,
     LiveIncrementalUpdate,
     LiveProjectionStore,
@@ -143,6 +144,7 @@ class LiveApplicationApi:
         self._service_generation = service_generation
         self._preference_service = preference_service
         self._event_publisher = event_publisher
+        self._session_factory = session_factory
         # Production composition assigns the shared SQLite connection here.
         # Its lifetime deliberately matches this API object and therefore the
         # local service process; repositories do not own/close it separately.
@@ -427,17 +429,32 @@ class LiveApplicationApi:
         if state != "failed":
             return
         operation_id = self._operation_id(spec.session_id)
+        failure = self._session_factory.latest_session
+        calendar_failure = (
+            isinstance(failure, LiveRuntimeSession)
+            and isinstance(failure.failure, LiveCalendarUnavailableError)
+        )
         accepted = self._store.accept_operation_failure(
             session_id=spec.session_id,
             generation=spec.generation,
             operation_id=operation_id,
             payload={
-                "error_code": "calculation_failed",
-                "category": "calculation",
+                "error_code": (
+                    "calendar_unavailable"
+                    if calendar_failure
+                    else "calculation_failed"
+                ),
+                "category": "data" if calendar_failure else "calculation",
                 "severity": "error",
                 "retryable": True,
-                "affected_capability": "live",
-                "message": "Live 行情加载失败，请重试",
+                "affected_capability": (
+                    "market_calendar" if calendar_failure else "live"
+                ),
+                "message": (
+                    "交易日历覆盖不足，无法权威解析有效交易日"
+                    if calendar_failure
+                    else "Live 行情加载失败，请重试"
+                ),
                 "request_id": operation_id,
                 "operation_id": operation_id,
                 "details": {},

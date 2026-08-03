@@ -391,11 +391,32 @@ def _validate_live_market_view(
         raise WorkbenchProjectionError(
             "live_market_view is only valid for live sessions"
         )
-    required = {"effective_trade_date", "calendar_status", "market_phase"}
-    if set(live_market_view) != required:
+    required = {
+        "effective_trade_date",
+        "calendar_status",
+        "market_phase",
+        "symbol_availability",
+        "data_quality",
+        "polling_profile",
+        "quote_as_of",
+        "bars_1m_as_of",
+        "bars_5m_as_of",
+        "daily_as_of",
+        "one_minute_indicators_as_of",
+        "five_minute_indicators_as_of",
+        "czsc_as_of",
+    }
+    missing = required - set(live_market_view)
+    if missing:
         raise WorkbenchProjectionError(
-            "live_market_view fields must be effective_trade_date, "
-            "calendar_status, and market_phase"
+            "live_market_view is missing required fields: "
+            + ", ".join(sorted(missing))
+        )
+    extra = set(live_market_view) - required - {"market_closed_reason"}
+    if extra:
+        raise WorkbenchProjectionError(
+            "live_market_view contains unsupported fields: "
+            + ", ".join(sorted(extra))
         )
     if live_market_view.get("effective_trade_date") != session.trade_date:
         raise WorkbenchProjectionError(
@@ -413,12 +434,33 @@ def _validate_live_market_view(
         "market_closed",
     }:
         raise WorkbenchProjectionError("live_market_view.market_phase is invalid")
+    if live_market_view.get("symbol_availability") not in {
+        "available",
+        "no_current_data",
+        "suspended",
+    }:
+        raise WorkbenchProjectionError(
+            "live_market_view.symbol_availability is invalid"
+        )
+    if live_market_view.get("data_quality") not in {"full", "degraded", "partial"}:
+        raise WorkbenchProjectionError("live_market_view.data_quality is invalid")
+    if live_market_view.get("polling_profile") not in {"active", "reduced", "idle"}:
+        raise WorkbenchProjectionError("live_market_view.polling_profile is invalid")
     if (
         live_market_view.get("calendar_status") == "unavailable"
         and live_market_view.get("market_phase") != "unknown"
     ):
         raise WorkbenchProjectionError(
             "calendar_status=unavailable requires market_phase=unknown"
+        )
+    if (
+        live_market_view.get("calendar_status") == "available"
+        and live_market_view.get("market_phase") == "market_closed"
+        and live_market_view.get("market_closed_reason")
+        not in {"weekend", "holiday"}
+    ):
+        raise WorkbenchProjectionError(
+            "market_phase=market_closed requires market_closed_reason"
         )
 
 

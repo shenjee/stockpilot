@@ -102,6 +102,7 @@ class _SwitchableSource:
             return PreparedLiveWarmup(
                 market_session=self.friday,
                 target_time=datetime(2026, 7, 24, 15, 0),
+                observed_now=datetime(2026, 7, 24, 15, 0),
                 market_input_port=_Port(market_input),
                 calendar_status="available",
                 market_phase="closed",
@@ -110,6 +111,7 @@ class _SwitchableSource:
         return PreparedLiveWarmup(
             market_session=self.monday,
             target_time=datetime(2026, 7, 27, 9, 31),
+            observed_now=datetime(2026, 7, 27, 9, 31),
             market_input_port=_Port(market_input),
             calendar_status="available",
             market_phase="morning",
@@ -694,6 +696,7 @@ class CloseReconciliationRetryTests(unittest.TestCase):
                 return PreparedLiveWarmup(
                     market_session=self.friday,
                     target_time=datetime(2026, 7, 24, 15, 6),
+                    observed_now=datetime(2026, 7, 24, 15, 6),
                     market_input_port=_Port(market_input),
                     calendar_status="available",
                     market_phase="closed",

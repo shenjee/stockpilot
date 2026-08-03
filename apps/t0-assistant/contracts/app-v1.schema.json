@@ -281,7 +281,7 @@
         "category": {"enum": ["validation", "data", "calculation", "session", "persistence", "service"]},
         "severity": {"const": "error"},
         "retryable": {"type": "boolean"},
-        "affected_capability": {"enum": ["symbol_selection", "live", "intraday_chart", "five_minute_chart", "chan_analysis", "trades", "preferences", "service", "historical_chart"]},
+        "affected_capability": {"enum": ["symbol_selection", "live", "intraday_chart", "five_minute_chart", "chan_analysis", "trades", "preferences", "service", "historical_chart", "market_calendar"]},
         "message": {"type": "string", "minLength": 1},
         "request_id": {"type": "string", "minLength": 1},
         "operation_id": {"type": "string", "minLength": 1},
@@ -463,7 +463,7 @@
         "service_generation": {"type": "integer", "minimum": 1},
         "session_id": {"type": ["string", "null"], "minLength": 1},
         "revision": {"type": "integer", "minimum": 0},
-        "event_type": {"enum": ["live_session_status", "workbench_snapshot", "market_update", "indicators_updated", "chan_analysis_replaced", "trades_changed", "preferences_changed", "service_status", "operation_failed"]},
+        "event_type": {"enum": ["live_session_status", "workbench_snapshot", "market_update", "indicators_updated", "chan_analysis_replaced", "live_market_view_updated", "trades_changed", "preferences_changed", "service_status", "operation_failed"]},
         "operation_id": {"type": "string", "minLength": 1},
         "payload": {"type": "object"}
       },
@@ -473,6 +473,7 @@
         {"if": {"properties": {"event_type": {"const": "market_update"}}}, "then": {"properties": {"session_id": {"type": "string"}, "payload": {"$ref": "#/$defs/market_update_payload"}}}},
         {"if": {"properties": {"event_type": {"const": "indicators_updated"}}}, "then": {"properties": {"session_id": {"type": "string"}, "payload": {"$ref": "https://stockpilot.local/contracts/t0-logic-v1.schema.json#/$defs/indicators"}}}},
         {"if": {"properties": {"event_type": {"const": "chan_analysis_replaced"}}}, "then": {"properties": {"session_id": {"type": "string"}, "payload": {"$ref": "https://stockpilot.local/contracts/t0-logic-v1.schema.json#/$defs/chan_analysis"}}}},
+        {"if": {"properties": {"event_type": {"const": "live_market_view_updated"}}}, "then": {"properties": {"session_id": {"type": "string"}, "payload": {"$ref": "https://stockpilot.local/contracts/t0-logic-v1.schema.json#/$defs/live_market_view"}}}},
         {
           "if": {"properties": {"event_type": {"const": "trades_changed"}}},
           "then": {

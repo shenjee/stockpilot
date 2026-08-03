@@ -23,10 +23,12 @@ from .live_refresh import (
 )
 from .live_market_view import (
     CloseReconcileStatus,
+    MarketClosedReason,
     PollingProfile,
     day_switch_evidence_date,
     day_switch_target_date,
     is_awaiting_day_switch,
+    resolve_market_closed_reason,
     resolve_polling_profile,
     should_run_close_reconciliation,
 )
@@ -377,6 +379,12 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             calendar_status=calendar_status,
             market_phase=market_phase,
             market_epoch=committed_epoch,
+            **_live_view_extras(
+                self,
+                observed_at=observed_at,
+                calendar_status=calendar_status,
+                market_phase=market_phase,
+            ),
         )
         snapshot = candidate.build_projection(0).to_dict()
         return LiveRefreshResult(
@@ -431,6 +439,12 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
                 calendar_status=resolved.calendar_status,
                 market_phase=resolved.market_phase,
                 market_epoch=market_epoch,
+                **_live_view_extras(
+                    self,
+                    observed_at=observed_at,
+                    calendar_status=resolved.calendar_status,
+                    market_phase=resolved.market_phase,
+                ),
             )
             handler = self._on_projection_refresh
             if handler is not None:
@@ -579,6 +593,12 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             pipeline_result=result,
             calendar_status=prepared.calendar_status,
             market_phase=prepared.market_phase,
+            **_live_view_extras(
+                self,
+                observed_at=prepared.target_time,
+                calendar_status=prepared.calendar_status,
+                market_phase=prepared.market_phase,
+            ),
         )
 
         with self._lock:
@@ -677,6 +697,10 @@ class LiveRuntimeSession:
     def wait_for_completion(self, timeout: float | None = None) -> bool:
         return self._initial.wait_for_completion(timeout)
 
+    @property
+    def failure(self) -> BaseException | None:
+        return self._initial.failure
+
     def run_refresh_due(self, observed_at: datetime | None = None) -> Mapping:
         scheduler = self.refresh_scheduler
         if scheduler is None:
@@ -771,6 +795,35 @@ class _PinnedLiveView:
 
     market_phase: str
     calendar_status: str
+
+
+def _market_closed_reason(
+    observed_at: datetime,
+    market_phase: str,
+    calendar_status: str,
+) -> MarketClosedReason | None:
+    return resolve_market_closed_reason(
+        observed_now=observed_at,
+        market_phase=market_phase,  # type: ignore[arg-type]
+        calendar_status=calendar_status,  # type: ignore[arg-type]
+    )
+
+
+def _live_view_extras(
+    input_port: BranchingLiveInput,
+    *,
+    observed_at: datetime,
+    calendar_status: str,
+    market_phase: str,
+) -> dict[str, PollingProfile | MarketClosedReason | None]:
+    return {
+        "polling_profile": input_port.polling_profile(observed_at),
+        "market_closed_reason": _market_closed_reason(
+            observed_at,
+            market_phase,
+            calendar_status,
+        ),
+    }
 
 
 def _resolve_pinned_live_view(
@@ -879,6 +932,11 @@ def _branch_updates(
         "generation": spec.generation,
         "market_epoch": market_epoch,
     }
+    live_view_update = LiveIncrementalUpdate(
+        **identity,
+        event_type="live_market_view_updated",
+        payload=snapshot["live_market_view"],
+    )
     market = snapshot["market"]
     if kind is LiveRefreshKind.QUOTE:
         return (
@@ -887,6 +945,7 @@ def _branch_updates(
                 event_type="market_update",
                 payload={"target": "quote", "bars": [], "quote": market["quote"]},
             ),
+            live_view_update,
         )
     if kind is LiveRefreshKind.ONE_MINUTE:
         return (
@@ -913,6 +972,7 @@ def _branch_updates(
                 event_type="indicators_updated",
                 payload=snapshot["indicators"],
             ),
+            live_view_update,
         )
     return (
         LiveIncrementalUpdate(
@@ -936,6 +996,7 @@ def _branch_updates(
             event_type="chan_analysis_replaced",
             payload=snapshot["chan_analysis"],
         ),
+        live_view_update,
     )
 
 

@@ -27,6 +27,12 @@ LiveMarketPhase = Literal[
 ]
 CalendarStatus = Literal["available", "unavailable"]
 PollingProfile = Literal["active", "reduced", "idle"]
+DataQuality = Literal["full", "degraded", "partial"]
+SymbolAvailability = Literal["available", "no_current_data", "suspended"]
+MarketClosedReason = Literal["weekend", "holiday"]
+
+MINIMUM_PREHEAT_5M = 500
+_TIMESTAMP_PATTERN = r"^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$"
 CloseReconcileStatus = Literal[
     "not_started",
     "in_progress",
@@ -125,6 +131,19 @@ def resolve_live_market_context(
         effective_trade_date=previous,
         market_phase="market_closed",
     )
+
+
+def resolve_market_closed_reason(
+    *,
+    observed_now: datetime,
+    market_phase: LiveMarketPhase,
+    calendar_status: CalendarStatus,
+) -> MarketClosedReason | None:
+    """Return the natural-day reason when the market layer is closed."""
+
+    if calendar_status != "available" or market_phase != "market_closed":
+        return None
+    return "weekend" if observed_now.weekday() >= 5 else "holiday"
 
 
 def _finalize_resolved(
@@ -355,3 +374,284 @@ def should_run_close_reconciliation(
     if market_phase != "closed":
         return False
     return observed_at.time() >= _CLOSE_RECONCILE
+
+
+def resolve_security_data_trade_date(
+    bars_1m: Sequence[Mapping[str, object]],
+    bars_5m: Sequence[Mapping[str, object]],
+) -> date | None:
+    """Return the latest intraday date present in the security snapshot."""
+
+    latest: date | None = None
+    for rows in (bars_1m, bars_5m):
+        for row in rows:
+            timestamp = row_timestamp(row)
+            if timestamp is None:
+                continue
+            row_date = timestamp.date()
+            if latest is None or row_date > latest:
+                latest = row_date
+    return latest
+
+
+def assess_symbol_availability(
+    *,
+    market_candidate_trade_date: date,
+    security_data_trade_date: date | None,
+    authoritative_suspended: bool = False,
+) -> SymbolAvailability:
+    """Assess whether the symbol has data for the market candidate day."""
+
+    if authoritative_suspended:
+        return "suspended"
+    if security_data_trade_date is None:
+        return "no_current_data"
+    if security_data_trade_date == market_candidate_trade_date:
+        return "available"
+    return "no_current_data"
+
+
+def _intraday_quality_cutoff(
+    *,
+    market_phase: LiveMarketPhase,
+    target_time: datetime,
+    market_session: MarketSession,
+) -> datetime | None:
+    if market_phase in {"market_closed", "closed"}:
+        return market_session.end
+    if market_phase == "lunch_break":
+        return market_session.morning_close
+    if market_phase in {"morning", "afternoon"}:
+        return target_time
+    return None
+
+
+def _bars_complete_to(
+    rows: Sequence[Mapping[str, object]],
+    *,
+    trade_date: date,
+    cutoff: datetime,
+    market_session: MarketSession,
+    minutes: int,
+) -> bool:
+    expected = [
+        moment
+        for moment in market_session.bar_close_times(minutes)
+        if moment.date() == trade_date and moment <= cutoff
+    ]
+    if not expected:
+        return False
+    present = {
+        timestamp
+        for row in rows
+        if row.get("closed") is True
+        if (timestamp := row_timestamp(row)) is not None
+        if timestamp.date() == trade_date
+    }
+    return all(moment in present for moment in expected)
+
+
+def _has_target_day_closed_daily(
+    rows: Sequence[Mapping[str, object]],
+    trade_date: date,
+) -> bool:
+    for row in rows:
+        if row.get("closed") is not True:
+            continue
+        timestamp = row_timestamp(row)
+        if timestamp is not None and timestamp.date() == trade_date:
+            return True
+    return False
+
+
+def assess_data_quality(
+    *,
+    closed_5m_prefix_count: int,
+    bars_1m: Sequence[Mapping[str, object]],
+    bars_5m: Sequence[Mapping[str, object]],
+    daily_rows: Sequence[Mapping[str, object]],
+    trade_date: date,
+    market_session: MarketSession,
+    target_time: datetime,
+    market_phase: LiveMarketPhase,
+    minimum_preheat_5m: int = MINIMUM_PREHEAT_5M,
+) -> DataQuality:
+    """Assess candidate-day data completeness (#130 PR-C)."""
+
+    if closed_5m_prefix_count < minimum_preheat_5m:
+        return "partial"
+
+    cutoff = _intraday_quality_cutoff(
+        market_phase=market_phase,
+        target_time=target_time,
+        market_session=market_session,
+    )
+    if cutoff is None:
+        return "partial"
+
+    has_complete_1m = _bars_complete_to(
+        bars_1m,
+        trade_date=trade_date,
+        cutoff=cutoff,
+        market_session=market_session,
+        minutes=1,
+    )
+    has_complete_5m = _bars_complete_to(
+        bars_5m,
+        trade_date=trade_date,
+        cutoff=cutoff,
+        market_session=market_session,
+        minutes=5,
+    )
+    has_target_day_closed_daily = _has_target_day_closed_daily(daily_rows, trade_date)
+    requires_daily = market_phase in {"market_closed", "closed"}
+
+    if has_complete_1m and has_complete_5m:
+        if requires_daily and not has_target_day_closed_daily:
+            return "degraded"
+        return "full"
+    if has_complete_5m and has_target_day_closed_daily:
+        return "degraded"
+    return "partial"
+
+
+def _latest_closed_bar_timestamp(
+    rows: Sequence[Mapping[str, object]],
+    *,
+    trade_date: date | None = None,
+    closed_only: bool = True,
+) -> str | None:
+    latest: datetime | None = None
+    for row in rows:
+        if closed_only and row.get("closed") is not True:
+            continue
+        timestamp = row_timestamp(row)
+        if timestamp is None:
+            continue
+        if trade_date is not None and timestamp.date() != trade_date:
+            continue
+        if latest is None or timestamp > latest:
+            latest = timestamp
+    return latest.strftime("%Y-%m-%d %H:%M:%S") if latest is not None else None
+
+
+def _has_target_day_bars(
+    rows: Sequence[Mapping[str, object]],
+    trade_date: date,
+    *,
+    closed_only: bool = False,
+) -> bool:
+    for row in rows:
+        if closed_only and row.get("closed") is not True:
+            continue
+        timestamp = row_timestamp(row)
+        if timestamp is not None and timestamp.date() == trade_date:
+            return True
+    return False
+
+
+def build_live_market_view(
+    *,
+    effective_trade_date: date | str,
+    calendar_status: CalendarStatus,
+    market_phase: LiveMarketPhase,
+    polling_profile: PollingProfile,
+    market: Mapping[str, object],
+    indicators: Mapping[str, object],
+    chan_analysis: Mapping[str, object],
+    closed_5m_prefix: Sequence[Mapping[str, object]],
+    closed_5m_prefix_count: int,
+    target_time: datetime,
+    market_session: MarketSession,
+    symbol_availability: SymbolAvailability | None = None,
+    market_closed_reason: MarketClosedReason | None = None,
+    minimum_preheat_5m: int = MINIMUM_PREHEAT_5M,
+) -> dict[str, object]:
+    """Build the authoritative Live Market View contract payload (#130 PR-C)."""
+
+    trade_date = (
+        effective_trade_date
+        if isinstance(effective_trade_date, date)
+        else date.fromisoformat(str(effective_trade_date))
+    )
+    trade_date_text = trade_date.isoformat()
+    bars_1m = market.get("bars_1m")
+    bars_5m = market.get("bars_5m")
+    daily_bars = market.get("daily_bars")
+    quote = market.get("quote")
+    bars_1m_rows = bars_1m if isinstance(bars_1m, list) else ()
+    bars_5m_rows = bars_5m if isinstance(bars_5m, list) else ()
+    daily_rows = daily_bars if isinstance(daily_bars, list) else ()
+    closed_5m_rows = tuple(closed_5m_prefix)
+
+    security_data_trade_date = resolve_security_data_trade_date(
+        bars_1m_rows,
+        bars_5m_rows,
+    )
+    resolved_symbol_availability = symbol_availability or assess_symbol_availability(
+        market_candidate_trade_date=trade_date,
+        security_data_trade_date=security_data_trade_date,
+    )
+    data_quality = assess_data_quality(
+        closed_5m_prefix_count=closed_5m_prefix_count,
+        bars_1m=bars_1m_rows,
+        bars_5m=bars_5m_rows,
+        daily_rows=daily_rows,
+        trade_date=trade_date,
+        market_session=market_session,
+        target_time=target_time,
+        market_phase=market_phase,
+        minimum_preheat_5m=minimum_preheat_5m,
+    )
+
+    one_minute = indicators.get("one_minute")
+    five_minute = indicators.get("five_minute")
+    quote_as_of = (
+        quote.get("timestamp")
+        if isinstance(quote, Mapping) and isinstance(quote.get("timestamp"), str)
+        else None
+    )
+
+    payload: dict[str, object] = {
+        "effective_trade_date": trade_date_text,
+        "calendar_status": calendar_status,
+        "market_phase": market_phase,
+        "symbol_availability": resolved_symbol_availability,
+        "data_quality": data_quality,
+        "polling_profile": polling_profile,
+        "quote_as_of": quote_as_of,
+        "bars_1m_as_of": _latest_closed_bar_timestamp(
+            bars_1m_rows,
+            trade_date=trade_date,
+        ),
+        "bars_5m_as_of": _latest_closed_bar_timestamp(
+            bars_5m_rows,
+            trade_date=trade_date,
+            closed_only=True,
+        ),
+        "daily_as_of": _latest_closed_bar_timestamp(
+            daily_rows,
+            trade_date=trade_date,
+            closed_only=True,
+        ),
+        "one_minute_indicators_as_of": _latest_closed_bar_timestamp(
+            bars_1m_rows,
+            trade_date=trade_date,
+            closed_only=True,
+        ),
+        "five_minute_indicators_as_of": _latest_closed_bar_timestamp(
+            closed_5m_rows,
+            closed_only=True,
+        ),
+        "czsc_as_of": _latest_closed_bar_timestamp(
+            closed_5m_rows,
+            closed_only=True,
+        ),
+    }
+    if (
+        calendar_status == "available"
+        and market_phase == "market_closed"
+        and market_closed_reason is not None
+    ):
+        payload["market_closed_reason"] = market_closed_reason
+    return payload

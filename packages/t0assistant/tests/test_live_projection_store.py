@@ -222,6 +222,7 @@ class _StoreFixture:
         prepared = PreparedLiveWarmup(
             market_session=self.market_session,
             target_time=self.target_time,
+            observed_now=self.target_time,
             market_input_port=_SinglePort(self.target_time, self._market_input(symbol)),
         )
         pipeline = WorkbenchPipeline(
@@ -534,6 +535,36 @@ class LiveProjectionStoreTests(unittest.TestCase):
         self.assertEqual(len(snapshot["market"]["bars_1m"]), 2)
         self.assertEqual(snapshot["market"]["bars_1m"][-1]["close"], 10.09)
         self.assertEqual(snapshot["session"]["revision"], 1)
+
+    def test_live_market_view_updated_applies_to_authoritative_state(self) -> None:
+        self.coordinator.set_accepted("live-1", 1)
+        self.store.accept_candidate(self.fixture.candidate(session_id="live-1", generation=1))
+        payload = {
+            "effective_trade_date": "2026-07-24",
+            "calendar_status": "available",
+            "market_phase": "morning",
+            "symbol_availability": "available",
+            "data_quality": "partial",
+            "polling_profile": "active",
+            "quote_as_of": "2026-07-24 09:32:03",
+            "bars_1m_as_of": "2026-07-24 09:32:00",
+            "bars_5m_as_of": None,
+            "daily_as_of": None,
+            "one_minute_indicators_as_of": "2026-07-24 09:32:00",
+            "five_minute_indicators_as_of": None,
+            "czsc_as_of": None,
+        }
+        event = self.store.accept_incremental(
+            LiveIncrementalUpdate(
+                session_id="live-1",
+                generation=1,
+                event_type="live_market_view_updated",
+                payload=payload,
+            )
+        )
+        self.assertIsNotNone(event)
+        snapshot = self.store.get_live_snapshot(session_id="live-1", generation=1)
+        self.assertEqual(snapshot["live_market_view"]["quote_as_of"], "2026-07-24 09:32:03")
 
     def test_indicators_merge_and_chan_replacement_apply_to_authoritative_state(self) -> None:
         self.coordinator.set_accepted("live-1", 1)

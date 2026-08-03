@@ -552,12 +552,17 @@ class LiveRefreshScheduler:
                 "refresh update does not belong to this Live Session"
             )
         allowed = {
-            LiveRefreshKind.QUOTE: {"market_update"},
-            LiveRefreshKind.ONE_MINUTE: {"market_update", "indicators_updated"},
+            LiveRefreshKind.QUOTE: {"market_update", "live_market_view_updated"},
+            LiveRefreshKind.ONE_MINUTE: {
+                "market_update",
+                "indicators_updated",
+                "live_market_view_updated",
+            },
             LiveRefreshKind.OFFICIAL_FIVE_MINUTE: {
                 "market_update",
                 "indicators_updated",
                 "chan_analysis_replaced",
+                "live_market_view_updated",
             },
         }[kind]
         if update.event_type not in allowed:

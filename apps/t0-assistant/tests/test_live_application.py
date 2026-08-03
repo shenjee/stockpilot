@@ -114,6 +114,7 @@ class _DeterministicLiveInput:
         return PreparedLiveWarmup(
             market_session=self.context.require_session("2026-07-24", "sh"),
             target_time=target,
+            observed_now=target,
             market_input_port=_MarketInput(target, market_input),
             calendar_status="available",
             market_phase="morning",

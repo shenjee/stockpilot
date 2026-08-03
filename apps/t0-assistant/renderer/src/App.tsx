@@ -37,6 +37,7 @@ import {
   createLatestRequestTracker,
   isCompleteWorkbenchSnapshot,
   latestDailyBars,
+  liveMarketViewLines,
   liveOperationFailurePresentation,
   operationMatchesEnvelope,
   quoteRows,
@@ -1585,6 +1586,10 @@ export function App() {
         <MarketSidebar
           bars={dailyBars}
           quote={snapshot.market.quote}
+          liveMarketView={
+            (snapshot as { live_market_view?: unknown }).live_market_view
+          }
+          replayMode={replayMode}
           status={status}
         />
 
@@ -2020,12 +2025,17 @@ function LayoutButton({
 function MarketSidebar({
   bars,
   quote,
+  liveMarketView,
+  replayMode,
   status,
 }: {
   bars: MarketBar[];
   quote: unknown;
+  liveMarketView: unknown;
+  replayMode: boolean;
   status: ServiceStatus;
 }) {
+  const liveStatusLines = liveMarketViewLines(liveMarketView, { replayMode });
   return (
     <aside
       className="market-sidebar"
@@ -2036,6 +2046,22 @@ function MarketSidebar({
         <h2>日 K</h2>
         <DailyMiniChart bars={bars} />
       </section>
+      {liveStatusLines.length > 0 && (
+        <section
+          className="live-status-panel"
+          data-testid="live-market-status"
+          aria-label="实盘行情状态"
+        >
+          <dl>
+            {liveStatusLines.map(([label, value]) => (
+              <div key={label}>
+                <dt>{label}</dt>
+                <dd>{value}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      )}
       <section className="quote-panel">
         <h2>行情</h2>
         <dl>

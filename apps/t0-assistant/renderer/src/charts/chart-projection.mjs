@@ -95,6 +95,12 @@ export function applyLiveChartEvent(projection, event) {
     typeof event.payload === "object"
   ) {
     snapshot = { ...snapshot, chan_analysis: event.payload };
+  } else if (
+    event.event_type === "live_market_view_updated" &&
+    event.payload &&
+    typeof event.payload === "object"
+  ) {
+    snapshot = { ...snapshot, live_market_view: event.payload };
   }
 
   return {

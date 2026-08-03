@@ -193,6 +193,7 @@ class LiveDataPreparator(LiveInitialInputPort):
         return PreparedLiveWarmup(
             market_session=session,
             target_time=target_time,
+            observed_now=observed_now,
             market_input_port=market_input_port,
             calendar_status=resolved.calendar_status,
             market_phase=resolved.market_phase,

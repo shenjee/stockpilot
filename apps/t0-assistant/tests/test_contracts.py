@@ -283,6 +283,31 @@ class ContractTest(unittest.TestCase):
         errors = list(validator.iter_errors({**event, "revision": -1}))
         self.assertTrue(errors)
 
+    def test_live_market_view_updated_event_matches_contract(self) -> None:
+        event = {
+            "schema_version": "t0_app_v1",
+            "service_generation": 2,
+            "session_id": "live-1",
+            "revision": 5,
+            "event_type": "live_market_view_updated",
+            "payload": {
+                "effective_trade_date": "2026-07-24",
+                "calendar_status": "available",
+                "market_phase": "morning",
+                "symbol_availability": "available",
+                "data_quality": "partial",
+                "polling_profile": "active",
+                "quote_as_of": "2026-07-24 09:31:03",
+                "bars_1m_as_of": "2026-07-24 09:31:00",
+                "bars_5m_as_of": None,
+                "daily_as_of": None,
+                "one_minute_indicators_as_of": "2026-07-24 09:31:00",
+                "five_minute_indicators_as_of": None,
+                "czsc_as_of": None,
+            },
+        }
+        self.app_validator("event_envelope").validate(event)
+
     def test_synchronous_rejection_cannot_claim_an_operation(self) -> None:
         response = {
             "schema_version": "t0_app_v1",
