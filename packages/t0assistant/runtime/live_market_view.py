@@ -7,8 +7,8 @@ or maintain holiday rules (#133 owns Calendar data sources).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
-from typing import Literal
+from datetime import date, datetime, time, timedelta
+from typing import Literal, Mapping, Sequence
 
 from packages.marketdata.calendar_query import (
     CalendarQueryPort,
@@ -26,6 +26,10 @@ LiveMarketPhase = Literal[
     "market_closed",
 ]
 CalendarStatus = Literal["available", "unavailable"]
+PollingProfile = Literal["active", "reduced", "idle"]
+
+_MARKET_OPEN = time(9, 30)
+_CLOSE_RECONCILE = time(15, 5)
 
 
 class LiveMarketViewError(ValueError):
@@ -203,3 +207,141 @@ def _resolve_calendar_unavailable(
         market_phase="unknown",
         calendar_status="unavailable",
     )
+
+
+def resolve_polling_profile(
+    *,
+    market_phase: LiveMarketPhase,
+    calendar_status: CalendarStatus,
+    pinned_trade_date: date,
+    observed_at: datetime,
+    calendar: CalendarQueryPort | None,
+    market: str,
+    awaiting_day_switch: bool = False,
+    close_reconciled: bool = False,
+) -> PollingProfile:
+    """Return the refresh cadence for the current Live view (#130 PR-B)."""
+
+    if awaiting_day_switch:
+        return "reduced"
+    if market_phase in {"morning", "afternoon"}:
+        return "active"
+    if market_phase == "closed":
+        if close_reconciled:
+            return "idle"
+        if observed_at.time() >= _CLOSE_RECONCILE:
+            return "active"
+        return "idle"
+    if market_phase in {"pre_open", "lunch_break", "market_closed", "unknown"}:
+        return "idle"
+    if calendar_status == "unavailable":
+        return "idle"
+    if calendar is not None and is_awaiting_day_switch(
+        calendar,
+        observed_at=observed_at,
+        pinned_trade_date=pinned_trade_date,
+        market=market,
+        calendar_status=calendar_status,
+    ):
+        return "reduced"
+    return "idle"
+
+
+def is_awaiting_day_switch(
+    calendar: CalendarQueryPort,
+    *,
+    observed_at: datetime,
+    pinned_trade_date: date,
+    market: str,
+    calendar_status: CalendarStatus = "available",
+) -> bool:
+    """Return whether wall clock expects a newer day but the Session is still pinned."""
+
+    if observed_at.time() < _MARKET_OPEN:
+        return False
+    if calendar_status == "unavailable":
+        return False
+    try:
+        resolved = resolve_live_market_context(
+            calendar,
+            observed_now=observed_at,
+            market=market,
+        )
+    except LiveMarketViewError:
+        return False
+    return resolved.effective_trade_date > pinned_trade_date
+
+
+def day_switch_target_date(
+    calendar: CalendarQueryPort,
+    *,
+    observed_at: datetime,
+    pinned_trade_date: date,
+    market: str,
+) -> date | None:
+    """Return the calendar target day when a switch is due, else ``None``."""
+
+    if observed_at.time() < _MARKET_OPEN:
+        return None
+    try:
+        resolved = resolve_live_market_context(
+            calendar,
+            observed_now=observed_at,
+            market=market,
+        )
+    except LiveMarketViewError:
+        return None
+    target = resolved.effective_trade_date
+    if target <= pinned_trade_date:
+        return None
+    return target
+
+
+def row_timestamp(row: Mapping[str, object]) -> datetime | None:
+    value = row.get("timestamp", row.get("date"))
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is None else None
+
+
+def day_switch_evidence_date(
+    rows: Sequence[Mapping[str, object]],
+    *,
+    target_trade_date: date,
+    observed_at: datetime,
+    require_closed: bool = False,
+) -> bool:
+    """Return whether branch rows carry post-open evidence for ``target_trade_date``."""
+
+    if observed_at.time() < _MARKET_OPEN:
+        return False
+    for row in rows:
+        if require_closed and row.get("closed") is not True:
+            continue
+        timestamp = row_timestamp(row)
+        if timestamp is None:
+            continue
+        if timestamp.date() != target_trade_date:
+            continue
+        if timestamp.time() >= _MARKET_OPEN:
+            return True
+    return False
+
+
+def should_run_close_reconciliation(
+    *,
+    market_phase: LiveMarketPhase,
+    observed_at: datetime,
+    close_reconciled: bool,
+) -> bool:
+    """Return whether the one-shot post-close reconciliation should run."""
+
+    if close_reconciled:
+        return False
+    if market_phase != "closed":
+        return False
+    return observed_at.time() >= _CLOSE_RECONCILE

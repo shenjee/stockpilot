@@ -208,8 +208,8 @@ class LiveDataPreparator(LiveInitialInputPort):
         """Read one normalized intraday branch without coupling refreshes.
 
         ``trade_date`` must be the Session's prepared effective trade date.
-        Refresh must not re-resolve the wall-clock effective day until PR-B
-        atomic day switching owns that transition.
+        Day switching re-prepares through ``BranchingLiveInput`` when PR-B
+        detects post-open evidence for the calendar target day.
         """
 
         if timeframe not in {"1m", "5m"}:

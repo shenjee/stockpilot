@@ -20,6 +20,14 @@ from .live_refresh import (
     LiveRefreshResult,
     LiveRefreshScheduler,
 )
+from .live_market_view import (
+    PollingProfile,
+    day_switch_evidence_date,
+    day_switch_target_date,
+    is_awaiting_day_switch,
+    resolve_polling_profile,
+    should_run_close_reconciliation,
+)
 from .live_session import (
     LiveInitialInputPort,
     LiveSession,
@@ -66,9 +74,8 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
     That keeps Calendar phase orthogonal to quote/1m/5m success and prevents
     concurrent workers from republishing inverted full snapshots.
 
-    Until PR-B atomic day switching, refresh is pinned to the prepared
-    ``market_session.trade_date`` so a pre-open Session cannot ingest the next
-    session's rows after 09:30.
+    PR-B adds 09:30 atomic day switching with an internal ``market_epoch``,
+    phase-aware polling, and one-shot post-close reconciliation.
     """
 
     def __init__(
@@ -78,16 +85,22 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
         analyzer: CzscAnalyzerPort | None = None,
         calendar: CalendarQueryPort | None = None,
         on_projection_refresh: Callable[[LiveSnapshotCandidate], None] | None = None,
+        on_day_switched: Callable[[LiveSnapshotCandidate, int], None] | None = None,
     ) -> None:
         self._source = source
         self._analyzer = analyzer
         self._calendar = calendar
         self._on_projection_refresh = on_projection_refresh
+        self._on_day_switched = on_day_switched
         self._lock = RLock()
         self._session = None
         self._market_input: PipelineMarketInput | None = None
         self._calendar_status = "available"
         self._market_phase = "closed"
+        self._market: str | None = None
+        self._market_epoch = 0
+        self._day_switch_in_progress = False
+        self._close_reconciled = False
 
     def set_on_projection_refresh(
         self,
@@ -96,6 +109,19 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
         """Publish full snapshots when pinned-day ``market_phase`` advances."""
 
         self._on_projection_refresh = handler
+
+    def set_on_day_switched(
+        self,
+        handler: Callable[[LiveSnapshotCandidate, int], None] | None,
+    ) -> None:
+        """Notify the runtime when an atomic day switch completes."""
+
+        self._on_day_switched = handler
+
+    @property
+    def market_epoch(self) -> int:
+        with self._lock:
+            return self._market_epoch
 
     def prepare(
         self,
@@ -108,12 +134,76 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             minimum_preheat_5m=minimum_preheat_5m,
         )
         market_input = prepared.market_input_port.read(prepared.target_time)
+        _, _, market = _parse_market_from_symbol(spec.symbol)
         with self._lock:
             self._session = prepared.market_session
             self._market_input = market_input
             self._calendar_status = prepared.calendar_status
             self._market_phase = prepared.market_phase
+            self._market = market
+            self._market_epoch = 0
+            self._day_switch_in_progress = False
+            self._close_reconciled = False
         return prepared
+
+    def advance_view_status(
+        self,
+        spec: SessionSpec,
+        observed_at: datetime,
+    ) -> None:
+        """Advance pinned-day phase without provider I/O."""
+
+        self._publish_phase_if_advanced(spec, observed_at)
+
+    def polling_profile(self, observed_at: datetime) -> PollingProfile:
+        with self._lock:
+            if self._session is None or self._market is None:
+                return "idle"
+            session = self._session
+            calendar_status = self._calendar_status
+            market_phase = self._market_phase
+            market = self._market
+            close_reconciled = self._close_reconciled
+            calendar = self._calendar
+        awaiting = (
+            calendar is not None
+            and is_awaiting_day_switch(
+                calendar,
+                observed_at=observed_at,
+                pinned_trade_date=session.trade_date,
+                market=market,
+                calendar_status=calendar_status,
+            )
+        )
+        return resolve_polling_profile(
+            market_phase=market_phase,
+            calendar_status=calendar_status,
+            pinned_trade_date=session.trade_date,
+            observed_at=observed_at,
+            calendar=calendar,
+            market=market,
+            awaiting_day_switch=awaiting,
+            close_reconciled=close_reconciled,
+        )
+
+    def maybe_reconcile_close(
+        self,
+        spec: SessionSpec,
+        observed_at: datetime,
+    ) -> bool:
+        """Mark close reconciliation due and return whether it should run now."""
+
+        with self._lock:
+            if self._session is None:
+                return False
+            if not should_run_close_reconciliation(
+                market_phase=self._market_phase,
+                observed_at=observed_at,
+                close_reconciled=self._close_reconciled,
+            ):
+                return False
+            self._close_reconciled = True
+        return True
 
     def refresh(
         self,
@@ -123,6 +213,7 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
         observed_at: datetime,
         latest_data_time: datetime | None,
     ) -> LiveRefreshResult:
+        epoch_at_start = self.market_epoch
         # Phase is Calendar/wall-clock state: advance it even when every market
         # branch later fails, and claim the transition under the lock so only
         # one worker publishes the full snapshot for that transition.
@@ -132,6 +223,29 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             if self._market_input is None or self._session is None:
                 raise RuntimeError("Live refresh cannot run before initial prepare")
             trade_date = self._session.trade_date
+            market = self._market
+            calendar = self._calendar
+
+        target_date = None
+        if calendar is not None and market is not None:
+            target_date = day_switch_target_date(
+                calendar,
+                observed_at=observed_at,
+                pinned_trade_date=trade_date,
+                market=market,
+            )
+        if target_date is not None:
+            probe_rows = self._load_probe_rows(spec, kind, target_date)
+            if self._maybe_switch_day(
+                spec,
+                observed_at=observed_at,
+                kind=kind,
+                rows=probe_rows,
+                epoch_at_start=epoch_at_start,
+            ):
+                return LiveRefreshResult.no_change()
+            if epoch_at_start != self.market_epoch:
+                return LiveRefreshResult.no_change()
 
         if kind is LiveRefreshKind.QUOTE:
             rows = tuple(
@@ -149,6 +263,9 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
                     trade_date=trade_date,
                 )
             )
+        if epoch_at_start != self.market_epoch:
+            return LiveRefreshResult.no_change()
+
         data_time = _latest_row_time(
             rows,
             closed_only=kind is LiveRefreshKind.OFFICIAL_FIVE_MINUTE,
@@ -164,6 +281,8 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
         with self._lock:
             if self._market_input is None or self._session is None:
                 raise RuntimeError("Live refresh cannot run before initial prepare")
+            if self._market_epoch != epoch_at_start:
+                return LiveRefreshResult.no_change()
             if self._session.trade_date != trade_date:
                 # Prepared day changed under us; drop this branch read.
                 return LiveRefreshResult.no_change()
@@ -257,6 +376,148 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
                 # phase candidate built before sibling merges.
                 handler(candidate)
 
+    def _load_probe_rows(
+        self,
+        spec: SessionSpec,
+        kind: LiveRefreshKind,
+        target_trade_date: date,
+    ) -> tuple[Mapping[str, object], ...]:
+        if kind is LiveRefreshKind.QUOTE:
+            return tuple(
+                self._source.load_refresh_quotes(
+                    spec,
+                    trade_date=target_trade_date,
+                )
+            )
+        return tuple(
+            self._source.load_refresh_bars(
+                spec,
+                timeframe="1m" if kind is LiveRefreshKind.ONE_MINUTE else "5m",
+                trade_date=target_trade_date,
+            )
+        )
+
+    def _maybe_switch_day(
+        self,
+        spec: SessionSpec,
+        *,
+        observed_at: datetime,
+        kind: LiveRefreshKind,
+        rows: Sequence[Mapping[str, object]],
+        epoch_at_start: int,
+    ) -> bool:
+        with self._lock:
+            if (
+                self._session is None
+                or self._market is None
+                or self._calendar is None
+                or self._day_switch_in_progress
+            ):
+                return False
+            pinned_trade_date = self._session.trade_date
+            market = self._market
+            calendar = self._calendar
+
+        target_date = day_switch_target_date(
+            calendar,
+            observed_at=observed_at,
+            pinned_trade_date=pinned_trade_date,
+            market=market,
+        )
+        if target_date is None:
+            return False
+
+        require_closed = kind is not LiveRefreshKind.QUOTE
+        if not day_switch_evidence_date(
+            rows,
+            target_trade_date=target_date,
+            observed_at=observed_at,
+            require_closed=require_closed,
+        ):
+            return False
+
+        with self._lock:
+            if (
+                self._day_switch_in_progress
+                or self._market_epoch != epoch_at_start
+                or self._session is None
+                or self._session.trade_date != pinned_trade_date
+            ):
+                return False
+            self._day_switch_in_progress = True
+
+        try:
+            prepared = self._source.prepare(
+                spec,
+                minimum_preheat_5m=LiveSession.MINIMUM_PREHEAT_5M,
+            )
+        except BaseException:
+            with self._lock:
+                self._day_switch_in_progress = False
+            raise
+
+        try:
+            if prepared.market_session.trade_date != target_date:
+                return False
+            market_input = prepared.market_input_port.read(prepared.target_time)
+            candidate = self._commit_day_switch(
+                spec,
+                prepared=prepared,
+                market_input=market_input,
+                epoch_at_start=epoch_at_start,
+            )
+        finally:
+            with self._lock:
+                self._day_switch_in_progress = False
+
+        if candidate is None:
+            return False
+        switch_handler = self._on_day_switched
+        if switch_handler is not None:
+            switch_handler(candidate, self.market_epoch)
+        else:
+            refresh_handler = self._on_projection_refresh
+            if refresh_handler is not None:
+                refresh_handler(candidate)
+        return True
+
+    def _commit_day_switch(
+        self,
+        spec: SessionSpec,
+        *,
+        prepared: PreparedLiveWarmup,
+        market_input: PipelineMarketInput,
+        epoch_at_start: int,
+    ) -> LiveSnapshotCandidate | None:
+        with self._lock:
+            if (
+                self._market_epoch != epoch_at_start
+                or self._session is None
+                or prepared.market_session.trade_date <= self._session.trade_date
+            ):
+                return None
+            self._market_epoch += 1
+            self._session = prepared.market_session
+            self._market_input = market_input
+            self._calendar_status = prepared.calendar_status
+            self._market_phase = prepared.market_phase
+            self._close_reconciled = False
+
+        preview_at = prepared.target_time
+        result = WorkbenchPipeline(
+            session=prepared.market_session,
+            market_input_port=_FixedMarketInput(market_input),
+            analyzer=self._analyzer,
+        ).preview(preview_at)
+        return LiveSnapshotCandidate(
+            session_id=spec.session_id,
+            generation=spec.generation,
+            symbol=spec.symbol,
+            pipeline_result=result,
+            calendar_status=prepared.calendar_status,
+            market_phase=prepared.market_phase,
+        )
+
 
 class _FixedMarketInput(MarketInputPort):
     def __init__(self, value: PipelineMarketInput) -> None:
@@ -302,6 +563,7 @@ class LiveRuntimeSession:
         self._poll_thread: Thread | None = None
         if isinstance(input_port, BranchingLiveInput):
             input_port.set_on_projection_refresh(on_snapshot_candidate)
+            input_port.set_on_day_switched(self._on_day_switched)
         self._initial = LiveSession(
             spec,
             input_port,
@@ -332,7 +594,28 @@ class LiveRuntimeSession:
 
     def run_refresh_due(self, observed_at: datetime | None = None) -> Mapping:
         scheduler = self.refresh_scheduler
-        return {} if scheduler is None else scheduler.run_due(observed_at)
+        if scheduler is None:
+            return {}
+        now = observed_at or self._clock()
+        if isinstance(self._input_port, BranchingLiveInput):
+            self._input_port.advance_view_status(self._spec, now)
+            profile = self._input_port.polling_profile(now)
+            if self._input_port.maybe_reconcile_close(self._spec, now):
+                return scheduler.run_reconciliation(now)
+            scheduler.set_polling_profile(profile)
+            return scheduler.run_due(now)
+        return scheduler.run_due(now)
+
+    def _on_day_switched(
+        self,
+        candidate: LiveSnapshotCandidate,
+        market_epoch: int,
+    ) -> None:
+        scheduler = self.refresh_scheduler
+        if scheduler is None:
+            return
+        scheduler.reset_branch_watermarks(_initial_data_times(candidate))
+        self._external_candidate(candidate)
 
     def retire(self) -> None:
         # Retirement is cooperative for already-running Python/provider work:
@@ -389,9 +672,7 @@ class LiveRuntimeSession:
 
     def _poll(self) -> None:
         while not self._retired.wait(self._poll_interval_seconds):
-            scheduler = self.refresh_scheduler
-            if scheduler is not None:
-                scheduler.run_due(self._clock())
+            self.run_refresh_due(self._clock())
 
 
 @dataclass(frozen=True, slots=True)
@@ -411,11 +692,11 @@ def _resolve_pinned_live_view(
 ) -> _PinnedLiveView:
     """Resolve pinned-day ``market_phase`` and ``calendar_status`` together.
 
-    Trade-date switching remains PR-B. Cross-day classification consults the
-    calendar: confirmed closed days stay ``market_closed`` with
-    ``calendar_status=available``; ``day_status=unknown`` (coverage gap) must
-    degrade to ``unavailable`` + ``unknown``. Without open evidence, never
-    claim ``pre_open``.
+    Trade-date switching is handled by PR-B ``_maybe_switch_day``. Cross-day
+    classification consults the calendar: confirmed closed days stay
+    ``market_closed`` with ``calendar_status=available``; ``day_status=unknown``
+    (coverage gap) must degrade to ``unavailable`` + ``unknown``. Without open
+    evidence, never claim ``pre_open``.
     """
 
     if calendar_status == "unavailable":
@@ -445,6 +726,13 @@ def _resolve_pinned_live_view(
             calendar_status="available",
         )
     return _PinnedLiveView(market_phase="unknown", calendar_status="unavailable")
+
+
+def _parse_market_from_symbol(symbol: str) -> tuple[str, str, str]:
+    parts = str(symbol).strip().lower().split(".", 1)
+    if len(parts) != 2 or not parts[1].isdigit() or len(parts[1]) != 6:
+        raise ValueError(f"invalid symbol: {symbol!r}")
+    return f"{parts[0]}.{parts[1]}", parts[1], parts[0]
 
 
 def _timestamp(value: object) -> datetime | None:

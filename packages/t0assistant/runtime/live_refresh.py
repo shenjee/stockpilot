@@ -28,6 +28,7 @@ from .computation_contract import (
     new_task_id,
 )
 from .coordinator import SessionSpec, SessionType
+from .live_market_view import PollingProfile
 from .live_projection_store import LiveIncrementalUpdate
 
 
@@ -58,19 +59,36 @@ class LiveRefreshIntervals:
     quote: timedelta = timedelta(seconds=3)
     one_minute: timedelta = timedelta(seconds=15)
     official_five_minute: timedelta = timedelta(seconds=30)
+    reduced_quote: timedelta = timedelta(seconds=15)
+    reduced_one_minute: timedelta = timedelta(seconds=30)
+    reduced_official_five_minute: timedelta = timedelta(seconds=60)
 
     def __post_init__(self) -> None:
         for name, value in (
             ("quote", self.quote),
             ("one_minute", self.one_minute),
             ("official_five_minute", self.official_five_minute),
+            ("reduced_quote", self.reduced_quote),
+            ("reduced_one_minute", self.reduced_one_minute),
+            ("reduced_official_five_minute", self.reduced_official_five_minute),
         ):
             if not isinstance(value, timedelta) or value <= timedelta(0):
                 raise LiveRefreshValidationError(
                     f"{name} interval must be a positive timedelta"
                 )
 
-    def for_kind(self, kind: LiveRefreshKind) -> timedelta:
+    def for_kind(
+        self,
+        kind: LiveRefreshKind,
+        *,
+        polling_profile: PollingProfile = "active",
+    ) -> timedelta:
+        if polling_profile == "reduced":
+            if kind is LiveRefreshKind.QUOTE:
+                return self.reduced_quote
+            if kind is LiveRefreshKind.ONE_MINUTE:
+                return self.reduced_one_minute
+            return self.reduced_official_five_minute
         if kind is LiveRefreshKind.QUOTE:
             return self.quote
         if kind is LiveRefreshKind.ONE_MINUTE:
@@ -229,6 +247,7 @@ class LiveRefreshScheduler:
         self._on_failure = on_failure
         self._lock = RLock()
         self._retired = False
+        self._polling_profile: PollingProfile = "active"
         self._states = {kind: _MutableBranchState() for kind in self._KINDS}
         self._active_kinds: set[LiveRefreshKind] = set()
         for raw_kind, data_time in (initial_data_times or {}).items():
@@ -274,9 +293,70 @@ class LiveRefreshScheduler:
         with self._lock:
             self._retired = True
 
+    def set_polling_profile(self, profile: PollingProfile) -> None:
+        with self._lock:
+            if profile not in {"active", "reduced", "idle"}:
+                raise LiveRefreshValidationError(
+                    f"unknown polling profile: {profile!r}"
+                )
+            self._polling_profile = profile
+
+    @property
+    def polling_profile(self) -> PollingProfile:
+        with self._lock:
+            return self._polling_profile
+
+    def run_reconciliation(
+        self,
+        observed_at: datetime | None = None,
+    ) -> Mapping[LiveRefreshKind, LiveRefreshBranchState]:
+        """Force one refresh pass for every branch (#130 PR-B close reconcile)."""
+
+        now = self._resolve_now(observed_at)
+        with self._lock:
+            if self._retired:
+                return self.states
+            previous = self._polling_profile
+            self._polling_profile = "active"
+        try:
+            self._run(now, list(self._KINDS))
+        finally:
+            with self._lock:
+                if not self._retired:
+                    self._polling_profile = previous
+        return self.states
+
+    def reset_branch_watermarks(
+        self,
+        data_times: Mapping[LiveRefreshKind | str, datetime | None] | None = None,
+    ) -> None:
+        """Clear branch schedules after an atomic day switch."""
+
+        with self._lock:
+            for kind in self._KINDS:
+                state = self._states[kind]
+                state.latest_data_time = None
+                state.last_attempt_at = None
+                state.last_success_at = None
+                state.next_due_at = None
+                state.last_failure = None
+                state.consecutive_failures = 0
+            for raw_kind, data_time in (data_times or {}).items():
+                kind = _coerce_kind(raw_kind)
+                if data_time is not None and (
+                    not isinstance(data_time, datetime)
+                    or data_time.tzinfo is not None
+                ):
+                    raise LiveRefreshValidationError(
+                        "reset data times must be naive Asia/Shanghai datetimes"
+                    )
+                self._states[kind].latest_data_time = data_time
+
     def run_due(
         self,
         observed_at: datetime | None = None,
+        *,
+        polling_profile: PollingProfile | None = None,
     ) -> Mapping[LiveRefreshKind, LiveRefreshBranchState]:
         """Run every branch due at ``observed_at`` and return all branch states."""
 
@@ -284,13 +364,18 @@ class LiveRefreshScheduler:
         with self._lock:
             if self._retired:
                 return self.states
+            if polling_profile is not None:
+                self._polling_profile = polling_profile
+            profile = self._polling_profile
+            if profile == "idle":
+                return self.states
             due = [
                 kind
                 for kind in self._KINDS
                 if self._states[kind].next_due_at is None
                 or now >= self._states[kind].next_due_at
             ]
-        self._run(now, due)
+        self._run(now, due, polling_profile=profile)
         return self.states
 
     def retry(
@@ -305,10 +390,17 @@ class LiveRefreshScheduler:
         with self._lock:
             if self._retired:
                 return self._freeze_state(resolved, self._states[resolved])
-        self._run(now, [resolved])
+        self._run(now, [resolved], polling_profile=self.polling_profile)
         return self.state_for(resolved)
 
-    def _run(self, observed_at: datetime, kinds: Sequence[LiveRefreshKind]) -> None:
+    def _run(
+        self,
+        observed_at: datetime,
+        kinds: Sequence[LiveRefreshKind],
+        *,
+        polling_profile: PollingProfile | None = None,
+    ) -> None:
+        profile = polling_profile or self.polling_profile
         futures = []
         for kind in kinds:
             with self._lock:
@@ -317,7 +409,10 @@ class LiveRefreshScheduler:
                 self._active_kinds.add(kind)
                 state = self._states[kind]
                 state.last_attempt_at = observed_at
-                state.next_due_at = observed_at + self._intervals.for_kind(kind)
+                state.next_due_at = observed_at + self._intervals.for_kind(
+                    kind,
+                    polling_profile=profile,
+                )
                 watermark = state.latest_data_time
             task = ComputationTask(
                 task_id=new_task_id(),
@@ -452,7 +547,10 @@ class LiveRefreshScheduler:
             state.last_failure = failure
             state.consecutive_failures += 1
             state.next_due_at = observed_at + self._backoff.delay(
-                self._intervals.for_kind(kind),
+                self._intervals.for_kind(
+                    kind,
+                    polling_profile=self._polling_profile,
+                ),
                 state.consecutive_failures,
             )
         if self._on_failure is not None:

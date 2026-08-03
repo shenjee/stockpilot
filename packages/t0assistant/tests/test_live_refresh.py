@@ -303,6 +303,37 @@ class LiveRefreshSchedulerTests(unittest.TestCase):
         thread.join(timeout=1)
         self.assertFalse(thread.is_alive())
 
+    def test_idle_profile_skips_provider_reads(self) -> None:
+        self.scheduler.run_due(self.t0)
+        initial_calls = len(self.input.calls)
+        states = self.scheduler.run_due(
+            self.t0 + timedelta(seconds=1),
+            polling_profile="idle",
+        )
+        self.assertEqual(len(self.input.calls), initial_calls)
+        self.assertEqual(
+            states[LiveRefreshKind.QUOTE].last_attempt_at,
+            self.t0,
+        )
+
+    def test_reconciliation_runs_all_branches_once(self) -> None:
+        self.input.queue(
+            LiveRefreshKind.QUOTE,
+            LiveRefreshResult.no_change(),
+        )
+        self.input.queue(
+            LiveRefreshKind.ONE_MINUTE,
+            LiveRefreshResult.no_change(),
+        )
+        self.input.queue(
+            LiveRefreshKind.OFFICIAL_FIVE_MINUTE,
+            LiveRefreshResult.no_change(),
+        )
+        self.scheduler.set_polling_profile("idle")
+        self.scheduler.run_reconciliation(self.t0 + timedelta(hours=6))
+        self.assertEqual(len(self.input.calls), 3)
+        self.assertEqual(self.scheduler.polling_profile, "idle")
+
     def test_manual_retry_only_runs_requested_branch_and_keeps_other_schedules(self) -> None:
         self.scheduler.run_due(self.t0)
         initial_calls = len(self.input.calls)
