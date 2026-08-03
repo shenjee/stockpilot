@@ -31,6 +31,47 @@ export function securitiesFromSearchResponse(
  *   - a_share + market = sz         -> 深市
  */
 export function securityCategoryLabel(security: SecurityIdentity): string;
+
+/**
+ * Initial state for the security search box interaction reducer.
+ */
+export interface SecuritySearchState {
+  activeIndex: number;
+  dismissed: boolean;
+}
+
+export const initialSecuritySearchState: Readonly<SecuritySearchState>;
+
+export type SecuritySearchAction =
+  | { type: "arrow-down"; count: number }
+  | { type: "arrow-up"; count: number }
+  | { type: "escape"; visible: boolean }
+  | { type: "mouse-enter"; index: number }
+  | { type: "query-change" }
+  | { type: "reset-cursor" }
+  | { type: "select" };
+
+/**
+ * Pure reducer for security search box keyboard/mouse interaction.
+ *
+ * The "select" action always closes the dropdown immediately so that slow
+ * or failed async callbacks in the parent do not leave the results list
+ * visible.
+ */
+export function securitySearchReducer(
+  state: SecuritySearchState,
+  action: SecuritySearchAction,
+): SecuritySearchState;
+
+/**
+ * Return the suggestion index that Enter would select, or null if there
+ * are no suggestions to select.
+ */
+export function securitySearchEnterTarget(
+  state: SecuritySearchState,
+  count: number,
+): number | null;
+
 export function isCompleteWorkbenchSnapshot(
   candidate: unknown,
 ): candidate is WorkbenchChartSnapshot;

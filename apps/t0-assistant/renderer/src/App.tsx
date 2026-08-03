@@ -1,6 +1,7 @@
 import {
   useEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -41,6 +42,7 @@ import {
   applicationErrorFrom,
   canHydratePreferences,
   createLatestRequestTracker,
+  initialSecuritySearchState,
   isCompleteWorkbenchSnapshot,
   latestDailyBars,
   liveMarketViewLines,
@@ -49,6 +51,7 @@ import {
   quoteRows,
   securitiesFromSearchResponse,
   securityCategoryLabel,
+  securitySearchReducer,
   type ApplicationError,
 } from "./workbench-presenter.mjs";
 import { createSerialTaskQueue } from "./serial-task-queue.mjs";
@@ -1871,18 +1874,21 @@ function WorkbenchToolbar({
   onSelect: (security: SecurityIdentity) => void;
   onMode: (mode: "live" | "replay") => void;
 }) {
-  const [activeIndex, setActiveIndex] = useState(-1);
-  const [dismissed, setDismissed] = useState(false);
+  const [searchState, dispatchSearch] = useReducer(
+    securitySearchReducer,
+    initialSecuritySearchState,
+  );
+  const { activeIndex, dismissed } = searchState;
   const resultsRef = useRef<HTMLDivElement>(null);
 
   // Reset keyboard cursor and dismissed flag whenever the result set or query
   // changes so the user always starts fresh.
   useEffect(() => {
-    setActiveIndex(-1);
+    dispatchSearch({ type: "reset-cursor" });
   }, [suggestions]);
 
   useEffect(() => {
-    setDismissed(false);
+    dispatchSearch({ type: "query-change" });
   }, [query]);
 
   // Keep the highlighted option scrolled into view during keyboard navigation.
@@ -1898,31 +1904,29 @@ function WorkbenchToolbar({
     !dismissed &&
     (searching || Boolean(searchMessage) || suggestions.length > 0);
 
+  function selectSuggestion(security: SecurityIdentity) {
+    dispatchSearch({ type: "select" });
+    onSelect(security);
+  }
+
   function handleKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
     if (event.key === "ArrowDown") {
       if (suggestions.length === 0) return;
       event.preventDefault();
-      setDismissed(false);
-      setActiveIndex((current) =>
-        current >= suggestions.length - 1 ? 0 : current + 1,
-      );
+      dispatchSearch({ type: "arrow-down", count: suggestions.length });
     } else if (event.key === "ArrowUp") {
       if (suggestions.length === 0) return;
       event.preventDefault();
-      setDismissed(false);
-      setActiveIndex((current) =>
-        current <= 0 ? suggestions.length - 1 : current - 1,
-      );
+      dispatchSearch({ type: "arrow-up", count: suggestions.length });
     } else if (event.key === "Enter") {
-      if (suggestions.length === 0) return;
+      if (dismissed || suggestions.length === 0) return;
       event.preventDefault();
       const target = activeIndex >= 0 ? activeIndex : 0;
-      onSelect(suggestions[target]);
+      selectSuggestion(suggestions[target]);
     } else if (event.key === "Escape") {
       if (!showResults) return;
       event.preventDefault();
-      setDismissed(true);
-      setActiveIndex(-1);
+      dispatchSearch({ type: "escape", visible: showResults });
     }
   }
 
@@ -1966,7 +1970,10 @@ function WorkbenchToolbar({
                   key={security.symbol}
                   aria-selected={index === activeIndex}
                   className={index === activeIndex ? "is-active" : undefined}
-                  onClick={() => onSelect(security)}
+                  onClick={() => selectSuggestion(security)}
+                  onMouseEnter={() =>
+                    dispatchSearch({ type: "mouse-enter", index })
+                  }
                 >
                   <span>{security.code}</span>
                   <strong>{security.name}</strong>
