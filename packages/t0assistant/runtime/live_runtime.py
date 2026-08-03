@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from threading import Event, RLock, Thread, current_thread
 from typing import Callable, Mapping, Protocol, Sequence
 
@@ -14,6 +14,7 @@ from .computation_executor import BoundedComputationExecutor
 from .coordinator import SessionSpec
 from .live_projection_store import LiveIncrementalUpdate
 from .live_refresh import (
+    LiveRefreshBranchState,
     LiveRefreshInputPort,
     LiveRefreshIntervals,
     LiveRefreshKind,
@@ -21,6 +22,7 @@ from .live_refresh import (
     LiveRefreshScheduler,
 )
 from .live_market_view import (
+    CloseReconcileStatus,
     PollingProfile,
     day_switch_evidence_date,
     day_switch_target_date,
@@ -40,6 +42,10 @@ from .pipeline import (
     PipelineMarketInput,
     WorkbenchPipeline,
 )
+
+
+_CLOSE_RECONCILE_MAX_ATTEMPTS = 5
+_CLOSE_RECONCILE_RETRY_INTERVAL = timedelta(seconds=30)
 
 
 class LiveBranchDataPort(LiveInitialInputPort, Protocol):
@@ -100,7 +106,9 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
         self._market: str | None = None
         self._market_epoch = 0
         self._day_switch_in_progress = False
-        self._close_reconciled = False
+        self._close_reconcile_status: CloseReconcileStatus = "not_started"
+        self._close_reconcile_attempts = 0
+        self._close_reconcile_next_retry_at: datetime | None = None
 
     def set_on_projection_refresh(
         self,
@@ -123,6 +131,11 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
         with self._lock:
             return self._market_epoch
 
+    @property
+    def close_reconcile_status(self) -> CloseReconcileStatus:
+        with self._lock:
+            return self._close_reconcile_status
+
     def prepare(
         self,
         spec: SessionSpec,
@@ -143,7 +156,9 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             self._market = market
             self._market_epoch = 0
             self._day_switch_in_progress = False
-            self._close_reconciled = False
+            self._close_reconcile_status = "not_started"
+            self._close_reconcile_attempts = 0
+            self._close_reconcile_next_retry_at = None
         return prepared
 
     def advance_view_status(
@@ -163,7 +178,8 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             calendar_status = self._calendar_status
             market_phase = self._market_phase
             market = self._market
-            close_reconciled = self._close_reconciled
+            close_reconcile_status = self._close_reconcile_status
+            close_reconcile_next_retry_at = self._close_reconcile_next_retry_at
             calendar = self._calendar
         awaiting = (
             calendar is not None
@@ -183,7 +199,11 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             calendar=calendar,
             market=market,
             awaiting_day_switch=awaiting,
-            close_reconciled=close_reconciled,
+            close_reconcile_status=close_reconcile_status,
+            close_reconcile_retry_due=(
+                close_reconcile_next_retry_at is None
+                or observed_at >= close_reconcile_next_retry_at
+            ),
         )
 
     def maybe_reconcile_close(
@@ -191,19 +211,57 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
         spec: SessionSpec,
         observed_at: datetime,
     ) -> bool:
-        """Mark close reconciliation due and return whether it should run now."""
+        """Return whether close reconciliation should run at ``observed_at``."""
 
         with self._lock:
             if self._session is None:
                 return False
+            status = self._close_reconcile_status
             if not should_run_close_reconciliation(
                 market_phase=self._market_phase,
                 observed_at=observed_at,
-                close_reconciled=self._close_reconciled,
+                close_reconcile_status=status,
             ):
                 return False
-            self._close_reconciled = True
-        return True
+            if status == "in_progress":
+                return False
+            if status == "retry_pending":
+                if (
+                    self._close_reconcile_next_retry_at is not None
+                    and observed_at < self._close_reconcile_next_retry_at
+                ):
+                    return False
+            if status in {"not_started", "retry_pending"}:
+                self._close_reconcile_status = "in_progress"
+            return True
+
+    def finish_close_reconciliation(
+        self,
+        branch_states: Mapping[LiveRefreshKind, LiveRefreshBranchState],
+        observed_at: datetime,
+    ) -> None:
+        """Finalize or reschedule close reconciliation after one pass."""
+
+        with self._lock:
+            if self._close_reconcile_status != "in_progress":
+                return
+            all_succeeded = all(
+                state.last_success_at == observed_at and state.last_failure is None
+                for state in branch_states.values()
+            )
+            if all_succeeded:
+                self._close_reconcile_status = "completed"
+                self._close_reconcile_next_retry_at = None
+                return
+            self._close_reconcile_attempts += 1
+            if self._close_reconcile_attempts >= _CLOSE_RECONCILE_MAX_ATTEMPTS:
+                self._close_reconcile_status = "exhausted"
+                self._close_reconcile_next_retry_at = None
+                return
+            self._close_reconcile_status = "retry_pending"
+            self._close_reconcile_next_retry_at = (
+                observed_at + _CLOSE_RECONCILE_RETRY_INTERVAL
+            )
 
     def refresh(
         self,
@@ -243,9 +301,9 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
                 rows=probe_rows,
                 epoch_at_start=epoch_at_start,
             ):
-                return LiveRefreshResult.no_change()
+                return LiveRefreshResult.no_change(market_epoch=epoch_at_start)
             if epoch_at_start != self.market_epoch:
-                return LiveRefreshResult.no_change()
+                return LiveRefreshResult.no_change(market_epoch=epoch_at_start)
 
         if kind is LiveRefreshKind.QUOTE:
             rows = tuple(
@@ -264,7 +322,7 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
                 )
             )
         if epoch_at_start != self.market_epoch:
-            return LiveRefreshResult.no_change()
+            return LiveRefreshResult.no_change(market_epoch=epoch_at_start)
 
         data_time = _latest_row_time(
             rows,
@@ -276,16 +334,16 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             and data_time <= latest_data_time
         )
         if not data_changed:
-            return LiveRefreshResult.no_change()
+            return LiveRefreshResult.no_change(market_epoch=epoch_at_start)
 
         with self._lock:
             if self._market_input is None or self._session is None:
                 raise RuntimeError("Live refresh cannot run before initial prepare")
             if self._market_epoch != epoch_at_start:
-                return LiveRefreshResult.no_change()
+                return LiveRefreshResult.no_change(market_epoch=epoch_at_start)
             if self._session.trade_date != trade_date:
                 # Prepared day changed under us; drop this branch read.
-                return LiveRefreshResult.no_change()
+                return LiveRefreshResult.no_change(market_epoch=epoch_at_start)
             if kind is LiveRefreshKind.QUOTE:
                 updated_input = replace(self._market_input, quote_snapshots=rows)
             elif kind is LiveRefreshKind.ONE_MINUTE:
@@ -309,6 +367,7 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             self._market_input = updated_input
             calendar_status = self._calendar_status
             market_phase = self._market_phase
+            committed_epoch = self._market_epoch
 
         candidate = LiveSnapshotCandidate(
             session_id=spec.session_id,
@@ -317,11 +376,13 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             pipeline_result=result,
             calendar_status=calendar_status,
             market_phase=market_phase,
+            market_epoch=committed_epoch,
         )
         snapshot = candidate.build_projection(0).to_dict()
         return LiveRefreshResult(
             data_time=data_time,
-            updates=_branch_updates(kind, spec, snapshot),
+            updates=_branch_updates(kind, spec, snapshot, market_epoch=epoch_at_start),
+            market_epoch=epoch_at_start,
         )
 
     def _publish_phase_if_advanced(
@@ -353,6 +414,7 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
                 return
             self._market_phase = resolved.market_phase
             self._calendar_status = resolved.calendar_status
+            market_epoch = self._market_epoch
             preview_at = observed_at
             if observed_at.date() != self._session.trade_date:
                 preview_at = self._session.end
@@ -368,6 +430,7 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
                 pipeline_result=result,
                 calendar_status=resolved.calendar_status,
                 market_phase=resolved.market_phase,
+                market_epoch=market_epoch,
             )
             handler = self._on_projection_refresh
             if handler is not None:
@@ -496,20 +559,20 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
                 or prepared.market_session.trade_date <= self._session.trade_date
             ):
                 return None
-            self._market_epoch += 1
-            self._session = prepared.market_session
-            self._market_input = market_input
-            self._calendar_status = prepared.calendar_status
-            self._market_phase = prepared.market_phase
-            self._close_reconciled = False
+            pinned_epoch = self._market_epoch
+            pinned_trade_date = self._session.trade_date
 
         preview_at = prepared.target_time
-        result = WorkbenchPipeline(
-            session=prepared.market_session,
-            market_input_port=_FixedMarketInput(market_input),
-            analyzer=self._analyzer,
-        ).preview(preview_at)
-        return LiveSnapshotCandidate(
+        try:
+            result = WorkbenchPipeline(
+                session=prepared.market_session,
+                market_input_port=_FixedMarketInput(market_input),
+                analyzer=self._analyzer,
+            ).preview(preview_at)
+        except BaseException:
+            return None
+
+        candidate = LiveSnapshotCandidate(
             session_id=spec.session_id,
             generation=spec.generation,
             symbol=spec.symbol,
@@ -517,6 +580,26 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             calendar_status=prepared.calendar_status,
             market_phase=prepared.market_phase,
         )
+
+        with self._lock:
+            if (
+                self._market_epoch != pinned_epoch
+                or self._session is None
+                or self._session.trade_date != pinned_trade_date
+                or prepared.market_session.trade_date <= pinned_trade_date
+            ):
+                return None
+            self._market_epoch += 1
+            new_epoch = self._market_epoch
+            self._session = prepared.market_session
+            self._market_input = market_input
+            self._calendar_status = prepared.calendar_status
+            self._market_phase = prepared.market_phase
+            self._close_reconcile_status = "not_started"
+            self._close_reconcile_attempts = 0
+            self._close_reconcile_next_retry_at = None
+
+        return replace(candidate, market_epoch=new_epoch)
 
 
 class _FixedMarketInput(MarketInputPort):
@@ -601,7 +684,9 @@ class LiveRuntimeSession:
             self._input_port.advance_view_status(self._spec, now)
             profile = self._input_port.polling_profile(now)
             if self._input_port.maybe_reconcile_close(self._spec, now):
-                return scheduler.run_reconciliation(now)
+                states = scheduler.run_reconciliation(now)
+                self._input_port.finish_close_reconciliation(states, now)
+                return states
             scheduler.set_polling_profile(profile)
             return scheduler.run_due(now)
         return scheduler.run_due(now)
@@ -781,8 +866,14 @@ def _branch_updates(
     kind: LiveRefreshKind,
     spec: SessionSpec,
     snapshot: dict,
+    *,
+    market_epoch: int,
 ) -> tuple[LiveIncrementalUpdate, ...]:
-    identity = {"session_id": spec.session_id, "generation": spec.generation}
+    identity = {
+        "session_id": spec.session_id,
+        "generation": spec.generation,
+        "market_epoch": market_epoch,
+    }
     market = snapshot["market"]
     if kind is LiveRefreshKind.QUOTE:
         return (

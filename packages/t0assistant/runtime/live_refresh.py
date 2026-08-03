@@ -133,14 +133,19 @@ class LiveRefreshResult:
     ``data_time`` is the newest source timestamp observed by this branch.
     ``None`` means that no newer valid data exists.  This is the normal result
     while waiting for the next official 5m bar to close.
+
+    ``market_epoch`` stamps the Live market epoch active when this branch
+    finished.  The scheduler rejects stale epochs at the accept boundary so a
+    late result cannot mutate a newer trading-day baseline.
     """
 
     data_time: datetime | None = None
     updates: Sequence[LiveIncrementalUpdate] = ()
+    market_epoch: int | None = None
 
     @classmethod
-    def no_change(cls) -> "LiveRefreshResult":
-        return cls()
+    def no_change(cls, *, market_epoch: int | None = None) -> "LiveRefreshResult":
+        return cls(market_epoch=market_epoch)
 
 
 class LiveRefreshInputPort(Protocol):
@@ -470,6 +475,12 @@ class LiveRefreshScheduler:
                 "refresh data_time must be a naive Asia/Shanghai datetime"
             )
 
+        result_epoch = result.market_epoch
+        if result_epoch is not None:
+            current_epoch = self._current_market_epoch()
+            if current_epoch is not None and result_epoch != current_epoch:
+                return
+
         with self._lock:
             if self._retired:
                 return
@@ -567,6 +578,14 @@ class LiveRefreshScheduler:
                     },
                 )
                 return
+
+    def _current_market_epoch(self) -> int | None:
+        getter = getattr(self._input_port, "market_epoch", None)
+        if getter is None:
+            return None
+        if callable(getter):
+            return getter()
+        return getter
 
     def _resolve_now(self, observed_at: datetime | None) -> datetime:
         resolved = self._clock() if observed_at is None else observed_at

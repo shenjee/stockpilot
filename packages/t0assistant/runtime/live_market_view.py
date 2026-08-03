@@ -27,6 +27,13 @@ LiveMarketPhase = Literal[
 ]
 CalendarStatus = Literal["available", "unavailable"]
 PollingProfile = Literal["active", "reduced", "idle"]
+CloseReconcileStatus = Literal[
+    "not_started",
+    "in_progress",
+    "retry_pending",
+    "completed",
+    "exhausted",
+]
 
 _MARKET_OPEN = time(9, 30)
 _CLOSE_RECONCILE = time(15, 5)
@@ -218,7 +225,8 @@ def resolve_polling_profile(
     calendar: CalendarQueryPort | None,
     market: str,
     awaiting_day_switch: bool = False,
-    close_reconciled: bool = False,
+    close_reconcile_status: CloseReconcileStatus = "not_started",
+    close_reconcile_retry_due: bool = False,
 ) -> PollingProfile:
     """Return the refresh cadence for the current Live view (#130 PR-B)."""
 
@@ -227,8 +235,10 @@ def resolve_polling_profile(
     if market_phase in {"morning", "afternoon"}:
         return "active"
     if market_phase == "closed":
-        if close_reconciled:
+        if close_reconcile_status in {"completed", "exhausted"}:
             return "idle"
+        if close_reconcile_status == "retry_pending" and not close_reconcile_retry_due:
+            return "reduced"
         if observed_at.time() >= _CLOSE_RECONCILE:
             return "active"
         return "idle"
@@ -336,11 +346,11 @@ def should_run_close_reconciliation(
     *,
     market_phase: LiveMarketPhase,
     observed_at: datetime,
-    close_reconciled: bool,
+    close_reconcile_status: CloseReconcileStatus,
 ) -> bool:
     """Return whether the one-shot post-close reconciliation should run."""
 
-    if close_reconciled:
+    if close_reconcile_status in {"completed", "exhausted"}:
         return False
     if market_phase != "closed":
         return False

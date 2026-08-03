@@ -334,6 +334,70 @@ class LiveRefreshSchedulerTests(unittest.TestCase):
         self.assertEqual(len(self.input.calls), 3)
         self.assertEqual(self.scheduler.polling_profile, "idle")
 
+    def test_stale_market_epoch_result_is_discarded(self) -> None:
+        class _EpochInput(_FakeInput):
+            @property
+            def market_epoch(self) -> int:
+                return 2
+
+        epoch_input = _EpochInput()
+        epoch_input.queue(
+            LiveRefreshKind.ONE_MINUTE,
+            LiveRefreshResult(
+                self.t0 + timedelta(minutes=1),
+                (_update(LiveRefreshKind.ONE_MINUTE),),
+                market_epoch=1,
+            ),
+        )
+        scheduler = LiveRefreshScheduler(
+            self.spec,
+            epoch_input,
+            self.executor,
+            on_update=self.updates.append,
+            intervals=self.intervals,
+        )
+        self.addCleanup(scheduler.retire)
+
+        scheduler.retry(LiveRefreshKind.ONE_MINUTE, self.t0)
+        self.assertEqual(self.updates, [])
+        state = scheduler.state_for(LiveRefreshKind.ONE_MINUTE)
+        self.assertIsNone(state.latest_data_time)
+
+    def test_stale_epoch_skips_watermark_failure(self) -> None:
+        class _EpochInput(_FakeInput):
+            @property
+            def market_epoch(self) -> int:
+                return 1
+
+        epoch_input = _EpochInput()
+        monday = datetime(2026, 7, 27, 9, 31)
+        scheduler = LiveRefreshScheduler(
+            self.spec,
+            epoch_input,
+            self.executor,
+            on_update=self.updates.append,
+            intervals=self.intervals,
+            on_failure=lambda kind, exc: self.failures.append((kind, exc)),
+            initial_data_times={LiveRefreshKind.ONE_MINUTE: monday},
+        )
+        self.addCleanup(scheduler.retire)
+        epoch_input.queue(
+            LiveRefreshKind.ONE_MINUTE,
+            LiveRefreshResult(
+                datetime(2026, 7, 24, 15, 1),
+                (_update(LiveRefreshKind.ONE_MINUTE),),
+                market_epoch=0,
+            ),
+        )
+
+        state = scheduler.retry(LiveRefreshKind.ONE_MINUTE, monday)
+
+        self.assertEqual(self.updates, [])
+        self.assertEqual(self.failures, [])
+        self.assertEqual(state.latest_data_time, monday)
+        self.assertEqual(state.consecutive_failures, 0)
+        self.assertIsNone(state.last_failure)
+
     def test_manual_retry_only_runs_requested_branch_and_keeps_other_schedules(self) -> None:
         self.scheduler.run_due(self.t0)
         initial_calls = len(self.input.calls)

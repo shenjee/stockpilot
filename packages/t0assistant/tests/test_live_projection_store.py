@@ -780,6 +780,62 @@ class LiveProjectionStoreTests(unittest.TestCase):
         self.assertEqual(len(set(revisions)), len(revisions))
         self.assertEqual(self.store.current_revision, len(revisions) - 1)
 
+    def test_stale_epoch_incremental_rejected_after_new_baseline(self) -> None:
+        self.coordinator.set_accepted("live-1", 1)
+        baseline = self.fixture.candidate(session_id="live-1", generation=1)
+        self.store.accept_candidate(baseline)
+        revision_after_baseline = self.store.current_revision
+        self.assertEqual(self.store.published_market_epoch, 0)
+
+        stale = LiveIncrementalUpdate(
+            session_id="live-1",
+            generation=1,
+            event_type="market_update",
+            payload={
+                "target": "quote",
+                "bars": [],
+                "quote": _quote("2026-07-24 09:30:03", 10.03),
+            },
+            market_epoch=0,
+        )
+        switched = self.fixture.candidate(session_id="live-1", generation=1)
+        switched = LiveSnapshotCandidate(
+            session_id=switched.session_id,
+            generation=switched.generation,
+            symbol=switched.symbol,
+            pipeline_result=switched.pipeline_result,
+            market_epoch=1,
+        )
+        switch_event = self.store.accept_candidate(switched)
+
+        self.assertIsNotNone(switch_event)
+        self.assertEqual(self.store.published_market_epoch, 1)
+        rejected = self.store.accept_incremental(stale)
+        self.assertIsNone(rejected)
+        self.assertEqual(self.store.current_revision, revision_after_baseline + 1)
+
+    def test_incremental_rejected_before_matching_baseline_epoch(self) -> None:
+        self.coordinator.set_accepted("live-1", 1)
+        self.store.accept_candidate(
+            self.fixture.candidate(session_id="live-1", generation=1)
+        )
+        revision_after_baseline = self.store.current_revision
+
+        ahead = LiveIncrementalUpdate(
+            session_id="live-1",
+            generation=1,
+            event_type="market_update",
+            payload={
+                "target": "quote",
+                "bars": [],
+                "quote": _quote("2026-07-24 09:30:03", 10.03),
+            },
+            market_epoch=1,
+        )
+        self.assertIsNone(self.store.accept_incremental(ahead))
+        self.assertEqual(self.store.current_revision, revision_after_baseline)
+        self.assertEqual(self.store.published_market_epoch, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

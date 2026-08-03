@@ -76,6 +76,7 @@ class LiveSnapshotCandidate:
     state: str = "ready"
     calendar_status: str = "available"
     market_phase: str = "closed"
+    market_epoch: int = 0
 
     def build_projection(self, revision: int) -> WorkbenchProjection:
         """Build a full workbench snapshot once a revision is assigned."""

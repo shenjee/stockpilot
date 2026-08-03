@@ -110,12 +110,17 @@ class LiveIncrementalUpdate:
     The store is the sole revision authority, so the update carries no
     revision.  The producer builds the update on top of the latest accepted
     state; the store applies it and assigns ``current + 1`` atomically.
+
+    ``market_epoch`` stamps the Live market epoch the increment belongs to.
+    The store rejects increments whose epoch does not match the latest
+    accepted full snapshot epoch inside its atomic commit boundary.
     """
 
     session_id: str
     generation: int
     event_type: str
     payload: dict[str, Any]
+    market_epoch: int | None = None
 
 
 class LiveProjectionStore:
@@ -149,6 +154,7 @@ class LiveProjectionStore:
         self._current_session: tuple[str, int] | None = None
         self._current_revision: int | None = None
         self._current_payload: dict[str, Any] | None = None
+        self._published_market_epoch: int | None = None
 
     @property
     def current_revision(self) -> int | None:
@@ -164,6 +170,11 @@ class LiveProjectionStore:
     def has_snapshot(self) -> bool:
         with self._lock:
             return self._current_payload is not None
+
+    @property
+    def published_market_epoch(self) -> int | None:
+        with self._lock:
+            return self._published_market_epoch
 
     def accept_candidate(
         self,
@@ -199,6 +210,7 @@ class LiveProjectionStore:
                 self._current_session = session_key
                 self._current_revision = revision
                 self._current_payload = payload
+                self._published_market_epoch = candidate.market_epoch
                 event_box.append(
                     LiveAcceptedEvent(
                         schema_version=SCHEMA_VERSION,
@@ -253,9 +265,17 @@ class LiveProjectionStore:
                     or self._current_session != session_key
                     or self._current_payload is None
                     or self._current_revision is None
+                    or self._published_market_epoch is None
                 ):
                     # No baseline for this Session; an incremental cannot apply
                     # without a prior full snapshot.  Drop silently.
+                    return
+                if (
+                    update.market_epoch is not None
+                    and update.market_epoch != self._published_market_epoch
+                ):
+                    # Reject stale or ahead-of-baseline epochs atomically with
+                    # the authoritative snapshot revision.
                     return
                 # Apply to a deep-copy staging area so a validation failure
                 # leaves the authoritative state untouched.
