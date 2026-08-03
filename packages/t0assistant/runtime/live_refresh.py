@@ -255,6 +255,7 @@ class LiveRefreshScheduler:
         self._lock = RLock()
         self._retired = False
         self._polling_profile: PollingProfile = "active"
+        self._scheduler_market_epoch = self._read_input_market_epoch()
         self._states = {kind: _MutableBranchState() for kind in self._KINDS}
         self._active_kinds: set[LiveRefreshKind] = set()
         for raw_kind, data_time in (initial_data_times or {}).items():
@@ -336,10 +337,14 @@ class LiveRefreshScheduler:
     def reset_branch_watermarks(
         self,
         data_times: Mapping[LiveRefreshKind | str, datetime | None] | None = None,
+        *,
+        market_epoch: int | None = None,
     ) -> None:
         """Clear branch schedules after an atomic day switch."""
 
         with self._lock:
+            if market_epoch is not None:
+                self._scheduler_market_epoch = market_epoch
             for kind in self._KINDS:
                 state = self._states[kind]
                 state.latest_data_time = None
@@ -421,7 +426,7 @@ class LiveRefreshScheduler:
                     polling_profile=profile,
                 )
                 watermark = state.latest_data_time
-                task_epoch = self._current_market_epoch()
+                task_epoch = self._scheduler_market_epoch
             task = ComputationTask(
                 task_id=new_task_id(),
                 session_id=self._spec.session_id,
@@ -489,13 +494,15 @@ class LiveRefreshScheduler:
             )
 
         result_epoch = result.market_epoch
-        if result_epoch is not None:
-            current_epoch = self._current_market_epoch()
-            if current_epoch is not None and result_epoch != current_epoch:
-                return
 
         with self._lock:
             if self._retired:
+                return
+            if (
+                result_epoch is not None
+                and self._scheduler_market_epoch is not None
+                and result_epoch != self._scheduler_market_epoch
+            ):
                 return
             state = self._states[kind]
             current = state.latest_data_time
@@ -566,12 +573,15 @@ class LiveRefreshScheduler:
         *,
         market_epoch: int | None = None,
     ) -> None:
-        if market_epoch is not None:
-            current_epoch = self._current_market_epoch()
-            if current_epoch is not None and market_epoch != current_epoch:
-                return
+        publish_failure = False
         with self._lock:
             if self._retired:
+                return
+            if (
+                market_epoch is not None
+                and self._scheduler_market_epoch is not None
+                and market_epoch != self._scheduler_market_epoch
+            ):
                 return
             state = self._states[kind]
             state.last_failure = failure
@@ -583,7 +593,8 @@ class LiveRefreshScheduler:
                 ),
                 state.consecutive_failures,
             )
-        if self._on_failure is not None:
+            publish_failure = True
+        if publish_failure and self._on_failure is not None:
             try:
                 self._on_failure(kind, failure, market_epoch)
             except Exception:
@@ -598,7 +609,7 @@ class LiveRefreshScheduler:
                 )
                 return
 
-    def _current_market_epoch(self) -> int | None:
+    def _read_input_market_epoch(self) -> int | None:
         getter = getattr(self._input_port, "market_epoch", None)
         if getter is None:
             return None

@@ -720,7 +720,8 @@ class StaleEpochRefreshFailureTests(unittest.TestCase):
 
         input_port.set_market_epoch(1)
         scheduler.reset_branch_watermarks(
-            {LiveRefreshKind.ONE_MINUTE: datetime(2026, 7, 27, 9, 31)}
+            {LiveRefreshKind.ONE_MINUTE: datetime(2026, 7, 27, 9, 31)},
+            market_epoch=1,
         )
         release.set()
         thread.join(timeout=2)
@@ -732,6 +733,123 @@ class StaleEpochRefreshFailureTests(unittest.TestCase):
         self.assertIsNone(state.last_failure)
         self.assertEqual(state.latest_data_time, datetime(2026, 7, 27, 9, 31))
         self.assertEqual(self.updates, [])
+
+
+class _PausingRecordFailureScheduler(LiveRefreshScheduler):
+    """Pause at _record_failure entry so day-switch can advance epoch first."""
+
+    def __init__(
+        self,
+        *args,
+        pause_at_failure: Event,
+        release_failure: Event,
+        **kwargs,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self._pause_at_failure = pause_at_failure
+        self._release_failure = release_failure
+
+    def _record_failure(
+        self,
+        kind: LiveRefreshKind,
+        observed_at: datetime,
+        failure: BaseException,
+        *,
+        market_epoch: int | None = None,
+    ) -> None:
+        self._pause_at_failure.set()
+        self._release_failure.wait(timeout=2)
+        super()._record_failure(
+            kind,
+            observed_at,
+            failure,
+            market_epoch=market_epoch,
+        )
+
+
+class StaleEpochFailureToctouTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.executor = BoundedComputationExecutor(capacity=4, worker_count=2)
+        self.updates: list[LiveIncrementalUpdate] = []
+        self.failures: list[tuple[LiveRefreshKind, BaseException, int | None]] = []
+        self.published_failures: list[dict] = []
+        self.spec = SessionSpec(
+            session_id="live-1",
+            session_type=SessionType.LIVE,
+            symbol="sh.600000",
+            generation=7,
+            trade_date=None,
+        )
+        self.t0 = datetime(2026, 7, 24, 9, 35)
+
+    def test_record_failure_epoch_check_is_linearized_with_branch_state(self) -> None:
+        from packages.t0assistant.runtime.live_projection_store import (
+            LiveProjectionStore,
+        )
+
+        class _Coordinator:
+            def commit_if_accepted(self, *, session_type, session_id, generation, commit):
+                commit()
+                return True
+
+        store = LiveProjectionStore(_Coordinator(), service_generation=1)
+        pause_at_failure = Event()
+        release_failure = Event()
+        provider_pause = Event()
+        provider_release = Event()
+        input_port = _PausingFailureInput(
+            pause=provider_pause,
+            release=provider_release,
+        )
+
+        def on_failure(kind, exc, epoch):
+            self.failures.append((kind, exc, epoch))
+            accepted = store.accept_operation_failure(
+                session_id=self.spec.session_id,
+                generation=self.spec.generation,
+                operation_id=f"live-refresh-{kind.value}",
+                market_epoch=epoch,
+                payload={"error_code": "calculation_failed"},
+            )
+            if accepted is not None:
+                self.published_failures.append(accepted.to_envelope())
+
+        scheduler = _PausingRecordFailureScheduler(
+            self.spec,
+            input_port,
+            self.executor,
+            on_update=self.updates.append,
+            on_failure=on_failure,
+            pause_at_failure=pause_at_failure,
+            release_failure=release_failure,
+            initial_data_times={LiveRefreshKind.ONE_MINUTE: self.t0},
+        )
+        self.addCleanup(scheduler.retire)
+
+        thread = Thread(
+            target=scheduler.retry,
+            args=(LiveRefreshKind.ONE_MINUTE, self.t0),
+        )
+        thread.start()
+        self.assertTrue(provider_pause.wait(timeout=2))
+        provider_release.set()
+        self.assertTrue(pause_at_failure.wait(timeout=2))
+
+        scheduler.reset_branch_watermarks(
+            {LiveRefreshKind.ONE_MINUTE: datetime(2026, 7, 27, 9, 31)},
+            market_epoch=1,
+        )
+        release_failure.set()
+        thread.join(timeout=2)
+        self.assertFalse(thread.is_alive())
+
+        state = scheduler.state_for(LiveRefreshKind.ONE_MINUTE)
+        self.assertEqual(self.failures, [])
+        self.assertEqual(self.published_failures, [])
+        self.assertEqual(state.consecutive_failures, 0)
+        self.assertIsNone(state.last_failure)
+        self.assertEqual(state.latest_data_time, datetime(2026, 7, 27, 9, 31))
+        self.assertIsNone(store.current_revision)
 
 
 if __name__ == "__main__":

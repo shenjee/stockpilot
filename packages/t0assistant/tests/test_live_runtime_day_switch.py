@@ -370,9 +370,12 @@ class _PausingRefreshScheduler(LiveRefreshScheduler):
             super()._accept_result(kind, observed_at, result)
             return
         result_epoch = result.market_epoch
-        if result_epoch is not None:
-            current_epoch = self._current_market_epoch()
-            if current_epoch is not None and result_epoch != current_epoch:
+        with self._lock:
+            if (
+                result_epoch is not None
+                and self._scheduler_market_epoch is not None
+                and result_epoch != self._scheduler_market_epoch
+            ):
                 return
         if result.updates:
             self._pause_before_publish.set()

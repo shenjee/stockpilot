@@ -701,7 +701,10 @@ class LiveRuntimeSession:
         scheduler = self.refresh_scheduler
         if scheduler is None:
             return
-        scheduler.reset_branch_watermarks(_initial_data_times(candidate))
+        scheduler.reset_branch_watermarks(
+            _initial_data_times(candidate),
+            market_epoch=market_epoch,
+        )
         self._external_candidate(candidate)
 
     def retire(self) -> None:
