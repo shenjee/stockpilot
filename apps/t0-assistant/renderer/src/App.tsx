@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import chartFixture from "../../contracts/fixtures/chart-groups-v1.json";
 import { ChartGroup } from "./charts/ChartGroup";
 import {
@@ -37,6 +44,7 @@ import {
   canHydratePreferences,
   clearLiveScopedBackgroundError,
   createLatestRequestTracker,
+  initialSecuritySearchState,
   isCompleteWorkbenchSnapshot,
   latestDailyBars,
   liveMarketViewLines,
@@ -46,6 +54,8 @@ import {
   quoteRows,
   restoredSecurityFromResponse,
   securitiesFromSearchResponse,
+  securityCategoryLabel,
+  securitySearchReducer,
   startupRestoreFromResponse,
   type ApplicationError,
 } from "./workbench-presenter.mjs";
@@ -844,6 +854,11 @@ export function App() {
       setSearching(false);
       return;
     }
+    // Clear stale results from the previous query immediately so that
+    // keyboard handlers (ArrowUp/Down/Enter) cannot select invisible
+    // results during the debounce or network window.
+    setSuggestions([]);
+    setSearchMessage("");
     setSearching(true);
     const timer = window.setTimeout(() => {
       void searchSecurityMatches(text)
@@ -2028,8 +2043,62 @@ function WorkbenchToolbar({
   onSelect: (security: SecurityIdentity) => void;
   onMode: (mode: "live" | "replay") => void;
 }) {
+  const [searchState, dispatchSearch] = useReducer(
+    securitySearchReducer,
+    initialSecuritySearchState,
+  );
+  const { activeIndex, dismissed } = searchState;
+  const resultsRef = useRef<HTMLDivElement>(null);
+
+  // Reset keyboard cursor and dismissed flag whenever the result set or query
+  // changes so the user always starts fresh.
+  useEffect(() => {
+    dispatchSearch({ type: "reset-cursor" });
+  }, [suggestions]);
+
+  useEffect(() => {
+    dispatchSearch({ type: "query-change" });
+  }, [query]);
+
+  // Keep the highlighted option scrolled into view during keyboard navigation.
+  useEffect(() => {
+    if (activeIndex < 0 || !resultsRef.current) return;
+    const active = resultsRef.current.querySelector<HTMLElement>(
+      `[data-index="${activeIndex}"]`,
+    );
+    active?.scrollIntoView({ block: "nearest" });
+  }, [activeIndex]);
+
   const showResults =
-    searching || Boolean(searchMessage) || suggestions.length > 0;
+    !dismissed &&
+    (searching || Boolean(searchMessage) || suggestions.length > 0);
+
+  function selectSuggestion(security: SecurityIdentity) {
+    dispatchSearch({ type: "select" });
+    onSelect(security);
+  }
+
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
+    if (event.key === "ArrowDown") {
+      if (suggestions.length === 0) return;
+      event.preventDefault();
+      dispatchSearch({ type: "arrow-down", count: suggestions.length });
+    } else if (event.key === "ArrowUp") {
+      if (suggestions.length === 0) return;
+      event.preventDefault();
+      dispatchSearch({ type: "arrow-up", count: suggestions.length });
+    } else if (event.key === "Enter") {
+      if (dismissed || suggestions.length === 0) return;
+      event.preventDefault();
+      const target = activeIndex >= 0 ? activeIndex : 0;
+      selectSuggestion(suggestions[target]);
+    } else if (event.key === "Escape") {
+      if (!showResults) return;
+      event.preventDefault();
+      dispatchSearch({ type: "escape", visible: showResults });
+    }
+  }
+
   return (
     <header className="toolbar" data-testid="toolbar">
       <div className="security-picker">
@@ -2044,22 +2113,40 @@ function WorkbenchToolbar({
           aria-autocomplete="list"
           aria-expanded={showResults}
           aria-controls="security-results"
+          aria-activedescendant={
+            activeIndex >= 0
+              ? `security-option-${activeIndex}`
+              : undefined
+          }
           onChange={(event) => onQuery(event.target.value)}
+          onKeyDown={handleKeyDown}
         />
         {showResults && (
-          <div id="security-results" className="search-results" role="listbox">
+          <div
+            id="security-results"
+            className="search-results"
+            role="listbox"
+            ref={resultsRef}
+          >
             {searching && <div className="search-hint">正在搜索…</div>}
             {!searching &&
-              suggestions.map((security) => (
+              suggestions.map((security, index) => (
                 <button
                   type="button"
                   role="option"
+                  id={`security-option-${index}`}
+                  data-index={index}
                   key={security.symbol}
-                  onClick={() => onSelect(security)}
+                  aria-selected={index === activeIndex}
+                  className={index === activeIndex ? "is-active" : undefined}
+                  onClick={() => selectSuggestion(security)}
+                  onMouseEnter={() =>
+                    dispatchSearch({ type: "mouse-enter", index })
+                  }
                 >
                   <span>{security.code}</span>
                   <strong>{security.name}</strong>
-                  <small>{security.security_type === "etf" ? "ETF" : "A 股"}</small>
+                  <small>{securityCategoryLabel(security)}</small>
                 </button>
               ))}
             {!searching && searchMessage && (
@@ -2350,7 +2437,7 @@ function preferenceWarningFromResponse(
 
 function preferencesFromResponse(response: unknown) {
   if (!response || typeof response !== "object") return null;
-  const data = (response as { data?: unknown }).data ?? response;
+  const data = (response as { data?: unknown; snapshot?: unknown }).data ?? response;
   if (!data || typeof data !== "object") return null;
   const candidate =
     (data as { preferences?: unknown }).preferences ??
