@@ -3,16 +3,22 @@ import test from "node:test";
 
 import {
   applicationErrorFrom,
+  cancelStartupRestoreTracking,
   canHydratePreferences,
+  clearLiveScopedBackgroundError,
   createLatestRequestTracker,
   isCompleteWorkbenchSnapshot,
   latestDailyBars,
   liveMarketViewLines,
   liveOperationFailurePresentation,
   operationMatchesEnvelope,
+  partialSecurityFromSymbol,
   quoteRows,
+  restoredSecurityFromResponse,
   securitiesFromSearchResponse,
   standardSecurityFromResponse,
+  startupRestoreFromResponse,
+  startupRestoreOperationId,
 } from "../renderer/src/workbench-presenter.mjs";
 
 test("security responses must contain a frozen standard identity", () => {
@@ -264,5 +270,93 @@ test("daily chart selection is bounded and application errors share one path", (
       message: "行情暂时不可用",
       retryable: true,
     },
+  );
+});
+
+test("startup preference payload exposes exact restored security without search", () => {
+  const security = {
+    symbol: "sz.300113",
+    code: "300113",
+    market: "sz",
+    name: "顺网科技",
+    security_type: "a_share",
+  };
+  const response = {
+    data: {
+      restored_security: security,
+      startup_restore: {
+        status: "restored",
+        symbol: "sz.300113",
+        session_id: "live-1",
+      },
+    },
+  };
+  assert.deepEqual(restoredSecurityFromResponse(response), security);
+  assert.deepEqual(startupRestoreFromResponse(response), {
+    status: "restored",
+    symbol: "sz.300113",
+    session_id: "live-1",
+  });
+  assert.deepEqual(partialSecurityFromSymbol("sz.300113"), {
+    symbol: "sz.300113",
+    code: "300113",
+    market: "sz",
+    name: "",
+    security_type: "a_share",
+  });
+  assert.equal(partialSecurityFromSymbol("invalid"), null);
+});
+
+test("workbench baseline clears only Live-scoped background errors", () => {
+  const preferenceError = {
+    error_code: "preference_persist_failed",
+    message: "股票未保存，重启后会丢失",
+    retryable: true,
+    affected_capability: "preferences",
+  };
+  const liveError = {
+    error_code: "live_data_unavailable",
+    message: "Live 行情加载失败，请重试",
+    retryable: true,
+    affected_capability: "live",
+  };
+  assert.deepEqual(
+    clearLiveScopedBackgroundError(preferenceError),
+    preferenceError,
+  );
+  assert.equal(clearLiveScopedBackgroundError(liveError), null);
+});
+
+test("user selection cancels tracked startup restore before stale failure arrives", () => {
+  const activeOperations = new Map();
+  const restoreInFlight = {
+    security: {
+      symbol: "sh.600000",
+      code: "600000",
+      market: "sh",
+      name: "浦发银行",
+      security_type: "a_share",
+    },
+    sessionId: "live-old",
+    serviceGeneration: 4,
+  };
+  const operationId = startupRestoreOperationId("live-old");
+  activeOperations.set(operationId, {
+    retry: "security",
+    security: restoreInFlight.security,
+    serviceGeneration: 4,
+    sessionId: "live-old",
+  });
+
+  cancelStartupRestoreTracking(restoreInFlight, activeOperations);
+
+  assert.equal(activeOperations.has(operationId), false);
+  assert.equal(
+    operationMatchesEnvelope(activeOperations.get(operationId) ?? null, {
+      service_generation: 4,
+      session_id: "live-old",
+      operation_id: operationId,
+    }),
+    false,
   );
 });

@@ -87,6 +87,7 @@ except ImportError:  # script context: ``python backend/service.py``
 APP_COMMANDS = {
     "search_securities",
     "select_security",
+    "save_last_symbol",
     "get_live_snapshot",
     "retry_live",
     "list_trades",
@@ -106,6 +107,7 @@ APP_COMMANDS = {
 _LIVE_COMMANDS = frozenset({"get_live_snapshot"})
 _LIVE_APPLICATION_COMMANDS = frozenset({
     "select_security",
+    "save_last_symbol",
     "get_live_snapshot",
     "retry_live",
     "get_preferences",

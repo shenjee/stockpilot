@@ -33,15 +33,20 @@ import {
 } from "./workbench-layout.mjs";
 import {
   applicationErrorFrom,
+  cancelStartupRestoreTracking,
   canHydratePreferences,
+  clearLiveScopedBackgroundError,
   createLatestRequestTracker,
   isCompleteWorkbenchSnapshot,
   latestDailyBars,
   liveMarketViewLines,
   liveOperationFailurePresentation,
   operationMatchesEnvelope,
+  partialSecurityFromSymbol,
   quoteRows,
+  restoredSecurityFromResponse,
   securitiesFromSearchResponse,
+  startupRestoreFromResponse,
   type ApplicationError,
 } from "./workbench-presenter.mjs";
 import { createSerialTaskQueue } from "./serial-task-queue.mjs";
@@ -158,6 +163,7 @@ export function App() {
   const [searching, setSearching] = useState(false);
   const [searchMessage, setSearchMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [restoreMessage, setRestoreMessage] = useState<string | null>(null);
   const [backgroundError, setBackgroundError] =
     useState<ApplicationError | null>(null);
   const [activeFailure, setActiveFailure] = useState<ActiveFailure | null>(
@@ -199,6 +205,11 @@ export function App() {
   const searchRequests = useRef(createLatestRequestTracker());
   const navigationRequests = useRef(createLatestRequestTracker());
   const preferenceHydrationInFlight = useRef(false);
+  const restoreInFlight = useRef<{
+    security: SecurityIdentity;
+    sessionId: string;
+    serviceGeneration: number;
+  } | null>(null);
   const userModifiedPreferences = useRef(false);
   const preferenceSaveQueue = useRef(
     createSerialTaskQueue(async (preferences: ReturnType<typeof workbenchPreferences>) => {
@@ -360,15 +371,49 @@ export function App() {
             applyWorkbenchPreferences(current, preferences),
           );
           if (preferences.last_symbol) {
-            const selected = await resolveSavedSecurity(
-              preferences.last_symbol,
-            );
+            const startup = startupRestoreFromResponse(response);
+            const resolvedSecurity = restoredSecurityFromResponse(response);
+            const displaySecurity =
+              resolvedSecurity ??
+              partialSecurityFromSymbol(preferences.last_symbol);
             if (
-              selected &&
+              displaySecurity &&
               !cancelled &&
               !userModifiedPreferences.current
             ) {
-              await performSecuritySelection(selected, true);
+              setWorkbench((current) =>
+                selectWorkbenchSecurity(current, displaySecurity),
+              );
+              setQuery(displaySecurity.code);
+              setRestoreMessage(
+                displaySecurity.name
+                  ? `正在恢复上次查看的 ${displaySecurity.name}（${displaySecurity.code}）…`
+                  : `正在恢复上次查看的 ${displaySecurity.code}…`,
+              );
+              setLoading(true);
+              const restoreStatus = startup?.status;
+              const sessionId =
+                typeof startup?.session_id === "string"
+                  ? startup.session_id
+                  : null;
+              if (
+                resolvedSecurity &&
+                (restoreStatus === "restored" ||
+                  restoreStatus === "already_active")
+              ) {
+                await applyStartupRestore(resolvedSecurity, sessionId);
+              } else if (resolvedSecurity) {
+                await performSecuritySelection(resolvedSecurity, true);
+              } else if (restoreStatus === "invalid_symbol") {
+                setLoading(false);
+                setRestoreMessage(null);
+                setBackgroundError({
+                  error_code: "invalid_request",
+                  message: `上次保存的股票 ${preferences.last_symbol} 已无法识别，请重新选择`,
+                  retryable: false,
+                  affected_capability: "symbol_selection",
+                });
+              }
             }
           }
         }
@@ -433,10 +478,17 @@ export function App() {
           setLoading(true);
         }
         if (state === "ready") {
-          if (liveIsVisible) setLoading(false);
-          setBackgroundError((current) =>
-            current?.affected_capability === "live" ? null : current,
-          );
+          if (liveIsVisible) {
+            setLoading(false);
+            setRestoreMessage(null);
+            if (
+              restoreInFlight.current &&
+              envelope.session_id === restoreInFlight.current.sessionId
+            ) {
+              restoreInFlight.current = null;
+            }
+          }
+          setBackgroundError((current) => clearLiveScopedBackgroundError(current));
         }
         applyLiveEvent();
         return;
@@ -497,7 +549,23 @@ export function App() {
             setBackgroundError(presentation.error);
           }
         } else {
-          setBackgroundError(error);
+          const pendingRestore = restoreInFlight.current;
+          if (
+            pendingRestore &&
+            envelope.service_generation === pendingRestore.serviceGeneration &&
+            envelope.session_id === pendingRestore.sessionId
+          ) {
+            restoreInFlight.current = null;
+            setLoading(false);
+            setRestoreMessage(null);
+            setActiveFailure({
+              error,
+              retry: "security",
+              security: pendingRestore.security,
+            });
+          } else {
+            setBackgroundError(error);
+          }
         }
         applyLiveEvent();
         return;
@@ -544,9 +612,16 @@ export function App() {
             ),
           );
         }
+        if (
+          restoreInFlight.current &&
+          restoreInFlight.current.sessionId === baseline.sessionId
+        ) {
+          restoreInFlight.current = null;
+          setRestoreMessage(null);
+        }
         activeOperations.current.clear();
         setLoading(false);
-        setBackgroundError(null);
+        setBackgroundError((current) => clearLiveScopedBackgroundError(current));
         return;
       }
       applyLiveEvent();
@@ -800,15 +875,75 @@ export function App() {
     return securitiesFromSearchResponse(response);
   }
 
-  async function resolveSavedSecurity(input: string) {
-    if (!window.stockpilot) return null;
-    try {
-      const matches = await searchSecurityMatches(input);
-      return matches.find((security) => security.symbol === input) ?? null;
-    } catch {
-      // last_symbol is only a convenience. Missing or stale saved data is a
-      // normal empty state; leave the selector blank for the user's next input.
-      return null;
+  async function applyStartupRestore(
+    security: SecurityIdentity,
+    sessionId: string | null,
+  ) {
+    const selectionSequence = navigationRequests.current.begin();
+    if (!window.stockpilot) {
+      setWorkbench((current) => selectWorkbenchSecurity(current, security));
+      setQuery(security.code);
+      setLoading(false);
+      setRestoreMessage(null);
+      return;
+    }
+    setWorkbench((current) => selectWorkbenchSecurity(current, security));
+    setQuery(security.code);
+    setSuggestions([]);
+    setSearchMessage("");
+    if (sessionId) {
+      const operationId = `live-load-${sessionId}`;
+      restoreInFlight.current = {
+        security,
+        sessionId,
+        serviceGeneration: status.service_generation,
+      };
+      activeOperations.current.set(operationId, {
+        retry: "security",
+        security,
+        serviceGeneration: status.service_generation,
+        sessionId,
+      });
+      try {
+        const snapshotResponse = await window.stockpilot.getLiveSnapshot(
+          appRequest("get_live_snapshot", sessionId, {}),
+        );
+        if (!navigationRequests.current.isCurrent(selectionSequence)) return;
+        const recovered = workbenchSnapshotFromResponse(snapshotResponse);
+        if (recovered) {
+          setProjection((current) => {
+            const replacement = applyWorkbenchSnapshot(current, recovered, {
+              service_generation: status.service_generation,
+              session_id: sessionId,
+              revision: recovered.session?.revision,
+            });
+            liveProjection.current = replacement;
+            return replacement;
+          });
+          setLoading(false);
+          setRestoreMessage(null);
+          restoreInFlight.current = null;
+          activeOperations.current.delete(`live-load-${sessionId}`);
+          return;
+        }
+      } catch {
+        // The event channel may still deliver the startup snapshot.
+      }
+      setProjection((current) => {
+        if (
+          current.serviceGeneration === status.service_generation &&
+          current.sessionId === sessionId
+        ) {
+          return current;
+        }
+        const replacement = beginChartSession(
+          current.snapshot,
+          status.service_generation,
+          sessionId,
+        );
+        liveProjection.current = replacement;
+        return replacement;
+      });
     }
   }
 
@@ -817,6 +952,11 @@ export function App() {
     restoring = false,
   ) {
     const selectionSequence = navigationRequests.current.begin();
+    cancelStartupRestoreTracking(
+      restoreInFlight.current,
+      activeOperations.current,
+    );
+    restoreInFlight.current = null;
     const replayOwnsView = modeRef.current === WorkbenchMode.REPLAY;
     if (!restoring) userModifiedPreferences.current = true;
     if (!window.stockpilot) {
@@ -850,7 +990,15 @@ export function App() {
           modeRef.current,
           error,
         );
-        if (presentation.blocking && !restoring) {
+        if (restoring) {
+          setLoading(false);
+          setRestoreMessage(null);
+          setActiveFailure({
+            error: presentation.error,
+            retry: "security",
+            security,
+          });
+        } else if (presentation.blocking) {
           setLoading(false);
           setActiveFailure({
             error: presentation.error,
@@ -864,6 +1012,10 @@ export function App() {
       }
       const operationId = responseOperationId(response);
       const sessionId = responseSessionId(response);
+      const preferenceWarning = preferenceWarningFromResponse(response);
+      if (preferenceWarning) {
+        setBackgroundError(preferenceWarning);
+      }
       activeOperations.current.clear();
       rebaselineRequest.current = null;
       if (modeRef.current === WorkbenchMode.REPLAY) {
@@ -961,7 +1113,15 @@ export function App() {
         modeRef.current,
         failure,
       );
-      if (presentation.blocking && !restoring) {
+      if (restoring) {
+        setLoading(false);
+        setRestoreMessage(null);
+        setActiveFailure({
+          error: presentation.error,
+          retry: "security",
+          security,
+        });
+      } else if (presentation.blocking) {
         setLoading(false);
         setActiveFailure({
           error: presentation.error,
@@ -1065,10 +1225,14 @@ export function App() {
         setPreferenceHydrationAttempt((current) => current + 1);
         return;
       }
+      const symbol = workbench.security?.symbol;
+      if (!symbol) return;
       try {
-        await preferenceSaveQueue.current.enqueue(
-          workbenchPreferences(workbench),
+        const response = await window.stockpilot.saveLastSymbol(
+          appRequest("save_last_symbol", null, { symbol }),
         );
+        const error = applicationErrorFrom(response);
+        if (error) throw error;
       } catch (error) {
         setBackgroundError(clientError(error, "preferences"));
       }
@@ -1600,7 +1764,7 @@ export function App() {
 
         {loading && (
           <div className="loading-indicator" role="status">
-            正在加载…
+            {restoreMessage ?? "正在加载…"}
           </div>
         )}
       </section>
@@ -2172,6 +2336,16 @@ function responseSessionId(response: unknown) {
   return typeof candidate === "string" && candidate.length > 0
     ? candidate
     : null;
+}
+
+function preferenceWarningFromResponse(
+  response: unknown,
+): ApplicationError | null {
+  if (!response || typeof response !== "object") return null;
+  const warning = (
+    response as { data?: { preference_warning?: unknown } }
+  ).data?.preference_warning;
+  return applicationErrorFrom(warning);
 }
 
 function preferencesFromResponse(response: unknown) {

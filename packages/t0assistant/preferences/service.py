@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, Protocol
 
-from .models import PreferenceSnapshot, PreferenceValues
+from .models import LayerPreference, LayoutPreference, PreferenceSnapshot, PreferenceValues
 
 
 class PreferencePersistenceError(RuntimeError):
@@ -36,6 +36,14 @@ class PreferenceRepository(Protocol):
     def load(self) -> PreferenceSnapshot: ...
 
     def save(self, preferences: PreferenceValues) -> PreferenceSnapshot: ...
+
+    def save_layout_layers(
+        self,
+        layout: LayoutPreference,
+        layers: LayerPreference,
+    ) -> PreferenceSnapshot: ...
+
+    def save_last_symbol(self, symbol: str) -> PreferenceSnapshot: ...
 
 
 class PreferenceService:
@@ -68,3 +76,29 @@ class PreferenceService:
             reason = self._repository.capability.reason or "App database is read-only"
             raise PreferencesReadOnlyError(reason)
         return self._repository.save(values)
+
+    def save_layout_layers(
+        self,
+        layout: LayoutPreference | Mapping[str, Any],
+        layers: LayerPreference | Mapping[str, Any],
+    ) -> PreferenceSnapshot:
+        layout_values = (
+            layout
+            if isinstance(layout, LayoutPreference)
+            else LayoutPreference.from_mapping(layout)
+        )
+        layer_values = (
+            layers
+            if isinstance(layers, LayerPreference)
+            else LayerPreference.from_mapping(layers)
+        )
+        if not self._repository.capability.writable:
+            reason = self._repository.capability.reason or "App database is read-only"
+            raise PreferencesReadOnlyError(reason)
+        return self._repository.save_layout_layers(layout_values, layer_values)
+
+    def save_last_symbol(self, symbol: str) -> PreferenceSnapshot:
+        if not self._repository.capability.writable:
+            reason = self._repository.capability.reason or "App database is read-only"
+            raise PreferencesReadOnlyError(reason)
+        return self._repository.save_last_symbol(symbol)

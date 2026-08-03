@@ -251,6 +251,32 @@ class PreferencePersistenceTests(unittest.TestCase):
                 service.save(self._changed_values())
             self.assertEqual(service.restore_for_startup().snapshot, before)
 
+    def test_layout_only_patch_never_reverts_last_symbol_under_contention(self) -> None:
+        with open_app_database(self.db_path) as database:
+            service = PreferenceService(SqlitePreferenceRepository(database))
+            service.save_last_symbol("sh.600519")
+            alt_layout = LayoutPreference(chart_split="50_50", show_intraday=False)
+            layers = LayerPreference(ma5=True)
+            worker_count = 8
+            start = Barrier(worker_count)
+
+            def patch_layout() -> None:
+                start.wait()
+                for _ in range(10):
+                    service.save_layout_layers(alt_layout, layers)
+
+            with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                futures = [
+                    executor.submit(patch_layout) for _ in range(worker_count)
+                ]
+                for future in futures:
+                    future.result()
+
+            self.assertEqual(
+                service.restore_for_startup().snapshot.preferences.last_symbol,
+                "sh.600519",
+            )
+
     def test_incompatible_existing_database_is_not_cleared(self) -> None:
         connection = sqlite3.connect(self.db_path)
         connection.execute("CREATE TABLE preferences(singleton_id INTEGER PRIMARY KEY)")

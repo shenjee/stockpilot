@@ -167,6 +167,7 @@ class LiveApplicationTests(unittest.TestCase):
         input_port: _DeterministicLiveInput,
         *,
         restore_on_startup: bool = False,
+        resolve_security=None,
     ) -> LiveApplicationApi:
         factory = LiveSessionFactory(
             input_port,
@@ -174,11 +175,20 @@ class LiveApplicationTests(unittest.TestCase):
             auto_poll=False,
         )
         self.factory = factory
+        if resolve_security is None:
+            resolve_security = lambda symbol: {
+                "symbol": symbol,
+                "code": symbol[3:],
+                "market": symbol[:2],
+                "name": "测试证券",
+                "security_type": "a_share",
+            }
         return LiveApplicationApi(
             service_generation=7,
             session_factory=factory,
             preference_service=self.preferences,
             event_publisher=self.publisher,
+            resolve_security=resolve_security,
             restore_on_startup=restore_on_startup,
         )
 
@@ -250,6 +260,250 @@ class LiveApplicationTests(unittest.TestCase):
             response["data"]["session_id"],
         )
         self.assertEqual(republished["payload"], first["payload"])
+
+    def test_get_preferences_returns_restored_security_via_exact_lookup(self) -> None:
+        self.preferences.save(
+            PreferenceValues(last_symbol="sz.300113")
+        )
+        lookups: list[str] = []
+
+        def resolve(symbol: str):
+            lookups.append(symbol)
+            return {
+                "symbol": symbol,
+                "code": "300113",
+                "market": "sz",
+                "name": "顺网科技",
+                "security_type": "a_share",
+            }
+
+        app = self._app(
+            _DeterministicLiveInput(),
+            restore_on_startup=False,
+            resolve_security=resolve,
+        )
+        response = app.get_preferences(request_id="prefs-1")
+        data = response["data"]
+
+        self.assertTrue(response["accepted"])
+        self.assertEqual(lookups, ["sz.300113"])
+        self.assertEqual(data["restored_security"]["name"], "顺网科技")
+        self.assertEqual(data["startup_restore"]["status"], "restored")
+        self.assertIsNotNone(data["startup_restore"]["session_id"])
+
+    def test_save_preferences_preserves_last_symbol_when_layout_patch_is_null(
+        self,
+    ) -> None:
+        app = self._app(_DeterministicLiveInput())
+        app.select_security(request_id="select-1", symbol="sh.600519")
+        self.events.get(timeout=1)
+
+        saved = app.save_preferences(
+            request_id="save-layout",
+            preferences={
+                "last_symbol": None,
+                "layout": {"chart_split": "50_50", "show_intraday": False},
+                "layers": PreferenceValues().layers.to_dict(),
+            },
+        )
+
+        self.assertTrue(saved["accepted"])
+        self.assertEqual(
+            self.preferences.restore_for_startup().snapshot.preferences.last_symbol,
+            "sh.600519",
+        )
+        self.assertEqual(
+            saved["data"]["preferences"]["layout"]["chart_split"],
+            "50_50",
+        )
+
+    def test_save_preferences_ignores_stale_non_null_last_symbol(
+        self,
+    ) -> None:
+        app = self._app(_DeterministicLiveInput())
+        app.select_security(request_id="select-1", symbol="sh.600519")
+        self.events.get(timeout=1)
+
+        saved = app.save_preferences(
+            request_id="save-layout",
+            preferences={
+                "last_symbol": "sh.600000",
+                "layout": {"chart_split": "50_50", "show_intraday": False},
+                "layers": PreferenceValues().layers.to_dict(),
+            },
+        )
+
+        self.assertTrue(saved["accepted"])
+        self.assertEqual(
+            self.preferences.restore_for_startup().snapshot.preferences.last_symbol,
+            "sh.600519",
+        )
+
+    def test_concurrent_layout_save_does_not_revert_newly_selected_symbol(
+        self,
+    ) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+
+        app = self._app(_DeterministicLiveInput())
+        app.select_security(request_id="initial", symbol="sh.600000")
+        self.events.get(timeout=1)
+        layout_prefs = {
+            "last_symbol": "sh.600000",
+            "layout": {"chart_split": "50_50", "show_intraday": False},
+            "layers": PreferenceValues().layers.to_dict(),
+        }
+        barrier = Barrier(2)
+
+        def save_layout() -> None:
+            barrier.wait()
+            for index in range(20):
+                app.save_preferences(
+                    request_id=f"layout-{index}",
+                    preferences=layout_prefs,
+                )
+
+        def select_new() -> None:
+            barrier.wait()
+            app.select_security(request_id="select-new", symbol="sz.300113")
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            layout_future = executor.submit(save_layout)
+            select_future = executor.submit(select_new)
+            layout_future.result()
+            select_future.result()
+
+        self.assertEqual(
+            self.preferences.restore_for_startup().snapshot.preferences.last_symbol,
+            "sz.300113",
+        )
+
+    def test_select_security_reports_preference_warning_when_storage_is_read_only(
+        self,
+    ) -> None:
+        db_path = Path(self.tempdir.name) / "readonly-preferences.sqlite"
+        with open_app_database(db_path) as writable:
+            PreferenceService(SqlitePreferenceRepository(writable)).save(
+                PreferenceValues(last_symbol="sh.600000")
+            )
+        with open_app_database(db_path, force_read_only=True) as read_only:
+            read_only_prefs = PreferenceService(
+                SqlitePreferenceRepository(read_only)
+            )
+            app = LiveApplicationApi(
+                service_generation=7,
+                session_factory=LiveSessionFactory(
+                    _DeterministicLiveInput(),
+                    analyzer=lambda bars, symbol: _chan(symbol),
+                    auto_poll=False,
+                ),
+                preference_service=read_only_prefs,
+                event_publisher=self.publisher,
+                restore_on_startup=False,
+            )
+            response = app.select_security(
+                request_id="select-readonly",
+                symbol="sh.600519",
+            )
+
+        self.assertTrue(response["accepted"])
+        warning = response["data"]["preference_warning"]
+        self.assertEqual(warning["affected_capability"], "preferences")
+        self.assertFalse(warning["retryable"])
+
+    def test_save_last_symbol_retries_failed_selection_persistence(self) -> None:
+        db_path = Path(self.tempdir.name) / "save-last-symbol-retry.sqlite"
+        with open_app_database(db_path) as writable:
+            initial_prefs = PreferenceService(SqlitePreferenceRepository(writable))
+            initial_prefs.save(PreferenceValues(last_symbol="sh.600000"))
+        with open_app_database(db_path, force_read_only=True) as read_only:
+            read_only_prefs = PreferenceService(SqlitePreferenceRepository(read_only))
+            app = LiveApplicationApi(
+                service_generation=7,
+                session_factory=LiveSessionFactory(
+                    _DeterministicLiveInput(),
+                    analyzer=lambda bars, symbol: _chan(symbol),
+                    auto_poll=False,
+                ),
+                preference_service=read_only_prefs,
+                event_publisher=self.publisher,
+                restore_on_startup=False,
+            )
+            response = app.save_last_symbol(
+                request_id="retry-save",
+                symbol="sh.600519",
+            )
+
+        self.assertFalse(response["accepted"])
+        self.assertEqual(response["error"]["affected_capability"], "preferences")
+
+        with open_app_database(db_path) as writable:
+            writable_prefs = PreferenceService(SqlitePreferenceRepository(writable))
+            app = LiveApplicationApi(
+                service_generation=7,
+                session_factory=LiveSessionFactory(
+                    _DeterministicLiveInput(),
+                    analyzer=lambda bars, symbol: _chan(symbol),
+                    auto_poll=False,
+                ),
+                preference_service=writable_prefs,
+                event_publisher=self.publisher,
+                restore_on_startup=False,
+            )
+            response = app.save_last_symbol(
+                request_id="retry-success",
+                symbol="sh.600519",
+            )
+            self.assertTrue(response["accepted"])
+            self.assertEqual(
+                writable_prefs.restore_for_startup().snapshot.preferences.last_symbol,
+                "sh.600519",
+            )
+
+    def test_startup_restore_round_trip_survives_service_restart(self) -> None:
+        self.preferences.save(
+            PreferenceValues(last_symbol="sh.510300")
+        )
+        first = self._app(
+            _DeterministicLiveInput(),
+            restore_on_startup=True,
+            resolve_security=lambda symbol: {
+                "symbol": symbol,
+                "code": "510300",
+                "market": "sh",
+                "name": "沪深300ETF",
+                "security_type": "etf",
+            },
+        )
+        first_event = self.events.get(timeout=1)
+        first_session = first.coordinator.snapshot.live_session
+        self.assertEqual(first_event["event_type"], "workbench_snapshot")
+        self.assertIsNotNone(first_session)
+
+        prefs = first.get_preferences(request_id="prefs-restart")
+        self.assertEqual(prefs["data"]["startup_restore"]["status"], "already_active")
+        self.assertEqual(
+            prefs["data"]["restored_security"]["name"],
+            "沪深300ETF",
+        )
+
+        second = self._app(
+            _DeterministicLiveInput(),
+            restore_on_startup=True,
+            resolve_security=lambda symbol: {
+                "symbol": symbol,
+                "code": "510300",
+                "market": "sh",
+                "name": "沪深300ETF",
+                "security_type": "etf",
+            },
+        )
+        second_event = self.events.get(timeout=1)
+        self.assertEqual(second_event["event_type"], "workbench_snapshot")
+        self.assertEqual(
+            second.coordinator.snapshot.current_symbol,
+            "sh.510300",
+        )
 
     def test_initial_failure_publishes_revision_zero_without_a_baseline(self) -> None:
         app = self._app(

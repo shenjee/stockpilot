@@ -178,6 +178,8 @@ class SecuritiesSearchServiceTests(unittest.TestCase):
         service = SecuritiesSearchService(bundled_store)
 
         self.assertEqual(service.search("gzmt")[0]["symbol"], "sh.600519")
+        self.assertEqual(service.search("sh.600519"), [])
+        self.assertEqual(service.get("sh.600519")["name"], "贵州茅台")
         etf = service.search("沪深300ETF华泰柏瑞")[0]
         self.assertEqual(etf["symbol"], "sh.510300")
         self.assertEqual(etf["security_type"], "etf")

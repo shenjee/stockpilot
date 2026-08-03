@@ -547,3 +547,107 @@ class SqlitePreferenceRepository:
             return PreferenceSnapshot(current.preference_revision + 1, preferences)
 
         return self._writer.run(persist)
+
+    def save_layout_layers(
+        self,
+        layout: LayoutPreference,
+        layers: LayerPreference,
+    ) -> PreferenceSnapshot:
+        if not self.capability.writable:
+            raise PreferencesReadOnlyError(
+                self.capability.reason or "本地成交与设置文件为只读"
+            )
+
+        def persist(connection: sqlite3.Connection) -> PreferenceSnapshot:
+            row = connection.execute(
+                "SELECT * FROM preferences WHERE singleton_id = 1"
+            ).fetchone()
+            if row is None:
+                raise PreferencePersistenceError(
+                    "偏好保存失败：缺少 singleton preference row"
+                )
+            current = self._snapshot_from_row(row)
+            preferences = PreferenceValues(
+                last_symbol=current.preferences.last_symbol,
+                layout=layout,
+                layers=layers,
+            )
+            if current.preferences == preferences:
+                return current
+            cursor = connection.execute(
+                """
+                UPDATE preferences
+                SET preference_revision = preference_revision + 1,
+                    chart_split = ?, show_intraday = ?,
+                    ma5 = ?, ma10 = ?, ma20 = ?, ma30 = ?, ma60 = ?,
+                    strokes = ?, pivot_zones = ?, updated_at = ?
+                WHERE singleton_id = ?
+                  AND preference_revision = ?
+                """,
+                (
+                    preferences.layout.chart_split,
+                    int(preferences.layout.show_intraday),
+                    int(preferences.layers.ma5),
+                    int(preferences.layers.ma10),
+                    int(preferences.layers.ma20),
+                    int(preferences.layers.ma30),
+                    int(preferences.layers.ma60),
+                    int(preferences.layers.strokes),
+                    int(preferences.layers.pivot_zones),
+                    _utc_now(),
+                    1,
+                    current.preference_revision,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise PreferencePersistenceError(
+                    "偏好保存冲突；持久化副本已被其他操作修改"
+                )
+            return PreferenceSnapshot(current.preference_revision + 1, preferences)
+
+        return self._writer.run(persist)
+
+    def save_last_symbol(self, symbol: str) -> PreferenceSnapshot:
+        if not self.capability.writable:
+            raise PreferencesReadOnlyError(
+                self.capability.reason or "本地成交与设置文件为只读"
+            )
+
+        def persist(connection: sqlite3.Connection) -> PreferenceSnapshot:
+            row = connection.execute(
+                "SELECT * FROM preferences WHERE singleton_id = 1"
+            ).fetchone()
+            if row is None:
+                raise PreferencePersistenceError(
+                    "偏好保存失败：缺少 singleton preference row"
+                )
+            current = self._snapshot_from_row(row)
+            if current.preferences.last_symbol == symbol:
+                return current
+            preferences = PreferenceValues(
+                last_symbol=symbol,
+                layout=current.preferences.layout,
+                layers=current.preferences.layers,
+            )
+            cursor = connection.execute(
+                """
+                UPDATE preferences
+                SET preference_revision = preference_revision + 1,
+                    last_symbol = ?, updated_at = ?
+                WHERE singleton_id = ?
+                  AND preference_revision = ?
+                """,
+                (
+                    symbol,
+                    _utc_now(),
+                    1,
+                    current.preference_revision,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise PreferencePersistenceError(
+                    "偏好保存冲突；持久化副本已被其他操作修改"
+                )
+            return PreferenceSnapshot(current.preference_revision + 1, preferences)
+
+        return self._writer.run(persist)

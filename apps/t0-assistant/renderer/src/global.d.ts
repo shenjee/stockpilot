@@ -21,6 +21,7 @@ declare global {
     searchSecurities(request: unknown): Promise<unknown>;
     onServiceStatus(listener: (status: ServiceStatus) => void): () => void;
     selectSecurity(request: unknown): Promise<unknown>;
+    saveLastSymbol(request: unknown): Promise<unknown>;
     getLiveSnapshot(request: unknown): Promise<unknown>;
     retryLive(request: unknown): Promise<unknown>;
     listTrades(request: unknown): Promise<unknown>;

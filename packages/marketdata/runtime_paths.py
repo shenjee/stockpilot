@@ -22,7 +22,10 @@ class RuntimePaths:
             or config.get("workspace")
         )
         root = Path(root_value).expanduser().resolve() if root_value else Path.cwd().resolve()
-        runtime_value = config.get("runtime_dir", "stockpilot")
+        runtime_value = (
+            os.environ.get("T0_RUNTIME_DIR")
+            or config.get("runtime_dir", "stockpilot")
+        )
 
         self.workspace = root
         self.runtime_dir = self._resolve_workspace_path(runtime_value)
