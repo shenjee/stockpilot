@@ -69,7 +69,7 @@ class _FakeMarketData:
             }
         )
         rows: list[dict[str, Any]] = []
-        if timeframe == "5m" and start_date is not None:
+        if timeframe in {"5m", "1m"} and start_date is not None:
             for (stored_timeframe, stored_date), stored_rows in self.store.items():
                 if (
                     stored_timeframe == timeframe
@@ -198,7 +198,7 @@ class LiveDataPreparatorTests(unittest.TestCase):
         preheat_calls = [
             call
             for call in market_data.calls
-            if call["timeframe"] == "5m" and call["start_date"] != "2026-07-24"
+            if call["timeframe"] == "5m" and call["limit"] == 6
         ]
         self.assertTrue(preheat_calls)
         self.assertTrue(all(call["limit"] == 6 for call in preheat_calls))
@@ -504,8 +504,7 @@ class LiveDataPreparatorTests(unittest.TestCase):
         preheat_call = next(
             call
             for call in market_data.calls
-            if call["timeframe"] == "5m"
-            and call["start_date"] != "2026-07-24"
+            if call["timeframe"] == "5m" and call["limit"] == 2
         )
         self.assertEqual(preheat_call["start_date"], "2026-07-21")
         self.assertEqual(preheat_call["end_date"], "2026-07-23")
@@ -551,8 +550,7 @@ class LiveDataPreparatorTests(unittest.TestCase):
         preheat_call = next(
             call
             for call in market_data.calls
-            if call["timeframe"] == "5m"
-            and call["start_date"] != "2026-07-24"
+            if call["timeframe"] == "5m" and call["limit"] == 3
         )
         self.assertEqual(preheat_call["start_date"], "2026-07-22")
         self.assertEqual(preheat_call["end_date"], "2026-07-23")
@@ -602,8 +600,7 @@ class LiveDataPreparatorTests(unittest.TestCase):
         preheat_call = next(
             call
             for call in market_data.calls
-            if call["timeframe"] == "5m"
-            and call["start_date"] != "2026-07-24"
+            if call["timeframe"] == "5m" and call["limit"] == 2
         )
         self.assertEqual(preheat_call["start_date"], "2026-07-22")
         self.assertEqual(preheat_call["end_date"], "2026-07-23")
@@ -1022,6 +1019,47 @@ class LiveDataPreparatorTests(unittest.TestCase):
         self.assertEqual(prepared.market_session.trade_date.isoformat(), "2026-07-24")
         self.assertEqual(prepared.symbol_availability, "no_current_data")
         self.assertEqual(prepared.market_phase, "morning")
+
+    def test_prepare_security_lookback_is_bounded_and_uses_range_discovery(self) -> None:
+        trading_days = [
+            f"2026-07-{day:02d}"
+            for day in range(1, 28)
+            if day not in {4, 5, 11, 12, 18, 19, 25, 26}
+        ]
+        market_context = MarketContextService(
+            trading_days,
+            coverage_start="2026-07-01",
+            coverage_end="2026-07-27",
+        )
+        market_data = _FakeMarketData({})
+        preparator = LiveDataPreparator(
+            market_data,
+            market_context,
+            quote_reader=_FakeQuoteReader(None),
+            clock=lambda: datetime(2026, 7, 27, 9, 31, 0),
+            config=LivePreparationConfig(
+                daily_history_days=10,
+                intraday_limit=20,
+                max_security_day_lookback=3,
+            ),
+        )
+
+        with self.assertRaisesRegex(
+            LiveDataUnavailableError,
+            r"requires a quote or intraday bars",
+        ):
+            preparator.prepare(self.spec, minimum_preheat_5m=2)
+
+        discovery_calls = [
+            call
+            for call in market_data.calls
+            if call["timeframe"] in {"1m", "5m"}
+            and call["start_date"] is not None
+            and call["start_date"] != call["end_date"]
+        ]
+        self.assertEqual(len(discovery_calls), 2)
+        daily_calls = [call for call in market_data.calls if call["timeframe"] == "day"]
+        self.assertEqual(daily_calls, [])
 
 
 if __name__ == "__main__":

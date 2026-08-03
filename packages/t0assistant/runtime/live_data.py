@@ -84,6 +84,7 @@ class LivePreparationConfig:
 
     daily_history_days: int = 120
     intraday_limit: int = 300
+    max_security_day_lookback: int = 10
     request_priority: ProviderRequestPriority = ProviderRequestPriority.LIVE
     request_timeout: float | None = 15.0
 
@@ -298,60 +299,127 @@ class LiveDataPreparator(LiveInitialInputPort):
         tuple[Mapping[str, Any], ...],
         datetime | None,
     ]:
-        """Walk back from the market candidate day to the latest day with data."""
+        """Find the latest day with intraday evidence within a bounded lookback."""
 
-        search_date = start_date
-        search_session = start_session
         empty_bars: tuple[Mapping[str, Any], ...] = ()
         empty_daily: tuple[Mapping[str, Any], ...] = ()
-        while search_date is not None:
-            trade_date_str = search_date.isoformat()
-            bar_observed_at = _bar_filter_observed_at(observed_now, search_date)
-            bars_1m = self._load_target_day_bars(
-                code=code,
-                market=market,
-                trade_date=trade_date_str,
-                timeframe="1m",
-                session_validator=session_validator,
-                observed_at=bar_observed_at,
-            )
-            official_5m = self._load_target_day_bars(
-                code=code,
-                market=market,
-                trade_date=trade_date_str,
-                timeframe="5m",
-                session_validator=session_validator,
-                observed_at=bar_observed_at,
-            )
-            daily_history = self._load_daily_history(
-                code=code,
-                market=market,
-                trade_date=trade_date_str,
-                session_trade_date=search_date,
-                session_validator=session_validator,
-            )
-            target_time = _select_target_time(
-                observed_now=observed_now,
-                trade_date=search_date,
-                session_end=search_session.end,
-                bars_1m=bars_1m,
-                official_5m=official_5m,
-                quote_snapshots=quote_snapshots,
-            )
-            if target_time is not None:
-                return (
-                    search_session,
-                    bars_1m,
-                    official_5m,
-                    daily_history,
-                    target_time,
-                )
-            previous = self._calendar.previous_trading_day(search_date, market)
-            if previous is None:
-                break
-            search_date = previous
-            search_session = self._calendar.require_session(previous, market)
-        return start_session, empty_bars, empty_bars, empty_daily, None
+        lookback = self._config.max_security_day_lookback
+        if lookback <= 0:
+            raise LiveDataError("max_security_day_lookback must be positive")
+
+        earliest_date = _earliest_security_lookback_date(
+            self._calendar,
+            start_date=start_date,
+            market=market,
+            max_trading_days=lookback,
+        )
+        discovery_1m = self._load_intraday_discovery_range(
+            code=code,
+            market=market,
+            start_date=earliest_date,
+            end_date=start_date,
+            timeframe="1m",
+            session_validator=session_validator,
+        )
+        discovery_5m = self._load_intraday_discovery_range(
+            code=code,
+            market=market,
+            start_date=earliest_date,
+            end_date=start_date,
+            timeframe="5m",
+            session_validator=session_validator,
+        )
+        effective_date = _latest_date_with_intraday_evidence(
+            discovery_1m,
+            discovery_5m,
+            quote_snapshots=quote_snapshots,
+            earliest=earliest_date,
+            latest=start_date,
+        )
+        if effective_date is None:
+            return start_session, empty_bars, empty_bars, empty_daily, None
+
+        effective_session = self._calendar.require_session(effective_date, market)
+        trade_date_str = effective_date.isoformat()
+        bar_observed_at = _bar_filter_observed_at(observed_now, effective_date)
+        bars_1m = self._load_target_day_bars(
+            code=code,
+            market=market,
+            trade_date=trade_date_str,
+            timeframe="1m",
+            session_validator=session_validator,
+            observed_at=bar_observed_at,
+        )
+        official_5m = self._load_target_day_bars(
+            code=code,
+            market=market,
+            trade_date=trade_date_str,
+            timeframe="5m",
+            session_validator=session_validator,
+            observed_at=bar_observed_at,
+        )
+        daily_history = self._load_daily_history(
+            code=code,
+            market=market,
+            trade_date=trade_date_str,
+            session_trade_date=effective_date,
+            session_validator=session_validator,
+        )
+        target_time = _select_target_time(
+            observed_now=observed_now,
+            trade_date=effective_date,
+            session_end=effective_session.end,
+            bars_1m=bars_1m,
+            official_5m=official_5m,
+            quote_snapshots=quote_snapshots,
+        )
+        if target_time is None:
+            return start_session, empty_bars, empty_bars, empty_daily, None
+        return (
+            effective_session,
+            bars_1m,
+            official_5m,
+            daily_history,
+            target_time,
+        )
+
+    def _load_intraday_discovery_range(
+        self,
+        *,
+        code: str,
+        market: str,
+        start_date: date,
+        end_date: date,
+        timeframe: str,
+        session_validator: Callable[[], bool] | None,
+    ) -> tuple[Mapping[str, Any], ...]:
+        """Fetch one intraday range to locate the latest day with security data."""
+
+        if timeframe not in {"1m", "5m"}:
+            raise LiveDataError("discovery timeframe must be '1m' or '5m'")
+        bars_per_day = 240 if timeframe == "1m" else 48
+        span_days = max(1, (end_date - start_date).days + 1)
+        limit = max(
+            self._config.intraday_limit,
+            self._config.max_security_day_lookback * bars_per_day,
+            span_days * bars_per_day,
+        )
+        result = self._market_data.get_klines_result(
+            code=code,
+            end_date=end_date.isoformat(),
+            market=market,
+            timeframe=timeframe,
+            start_date=start_date.isoformat(),
+            limit=limit,
+            request_priority=self._config.request_priority,
+            session_validator=session_validator,
+            request_timeout=self._config.request_timeout,
+        )
+        rows = normalize_provider_bar_units(
+            _extract_live_rows(result),
+            self._market_data,
+        )
+        return tuple(rows)
 
     def _load_preheat_5m(
         self,
@@ -501,6 +569,53 @@ class LiveDataPreparator(LiveInitialInputPort):
             except (TypeError, ValueError):
                 continue
         return tuple(snapshots)
+
+
+def _earliest_security_lookback_date(
+    calendar: CalendarQueryPort,
+    *,
+    start_date: date,
+    market: str,
+    max_trading_days: int,
+) -> date:
+    earliest = start_date
+    for _ in range(max(0, max_trading_days - 1)):
+        previous = calendar.previous_trading_day(earliest, market)
+        if previous is None:
+            break
+        earliest = previous
+    return earliest
+
+
+def _latest_date_with_intraday_evidence(
+    *row_groups: Sequence[Mapping[str, Any]],
+    quote_snapshots: Sequence[Mapping[str, Any]],
+    earliest: date,
+    latest: date,
+) -> date | None:
+    candidates: list[date] = []
+    for rows in row_groups:
+        for row in rows:
+            timestamp = row.get("timestamp", row.get("date"))
+            if not isinstance(timestamp, str):
+                continue
+            try:
+                row_date = parse_market_timestamp(timestamp).date()
+            except (TypeError, ValueError):
+                continue
+            if earliest <= row_date <= latest:
+                candidates.append(row_date)
+    for row in quote_snapshots:
+        timestamp = row.get("timestamp")
+        if not isinstance(timestamp, str):
+            continue
+        try:
+            row_date = parse_market_timestamp(timestamp).date()
+        except (TypeError, ValueError):
+            continue
+        if earliest <= row_date <= latest:
+            candidates.append(row_date)
+    return max(candidates) if candidates else None
 
 
 def _select_target_time(

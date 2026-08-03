@@ -276,6 +276,32 @@ def resolve_polling_profile(
     return "idle"
 
 
+def resolve_initial_polling_profile(
+    *,
+    market_phase: LiveMarketPhase,
+    calendar_status: CalendarStatus,
+    pinned_trade_date: date,
+    market_candidate_trade_date: date,
+    observed_now: datetime,
+) -> PollingProfile:
+    """Resolve polling cadence for the first Live snapshot before runtime owns input."""
+
+    awaiting_day_switch = (
+        calendar_status == "available"
+        and observed_now.time() >= _MARKET_OPEN
+        and market_candidate_trade_date > pinned_trade_date
+    )
+    return resolve_polling_profile(
+        market_phase=market_phase,
+        calendar_status=calendar_status,
+        pinned_trade_date=pinned_trade_date,
+        observed_at=observed_now,
+        calendar=None,
+        market="",
+        awaiting_day_switch=awaiting_day_switch,
+    )
+
+
 def is_awaiting_day_switch(
     calendar: CalendarQueryPort,
     *,
@@ -513,7 +539,10 @@ def assess_data_quality(
         minutes=5,
     )
     has_target_day_closed_daily = _has_target_day_closed_daily(daily_rows, trade_date)
-    requires_daily = market_phase in {"market_closed", "closed"}
+    effective_day_closed = target_time >= market_session.end
+    requires_daily = (
+        market_phase in {"market_closed", "closed"} or effective_day_closed
+    )
 
     if has_complete_1m and has_complete_5m:
         if requires_daily and not has_target_day_closed_daily:

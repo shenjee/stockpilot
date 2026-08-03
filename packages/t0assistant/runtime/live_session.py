@@ -29,6 +29,7 @@ from .live_market_view import (
     PollingProfile,
     SymbolAvailability,
     build_live_market_view,
+    resolve_initial_polling_profile,
     resolve_market_closed_reason,
 )
 from .pipeline import CzscAnalyzerPort, MarketInputPort, PipelineResult, WorkbenchPipeline
@@ -279,11 +280,12 @@ class LiveSession:
                     market_phase=prepared.market_phase,
                     market_candidate_trade_date=prepared.market_candidate_trade_date,
                     symbol_availability=prepared.symbol_availability,
-                    polling_profile=(
-                        "idle"
-                        if prepared.market_phase
-                        in {"pre_open", "lunch_break", "market_closed", "unknown", "closed"}
-                        else "active"
+                    polling_profile=resolve_initial_polling_profile(
+                        market_phase=prepared.market_phase,  # type: ignore[arg-type]
+                        calendar_status=prepared.calendar_status,  # type: ignore[arg-type]
+                        pinned_trade_date=prepared.market_session.trade_date,
+                        market_candidate_trade_date=prepared.market_candidate_trade_date,
+                        observed_now=prepared.observed_now,
                     ),
                     market_closed_reason=resolve_market_closed_reason(
                         observed_now=prepared.observed_now,

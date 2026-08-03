@@ -12,6 +12,7 @@ from packages.t0assistant.runtime.live_market_view import (
     assess_data_quality,
     assess_symbol_availability,
     build_live_market_view,
+    resolve_initial_polling_profile,
     resolve_live_market_context,
     resolve_market_closed_reason,
     resolve_security_data_trade_date,
@@ -319,6 +320,41 @@ class LiveMarketViewProjectionTests(unittest.TestCase):
                 market_phase="market_closed",
             ),
             "full",
+        )
+
+    def test_assess_data_quality_fallback_closed_day_without_daily_is_degraded(
+        self,
+    ) -> None:
+        session = MarketSession(market="sh", trade_date=date(2026, 7, 24))
+        target_time = datetime(2026, 7, 24, 15, 0)
+        bars_1m = _closed_session_bars(session, minutes=1)
+        bars_5m = _closed_session_bars(session, minutes=5)
+        self.assertEqual(
+            assess_data_quality(
+                closed_5m_prefix_count=500,
+                bars_1m=bars_1m,
+                bars_5m=bars_5m,
+                daily_rows=[],
+                trade_date=date(2026, 7, 24),
+                market_session=session,
+                target_time=target_time,
+                market_phase="morning",
+            ),
+            "degraded",
+        )
+
+    def test_resolve_initial_polling_profile_reduced_when_awaiting_day_switch(
+        self,
+    ) -> None:
+        self.assertEqual(
+            resolve_initial_polling_profile(
+                market_phase="morning",
+                calendar_status="available",
+                pinned_trade_date=date(2026, 7, 24),
+                market_candidate_trade_date=date(2026, 7, 27),
+                observed_now=datetime(2026, 7, 27, 9, 31),
+            ),
+            "reduced",
         )
 
     def test_build_live_market_view_projects_branch_as_of(self) -> None:
