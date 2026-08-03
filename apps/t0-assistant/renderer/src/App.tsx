@@ -779,6 +779,11 @@ export function App() {
       setSearching(false);
       return;
     }
+    // Clear stale results from the previous query immediately so that
+    // keyboard handlers (ArrowUp/Down/Enter) cannot select invisible
+    // results during the debounce or network window.
+    setSuggestions([]);
+    setSearchMessage("");
     setSearching(true);
     const timer = window.setTimeout(() => {
       void searchSecurityMatches(text)

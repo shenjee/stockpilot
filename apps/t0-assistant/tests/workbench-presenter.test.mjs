@@ -512,3 +512,33 @@ test("Enter with zero suggestions selects nothing", () => {
   let state = { activeIndex: 0, dismissed: false };
   assert.equal(securitySearchEnterTarget(state, 0), null);
 });
+
+test("Enter during searching does not select stale results from previous query", () => {
+  // Regression test for PR #137 re-review comment 1:
+  // After query A returns results, the user types query B.  During the
+  // debounce/network window the component clears stale suggestions
+  // (count = 0) and sets searching = true.  Enter must NOT select a
+  // stale result that is no longer visible.
+  const countA = 3;
+  let state = initialSecuritySearchState;
+
+  // Query A: user navigates and has active results
+  state = securitySearchReducer(state, { type: "arrow-down", count: countA });
+  assert.equal(state.activeIndex, 0);
+
+  // User types query B -> query-change resets cursor and reopens dropdown
+  state = securitySearchReducer(state, { type: "query-change" });
+  assert.equal(state.activeIndex, -1);
+  assert.equal(state.dismissed, false);
+
+  // During searching, suggestions is empty (count = 0) because the
+  // component clears stale results immediately when a new query starts.
+  // Enter must return null (no selection).
+  assert.equal(securitySearchEnterTarget(state, 0), null);
+
+  // Arrow keys during searching are also no-ops (count = 0)
+  state = securitySearchReducer(state, { type: "arrow-down", count: 0 });
+  assert.equal(state.activeIndex, -1);
+  state = securitySearchReducer(state, { type: "arrow-up", count: 0 });
+  assert.equal(state.activeIndex, -1);
+});
