@@ -32,7 +32,7 @@ interface CanvasRenderingTarget {
 
 type PriceSeries = ISeriesApi<"Candlestick"> | ISeriesApi<"Line">;
 
-export declare class CzscMarkerRenderer implements IPrimitivePaneRenderer {
+declare class CzscMarkerRenderer implements IPrimitivePaneRenderer {
   constructor(
     markers: readonly CzscMarkerPrimitiveData[],
     chart: IChartApi,
@@ -41,7 +41,7 @@ export declare class CzscMarkerRenderer implements IPrimitivePaneRenderer {
   draw(target: CanvasRenderingTarget): void;
 }
 
-export declare class CzscMarkerPaneView implements IPrimitivePaneView {
+declare class CzscMarkerPaneView implements IPrimitivePaneView {
   constructor(primitive: CzscMarkerPrimitive);
   zOrder(): PrimitivePaneViewZOrder;
   renderer(): IPrimitivePaneRenderer | null;

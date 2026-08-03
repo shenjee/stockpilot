@@ -33,7 +33,7 @@ interface CanvasRenderingTarget {
 
 type PriceSeries = ISeriesApi<"Candlestick"> | ISeriesApi<"Line">;
 
-export declare class PivotZoneRenderer implements IPrimitivePaneRenderer {
+declare class PivotZoneRenderer implements IPrimitivePaneRenderer {
   constructor(
     zones: readonly PivotZonePrimitiveData[],
     chart: IChartApi,
@@ -42,7 +42,7 @@ export declare class PivotZoneRenderer implements IPrimitivePaneRenderer {
   draw(target: CanvasRenderingTarget): void;
 }
 
-export declare class PivotZonePaneView implements IPrimitivePaneView {
+declare class PivotZonePaneView implements IPrimitivePaneView {
   constructor(primitive: PivotZonePrimitive);
   zOrder(): PrimitivePaneViewZOrder;
   renderer(): IPrimitivePaneRenderer | null;
