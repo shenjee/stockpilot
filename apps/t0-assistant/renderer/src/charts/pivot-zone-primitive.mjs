@@ -8,55 +8,24 @@
  * 起点位于视口左侧、但有效部分进入视口的中枢仍能正确显示：timeToCoordinate
  * 对数据内但离屏的时间返回越界坐标，画布自然裁剪；对数据外时间返回 null 时
  * 夹紧到边缘。
+ *
+ * 本文件是 production 实现，由 renderer/src/charts/SynchronizedChartGroup.ts
+ * 和 tests/chart-primitives-lc.test.mjs 共同消费（Issue #134 回归保护）。
+ * 不要在测试中复制本实现。
  */
-import type {
-  Coordinate,
-  IChartApi,
-  IPrimitivePaneRenderer,
-  IPrimitivePaneView,
-  ISeriesApi,
-  ISeriesPrimitive,
-  PrimitivePaneViewZOrder,
-  SeriesAttachedParameter,
-  SeriesType,
-  Time,
-} from "lightweight-charts";
-
-export interface PivotZonePrimitiveData {
-  start: Time;
-  end: Time;
-  high: number;
-  low: number;
-  active: boolean;
-}
-
-interface BitmapCoordinateScope {
-  context: CanvasRenderingContext2D;
-  horizontalPixelRatio: number;
-  verticalPixelRatio: number;
-}
-
-interface CanvasRenderingTarget {
-  useBitmapCoordinateSpace(
-    fn: (scope: BitmapCoordinateScope) => void,
-  ): void;
-}
-
 const ACTIVE_FILL = "rgba(245, 158, 11, 0.18)";
 const ACTIVE_BORDER = "rgba(245, 158, 11, 0.75)";
 const INACTIVE_FILL = "rgba(148, 163, 184, 0.10)";
 const INACTIVE_BORDER = "rgba(148, 163, 184, 0.55)";
 
-type PriceSeries = ISeriesApi<"Candlestick"> | ISeriesApi<"Line">;
+class PivotZoneRenderer {
+  constructor(zones, chart, series) {
+    this.zones = zones;
+    this.chart = chart;
+    this.series = series;
+  }
 
-class PivotZoneRenderer implements IPrimitivePaneRenderer {
-  constructor(
-    private readonly zones: readonly PivotZonePrimitiveData[],
-    private readonly chart: IChartApi,
-    private readonly series: PriceSeries,
-  ) {}
-
-  draw(target: CanvasRenderingTarget): void {
+  draw(target) {
     if (this.zones.length === 0) {
       return;
     }
@@ -81,8 +50,8 @@ class PivotZoneRenderer implements IPrimitivePaneRenderer {
         }
         // 数据内但离屏的时间会返回越界坐标（由画布裁剪）；数据外时间返回 null
         // 时夹紧到对应边缘，保证“起点在视口左侧”的中枢仍能显示可见部分。
-        const left = startX === null ? 0 : (startX as Coordinate);
-        const right = endX === null ? plotWidth : (endX as Coordinate);
+        const left = startX === null ? 0 : startX;
+        const right = endX === null ? plotWidth : endX;
         if (right <= 0 || left >= plotWidth) {
           continue;
         }
@@ -110,15 +79,17 @@ class PivotZoneRenderer implements IPrimitivePaneRenderer {
   }
 }
 
-class PivotZonePaneView implements IPrimitivePaneView {
-  constructor(private readonly primitive: PivotZonePrimitive) {}
+class PivotZonePaneView {
+  constructor(primitive) {
+    this.primitive = primitive;
+  }
 
-  zOrder(): PrimitivePaneViewZOrder {
-    // 绘制在 K 线之下、网格之上，保证 K 线可见。
+  // 绘制在 K 线之下、网格之上，保证 K 线可见。
+  zOrder() {
     return "bottom";
   }
 
-  renderer(): IPrimitivePaneRenderer | null {
+  renderer() {
     const chart = this.primitive.getChart();
     const series = this.primitive.getSeries();
     if (!chart || !series) {
@@ -128,47 +99,48 @@ class PivotZonePaneView implements IPrimitivePaneView {
   }
 }
 
-export class PivotZonePrimitive implements ISeriesPrimitive {
-  private chart?: IChartApi;
-  private series?: PriceSeries;
-  private requestUpdate?: () => void;
-  private zones: readonly PivotZonePrimitiveData[] = [];
-  private readonly paneView = new PivotZonePaneView(this);
+export class PivotZonePrimitive {
+  constructor() {
+    this.chart = undefined;
+    this.series = undefined;
+    this.requestUpdate = undefined;
+    this.zones = [];
+    this.paneView = new PivotZonePaneView(this);
+  }
 
-  attached(params: SeriesAttachedParameter<Time, SeriesType>): void {
+  attached(params) {
     this.chart = params.chart;
-    this.series = params.series as PriceSeries;
+    this.series = params.series;
     this.requestUpdate = params.requestUpdate;
   }
 
-  detached(): void {
+  detached() {
     this.chart = undefined;
     this.series = undefined;
     this.requestUpdate = undefined;
   }
 
-  setZones(zones: readonly PivotZonePrimitiveData[]): void {
+  setZones(zones) {
     this.zones = zones;
     this.requestUpdate?.();
   }
 
-  updateAllViews(): void {
-    // 渲染器在 draw 时即时读取最新 zones，无需缓存视图。
-  }
+  // 渲染器在 draw 时即时读取最新 zones，无需缓存视图。
+  updateAllViews() {}
 
-  paneViews(): readonly IPrimitivePaneView[] {
+  paneViews() {
     return [this.paneView];
   }
 
-  getZones(): readonly PivotZonePrimitiveData[] {
+  getZones() {
     return this.zones;
   }
 
-  getChart(): IChartApi | undefined {
+  getChart() {
     return this.chart;
   }
 
-  getSeries(): PriceSeries | undefined {
+  getSeries() {
     return this.series;
   }
 }

@@ -33,8 +33,8 @@ import {
   resolvePriceAxisMinMove,
   type ChartGroupModel,
 } from "./chart-model.mjs";
-import { PivotZonePrimitive } from "./pivot-zone-primitive";
-import { CzscMarkerPrimitive } from "./czsc-marker-primitive";
+import { PivotZonePrimitive } from "./pivot-zone-primitive.mjs";
+import { CzscMarkerPrimitive } from "./czsc-marker-primitive.mjs";
 import {
   CHART_RIGHT_Y_AXIS_WIDTH,
   syncChartGroupPriceScaleWidths,
