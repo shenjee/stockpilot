@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import socket
 import sys
@@ -16,6 +17,7 @@ APP_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(APP_ROOT))
 
 from backend.historical_snapshot_api import HistoricalSnapshotApi  # noqa: E402
+from backend.service import _Handler  # noqa: E402
 from backend.service import create_server  # noqa: E402
 from backend.service import LiveSnapshotApi  # noqa: E402
 from packages.marketdata.services.market_context_service import (  # noqa: E402
@@ -856,6 +858,108 @@ class HistoricalSnapshotServiceTest(unittest.TestCase):
                 5,
                 historical_snapshot_api=bad_api,
             )
+
+
+class _HandlerRouteTest(unittest.TestCase):
+    def test_save_last_symbol_reaches_live_application_api(self) -> None:
+        from email.message import Message
+
+        api = MagicMock()
+        api.dispatch.return_value = {
+            "schema_version": "t0_app_v1",
+            "request_id": "save-last-1",
+            "accepted": True,
+            "operation_id": None,
+            "data": {},
+            "error": None,
+        }
+        server = MagicMock()
+        server.token = "test-token"
+        server.service_generation = 1
+        server.live_application_api = api
+        body = json.dumps(
+            {
+                "schema_version": "t0_app_v1",
+                "request_id": "save-last-1",
+                "command": "save_last_symbol",
+                "session_id": None,
+                "payload": {"symbol": "sh.600519"},
+            }
+        ).encode()
+        headers = Message()
+        headers["Host"] = "127.0.0.1"
+        headers["Authorization"] = "Bearer test-token"
+        headers["Content-Type"] = "application/json"
+        headers["Content-Length"] = str(len(body))
+
+        handler = _Handler.__new__(_Handler)
+        handler.server = server
+        handler.client_address = ("127.0.0.1", 0)
+        handler.protocol_version = "HTTP/1.1"
+        handler.request_version = "HTTP/1.1"
+        handler.requestline = "POST /api/commands/save_last_symbol HTTP/1.1"
+        handler.path = "/api/commands/save_last_symbol"
+        handler.headers = headers
+        handler.rfile = io.BytesIO(body)
+        handler.wfile = io.BytesIO()
+        handler._headers_buffer = []
+        handler.close_connection = False
+        handler.do_POST()
+
+        response = handler.wfile.getvalue()
+        header, _, body_bytes = response.partition(b"\r\n\r\n")
+        status_line = header.splitlines()[0].decode()
+        self.assertIn("200", status_line)
+        payload = json.loads(body_bytes)
+        self.assertTrue(payload["accepted"])
+        api.dispatch.assert_called_once()
+        self.assertEqual(api.dispatch.call_args[0][0], "save_last_symbol")
+
+    def test_save_last_symbol_validation_failure_maps_to_preferences(self) -> None:
+        from email.message import Message
+
+        server = MagicMock()
+        server.token = "test-token"
+        server.service_generation = 1
+        server.live_application_api = MagicMock()
+        body = json.dumps(
+            {
+                "schema_version": "t0_app_v1",
+                "request_id": "save-last-bad",
+                "command": "save_last_symbol",
+                "session_id": None,
+                "payload": {"symbol": "invalid"},
+            }
+        ).encode()
+        headers = Message()
+        headers["Host"] = "127.0.0.1"
+        headers["Authorization"] = "Bearer test-token"
+        headers["Content-Type"] = "application/json"
+        headers["Content-Length"] = str(len(body))
+
+        handler = _Handler.__new__(_Handler)
+        handler.server = server
+        handler.client_address = ("127.0.0.1", 0)
+        handler.protocol_version = "HTTP/1.1"
+        handler.request_version = "HTTP/1.1"
+        handler.requestline = "POST /api/commands/save_last_symbol HTTP/1.1"
+        handler.path = "/api/commands/save_last_symbol"
+        handler.headers = headers
+        handler.rfile = io.BytesIO(body)
+        handler.wfile = io.BytesIO()
+        handler._headers_buffer = []
+        handler.close_connection = False
+        handler.do_POST()
+
+        response = handler.wfile.getvalue()
+        header, _, body_bytes = response.partition(b"\r\n\r\n")
+        status_line = header.splitlines()[0].decode()
+        self.assertIn("400", status_line)
+        payload = json.loads(body_bytes)
+        self.assertFalse(payload["accepted"])
+        self.assertEqual(payload["error"]["error_code"], "invalid_request")
+        self.assertEqual(payload["error"]["affected_capability"], "preferences")
+        server.live_application_api.dispatch.assert_not_called()
 
 
 if __name__ == "__main__":

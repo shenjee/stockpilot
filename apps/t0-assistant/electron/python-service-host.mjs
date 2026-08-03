@@ -41,6 +41,7 @@ export class PythonServiceHost extends EventEmitter {
   constructor({
     pythonExecutable = process.env.T0_PYTHON || "python3",
     serviceEntry = process.env.T0_BACKEND_ENTRY || backendEntry,
+    runtimeDir = process.env.T0_RUNTIME_DIR || "",
     generation = 1,
     maxRestarts = 3,
     restartBackoffMs = [100, 250, 500],
@@ -52,6 +53,7 @@ export class PythonServiceHost extends EventEmitter {
     super();
     this.pythonExecutable = pythonExecutable;
     this.serviceEntry = serviceEntry;
+    this.runtimeDir = runtimeDir;
     this.generation = generation;
     this.maxRestarts = maxRestarts;
     this.restartBackoffMs = restartBackoffMs;
@@ -128,7 +130,11 @@ export class PythonServiceHost extends EventEmitter {
         this.pythonExecutable,
         [this.serviceEntry, "--host", "127.0.0.1", "--port", String(this.port), "--service-generation", String(this.generation)],
         {
-          env: { ...process.env, T0_SERVICE_TOKEN: this.token },
+          env: {
+            ...process.env,
+            T0_SERVICE_TOKEN: this.token,
+            ...(this.runtimeDir ? { T0_RUNTIME_DIR: this.runtimeDir } : {}),
+          },
           stdio: ["ignore", "pipe", "pipe"],
         },
       );

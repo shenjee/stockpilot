@@ -8,7 +8,6 @@ tests can therefore drive the full flow without network access.
 
 from __future__ import annotations
 
-from dataclasses import replace
 from datetime import date
 from pathlib import Path
 from threading import Lock
@@ -20,9 +19,15 @@ from packages.marketdata.calendar_query import (
 )
 from packages.marketdata.market_data import TencentStockDataProvider
 from packages.marketdata.repositories.kline_store import KLineStore
+from packages.marketdata.repositories.securities_store import SecuritiesStore
 from packages.marketdata.runtime_paths import RuntimePaths
 from packages.marketdata.services.kline_data_service import KLineDataService
-from packages.t0assistant.preferences import PreferenceService
+from packages.marketdata.services.securities_search_service import SecuritiesSearchService
+from packages.t0assistant.preferences import (
+    PreferencePersistenceError,
+    PreferenceService,
+    PreferencesReadOnlyError,
+)
 from packages.t0assistant.repositories import (
     SqlitePreferenceRepository,
     open_app_database,
@@ -139,12 +144,14 @@ class LiveApplicationApi:
         session_factory: LiveSessionFactory,
         preference_service: PreferenceService,
         event_publisher: Any,
+        resolve_security: Callable[[str], dict[str, str] | None] | None = None,
         restore_on_startup: bool = True,
     ) -> None:
         self._service_generation = service_generation
         self._preference_service = preference_service
         self._event_publisher = event_publisher
         self._session_factory = session_factory
+        self._resolve_security = resolve_security
         # Production composition assigns the shared SQLite connection here.
         # Its lifetime deliberately matches this API object and therefore the
         # local service process; repositories do not own/close it separately.
@@ -178,8 +185,28 @@ class LiveApplicationApi:
     def restore_startup(self) -> dict[str, Any]:
         restored = self._preference_service.restore_for_startup()
         symbol = restored.snapshot.preferences.last_symbol
-        if symbol is not None and self._coordinator.snapshot.current_symbol is None:
-            self._coordinator.select_symbol(symbol)
+        restored_security: dict[str, str] | None = None
+        startup_restore: dict[str, Any] = {"status": "none"}
+        if symbol is not None:
+            if self._resolve_security is not None:
+                restored_security = self._resolve_security(symbol)
+            if restored_security is None:
+                startup_restore = {"status": "invalid_symbol", "symbol": symbol}
+            elif self._coordinator.snapshot.current_symbol is None:
+                self._coordinator.select_symbol(symbol)
+                live = self._coordinator.snapshot.live_session
+                startup_restore = {
+                    "status": "restored",
+                    "symbol": symbol,
+                    "session_id": live.session_id if live is not None else None,
+                }
+            else:
+                live = self._coordinator.snapshot.live_session
+                startup_restore = {
+                    "status": "already_active",
+                    "symbol": symbol,
+                    "session_id": live.session_id if live is not None else None,
+                }
         return {
             **restored.snapshot.to_dict(),
             "capability": {
@@ -187,6 +214,8 @@ class LiveApplicationApi:
                 "writable": restored.capability.writable,
                 "reason": restored.capability.reason,
             },
+            "restored_security": restored_security,
+            "startup_restore": startup_restore,
         }
 
     def get_preferences(self, *, request_id: str) -> dict[str, Any]:
@@ -199,7 +228,11 @@ class LiveApplicationApi:
         preferences: dict[str, Any],
     ) -> dict[str, Any]:
         try:
-            snapshot = self._preference_service.save(preferences)
+            # Layout/layer saves never touch last_symbol; select_security owns it.
+            snapshot = self._preference_service.save_layout_layers(
+                preferences["layout"],
+                preferences["layers"],
+            )
         except (TypeError, ValueError) as exc:
             return self._rejected(
                 request_id,
@@ -263,17 +296,40 @@ class LiveApplicationApi:
                 affected_capability="live",
                 retryable=True,
             )
-        self._save_last_symbol_best_effort(symbol)
+        data: dict[str, Any] = {"session_id": live.session_id}
+        warning = self._save_last_symbol(symbol)
         if (
             before.live_session is not None
             and before.live_session.session_id == live.session_id
         ):
             self._republish_current_snapshot(live.session_id, live.generation)
+        if warning is not None:
+            data["preference_warning"] = warning
+            self._publish_preference_warning(warning, request_id=request_id)
         return self._accepted(
             request_id,
             operation_id=self._operation_id(live.session_id),
-            data={"session_id": live.session_id},
+            data=data,
         )
+
+    def save_last_symbol(
+        self,
+        *,
+        request_id: str,
+        symbol: str,
+    ) -> dict[str, Any]:
+        warning = self._save_last_symbol(symbol)
+        if warning is not None:
+            self._publish_preference_warning(warning, request_id=request_id)
+            return self._rejected(
+                request_id,
+                warning["error_code"],
+                warning["message"],
+                category=warning["category"],
+                affected_capability=warning["affected_capability"],
+                retryable=warning["retryable"],
+            )
+        return self._accepted(request_id, data={})
 
     def retry_live(
         self,
@@ -375,6 +431,11 @@ class LiveApplicationApi:
                 request_id=request_id,
                 preferences=payload["preferences"],
             )
+        if command == "save_last_symbol":
+            return self.save_last_symbol(
+                request_id=request_id,
+                symbol=payload["symbol"],
+            )
         raise ValueError(f"unsupported Live application command: {command}")
 
     def _accept_candidate(self, candidate: Any) -> None:
@@ -463,15 +524,55 @@ class LiveApplicationApi:
         if accepted is not None:
             self._event_publisher.publish_envelope(accepted.to_envelope())
 
-    def _save_last_symbol_best_effort(self, symbol: str) -> None:
+    def _save_last_symbol(self, symbol: str) -> dict[str, Any] | None:
         try:
-            restored = self._preference_service.restore_for_startup().snapshot
-            values = replace(restored.preferences, last_symbol=symbol)
-            self._preference_service.save(values)
+            self._preference_service.save_last_symbol(symbol)
+            return None
+        except PreferencesReadOnlyError as exc:
+            return {
+                "error_code": "preference_read_only",
+                "category": "persistence",
+                "severity": "error",
+                "retryable": False,
+                "affected_capability": "preferences",
+                "message": str(exc),
+                "details": {},
+            }
+        except PreferencePersistenceError:
+            return {
+                "error_code": "preference_persist_failed",
+                "category": "persistence",
+                "severity": "error",
+                "retryable": True,
+                "affected_capability": "preferences",
+                "message": "最后选择的股票未能保存，重启后可能需要重新选择",
+                "details": {},
+            }
         except Exception:
-            # The current Live Session remains useful when preference storage is
-            # read-only or temporarily unavailable.
-            return
+            return {
+                "error_code": "preference_persist_failed",
+                "category": "persistence",
+                "severity": "error",
+                "retryable": True,
+                "affected_capability": "preferences",
+                "message": "最后选择的股票未能保存，重启后可能需要重新选择",
+                "details": {},
+            }
+
+    def _publish_preference_warning(
+        self,
+        warning: dict[str, Any],
+        *,
+        request_id: str,
+    ) -> None:
+        self._event_publisher.publish(
+            event_type="operation_failed",
+            payload={
+                **warning,
+                "request_id": request_id,
+            },
+            session_id=None,
+        )
 
     def _republish_current_snapshot(self, session_id: str, generation: int) -> None:
         try:
@@ -597,6 +698,8 @@ def create_live_application_api(
         app_db_path or paths.db_dir / "t0_assistant.sqlite"
     )
     preferences = PreferenceService(SqlitePreferenceRepository(database))
+    securities_store = SecuritiesStore(paths.db_dir / "market_data.sqlite")
+    search_service = SecuritiesSearchService(securities_store)
     calendar = MarketContextCalendarAdapter(
         context,
         authoritative_through=authoritative_through,
@@ -616,6 +719,7 @@ def create_live_application_api(
         ),
         preference_service=preferences,
         event_publisher=event_publisher,
+        resolve_security=search_service.get,
         restore_on_startup=True,
     )
     # Explicit ownership: the API keeps the shared connection alive until the

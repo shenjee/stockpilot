@@ -238,6 +238,7 @@
             "select_security",
             "get_live_snapshot",
             "retry_live",
+            "save_last_symbol",
             "list_trades",
             "create_trade",
             "update_trade",
@@ -269,6 +270,7 @@
         {"if": {"properties": {"command": {"const": "calculate_trade_fee"}}}, "then": {"properties": {"session_id": {"type": "null"}, "payload": {"$ref": "#/$defs/calculate_trade_fee_payload"}}}},
         {"if": {"properties": {"command": {"const": "get_preferences"}}}, "then": {"properties": {"payload": {"$ref": "#/$defs/empty_payload"}}}},
         {"if": {"properties": {"command": {"const": "save_preferences"}}}, "then": {"properties": {"payload": {"$ref": "#/$defs/save_preferences_payload"}}}},
+        {"if": {"properties": {"command": {"const": "save_last_symbol"}}}, "then": {"properties": {"session_id": {"type": "null"}, "payload": {"$ref": "#/$defs/security_selection_payload"}}}},
         {"if": {"properties": {"command": {"const": "get_historical_snapshot"}}}, "then": {"properties": {"session_id": {"type": "null"}, "payload": {"$ref": "#/$defs/get_historical_snapshot_payload"}}}}
       ]
     },

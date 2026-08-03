@@ -9,6 +9,49 @@ export function standardSecurityFromResponse(response) {
     : null;
 }
 
+export function restoredSecurityFromResponse(response) {
+  const data = response?.data ?? response;
+  const security = data?.restored_security;
+  return security &&
+    /^(sh|sz)\.[0-9]{6}$/.test(security.symbol) &&
+    /^[0-9]{6}$/.test(security.code) &&
+    typeof security.name === "string" &&
+    security.name.length > 0
+    ? security
+    : null;
+}
+
+export function startupRestoreFromResponse(response) {
+  const data = response?.data ?? response;
+  const startup = data?.startup_restore;
+  return startup && typeof startup === "object" ? startup : null;
+}
+
+export function clearLiveScopedBackgroundError(error) {
+  return error?.affected_capability === "live" ? null : error;
+}
+
+export function startupRestoreOperationId(sessionId) {
+  return `live-load-${sessionId}`;
+}
+
+export function cancelStartupRestoreTracking(restoreInFlight, activeOperations) {
+  if (!restoreInFlight?.sessionId) return;
+  activeOperations.delete(startupRestoreOperationId(restoreInFlight.sessionId));
+}
+
+export function partialSecurityFromSymbol(symbol) {
+  const match = /^(sh|sz)\.([0-9]{6})$/.exec(symbol);
+  if (!match) return null;
+  return {
+    symbol,
+    code: match[2],
+    market: match[1],
+    name: "",
+    security_type: "a_share",
+  };
+}
+
 export function securitiesFromSearchResponse(response) {
   const securities = response?.data?.securities;
   return Array.isArray(securities)

@@ -8,7 +8,9 @@ import { showLogReviewWindow } from "./log-review-window.mjs";
 import { retryDesktopService } from "./service-retry.mjs";
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
-const serviceHost = new PythonServiceHost();
+const serviceHost = new PythonServiceHost({
+  runtimeDir: resolve(app.getPath("userData"), "stockpilot"),
+});
 const gateway = new BackendGateway({
   commandTimeouts: { get_historical_snapshot: 10_000 },
 });

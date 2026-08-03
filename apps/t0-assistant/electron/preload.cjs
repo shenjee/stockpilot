@@ -7,6 +7,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 const APP_COMMANDS = Object.freeze({
   searchSecurities: "search_securities",
   selectSecurity: "select_security",
+  saveLastSymbol: "save_last_symbol",
   getLiveSnapshot: "get_live_snapshot",
   retryLive: "retry_live",
   listTrades: "list_trades",
