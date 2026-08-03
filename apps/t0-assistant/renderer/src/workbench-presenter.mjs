@@ -16,6 +16,86 @@ export function securitiesFromSearchResponse(response) {
     : [];
 }
 
+/**
+ * Map a standard security identity to a market classification label.
+ *
+ * Uses the authoritative `market` and `security_type` fields rather than
+ * code-prefix inference, per issue #131:
+ *   - security_type = etf           -> 基金 (covers SH/SZ listed ETFs only)
+ *   - a_share + market = sh         -> 沪市
+ *   - a_share + market = sz         -> 深市
+ */
+export function securityCategoryLabel(security) {
+  if (!security) return "";
+  if (security.security_type === "etf") return "基金";
+  return security.market === "sh" ? "沪市" : "深市";
+}
+
+/**
+ * Initial state for the security search box interaction reducer.
+ */
+export const initialSecuritySearchState = Object.freeze({
+  activeIndex: -1,
+  dismissed: false,
+});
+
+/**
+ * Pure reducer for security search box keyboard/mouse interaction.
+ *
+ * The "select" action always closes the dropdown immediately (dismissed =
+ * true, activeIndex = -1) so that slow or failed async callbacks in the
+ * parent component do not leave the results list visible.  The component
+ * dispatches "select" *before* calling the parent's onSelect handler.
+ */
+export function securitySearchReducer(state, action) {
+  switch (action.type) {
+    case "arrow-down":
+      if (action.count === 0) return state;
+      return {
+        dismissed: false,
+        activeIndex: nextActiveIndexDown(state.activeIndex, action.count),
+      };
+    case "arrow-up":
+      if (action.count === 0) return state;
+      return {
+        dismissed: false,
+        activeIndex: nextActiveIndexUp(state.activeIndex, action.count),
+      };
+    case "escape":
+      if (!action.visible) return state;
+      return { activeIndex: -1, dismissed: true };
+    case "mouse-enter":
+      return { ...state, activeIndex: action.index };
+    case "query-change":
+      return { activeIndex: -1, dismissed: false };
+    case "reset-cursor":
+      return { ...state, activeIndex: -1 };
+    case "select":
+      return { activeIndex: -1, dismissed: true };
+    default:
+      return state;
+  }
+}
+
+function nextActiveIndexDown(current, count) {
+  if (current < 0) return 0;
+  return current >= count - 1 ? 0 : current + 1;
+}
+
+function nextActiveIndexUp(current, count) {
+  if (current < 0) return count - 1;
+  return current <= 0 ? count - 1 : current - 1;
+}
+
+/**
+ * Return the suggestion index that Enter would select, or null if there
+ * are no suggestions to select.
+ */
+export function securitySearchEnterTarget(state, count) {
+  if (count === 0) return null;
+  return state.activeIndex >= 0 ? state.activeIndex : 0;
+}
+
 export function isCompleteWorkbenchSnapshot(candidate) {
   if (!candidate || typeof candidate !== "object") return false;
   const session = candidate.session;
