@@ -8,6 +8,7 @@ replace the production adapter's data source without changing this contract.
 from __future__ import annotations
 
 from datetime import date, datetime
+from threading import RLock
 from typing import Literal, Protocol
 
 from .services.market_context_service import (
@@ -56,6 +57,19 @@ class CalendarQueryPort(Protocol):
         market: str,
     ) -> date | None: ...
 
+    def confirm_open_day(self, trade_date: date | str) -> None:
+        """Runtime-confirm a day as open via benchmark probe evidence (#140).
+
+        Implementations that do not support runtime confirmation may make this
+        a no-op.  Production ``MarketContextCalendarAdapter`` records the day
+        so ``day_status`` returns ``open`` instead of ``unknown``.
+        """
+        ...
+
+    def reset_confirmed_open_days(self) -> None:
+        """Clear all runtime-confirmed open days (tests / re-init)."""
+        ...
+
 
 class MarketContextCalendarAdapter:
     """Adapt an existing ``MarketContextService`` to ``CalendarQueryPort``.
@@ -86,6 +100,12 @@ class MarketContextCalendarAdapter:
             if authoritative_through is None
             else _as_date(authoritative_through)
         )
+        # Runtime-confirmed open days from benchmark probe (#140).  These
+        # overlay the immutable base context so Live can break the
+        # Calendar-unknown self-lock without minting fake authority from
+        # weekdays or single-stock data.
+        self._confirmed_open_days: set[date] = set()
+        self._lock = RLock()
 
     @property
     def coverage_start(self) -> date:
@@ -93,7 +113,10 @@ class MarketContextCalendarAdapter:
 
     @property
     def coverage_end(self) -> date:
-        return self._context.coverage_end
+        with self._lock:
+            if not self._confirmed_open_days:
+                return self._context.coverage_end
+            return max(self._context.coverage_end, max(self._confirmed_open_days))
 
     @property
     def authoritative_through(self) -> date:
@@ -103,13 +126,51 @@ class MarketContextCalendarAdapter:
     def evidence_authoritative(self) -> bool:
         return self._evidence_authoritative
 
+    @property
+    def confirmed_open_days(self) -> frozenset[date]:
+        """Return the runtime-confirmed open days (benchmark probe evidence)."""
+
+        with self._lock:
+            return frozenset(self._confirmed_open_days)
+
+    def confirm_open_day(self, trade_date: date | str) -> None:
+        """Runtime-confirm a day as open via benchmark probe evidence (#140).
+
+        This does **not** mint Calendar authority from weekdays or single-stock
+        data.  It records that ``sh.000001`` (or an equivalent benchmark) has
+        produced valid intraday evidence for ``trade_date``, so the adapter
+        reports ``open`` instead of ``unknown`` for that day.  All consumers
+        sharing this adapter instance (LiveDataPreparator, BranchingLiveInput,
+        KLineDataService) see the update atomically.
+        """
+
+        value = _as_date(trade_date)
+        if value.weekday() >= 5:
+            raise MarketContextError(
+                "cannot confirm a weekend as a trading day"
+            )
+        with self._lock:
+            self._confirmed_open_days.add(value)
+
+    def reset_confirmed_open_days(self) -> None:
+        """Clear all runtime-confirmed open days (used by tests / re-init)."""
+
+        with self._lock:
+            self._confirmed_open_days.clear()
+
     def covers(self, trade_date: date | str) -> bool:
         value = _as_date(trade_date)
+        with self._lock:
+            if value in self._confirmed_open_days:
+                return True
         return self._context.coverage_start <= value <= self._context.coverage_end
 
     def day_status(self, trade_date: date | str, market: str) -> CalendarDayStatus:
         _require_supported_market(market)
         value = _as_date(trade_date)
+        with self._lock:
+            if value in self._confirmed_open_days:
+                return "open"
         if not self.covers(value):
             return "unknown"
         if not self._evidence_authoritative:
@@ -125,6 +186,10 @@ class MarketContextCalendarAdapter:
         return "unknown"
 
     def is_trading_day(self, trade_date: date | str, market: str) -> bool:
+        value = _as_date(trade_date)
+        with self._lock:
+            if value in self._confirmed_open_days:
+                return True
         return self._context.is_trading_day(trade_date, market)
 
     def session_on(
@@ -132,9 +197,19 @@ class MarketContextCalendarAdapter:
         trade_date: date | str,
         market: str,
     ) -> MarketSession | None:
+        value = _as_date(trade_date)
+        normalized_market = _require_supported_market(market)
+        with self._lock:
+            if value in self._confirmed_open_days:
+                return MarketSession(market=normalized_market, trade_date=value)
         return self._context.session_on(trade_date, market)
 
     def require_session(self, trade_date: date | str, market: str) -> MarketSession:
+        value = _as_date(trade_date)
+        normalized_market = _require_supported_market(market)
+        with self._lock:
+            if value in self._confirmed_open_days:
+                return MarketSession(market=normalized_market, trade_date=value)
         return self._context.require_session(trade_date, market)
 
     def previous_trading_day(
@@ -142,14 +217,54 @@ class MarketContextCalendarAdapter:
         trade_date: date | str,
         market: str,
     ) -> date | None:
-        return self._context.previous_trading_day(trade_date, market)
+        value = _as_date(trade_date)
+        with self._lock:
+            confirmed = sorted(self._confirmed_open_days)
+        # Clamp to the immutable base context's coverage before querying it.
+        # A runtime-confirmed open day (benchmark probe, #140) can fall beyond
+        # the base ``coverage_end``; querying the context with that later date
+        # raises ``MarketContextError``, so the atomic day switch fails even
+        # though the calendar was confirmed (#140 P1).  Unlike
+        # ``next_trading_day``, there *are* authoritative days before an
+        # out-of-range ``value``, so a plain try/except would wrongly drop
+        # them - clamp instead and merge with the confirmed days.
+        context = self._context
+        base_previous: date | None = None
+        if value >= context.coverage_start:
+            clamped = value if value <= context.coverage_end else context.coverage_end
+            if clamped < value and context.is_trading_day(clamped, market):
+                # ``value`` was past coverage; the coverage bound itself is the
+                # latest authoritative trading day strictly before ``value``.
+                base_previous = clamped
+            else:
+                try:
+                    base_previous = context.previous_trading_day(clamped, market)
+                except MarketContextError:
+                    base_previous = None
+        # Merge confirmed days with the context's answer so runtime-confirmed
+        # open days participate in the backward walk.
+        candidates = [d for d in confirmed if d < value]
+        if base_previous is not None:
+            candidates.append(base_previous)
+        return max(candidates) if candidates else None
 
     def next_trading_day(
         self,
         trade_date: date | str,
         market: str,
     ) -> date | None:
-        return self._context.next_trading_day(trade_date, market)
+        value = _as_date(trade_date)
+        with self._lock:
+            confirmed = sorted(self._confirmed_open_days)
+        base_next = None
+        try:
+            base_next = self._context.next_trading_day(value, market)
+        except MarketContextError:
+            pass
+        candidates = [d for d in confirmed if d > value]
+        if base_next is not None:
+            candidates.append(base_next)
+        return min(candidates) if candidates else None
 
 
 class FixtureCalendarQuery(MarketContextCalendarAdapter):

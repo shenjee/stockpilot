@@ -244,12 +244,21 @@ def resolve_polling_profile(
     calendar: CalendarQueryPort | None,
     market: str,
     awaiting_day_switch: bool = False,
+    benchmark_probe_active: bool = False,
     close_reconcile_status: CloseReconcileStatus = "not_started",
     close_reconcile_retry_due: bool = False,
 ) -> PollingProfile:
-    """Return the refresh cadence for the current Live view (#130 PR-B)."""
+    """Return the refresh cadence for the current Live view (#130 PR-B).
+
+    ``benchmark_probe_active`` (#140) lets the scheduler enter a bounded
+    ``reduced`` probe when Calendar is ``unknown`` for today but the Session
+    is pinned to an earlier day and it is past 09:30.  This breaks the
+    Calendar-unknown self-lock without permanently entering ``idle``.
+    """
 
     if awaiting_day_switch:
+        return "reduced"
+    if benchmark_probe_active:
         return "reduced"
     if market_phase in {"morning", "afternoon"}:
         return "active"
@@ -352,6 +361,58 @@ def day_switch_target_date(
     return target
 
 
+def is_awaiting_benchmark_probe(
+    calendar: CalendarQueryPort,
+    *,
+    observed_at: datetime,
+    pinned_trade_date: date,
+    market: str,
+) -> bool:
+    """Return whether a benchmark probe should run for an unknown Calendar (#140).
+
+    Unlike :func:`is_awaiting_day_switch`, this is for the case where Calendar
+    is ``unknown`` for today.  The probe uses ``sh.000001`` to confirm that the
+    market has produced intraday evidence today, then runtime-confirms today as
+    open.  Conditions:
+
+    - Past 09:30 (no pre-open / auction-quote probing).
+    - Today is a weekday with ``day_status == "unknown"`` (not ``closed``).
+    - Session is pinned to an earlier date (``today > pinned_trade_date``).
+    """
+
+    if observed_at.time() < _MARKET_OPEN:
+        return False
+    today = observed_at.date()
+    if today <= pinned_trade_date:
+        return False
+    if today.weekday() >= 5:
+        return False
+    try:
+        status = calendar.day_status(today, market)
+    except Exception:
+        return False
+    return status == "unknown"
+
+
+def benchmark_probe_target_date(
+    calendar: CalendarQueryPort,
+    *,
+    observed_at: datetime,
+    pinned_trade_date: date,
+    market: str,
+) -> date | None:
+    """Return the benchmark probe target day (today) or ``None`` (#140)."""
+
+    if is_awaiting_benchmark_probe(
+        calendar,
+        observed_at=observed_at,
+        pinned_trade_date=pinned_trade_date,
+        market=market,
+    ):
+        return observed_at.date()
+    return None
+
+
 def row_timestamp(row: Mapping[str, object]) -> datetime | None:
     value = row.get("timestamp", row.get("date"))
     if not isinstance(value, str):
@@ -385,6 +446,57 @@ def day_switch_evidence_date(
         if timestamp.time() >= _MARKET_OPEN:
             return True
     return False
+
+
+def benchmark_probe_evidence(
+    quote_rows: Sequence[Mapping[str, object]],
+    bars_1m: Sequence[Mapping[str, object]],
+    bars_5m: Sequence[Mapping[str, object]],
+    *,
+    target_trade_date: date,
+    observed_at: datetime,
+) -> bool:
+    """Return whether benchmark rows confirm the market opened on ``target_trade_date``.
+
+    Accepts any one of (#140):
+
+    - A real-time quote with today's timestamp (not future, past 09:30).
+    - Today's first closed 1m bar.
+    - Today's officially closed 5m bar.
+
+    Stale quotes from a previous day are rejected because the date must match
+    ``target_trade_date``.  Future timestamps are rejected to avoid accepting
+    erroneous or out-of-range data as evidence.
+    """
+
+    if observed_at.time() < _MARKET_OPEN:
+        return False
+
+    def _has_evidence(
+        rows: Sequence[Mapping[str, object]],
+        *,
+        require_closed: bool,
+    ) -> bool:
+        for row in rows:
+            if require_closed and row.get("closed") is not True:
+                continue
+            timestamp = row_timestamp(row)
+            if timestamp is None:
+                continue
+            if timestamp.date() != target_trade_date:
+                continue
+            if timestamp.time() < _MARKET_OPEN:
+                continue
+            if timestamp > observed_at:
+                continue
+            return True
+        return False
+
+    return (
+        _has_evidence(quote_rows, require_closed=False)
+        or _has_evidence(bars_1m, require_closed=True)
+        or _has_evidence(bars_5m, require_closed=True)
+    )
 
 
 def should_run_close_reconciliation(
