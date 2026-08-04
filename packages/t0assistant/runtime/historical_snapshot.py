@@ -11,7 +11,6 @@ import time
 from datetime import date, datetime
 from typing import Any
 
-from packages.chantheory import analyze
 from packages.marketdata.services.market_context_service import (
     MarketContextService,
 )
@@ -50,7 +49,8 @@ def build_historical_snapshot(
         market_data: a port satisfying ``ReplayMarketDataPort`` (typically a
             ``KLineDataService`` instance).
         market_context: authoritative trading calendar for the market.
-        analyzer: optional CZSC analyzer; defaults to ``packages.chantheory.analyze``.
+        analyzer: optional CZSC analyzer; when ``None`` the pipeline default
+            (closed-5m ``packages.chantheory.analyze`` wrapper) is used.
         deadline_seconds: absolute monotonic deadline for data preparation.
 
     Returns:
@@ -62,9 +62,6 @@ def build_historical_snapshot(
             reliable for the requested date.
         HistoricalSnapshotError: for validation or pipeline failures.
     """
-
-    if analyzer is None:
-        analyzer = analyze
 
     preparator = ReplayDataPreparator(
         market_data=market_data,

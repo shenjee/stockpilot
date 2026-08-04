@@ -30,15 +30,15 @@ class PivotZoneRenderer {
       return;
     }
     const timeScale = this.chart.timeScale();
-    const plotWidth = timeScale.width();
-    if (plotWidth <= 0) {
-      return;
-    }
 
     target.useBitmapCoordinateSpace((scope) => {
       const ctx = scope.context;
       const hRatio = scope.horizontalPixelRatio;
       const vRatio = scope.verticalPixelRatio;
+      // timeScale().width() is the time-axis widget width and is 0 when the
+      // price chart hides that axis. The bitmap target still has a valid price
+      // pane; use its media width for clipping instead.
+      const plotWidth = scope.mediaSize.width;
 
       for (const zone of this.zones) {
         const startX = timeScale.timeToCoordinate(zone.start);

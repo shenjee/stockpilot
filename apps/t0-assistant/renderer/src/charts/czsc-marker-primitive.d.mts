@@ -1,10 +1,11 @@
 import type {
-  Coordinate,
+  AutoscaleInfo,
   IChartApi,
   IPrimitivePaneRenderer,
   IPrimitivePaneView,
   ISeriesApi,
   ISeriesPrimitive,
+  Logical,
   PrimitivePaneViewZOrder,
   SeriesAttachedParameter,
   SeriesType,
@@ -37,6 +38,7 @@ declare class CzscMarkerRenderer implements IPrimitivePaneRenderer {
     markers: readonly CzscMarkerPrimitiveData[],
     chart: IChartApi,
     series: PriceSeries,
+    barByTime: ReadonlyMap<number, { time: Time; high: number; low: number }>,
   );
   draw(target: CanvasRenderingTarget): void;
 }
@@ -55,6 +57,11 @@ export declare class CzscMarkerPrimitive implements ISeriesPrimitive {
   setMarkers(markers: readonly CzscMarkerPrimitiveData[]): void;
   updateAllViews(): void;
   paneViews(): readonly IPrimitivePaneView[];
+  autoscaleInfo(
+    startTimePoint: Logical,
+    endTimePoint: Logical,
+  ): AutoscaleInfo | null;
+  resolveBarByTime(): ReadonlyMap<number, { time: Time; high: number; low: number }>;
   getMarkers(): readonly CzscMarkerPrimitiveData[];
   getChart(): IChartApi | undefined;
   getSeries(): PriceSeries | undefined;

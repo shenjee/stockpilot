@@ -891,6 +891,18 @@ class _RaisingAnalyzer:
         raise self._exc
 
 
+class _NonDictAnalyzer:
+    """Returns a non-Mapping payload, mimicking a raw ``analyze`` function
+    that hands back an ``AnalysisResult`` instead of ``result.to_dict()``."""
+
+    def __call__(
+        self,
+        bars: Sequence[Mapping[str, Any]],
+        symbol: str,
+    ) -> dict[str, Any]:
+        return object()  # type: ignore[return-value]
+
+
 class _RaisingClock:
     def __init__(self, exc: Exception) -> None:
         self._exc = exc
@@ -916,6 +928,17 @@ class ErrorBoundaryTests(_BasePipelineTests):
         )
 
         with self.assertRaisesRegex(WorkbenchPipelineError, "czsc failed"):
+            pipeline.step()
+
+    def test_analyzer_non_dict_result_is_rejected(self) -> None:
+        # Regression: injecting raw chantheory.analyze returns AnalysisResult,
+        # not a dict; the pipeline must fail fast with a clear contract error
+        # instead of a confusing downstream projection/validation failure.
+        pipeline = self._make_pipeline(analyzer=_NonDictAnalyzer())
+
+        with self.assertRaisesRegex(
+            WorkbenchPipelineError, "CzscAnalyzerPort contract"
+        ):
             pipeline.step()
 
     def test_clock_runtime_error_is_wrapped(self) -> None:
