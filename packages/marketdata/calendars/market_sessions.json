@@ -1,0 +1,47 @@
+{
+  "sh": {
+    "timezone": "Asia/Shanghai",
+    "regular_sessions": [
+      [
+        "09:30",
+        "11:30"
+      ],
+      [
+        "13:00",
+        "15:00"
+      ]
+    ]
+  },
+  "sz": {
+    "timezone": "Asia/Shanghai",
+    "regular_sessions": [
+      [
+        "09:30",
+        "11:30"
+      ],
+      [
+        "13:00",
+        "15:00"
+      ]
+    ]
+  },
+  "hk": {
+    "timezone": "Asia/Hong_Kong",
+    "regular_sessions": [
+      [
+        "09:30",
+        "12:00"
+      ],
+      [
+        "13:00",
+        "16:00"
+      ]
+    ],
+    "half_day_sessions": [
+      [
+        "09:30",
+        "12:00"
+      ]
+    ]
+  }
+}
