@@ -14,7 +14,10 @@ from packages.marketdata.calendar_query import (
     CalendarQueryPort,
     last_trading_day_on_or_before,
 )
-from packages.marketdata.services.market_context_service import MarketSession
+from packages.marketdata.services.market_context_service import (
+    MarketContextError,
+    MarketSession,
+)
 
 LiveMarketPhase = Literal[
     "unknown",
@@ -74,9 +77,8 @@ def resolve_live_market_context(
     - Trading day before 09:30 → previous trading day, ``pre_open``.
     - Trading day morning / lunch / afternoon / closed → that day.
     - Weekend / holiday → previous trading day, ``market_closed``.
-    - Observed date outside coverage, unknown day, or unknown gap between the
-      candidate day and ``observed_now`` → best-effort last open day with
-      ``calendar_status=unavailable``, ``market_phase=unknown``.
+    - Observed date outside coverage (missing year JSON) -> best-effort last
+      open day with ``calendar_status=unavailable``, ``market_phase=unknown``.
     """
 
     if not isinstance(observed_now, datetime) or observed_now.tzinfo is not None:
@@ -86,8 +88,9 @@ def resolve_live_market_context(
     normalized_market = str(market).strip().lower()
     observed_date = observed_now.date()
 
-    day_status = calendar.day_status(observed_date, normalized_market)
-    if day_status == "unknown":
+    try:
+        day_status = calendar.day_status(observed_date, normalized_market)
+    except MarketContextError:
         return _resolve_calendar_unavailable(
             calendar,
             observed_now=observed_now,
@@ -188,19 +191,20 @@ def _resolution_interval_is_known(
     end: date,
     market: str,
 ) -> bool:
-    """Return whether every day from ``start`` through ``end`` is known.
+    """Return whether every day from ``start`` through ``end`` is in coverage.
 
     ``calendar_status=available`` requires the full parse interval from the
     candidate effective trade date to ``observed_now``'s local date. Any
-    ``unknown`` day (including gaps after last benchmark evidence) makes the
-    view non-authoritative.
+    out-of-coverage day (missing year JSON) makes the view non-authoritative.
     """
 
     if end < start:
         start, end = end, start
     cursor = start
     while cursor <= end:
-        if calendar.day_status(cursor, market) == "unknown":
+        try:
+            calendar.day_status(cursor, market)
+        except MarketContextError:
             return False
         cursor += timedelta(days=1)
     return True
@@ -213,13 +217,12 @@ def _resolve_calendar_unavailable(
     observed_date: date,
     market: str,
 ) -> ResolvedLiveMarketContext:
+    """Best-effort fallback when observed_date is outside calendar coverage."""
+
     if observed_date > calendar.coverage_end:
         anchor = calendar.coverage_end
-    elif observed_date < calendar.coverage_start:
-        anchor = calendar.coverage_start
     else:
-        # Inside coverage but day_status is unknown (e.g. past last evidenced open).
-        anchor = observed_date
+        anchor = calendar.coverage_start
     previous = last_trading_day_on_or_before(calendar, anchor, market)
     if previous is None:
         raise LiveMarketViewError(
@@ -244,21 +247,12 @@ def resolve_polling_profile(
     calendar: CalendarQueryPort | None,
     market: str,
     awaiting_day_switch: bool = False,
-    benchmark_probe_active: bool = False,
     close_reconcile_status: CloseReconcileStatus = "not_started",
     close_reconcile_retry_due: bool = False,
 ) -> PollingProfile:
-    """Return the refresh cadence for the current Live view (#130 PR-B).
-
-    ``benchmark_probe_active`` (#140) lets the scheduler enter a bounded
-    ``reduced`` probe when Calendar is ``unknown`` for today but the Session
-    is pinned to an earlier day and it is past 09:30.  This breaks the
-    Calendar-unknown self-lock without permanently entering ``idle``.
-    """
+    """Return the refresh cadence for the current Live view (#130 PR-B)."""
 
     if awaiting_day_switch:
-        return "reduced"
-    if benchmark_probe_active:
         return "reduced"
     if market_phase in {"morning", "afternoon"}:
         return "active"
@@ -361,56 +355,25 @@ def day_switch_target_date(
     return target
 
 
-def is_awaiting_benchmark_probe(
+def resolve_effective_trade_date(
     calendar: CalendarQueryPort,
     *,
-    observed_at: datetime,
-    pinned_trade_date: date,
+    observed_now: datetime,
     market: str,
-) -> bool:
-    """Return whether a benchmark probe should run for an unknown Calendar (#140).
+) -> date:
+    """Resolve only the market-data cutoff date (#133).
 
-    Unlike :func:`is_awaiting_day_switch`, this is for the case where Calendar
-    is ``unknown`` for today.  The probe uses ``sh.000001`` to confirm that the
-    market has produced intraday evidence today, then runtime-confirms today as
-    open.  Conditions:
-
-    - Past 09:30 (no pre-open / auction-quote probing).
-    - Today is a weekday with ``day_status == "unknown"`` (not ``closed``).
-    - Session is pinned to an earlier date (``today > pinned_trade_date``).
+    This is the single entry point for determining which trading day the Live
+    view should pin to.  Callers that also need ``market_session``,
+    ``market_phase``, or ``calendar_status`` should use
+    :func:`resolve_live_market_context` instead.
     """
 
-    if observed_at.time() < _MARKET_OPEN:
-        return False
-    today = observed_at.date()
-    if today <= pinned_trade_date:
-        return False
-    if today.weekday() >= 5:
-        return False
-    try:
-        status = calendar.day_status(today, market)
-    except Exception:
-        return False
-    return status == "unknown"
-
-
-def benchmark_probe_target_date(
-    calendar: CalendarQueryPort,
-    *,
-    observed_at: datetime,
-    pinned_trade_date: date,
-    market: str,
-) -> date | None:
-    """Return the benchmark probe target day (today) or ``None`` (#140)."""
-
-    if is_awaiting_benchmark_probe(
+    return resolve_live_market_context(
         calendar,
-        observed_at=observed_at,
-        pinned_trade_date=pinned_trade_date,
+        observed_now=observed_now,
         market=market,
-    ):
-        return observed_at.date()
-    return None
+    ).effective_trade_date
 
 
 def row_timestamp(row: Mapping[str, object]) -> datetime | None:
@@ -446,57 +409,6 @@ def day_switch_evidence_date(
         if timestamp.time() >= _MARKET_OPEN:
             return True
     return False
-
-
-def benchmark_probe_evidence(
-    quote_rows: Sequence[Mapping[str, object]],
-    bars_1m: Sequence[Mapping[str, object]],
-    bars_5m: Sequence[Mapping[str, object]],
-    *,
-    target_trade_date: date,
-    observed_at: datetime,
-) -> bool:
-    """Return whether benchmark rows confirm the market opened on ``target_trade_date``.
-
-    Accepts any one of (#140):
-
-    - A real-time quote with today's timestamp (not future, past 09:30).
-    - Today's first closed 1m bar.
-    - Today's officially closed 5m bar.
-
-    Stale quotes from a previous day are rejected because the date must match
-    ``target_trade_date``.  Future timestamps are rejected to avoid accepting
-    erroneous or out-of-range data as evidence.
-    """
-
-    if observed_at.time() < _MARKET_OPEN:
-        return False
-
-    def _has_evidence(
-        rows: Sequence[Mapping[str, object]],
-        *,
-        require_closed: bool,
-    ) -> bool:
-        for row in rows:
-            if require_closed and row.get("closed") is not True:
-                continue
-            timestamp = row_timestamp(row)
-            if timestamp is None:
-                continue
-            if timestamp.date() != target_trade_date:
-                continue
-            if timestamp.time() < _MARKET_OPEN:
-                continue
-            if timestamp > observed_at:
-                continue
-            return True
-        return False
-
-    return (
-        _has_evidence(quote_rows, require_closed=False)
-        or _has_evidence(bars_1m, require_closed=True)
-        or _has_evidence(bars_5m, require_closed=True)
-    )
 
 
 def should_run_close_reconciliation(

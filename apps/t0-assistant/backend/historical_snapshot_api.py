@@ -13,11 +13,13 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
+from packages.marketdata.calendar_query import build_market_context_from_trading_calendar
 from packages.marketdata.market_data import TencentStockDataProvider
 from packages.marketdata.repositories.kline_store import KLineStore
 from packages.marketdata.runtime_paths import RuntimePaths
 from packages.marketdata.services.kline_data_service import KLineDataService
 from packages.marketdata.services.market_context_service import MarketContextService
+from packages.marketdata.trading_calendar import TradingCalendar
 from packages.t0assistant.runtime import (
     HistoricalDataUnavailableError,
     HistoricalSnapshotError,
@@ -27,10 +29,6 @@ from packages.t0assistant.runtime import (
 
 _SYMBOL_PATTERN = re.compile(r"^(sh|sz)\.[0-9]{6}$")
 _TRADE_DATE_PATTERN = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
-
-_BENCHMARK_CODE = "000001"
-_BENCHMARK_MARKET = "sh"
-_BENCHMARK_LOOKBACK_DAYS = 730
 
 
 def _error_category(error_code: str) -> str:
@@ -55,107 +53,34 @@ def _weekday_dates(start: date, end: date) -> list[date]:
     ]
 
 
-def _benchmark_index_dates(store: KLineStore) -> list[str]:
-    """Return cached ``sh.000001`` trade dates only (Live authoritative evidence)."""
-
-    return list(store.trade_dates(_BENCHMARK_CODE, market=_BENCHMARK_MARKET))
-
-
-def _historical_cached_dates(store: KLineStore) -> list[str]:
-    """Return cached dates for historical calendar scaffolding.
-
-    Prefers the benchmark index, then any cached security dates. Historical
-    charts still union weekdays so a stale cache does not invent holidays.
-    """
-
-    cached_dates = _benchmark_index_dates(store)
-    if not cached_dates:
-        cached_dates = list(store.all_trade_dates())
-    return cached_dates
-
-
 def _build_market_context(
     provider: TencentStockDataProvider,
     store: KLineStore,
     today: date,
 ) -> MarketContextService:
-    """Build a market-wide calendar that does not depend on any single security.
+    """Build an authoritative calendar from bundled TradingCalendar JSON (#133).
 
-    Cached benchmark index (``sh.000001``) bars are the preferred evidence of
-    which days the exchange was open, but a stale cache must not make a newer
-    weekday appear to be a holiday.  Therefore the generated weekday calendar
-    for the coverage window is always the base set, and cached dates are merged
-    into it as known-good trading days.  Holidays then degrade cleanly to
-    ``historical_data_unavailable`` when the provider cannot supply bars.
-
-    This synchronous path intentionally avoids network I/O so service startup
-    stays fast and reliable.  Live must not use this builder — see
-    :func:`_build_live_market_context`.
+    The calendar's holiday JSON is the single source of truth for which days
+    are trading days.  No benchmark probe or cached-date scaffold is needed.
     """
 
-    coverage_end = today
-    coverage_start = today - timedelta(days=_BENCHMARK_LOOKBACK_DAYS)
-
-    cached_dates = _historical_cached_dates(store)
-
-    if cached_dates:
-        first_cached = date.fromisoformat(cached_dates[0])
-        coverage_start = min(coverage_start, first_cached)
-        cached_day_set = {date.fromisoformat(value) for value in cached_dates}
-    else:
-        cached_day_set = set()
-
-    weekday_day_set = set(_weekday_dates(coverage_start, coverage_end))
-    trading_days = sorted(cached_day_set | weekday_day_set)
-
-    return MarketContextService(
-        trading_days=[value.isoformat() for value in trading_days],
-        coverage_start=trading_days[0].isoformat(),
-        coverage_end=coverage_end.isoformat(),
-    )
+    del provider, store, today  # no I/O; calendar JSON is bundled
+    return build_market_context_from_trading_calendar(TradingCalendar(), "sh")
 
 
 def _build_live_market_context(
     provider: TencentStockDataProvider,
     store: KLineStore,
     today: date,
-) -> tuple[MarketContextService, date | None]:
-    """Build Live calendar evidence without synthesizing authoritative opens.
+) -> MarketContextService:
+    """Build the Live calendar from bundled TradingCalendar JSON (#133).
 
-    Unlike :func:`_build_market_context`, this does **not** union every weekday
-    into ``trading_days`` and does **not** treat sparse ``all_trade_dates()`` as
-    exchange authority.  Only cached ``sh.000001`` dates are authoritative.
-
-    Returns ``(context, authoritative_through)``.  ``authoritative_through`` is
-    the last benchmark open day when evidence exists; ``None`` means the
-    context is a non-authoritative scaffold (cold start) and Live must keep
-    ``calendar_status=unavailable``.
+    Same authoritative source as :func:`_build_market_context`; Live no longer
+    needs a separate evidence-based scaffold.
     """
 
-    del provider  # reserved for future live calendar enrichment; no I/O here
-    coverage_end = today
-    coverage_start = today - timedelta(days=_BENCHMARK_LOOKBACK_DAYS)
-    benchmark_dates = _benchmark_index_dates(store)
-
-    if benchmark_dates:
-        cached_day_set = {date.fromisoformat(value) for value in benchmark_dates}
-        coverage_start = min(coverage_start, min(cached_day_set))
-        trading_days = sorted(cached_day_set)
-        authoritative_through: date | None = trading_days[-1]
-    else:
-        # Cold start: weekday scaffold for session/preheat mechanics only.
-        # Adapter must set evidence_authoritative=False so these are unknown.
-        trading_days = _weekday_dates(coverage_start, coverage_end)
-        authoritative_through = None
-
-    return (
-        MarketContextService(
-            trading_days=[value.isoformat() for value in trading_days],
-            coverage_start=trading_days[0].isoformat(),
-            coverage_end=coverage_end.isoformat(),
-        ),
-        authoritative_through,
-    )
+    del provider, store, today  # no I/O; calendar JSON is bundled
+    return build_market_context_from_trading_calendar(TradingCalendar(), "sh")
 
 
 def _ensure_context_covers(

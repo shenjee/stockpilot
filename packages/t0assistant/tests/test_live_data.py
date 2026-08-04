@@ -813,10 +813,7 @@ class LiveDataPreparatorTests(unittest.TestCase):
             coverage_start="2026-09-29",
             coverage_end="2026-10-02",
         )
-        calendar = MarketContextCalendarAdapter(
-            market_context,
-            authoritative_through="2026-09-30",
-        )
+        calendar = MarketContextCalendarAdapter(market_context)
         market_data = _FakeMarketData(
             {
                 ("5m", "2026-09-29"): [
@@ -861,10 +858,11 @@ class LiveDataPreparatorTests(unittest.TestCase):
 
         prepared = preparator.prepare(self.spec, minimum_preheat_5m=2)
 
-        # Past last evidenced open day → previous open day with calendar warning.
+        # Oct 2 is within coverage but not a trading day -> closed, falls back
+        # to Sep 30 with market_closed / available (#133: no more unknown).
         self.assertEqual(prepared.market_session.trade_date.isoformat(), "2026-09-30")
-        self.assertEqual(prepared.calendar_status, "unavailable")
-        self.assertEqual(prepared.market_phase, "unknown")
+        self.assertEqual(prepared.calendar_status, "available")
+        self.assertEqual(prepared.market_phase, "market_closed")
 
     def test_prepare_confirmed_weekday_holiday_is_market_closed(self) -> None:
         from packages.marketdata.calendar_query import MarketContextCalendarAdapter
@@ -876,10 +874,7 @@ class LiveDataPreparatorTests(unittest.TestCase):
             coverage_start="2026-09-29",
             coverage_end="2026-10-09",
         )
-        calendar = MarketContextCalendarAdapter(
-            market_context,
-            authoritative_through="2026-10-09",
-        )
+        calendar = MarketContextCalendarAdapter(market_context)
         market_data = _FakeMarketData(
             {
                 ("5m", "2026-09-29"): [

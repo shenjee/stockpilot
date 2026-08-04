@@ -600,42 +600,46 @@ class CreateHistoricalSnapshotApiTests(unittest.TestCase):
 
 
 class LiveMarketContextBuilderTests(unittest.TestCase):
-    def test_live_builder_does_not_synthesize_weekday_holidays(self) -> None:
-        store = MagicMock(spec=KLineStore)
-        store.trade_dates.return_value = ["2026-09-29", "2026-09-30"]
-        store.all_trade_dates.return_value = ["2026-10-01"]
+    """Tests for the TradingCalendar-based live market context builder (#133)."""
 
-        context, authoritative_through = _build_live_market_context(
+    def test_live_builder_returns_authoritative_calendar(self) -> None:
+        """_build_live_market_context returns a MarketContextService (not a tuple).
+
+        The calendar is built from bundled TradingCalendar JSON, not from
+        cached benchmark index dates or weekday scaffolds.
+        """
+
+        store = MagicMock(spec=KLineStore)
+
+        result = _build_live_market_context(
             MagicMock(),
             store,
             date(2026, 10, 2),
         )
 
-        self.assertEqual(authoritative_through, date(2026, 9, 30))
-        self.assertTrue(context.is_trading_day("2026-09-30", "sh"))
-        self.assertFalse(context.is_trading_day("2026-10-01", "sh"))
-        self.assertFalse(context.is_trading_day("2026-10-02", "sh"))
-        # Sparse all_trade_dates must not become Live authority.
+        # Returns a MarketContextService, not a tuple.
+        self.assertIsInstance(result, MarketContextService)
+        # National Day holiday (Oct 1-7) is not a trading day.
+        self.assertFalse(result.is_trading_day("2026-10-01", "sh"))
+        self.assertFalse(result.is_trading_day("2026-10-07", "sh"))
+        # Sep 30 is a trading day (not in the holiday range).
+        self.assertTrue(result.is_trading_day("2026-09-30", "sh"))
+        # No store I/O — calendar JSON is bundled.
+        store.trade_dates.assert_not_called()
         store.all_trade_dates.assert_not_called()
-        # Coverage still reaches today so Live can classify post-evidence days.
-        self.assertEqual(context.coverage_end, date(2026, 10, 2))
 
-    def test_live_builder_empty_cache_is_non_authoritative_scaffold(self) -> None:
+    def test_live_and_historical_builders_are_equivalent(self) -> None:
+        """Both builders delegate to the same TradingCalendar source (#133)."""
+
+        from backend.historical_snapshot_api import _build_market_context
+
         store = MagicMock(spec=KLineStore)
-        store.trade_dates.return_value = []
-        store.all_trade_dates.return_value = []
+        live_ctx = _build_live_market_context(MagicMock(), store, date(2026, 10, 2))
+        hist_ctx = _build_market_context(MagicMock(), store, date(2026, 10, 2))
 
-        context, authoritative_through = _build_live_market_context(
-            MagicMock(),
-            store,
-            date(2026, 10, 2),
-        )
-
-        self.assertIsNone(authoritative_through)
-        # Scaffold may contain weekdays for mechanics, but must not be marked
-        # authoritative by the Live host (authoritative_through is None).
-        self.assertTrue(context.is_trading_day("2026-10-01", "sh"))
-        self.assertTrue(context.is_trading_day("2026-10-02", "sh"))
+        self.assertEqual(live_ctx.coverage_start, hist_ctx.coverage_start)
+        self.assertEqual(live_ctx.coverage_end, hist_ctx.coverage_end)
+        self.assertEqual(live_ctx.trading_days, hist_ctx.trading_days)
 
 
 if __name__ == "__main__":

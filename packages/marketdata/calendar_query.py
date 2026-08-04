@@ -1,14 +1,19 @@
 """Calendar query port for Live and other market-date consumers.
 
-`LiveMarketView` depends only on this port. Production wraps
-`MarketContextService`; tests inject a fixture-backed adapter. Issue #133 may
-replace the production adapter's data source without changing this contract.
+``LiveMarketView`` depends only on this port.  Production wraps a
+``MarketContextService`` built from :class:`~packages.marketdata.trading_calendar.TradingCalendar`
+authoritative holiday JSON; tests inject a fixture-backed adapter.
+
+Issue #133 removed the benchmark probe and ``day_status="unknown"``:
+the calendar is authoritative within its coverage range, so every day is
+either ``open`` or ``closed``.  Dates outside coverage (missing year JSON)
+raise :class:`MarketContextError`; callers catch it and set
+``calendar_status="unavailable"``.
 """
 
 from __future__ import annotations
 
 from datetime import date, datetime
-from threading import RLock
 from typing import Literal, Protocol
 
 from .services.market_context_service import (
@@ -18,8 +23,9 @@ from .services.market_context_service import (
     NonTradingDayError,
 )
 from .t0_schema import T0_MARKETS
+from .trading_calendar import CalendarUnavailableError, TradingCalendar
 
-CalendarDayStatus = Literal["open", "closed", "unknown"]
+CalendarDayStatus = Literal["open", "closed"]
 
 
 class CalendarQueryPort(Protocol):
@@ -33,7 +39,13 @@ class CalendarQueryPort(Protocol):
 
     def covers(self, trade_date: date | str) -> bool: ...
 
-    def day_status(self, trade_date: date | str, market: str) -> CalendarDayStatus: ...
+    def day_status(self, trade_date: date | str, market: str) -> CalendarDayStatus:
+        """Return ``"open"`` or ``"closed"``.
+
+        Raises :class:`MarketContextError` if *trade_date* is outside the
+        calendar's coverage range (missing year JSON).
+        """
+        ...
 
     def is_trading_day(self, trade_date: date | str, market: str) -> bool: ...
 
@@ -57,55 +69,24 @@ class CalendarQueryPort(Protocol):
         market: str,
     ) -> date | None: ...
 
-    def confirm_open_day(self, trade_date: date | str) -> None:
-        """Runtime-confirm a day as open via benchmark probe evidence (#140).
-
-        Implementations that do not support runtime confirmation may make this
-        a no-op.  Production ``MarketContextCalendarAdapter`` records the day
-        so ``day_status`` returns ``open`` instead of ``unknown``.
-        """
-        ...
-
-    def reset_confirmed_open_days(self) -> None:
-        """Clear all runtime-confirmed open days (tests / re-init)."""
-        ...
-
 
 class MarketContextCalendarAdapter:
     """Adapt an existing ``MarketContextService`` to ``CalendarQueryPort``.
 
-    ``authoritative_through`` marks the last date for which absence from the
-    trading-day set is treated as a confirmed closed day (holiday / weekend
-    already handled). Weekdays after that bound return ``unknown`` so Live can
-    degrade with ``calendar_status=unavailable`` instead of inventing opens.
-
-    When ``evidence_authoritative`` is false (non-benchmark / cold-start
-    scaffold), every in-coverage day is ``unknown`` so Live never claims
-    ``calendar_status=available`` from synthetic weekdays or sparse securities.
+    The underlying ``MarketContextService`` is the single source of truth for
+    trading days and sessions.  Every in-coverage day is authoritatively
+    ``open`` or ``closed``; dates outside coverage raise
+    :class:`MarketContextError` so Live can degrade to
+    ``calendar_status="unavailable"``.
     """
 
     def __init__(
         self,
         market_context: MarketContextService,
-        *,
-        authoritative_through: date | str | None = None,
-        evidence_authoritative: bool = True,
     ) -> None:
         if not isinstance(market_context, MarketContextService):
             raise TypeError("market_context must be a MarketContextService")
         self._context = market_context
-        self._evidence_authoritative = bool(evidence_authoritative)
-        self._authoritative_through = (
-            market_context.coverage_end
-            if authoritative_through is None
-            else _as_date(authoritative_through)
-        )
-        # Runtime-confirmed open days from benchmark probe (#140).  These
-        # overlay the immutable base context so Live can break the
-        # Calendar-unknown self-lock without minting fake authority from
-        # weekdays or single-stock data.
-        self._confirmed_open_days: set[date] = set()
-        self._lock = RLock()
 
     @property
     def coverage_start(self) -> date:
@@ -113,83 +94,26 @@ class MarketContextCalendarAdapter:
 
     @property
     def coverage_end(self) -> date:
-        with self._lock:
-            if not self._confirmed_open_days:
-                return self._context.coverage_end
-            return max(self._context.coverage_end, max(self._confirmed_open_days))
-
-    @property
-    def authoritative_through(self) -> date:
-        return self._authoritative_through
-
-    @property
-    def evidence_authoritative(self) -> bool:
-        return self._evidence_authoritative
-
-    @property
-    def confirmed_open_days(self) -> frozenset[date]:
-        """Return the runtime-confirmed open days (benchmark probe evidence)."""
-
-        with self._lock:
-            return frozenset(self._confirmed_open_days)
-
-    def confirm_open_day(self, trade_date: date | str) -> None:
-        """Runtime-confirm a day as open via benchmark probe evidence (#140).
-
-        This does **not** mint Calendar authority from weekdays or single-stock
-        data.  It records that ``sh.000001`` (or an equivalent benchmark) has
-        produced valid intraday evidence for ``trade_date``, so the adapter
-        reports ``open`` instead of ``unknown`` for that day.  All consumers
-        sharing this adapter instance (LiveDataPreparator, BranchingLiveInput,
-        KLineDataService) see the update atomically.
-        """
-
-        value = _as_date(trade_date)
-        if value.weekday() >= 5:
-            raise MarketContextError(
-                "cannot confirm a weekend as a trading day"
-            )
-        with self._lock:
-            self._confirmed_open_days.add(value)
-
-    def reset_confirmed_open_days(self) -> None:
-        """Clear all runtime-confirmed open days (used by tests / re-init)."""
-
-        with self._lock:
-            self._confirmed_open_days.clear()
+        return self._context.coverage_end
 
     def covers(self, trade_date: date | str) -> bool:
         value = _as_date(trade_date)
-        with self._lock:
-            if value in self._confirmed_open_days:
-                return True
         return self._context.coverage_start <= value <= self._context.coverage_end
 
     def day_status(self, trade_date: date | str, market: str) -> CalendarDayStatus:
         _require_supported_market(market)
         value = _as_date(trade_date)
-        with self._lock:
-            if value in self._confirmed_open_days:
-                return "open"
         if not self.covers(value):
-            return "unknown"
-        if not self._evidence_authoritative:
-            # Scaffold / sparse fallback must not mint open/closed authority.
-            return "unknown"
+            raise MarketContextError(
+                f"date {value.isoformat()} is outside calendar coverage "
+                f"({self._context.coverage_start.isoformat()}"
+                f"..{self._context.coverage_end.isoformat()})"
+            )
         if self._context.is_trading_day(value, market):
             return "open"
-        if value.weekday() >= 5:
-            return "closed"
-        # Weekday missing from the authoritative trading-day set.
-        if value <= self._authoritative_through:
-            return "closed"
-        return "unknown"
+        return "closed"
 
     def is_trading_day(self, trade_date: date | str, market: str) -> bool:
-        value = _as_date(trade_date)
-        with self._lock:
-            if value in self._confirmed_open_days:
-                return True
         return self._context.is_trading_day(trade_date, market)
 
     def session_on(
@@ -197,19 +121,11 @@ class MarketContextCalendarAdapter:
         trade_date: date | str,
         market: str,
     ) -> MarketSession | None:
-        value = _as_date(trade_date)
-        normalized_market = _require_supported_market(market)
-        with self._lock:
-            if value in self._confirmed_open_days:
-                return MarketSession(market=normalized_market, trade_date=value)
+        _require_supported_market(market)
         return self._context.session_on(trade_date, market)
 
     def require_session(self, trade_date: date | str, market: str) -> MarketSession:
-        value = _as_date(trade_date)
-        normalized_market = _require_supported_market(market)
-        with self._lock:
-            if value in self._confirmed_open_days:
-                return MarketSession(market=normalized_market, trade_date=value)
+        _require_supported_market(market)
         return self._context.require_session(trade_date, market)
 
     def previous_trading_day(
@@ -218,35 +134,16 @@ class MarketContextCalendarAdapter:
         market: str,
     ) -> date | None:
         value = _as_date(trade_date)
-        with self._lock:
-            confirmed = sorted(self._confirmed_open_days)
-        # Clamp to the immutable base context's coverage before querying it.
-        # A runtime-confirmed open day (benchmark probe, #140) can fall beyond
-        # the base ``coverage_end``; querying the context with that later date
-        # raises ``MarketContextError``, so the atomic day switch fails even
-        # though the calendar was confirmed (#140 P1).  Unlike
-        # ``next_trading_day``, there *are* authoritative days before an
-        # out-of-range ``value``, so a plain try/except would wrongly drop
-        # them - clamp instead and merge with the confirmed days.
         context = self._context
-        base_previous: date | None = None
-        if value >= context.coverage_start:
-            clamped = value if value <= context.coverage_end else context.coverage_end
-            if clamped < value and context.is_trading_day(clamped, market):
-                # ``value`` was past coverage; the coverage bound itself is the
-                # latest authoritative trading day strictly before ``value``.
-                base_previous = clamped
-            else:
-                try:
-                    base_previous = context.previous_trading_day(clamped, market)
-                except MarketContextError:
-                    base_previous = None
-        # Merge confirmed days with the context's answer so runtime-confirmed
-        # open days participate in the backward walk.
-        candidates = [d for d in confirmed if d < value]
-        if base_previous is not None:
-            candidates.append(base_previous)
-        return max(candidates) if candidates else None
+        if value < context.coverage_start:
+            return None
+        clamped = value if value <= context.coverage_end else context.coverage_end
+        if clamped < value and context.is_trading_day(clamped, market):
+            return clamped
+        try:
+            return context.previous_trading_day(clamped, market)
+        except MarketContextError:
+            return None
 
     def next_trading_day(
         self,
@@ -254,17 +151,12 @@ class MarketContextCalendarAdapter:
         market: str,
     ) -> date | None:
         value = _as_date(trade_date)
-        with self._lock:
-            confirmed = sorted(self._confirmed_open_days)
-        base_next = None
+        if value > self._context.coverage_end:
+            return None
         try:
-            base_next = self._context.next_trading_day(value, market)
+            return self._context.next_trading_day(value, market)
         except MarketContextError:
-            pass
-        candidates = [d for d in confirmed if d > value]
-        if base_next is not None:
-            candidates.append(base_next)
-        return min(candidates) if candidates else None
+            return None
 
 
 class FixtureCalendarQuery(MarketContextCalendarAdapter):
@@ -286,6 +178,35 @@ class FixtureCalendarQuery(MarketContextCalendarAdapter):
         )
 
 
+def build_market_context_from_trading_calendar(
+    calendar: TradingCalendar,
+    market: str,
+) -> MarketContextService:
+    """Build a ``MarketContextService`` from :class:`TradingCalendar` data.
+
+    Scans the calendar's bundled JSON for available years, then materialises
+    every trading day in that range.  The resulting service is authoritative:
+    every in-coverage weekday is either a trading day (``open``) or a
+    holiday/weekend (``closed``) -- there is no ``unknown``.
+
+    Raises :class:`CalendarUnavailableError` if *market* has no year JSON at
+    all.
+    """
+    years = calendar.available_years(market)
+    if not years:
+        raise CalendarUnavailableError(
+            f"no calendar year JSON for market {market!r}"
+        )
+    coverage_start = date(years[0], 1, 1)
+    coverage_end = date(years[-1], 12, 31)
+    trading_days = calendar.trading_days_between(coverage_start, coverage_end, market)
+    return MarketContextService(
+        trading_days=[value.isoformat() for value in trading_days],
+        coverage_start=coverage_start.isoformat(),
+        coverage_end=coverage_end.isoformat(),
+    )
+
+
 def last_trading_day_on_or_before(
     calendar: CalendarQueryPort,
     trade_date: date | str,
@@ -299,8 +220,11 @@ def last_trading_day_on_or_before(
             value = calendar.coverage_end
         elif value < calendar.coverage_start:
             return None
-    if calendar.day_status(value, market) == "open":
-        return value
+    try:
+        if calendar.day_status(value, market) == "open":
+            return value
+    except MarketContextError:
+        pass
     return calendar.previous_trading_day(value, market)
 
 
@@ -329,5 +253,6 @@ __all__ = [
     "MarketContextCalendarAdapter",
     "MarketContextError",
     "NonTradingDayError",
+    "build_market_context_from_trading_calendar",
     "last_trading_day_on_or_before",
 ]

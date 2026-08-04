@@ -141,7 +141,15 @@ class ResolveLiveMarketContextTests(unittest.TestCase):
                 market="sh",
             )
 
-    def test_unknown_weekday_after_authoritative_through(self) -> None:
+    def test_closed_weekday_after_last_trading_day(self) -> None:
+        """A non-trading weekday within coverage is ``closed``, not ``unknown``.
+
+        Issue #133: the calendar is authoritative within coverage, so every
+        in-coverage day is ``open`` or ``closed``.  Oct 2 is within coverage
+        but not a trading day, so the resolver falls back to the previous
+        trading day with ``market_closed`` / ``available``.
+        """
+
         from packages.marketdata.calendar_query import MarketContextCalendarAdapter
         from packages.marketdata.services.market_context_service import (
             MarketContextService,
@@ -152,21 +160,22 @@ class ResolveLiveMarketContextTests(unittest.TestCase):
             coverage_start="2026-09-29",
             coverage_end="2026-10-02",
         )
-        calendar = MarketContextCalendarAdapter(
-            context,
-            authoritative_through="2026-09-30",
-        )
+        calendar = MarketContextCalendarAdapter(context)
         resolved = resolve_live_market_context(
             calendar,
             observed_now=datetime(2026, 10, 2, 10, 0, 0),
             market="sh",
         )
         self.assertEqual(resolved.effective_trade_date.isoformat(), "2026-09-30")
-        self.assertEqual(resolved.calendar_status, "unavailable")
-        self.assertEqual(resolved.market_phase, "unknown")
+        self.assertEqual(resolved.calendar_status, "available")
+        self.assertEqual(resolved.market_phase, "market_closed")
 
-    def test_weekend_with_unknown_gap_is_not_authoritative(self) -> None:
-        """Last evidence Wednesday + unknown Thu/Fri + Saturday must be unavailable."""
+    def test_weekend_after_last_trading_day_is_closed(self) -> None:
+        """Saturday after last evidence Wednesday is ``closed`` / ``available``.
+
+        Issue #133: no more ``unknown`` status.  Jul 25 is within coverage but
+        not a trading day, so the resolver falls back with ``market_closed``.
+        """
 
         from packages.marketdata.calendar_query import MarketContextCalendarAdapter
         from packages.marketdata.services.market_context_service import (
@@ -178,20 +187,23 @@ class ResolveLiveMarketContextTests(unittest.TestCase):
             coverage_start="2026-07-22",
             coverage_end="2026-07-25",
         )
-        calendar = MarketContextCalendarAdapter(
-            context,
-            authoritative_through="2026-07-22",
-        )
+        calendar = MarketContextCalendarAdapter(context)
         resolved = resolve_live_market_context(
             calendar,
             observed_now=datetime(2026, 7, 25, 11, 0, 0),
             market="sh",
         )
         self.assertEqual(resolved.effective_trade_date.isoformat(), "2026-07-22")
-        self.assertEqual(resolved.calendar_status, "unavailable")
-        self.assertEqual(resolved.market_phase, "unknown")
+        self.assertEqual(resolved.calendar_status, "available")
+        self.assertEqual(resolved.market_phase, "market_closed")
 
-    def test_non_authoritative_scaffold_never_reports_available(self) -> None:
+    def test_authoritative_calendar_reports_available_for_trading_day(self) -> None:
+        """Issue #133: in-coverage trading days are ``available``, not ``unknown``.
+
+        The old ``evidence_authoritative=False`` scaffold concept is gone.
+        If a day is in ``trading_days`` and within coverage, it is ``open``.
+        """
+
         from packages.marketdata.calendar_query import MarketContextCalendarAdapter
         from packages.marketdata.services.market_context_service import (
             MarketContextService,
@@ -202,17 +214,14 @@ class ResolveLiveMarketContextTests(unittest.TestCase):
             coverage_start="2026-09-29",
             coverage_end="2026-10-02",
         )
-        calendar = MarketContextCalendarAdapter(
-            context,
-            evidence_authoritative=False,
-        )
+        calendar = MarketContextCalendarAdapter(context)
         resolved = resolve_live_market_context(
             calendar,
             observed_now=datetime(2026, 10, 2, 10, 0, 0),
             market="sh",
         )
-        self.assertEqual(resolved.calendar_status, "unavailable")
-        self.assertEqual(resolved.market_phase, "unknown")
+        self.assertEqual(resolved.calendar_status, "available")
+        self.assertEqual(resolved.market_phase, "morning")
 
 
 class LiveMarketViewProjectionTests(unittest.TestCase):

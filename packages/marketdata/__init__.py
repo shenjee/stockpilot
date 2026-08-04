@@ -28,6 +28,7 @@ from .t0_schema import (
     standardize_quote_snapshot,
     standardize_security_identity,
 )
+from .trading_calendar import CalendarUnavailableError, TradingCalendar
 
 __all__ = [
     "INDICES",
@@ -46,6 +47,8 @@ __all__ = [
     "T0_MARKET_SCHEMA_VERSION",
     "T0_TIMEZONE",
     "TencentStockDataProvider",
+    "TradingCalendar",
+    "CalendarUnavailableError",
     "create_market_data_provider",
     "get_market_prefix",
     "get_shared_provider_request_queue",

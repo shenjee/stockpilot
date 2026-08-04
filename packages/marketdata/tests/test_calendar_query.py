@@ -8,11 +8,16 @@ from datetime import date
 from packages.marketdata.calendar_query import (
     FixtureCalendarQuery,
     MarketContextCalendarAdapter,
+    build_market_context_from_trading_calendar,
     last_trading_day_on_or_before,
 )
 from packages.marketdata.services.market_context_service import (
     MarketContextError,
     MarketContextService,
+)
+from packages.marketdata.trading_calendar import (
+    CalendarUnavailableError,
+    TradingCalendar,
 )
 
 
@@ -25,10 +30,12 @@ class CalendarQueryAdapterTests(unittest.TestCase):
         )
         self.calendar = MarketContextCalendarAdapter(self.context)
 
-    def test_day_status_open_closed_unknown(self) -> None:
+    def test_day_status_open_closed_and_out_of_coverage_raises(self) -> None:
         self.assertEqual(self.calendar.day_status("2026-07-24", "sh"), "open")
         self.assertEqual(self.calendar.day_status("2026-07-25", "sh"), "closed")
-        self.assertEqual(self.calendar.day_status("2026-07-26", "sh"), "unknown")
+        # Out-of-coverage raises instead of returning "unknown".
+        with self.assertRaises(MarketContextError):
+            self.calendar.day_status("2026-07-26", "sh")
 
     def test_is_trading_day_still_raises_outside_coverage(self) -> None:
         with self.assertRaises(MarketContextError):
@@ -46,14 +53,11 @@ class CalendarQueryAdapterTests(unittest.TestCase):
             date(2026, 7, 24),
         )
 
-    def test_previous_trading_day_clamps_confirmed_day_past_coverage(self) -> None:
-        """Runtime-confirmed day past coverage_end must not raise (#140 P1).
+    def test_previous_trading_day_clamps_past_coverage_end(self) -> None:
+        """Querying past coverage_end clamps to the bound instead of raising.
 
-        ``confirm_open_day`` extends the adapter's reported ``coverage_end``,
-        but the immutable base context's coverage is unchanged.  Querying the
-        base context with the confirmed (later) day used to raise
-        ``MarketContextError`` and break the atomic day switch even though the
-        calendar was confirmed.
+        ``previous_trading_day`` never raises for a date beyond coverage_end;
+        it walks back to the last in-coverage trading day.
         """
         # coverage_end is itself a trading day (Friday 2026-07-24).
         context = MarketContextService(
@@ -64,13 +68,7 @@ class CalendarQueryAdapterTests(unittest.TestCase):
         calendar = MarketContextCalendarAdapter(context)
         self.assertEqual(calendar.coverage_end, date(2026, 7, 24))
 
-        # Runtime-confirm Monday (beyond base coverage) via benchmark probe.
-        calendar.confirm_open_day("2026-07-27")
-        self.assertEqual(calendar.coverage_end, date(2026, 7, 27))
-        self.assertEqual(calendar.day_status("2026-07-27", "sh"), "open")
-
-        # Must not raise; returns the latest authoritative trading day (the
-        # coverage bound itself, since it is an open day).
+        # Monday beyond coverage -- clamps and walks back to the last open day.
         self.assertEqual(
             calendar.previous_trading_day("2026-07-27", "sh"),
             date(2026, 7, 24),
@@ -79,7 +77,7 @@ class CalendarQueryAdapterTests(unittest.TestCase):
     def test_previous_trading_day_clamps_when_coverage_end_not_trading_day(
         self,
     ) -> None:
-        """Non-trading coverage bound walks back to the last open day (#140 P1)."""
+        """Non-trading coverage bound walks back to the last open day."""
         # coverage_end is Saturday 2026-07-25 (not a trading day).
         context = MarketContextService(
             ["2026-07-22", "2026-07-23", "2026-07-24"],
@@ -87,7 +85,6 @@ class CalendarQueryAdapterTests(unittest.TestCase):
             coverage_end="2026-07-25",
         )
         calendar = MarketContextCalendarAdapter(context)
-        calendar.confirm_open_day("2026-07-27")
 
         self.assertEqual(
             calendar.previous_trading_day("2026-07-27", "sh"),
@@ -109,34 +106,38 @@ class CalendarQueryAdapterTests(unittest.TestCase):
             "2026-07-24",
         )
 
-    def test_authoritative_through_marks_later_weekdays_unknown(self) -> None:
-        context = MarketContextService(
-            ["2026-09-29", "2026-09-30"],
-            coverage_start="2026-09-29",
-            coverage_end="2026-10-02",
+    def test_last_trading_day_past_coverage_clamps(self) -> None:
+        """``last_trading_day_on_or_before`` clamps past coverage_end."""
+        fixture = FixtureCalendarQuery(
+            ["2026-07-22", "2026-07-23", "2026-07-24"],
+            coverage_start="2026-07-22",
+            coverage_end="2026-07-24",
         )
-        calendar = MarketContextCalendarAdapter(
-            context,
-            authoritative_through="2026-09-30",
+        self.assertEqual(
+            last_trading_day_on_or_before(fixture, "2026-07-30", "sh").isoformat(),
+            "2026-07-24",
         )
-        self.assertEqual(calendar.day_status("2026-09-30", "sh"), "open")
-        # Weekday holiday-like gap after last evidenced open day.
-        self.assertEqual(calendar.day_status("2026-10-01", "sh"), "unknown")
-        self.assertEqual(calendar.day_status("2026-10-02", "sh"), "unknown")
 
-    def test_non_authoritative_scaffold_marks_every_day_unknown(self) -> None:
-        context = MarketContextService(
-            ["2026-09-30", "2026-10-01", "2026-10-02"],
-            coverage_start="2026-09-30",
-            coverage_end="2026-10-02",
-        )
-        calendar = MarketContextCalendarAdapter(
-            context,
-            evidence_authoritative=False,
-        )
-        self.assertEqual(calendar.day_status("2026-10-01", "sh"), "unknown")
-        self.assertEqual(calendar.day_status("2026-10-02", "sh"), "unknown")
-        self.assertFalse(calendar.evidence_authoritative)
+
+class BuildFromTradingCalendarTests(unittest.TestCase):
+    """Tests for ``build_market_context_from_trading_calendar``."""
+
+    def setUp(self) -> None:
+        self.calendar = TradingCalendar()
+
+    def test_builds_context_for_sh(self) -> None:
+        context = build_market_context_from_trading_calendar(self.calendar, "sh")
+        # Coverage spans full years.
+        self.assertLessEqual(context.coverage_start, date(2026, 1, 1))
+        self.assertGreaterEqual(context.coverage_end, date(2026, 12, 31))
+        # 2026-01-05 is a Monday and not in the holiday list, so it should be open.
+        self.assertTrue(context.is_trading_day(date(2026, 1, 5), "sh"))
+        # 2026-01-01 (New Year) is in the closed_dates list.
+        self.assertFalse(context.is_trading_day(date(2026, 1, 1), "sh"))
+
+    def test_unsupported_market_raises(self) -> None:
+        with self.assertRaises(CalendarUnavailableError):
+            build_market_context_from_trading_calendar(self.calendar, "xx")
 
 
 if __name__ == "__main__":
