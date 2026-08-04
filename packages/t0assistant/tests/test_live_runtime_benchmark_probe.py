@@ -20,6 +20,7 @@ Scenarios covered (from Issue #140):
 
 from __future__ import annotations
 
+import threading
 import unittest
 from datetime import date, datetime, timedelta
 from typing import Any, Mapping, Sequence
@@ -98,6 +99,7 @@ class _BenchmarkProbeSource:
         benchmark_1m_d: str | None = None,
         benchmark_5m_d: str | None = None,
         stock_has_monday_data: bool = True,
+        benchmark_bars_raise: bool = False,
     ) -> None:
         self.context = MarketContextService(["2026-07-24", "2026-07-27"])
         self.friday = self.context.require_session("2026-07-24", "sh")
@@ -107,6 +109,7 @@ class _BenchmarkProbeSource:
         self.benchmark_1m_d = benchmark_1m_d
         self.benchmark_5m_d = benchmark_5m_d
         self.stock_has_monday_data = stock_has_monday_data
+        self.benchmark_bars_raise = benchmark_bars_raise
 
     def _friday_input(self, spec: SessionSpec) -> PipelineMarketInput:
         return PipelineMarketInput(
@@ -163,6 +166,8 @@ class _BenchmarkProbeSource:
     def load_refresh_bars(self, spec, *, timeframe, trade_date) -> Sequence[Mapping]:
         if spec.symbol == "sh.000001":
             # Benchmark probe data
+            if self.benchmark_bars_raise:
+                raise RuntimeError("benchmark bar provider unavailable (#140 P2)")
             if str(trade_date) == "2026-07-27":
                 if timeframe == "1m" and self.benchmark_1m_d:
                     return (_bar(self.benchmark_1m_d, 3100.0),)
@@ -767,6 +772,115 @@ class BenchmarkProbeRuntimeTests(unittest.TestCase):
             latest_data_time=None,
         )
         self.assertEqual(port._benchmark_probe_failures, 2)
+
+    def test_probe_confirms_when_bars_raise_but_quote_valid(self) -> None:
+        """quote evidence survives a 1m/5m provider error (#140 P2).
+
+        The contract is that any one of quote / closed 1m / closed 5m confirms
+        the market opened.  Previously all three reads shared one try, so a
+        1m/5m error discarded the valid quote and recorded a failure instead of
+        confirming.
+        """
+        source = _BenchmarkProbeSource(
+            benchmark_quote_d="2026-07-27 09:31:00",
+            benchmark_bars_raise=True,
+        )
+        calendar = _make_calendar()
+        port = self._prepare(source, calendar)
+
+        port.refresh(
+            LiveRefreshKind.QUOTE,
+            _spec(),
+            observed_at=self._monday_morning,
+            latest_data_time=None,
+        )
+
+        # Valid quote evidence confirmed the open day despite 1m/5m errors,
+        # and the day switch proceeded (probe broke the self-lock).
+        self.assertEqual(
+            calendar.day_status(date(2026, 7, 27), "sh"),
+            "open",
+        )
+        self.assertEqual(port.market_epoch, 1)
+        self.assertEqual(port._benchmark_probe_failures, 0)
+
+    def test_concurrent_workers_run_single_probe(self) -> None:
+        """Only one refresh worker runs the benchmark probe per cycle (#140 P2).
+
+        The quote/1m/5m workers all call ``_run_benchmark_probe_if_due`` within
+        the same scheduler cycle.  Without atomic ownership, every worker
+        passes the due-check and fires its own quote/1m/5m request set, so a
+        single failing cycle increments the failure count by 3 and exhausts the
+        bounded retry budget in ~2 cycles.
+        """
+
+        class _BlockingBenchmarkSource(_BenchmarkProbeSource):
+            """Force concurrent probes to overlap, then count quote loads."""
+
+            def __init__(self, **kwargs: Any) -> None:
+                super().__init__(**kwargs)
+                self._release = threading.Event()
+                self.benchmark_quote_loads = 0
+
+            def load_refresh_quotes(
+                self,
+                spec,
+                *,
+                trade_date,
+            ) -> Sequence[Mapping]:
+                if spec.symbol == "sh.000001" and str(trade_date) == "2026-07-27":
+                    self.benchmark_quote_loads += 1
+                    # Block so sibling workers reach the due-check while this
+                    # probe is still in flight (the race window the bug needs).
+                    self._release.wait(timeout=5)
+                    return ()  # no evidence -> failure
+                return super().load_refresh_quotes(spec, trade_date=trade_date)
+
+            def release(self) -> None:
+                self._release.set()
+
+        source = _BlockingBenchmarkSource(
+            benchmark_quote_d=None,
+            benchmark_1m_d=None,
+            benchmark_5m_d=None,
+        )
+        calendar = _make_calendar()
+        port = self._prepare(source, calendar)
+
+        spec = _spec()
+        observed_at = self._monday_morning
+
+        done = threading.Event()
+        done_count = [0]
+        done_lock = threading.Lock()
+
+        def worker() -> None:
+            port._run_benchmark_probe_if_due(spec, observed_at)
+            with done_lock:
+                done_count[0] += 1
+                if done_count[0] >= 2:
+                    done.set()
+
+        threads = [threading.Thread(target=worker) for _ in range(3)]
+        for thread in threads:
+            thread.start()
+
+        # With ownership, two workers skip immediately and finish while the
+        # third blocks inside the probe.  Without ownership, all three block
+        # and this wait times out.
+        self.assertTrue(
+            done.wait(timeout=2),
+            "ownership did not let sibling workers skip the in-flight probe",
+        )
+        source.release()
+        for thread in threads:
+            thread.join(timeout=2)
+        self.assertFalse(any(thread.is_alive() for thread in threads))
+
+        # Exactly one probe executed; only one failure recorded.
+        self.assertEqual(source.benchmark_quote_loads, 1)
+        self.assertEqual(port._benchmark_probe_failures, 1)
+        self.assertIsNone(port._benchmark_probe_owner)
 
 
 if __name__ == "__main__":

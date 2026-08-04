@@ -220,7 +220,27 @@ class MarketContextCalendarAdapter:
         value = _as_date(trade_date)
         with self._lock:
             confirmed = sorted(self._confirmed_open_days)
-        base_previous = self._context.previous_trading_day(value, market)
+        # Clamp to the immutable base context's coverage before querying it.
+        # A runtime-confirmed open day (benchmark probe, #140) can fall beyond
+        # the base ``coverage_end``; querying the context with that later date
+        # raises ``MarketContextError``, so the atomic day switch fails even
+        # though the calendar was confirmed (#140 P1).  Unlike
+        # ``next_trading_day``, there *are* authoritative days before an
+        # out-of-range ``value``, so a plain try/except would wrongly drop
+        # them - clamp instead and merge with the confirmed days.
+        context = self._context
+        base_previous: date | None = None
+        if value >= context.coverage_start:
+            clamped = value if value <= context.coverage_end else context.coverage_end
+            if clamped < value and context.is_trading_day(clamped, market):
+                # ``value`` was past coverage; the coverage bound itself is the
+                # latest authoritative trading day strictly before ``value``.
+                base_previous = clamped
+            else:
+                try:
+                    base_previous = context.previous_trading_day(clamped, market)
+                except MarketContextError:
+                    base_previous = None
         # Merge confirmed days with the context's answer so runtime-confirmed
         # open days participate in the backward walk.
         candidates = [d for d in confirmed if d < value]

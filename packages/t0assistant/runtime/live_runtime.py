@@ -61,6 +61,22 @@ _BENCHMARK_PROBE_MAX_FAILURES = 5
 _BENCHMARK_PROBE_RETRY_INTERVAL = timedelta(seconds=30)
 
 
+def _safe_probe_rows(
+    loader: Callable[[], Sequence[Mapping[str, object]]],
+) -> tuple[Mapping[str, object], ...]:
+    """Run one benchmark probe source read, returning ``()`` on provider error.
+
+    Each evidence source (quote / 1m / 5m) is loaded independently so a
+    failure in one cannot discard evidence already returned by another; any
+    single source is sufficient to confirm the market opened (#140 P2).
+    """
+
+    try:
+        return tuple(loader())
+    except Exception:
+        return ()
+
+
 class LiveBranchDataPort(LiveInitialInputPort, Protocol):
     """Initial input plus narrow normalized reads for each refresh branch."""
 
@@ -126,6 +142,11 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
         self._benchmark_probe_failures = 0
         self._benchmark_probe_next_retry_at: datetime | None = None
         self._benchmark_probe_confirmed = False
+        # Ownership token for the in-flight benchmark probe.  ``None`` means no
+        # probe is running; a non-None ``object`` token identifies the single
+        # worker that claimed the probe so the quote/1m/5m refresh workers do
+        # not each fire a full probe in the same cycle (#140 P2).
+        self._benchmark_probe_owner: object | None = None
 
     def set_on_projection_refresh(
         self,
@@ -179,6 +200,7 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             self._benchmark_probe_failures = 0
             self._benchmark_probe_next_retry_at = None
             self._benchmark_probe_confirmed = False
+            self._benchmark_probe_owner = None
         return prepared
 
     def advance_view_status(
@@ -529,68 +551,83 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
                 and observed_at < self._benchmark_probe_next_retry_at
             ):
                 return
+            # Atomic probe ownership: the quote/1m/5m refresh workers all call
+            # ``refresh`` (and therefore this method) within the same scheduler
+            # cycle.  Without claiming ownership under the lock, every worker
+            # would pass the checks above and fire its own quote/1m/5m request
+            # set, exhausting the bounded retry budget several times per cycle
+            # (#140 P2).  Only one worker proceeds; the rest skip.
+            if self._benchmark_probe_owner is not None:
+                return
+            owner_token = object()
+            self._benchmark_probe_owner = owner_token
             calendar = self._calendar
             market = self._market
             pinned_trade_date = self._session.trade_date
 
-        if not is_awaiting_benchmark_probe(
-            calendar,
-            observed_at=observed_at,
-            pinned_trade_date=pinned_trade_date,
-            market=market,
-        ):
-            return
-
-        today = observed_at.date()
-        benchmark_spec = replace(spec, symbol=_BENCHMARK_PROBE_SYMBOL)
-
         try:
-            quote_rows = tuple(
-                self._source.load_refresh_quotes(
+            if not is_awaiting_benchmark_probe(
+                calendar,
+                observed_at=observed_at,
+                pinned_trade_date=pinned_trade_date,
+                market=market,
+            ):
+                return
+
+            today = observed_at.date()
+            benchmark_spec = replace(spec, symbol=_BENCHMARK_PROBE_SYMBOL)
+
+            # Load each evidence source independently so a failure in one
+            # (e.g. 1m/5m) does not discard valid evidence already returned by
+            # another (e.g. quote).  The contract is that any single source
+            # suffices to confirm the market opened (#140 P2).
+            quote_rows = _safe_probe_rows(
+                lambda: self._source.load_refresh_quotes(
                     benchmark_spec,
                     trade_date=today,
                 )
             )
-            bars_1m = tuple(
-                self._source.load_refresh_bars(
+            bars_1m = _safe_probe_rows(
+                lambda: self._source.load_refresh_bars(
                     benchmark_spec,
                     timeframe="1m",
                     trade_date=today,
                 )
             )
-            bars_5m = tuple(
-                self._source.load_refresh_bars(
+            bars_5m = _safe_probe_rows(
+                lambda: self._source.load_refresh_bars(
                     benchmark_spec,
                     timeframe="5m",
                     trade_date=today,
                 )
             )
-        except BaseException:
-            with self._lock:
-                self._benchmark_probe_failures += 1
-                self._benchmark_probe_next_retry_at = (
-                    observed_at + _BENCHMARK_PROBE_RETRY_INTERVAL
-                )
-            return
 
-        if benchmark_probe_evidence(
-            quote_rows,
-            bars_1m,
-            bars_5m,
-            target_trade_date=today,
-            observed_at=observed_at,
-        ):
+            if benchmark_probe_evidence(
+                quote_rows,
+                bars_1m,
+                bars_5m,
+                target_trade_date=today,
+                observed_at=observed_at,
+            ):
+                with self._lock:
+                    if not self._benchmark_probe_confirmed:
+                        calendar.confirm_open_day(today)
+                        self._calendar_status = "available"
+                        self._benchmark_probe_confirmed = True
+            else:
+                with self._lock:
+                    self._benchmark_probe_failures += 1
+                    self._benchmark_probe_next_retry_at = (
+                        observed_at + _BENCHMARK_PROBE_RETRY_INTERVAL
+                    )
+        finally:
             with self._lock:
-                if not self._benchmark_probe_confirmed:
-                    calendar.confirm_open_day(today)
-                    self._calendar_status = "available"
-                    self._benchmark_probe_confirmed = True
-        else:
-            with self._lock:
-                self._benchmark_probe_failures += 1
-                self._benchmark_probe_next_retry_at = (
-                    observed_at + _BENCHMARK_PROBE_RETRY_INTERVAL
-                )
+                # Only release ownership if this probe still holds it.  A
+                # concurrent ``prepare`` / day-switch reset may have already
+                # cleared the slot (and let a newer probe claim it); releasing
+                # unconditionally would then clear that newer probe's claim.
+                if self._benchmark_probe_owner is owner_token:
+                    self._benchmark_probe_owner = None
 
     def _load_probe_rows(
         self,
@@ -765,6 +802,7 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             self._benchmark_probe_failures = 0
             self._benchmark_probe_next_retry_at = None
             self._benchmark_probe_confirmed = False
+            self._benchmark_probe_owner = None
 
         return replace(candidate, market_epoch=new_epoch)
 
