@@ -309,11 +309,16 @@ function setPriceData(priceSeries, model) {
   globalThis.__flushRaf();
 }
 
+const BUY_MARKER_COLOR = "#ef4444";
+const SELL_MARKER_COLOR = "#22c55e";
+
 const isPivotFill = (call) => PIVOT_FILL_COLORS.has(call.style);
 const isPivotStroke = (call) => PIVOT_STROKE_COLORS.has(call.style);
 const isMarkerText = (call) => MARKER_COLORS.has(call.style);
-const isMarkerPath = (call) =>
-  ["beginPath", "moveTo", "lineTo", "closePath"].includes(call.method);
+const markerTextsWithStyle = (drawCalls, style) =>
+  drawCalls
+    .filter((c) => c.method === "fillText" && c.style === style)
+    .map((c) => String(c.args[0]));
 
 test("real LC + production primitive: pivot zone draw renders fillRect and strokeRect", async () => {
   const drawCalls = [];
@@ -377,17 +382,14 @@ test("real LC + production primitive: czsc marker draw renders buy arrow and 1B 
     czscMarkerPrimitive.setMarkers(buyMarkers);
     globalThis.__flushRaf();
 
-    const markerTexts = drawCalls
-      .filter((c) => c.method === "fillText" && isMarkerText(c))
-      .map((c) => String(c.args[0]));
+    const buyTexts = markerTextsWithStyle(drawCalls, BUY_MARKER_COLOR);
     assert.ok(
-      markerTexts.some((t) => t.includes("1B")),
-      `CzscMarkerPrimitive.draw must render 1B label; got ${JSON.stringify(markerTexts)}`,
+      buyTexts.some((t) => t.includes("1B")),
+      `CzscMarkerPrimitive.draw must render red 1B label; got ${JSON.stringify(buyTexts)}`,
     );
-    const markerPaths = drawCalls.filter(isMarkerPath);
     assert.ok(
-      markerPaths.length > 0,
-      "CzscMarkerPrimitive.draw must draw arrow paths for buy markers",
+      buyTexts.includes("↑"),
+      `CzscMarkerPrimitive.draw must render red ↑ arrow for buy markers; got ${JSON.stringify(buyTexts)}`,
     );
   } finally {
     restore();
@@ -415,17 +417,14 @@ test("real LC + production primitive: czsc marker draw renders sell arrow and 1S
     czscMarkerPrimitive.setMarkers(sellMarkers);
     globalThis.__flushRaf();
 
-    const markerTexts = drawCalls
-      .filter((c) => c.method === "fillText" && isMarkerText(c))
-      .map((c) => String(c.args[0]));
+    const sellTexts = markerTextsWithStyle(drawCalls, SELL_MARKER_COLOR);
     assert.ok(
-      markerTexts.some((t) => t.includes("1S")),
-      `CzscMarkerPrimitive.draw must render 1S label; got ${JSON.stringify(markerTexts)}`,
+      sellTexts.some((t) => t.includes("1S")),
+      `CzscMarkerPrimitive.draw must render green 1S label; got ${JSON.stringify(sellTexts)}`,
     );
-    const markerPaths = drawCalls.filter(isMarkerPath);
     assert.ok(
-      markerPaths.length > 0,
-      "CzscMarkerPrimitive.draw must draw arrow paths for sell markers",
+      sellTexts.includes("↓"),
+      `CzscMarkerPrimitive.draw must render green ↓ arrow for sell markers; got ${JSON.stringify(sellTexts)}`,
     );
   } finally {
     restore();
@@ -468,6 +467,391 @@ test("hidden time axis: structural candidates render Buy? and Sell? labels", asy
       .map((call) => String(call.args[0]));
     assert.ok(labels.includes("Buy?"), `expected Buy? label; got ${JSON.stringify(labels)}`);
     assert.ok(labels.includes("Sell?"), `expected Sell? label; got ${JSON.stringify(labels)}`);
+    assert.ok(labels.includes("↑"), `expected buy ↑ arrow; got ${JSON.stringify(labels)}`);
+    assert.ok(labels.includes("↓"), `expected sell ↓ arrow; got ${JSON.stringify(labels)}`);
+
+    // 同一根 K 上：绿色卖点绘制在上方（y 更小），红色买点绘制在下方（y 更大）。
+    const arrowY = (style, text) =>
+      drawCalls.find(
+        (c) => c.method === "fillText" && c.style === style && c.args[0] === text,
+      )?.args[2];
+    const buyArrowY = arrowY(BUY_MARKER_COLOR, "↑");
+    const sellArrowY = arrowY(SELL_MARKER_COLOR, "↓");
+    assert.ok(
+      typeof buyArrowY === "number" && typeof sellArrowY === "number",
+      "expected both arrow draw calls with y coordinates",
+    );
+    assert.ok(
+      sellArrowY < buyArrowY,
+      `sell arrow must render above buy arrow; sellY=${sellArrowY} buyY=${buyArrowY}`,
+    );
+  } finally {
+    restore();
+  }
+});
+
+test("mid-body candidate prices anchor label+arrow fully outside the candle", async () => {
+  const drawCalls = [];
+  const restore = installDom(drawCalls);
+  try {
+    const lc = await import(
+      "../node_modules/lightweight-charts/dist/lightweight-charts.development.mjs"
+    );
+    const model = await buildFixtureModel();
+    const anchor = model.price.at(-1);
+    assert.ok(anchor, "fixture must provide a marker anchor bar");
+
+    const { priceSeries, czscMarkerPrimitive } =
+      await buildChartWithPrimitives(lc);
+    setPriceData(priceSeries, model);
+    const mid = (anchor.high + anchor.low) / 2;
+    czscMarkerPrimitive.setMarkers([
+      {
+        time: parseMarketTimestamp(anchor.timestamp),
+        price: mid,
+        side: "buy",
+        label: "1B",
+      },
+      {
+        time: parseMarketTimestamp(anchor.timestamp),
+        price: mid,
+        side: "sell",
+        label: "1S",
+      },
+    ]);
+    globalThis.__flushRaf();
+
+    // devicePixelRatio=1，drawCalls 记录的是位图坐标，可与 priceToCoordinate 直接比较。
+    const highY = priceSeries.priceToCoordinate(anchor.high);
+    const lowY = priceSeries.priceToCoordinate(anchor.low);
+    assert.ok(highY !== null && lowY !== null, "anchor bar must be on-screen");
+
+    const findY = (style, text) =>
+      drawCalls.find(
+        (c) => c.method === "fillText" && c.style === style && c.args[0] === text,
+      )?.args[2];
+    const sellArrowY = findY(SELL_MARKER_COLOR, "↓");
+    const sellLabelY = findY(SELL_MARKER_COLOR, "1S");
+    const buyArrowY = findY(BUY_MARKER_COLOR, "↑");
+    const buyLabelY = findY(BUY_MARKER_COLOR, "1B");
+    for (const [name, value] of Object.entries({
+      sellArrowY,
+      sellLabelY,
+      buyArrowY,
+      buyLabelY,
+    })) {
+      assert.ok(typeof value === "number", `expected ${name} draw call y coordinate`);
+    }
+
+    // 卖点整体在 K 线最高价的上方：1S 在上，↓ 底端也在 high 之上。
+    assert.ok(
+      sellArrowY < highY,
+      `sell arrow bottom must clear the candle high; arrowY=${sellArrowY} highY=${highY}`,
+    );
+    assert.ok(
+      sellLabelY < sellArrowY,
+      `sell label must sit above the arrow; labelY=${sellLabelY} arrowY=${sellArrowY}`,
+    );
+    // 买点整体在 K 线最低价的下方：↑ 顶端在 low 之下，1B 在箭头之下。
+    assert.ok(
+      buyArrowY > lowY,
+      `buy arrow top must clear the candle low; arrowY=${buyArrowY} lowY=${lowY}`,
+    );
+    assert.ok(
+      buyLabelY > buyArrowY,
+      `buy label must sit below the arrow; labelY=${buyLabelY} arrowY=${buyArrowY}`,
+    );
+  } finally {
+    restore();
+  }
+});
+
+test("same-side same-bar markers stack vertically without overlap", async () => {
+  const drawCalls = [];
+  const restore = installDom(drawCalls);
+  try {
+    const lc = await import(
+      "../node_modules/lightweight-charts/dist/lightweight-charts.development.mjs"
+    );
+    const model = await buildFixtureModel();
+    const anchor = model.price.at(-1);
+    assert.ok(anchor, "fixture must provide a marker anchor bar");
+
+    const { priceSeries, czscMarkerPrimitive } =
+      await buildChartWithPrimitives(lc);
+    setPriceData(priceSeries, model);
+    const time = parseMarketTimestamp(anchor.timestamp);
+    const mid = (anchor.high + anchor.low) / 2;
+    czscMarkerPrimitive.setMarkers([
+      // 同一根 K 线、两个买点：价格较低的先给，验证组内排序与堆叠。
+      { time, price: anchor.low, side: "buy", label: "2B" },
+      { time, price: anchor.high, side: "buy", label: "1B" },
+      // 同一根 K 线、两个卖点：价格较高的先给。
+      { time, price: anchor.high, side: "sell", label: "2S" },
+      { time, price: mid, side: "sell", label: "1S" },
+    ]);
+    globalThis.__flushRaf();
+
+    const findY = (style, text) =>
+      drawCalls.find(
+        (c) => c.method === "fillText" && c.style === style && c.args[0] === text,
+      )?.args[2];
+    const highY = priceSeries.priceToCoordinate(anchor.high);
+    const lowY = priceSeries.priceToCoordinate(anchor.low);
+    assert.ok(highY !== null && lowY !== null, "anchor bar must be on-screen");
+
+    const buy1LabelY = findY(BUY_MARKER_COLOR, "1B");
+    const buy2LabelY = findY(BUY_MARKER_COLOR, "2B");
+    const sell1LabelY = findY(SELL_MARKER_COLOR, "1S");
+    const sell2LabelY = findY(SELL_MARKER_COLOR, "2S");
+    for (const [name, value] of Object.entries({
+      buy1LabelY,
+      buy2LabelY,
+      sell1LabelY,
+      sell2LabelY,
+    })) {
+      assert.ok(typeof value === "number", `expected ${name} draw call y coordinate`);
+    }
+
+    // 两个买点都完整位于 K 线下方，且纵向错开；价高者（1B）更靠近 K 线。
+    assert.ok(
+      buy1LabelY > lowY && buy2LabelY > lowY,
+      `both buy labels must clear the candle low; 1B=${buy1LabelY} 2B=${buy2LabelY} lowY=${lowY}`,
+    );
+    assert.ok(
+      buy1LabelY < buy2LabelY,
+      `higher-priced buy must stack nearer the candle; 1B=${buy1LabelY} 2B=${buy2LabelY}`,
+    );
+    // 两个卖点都完整位于 K 线上方，且纵向错开；价低者（1S）更靠近 K 线。
+    assert.ok(
+      sell1LabelY < highY && sell2LabelY < highY,
+      `both sell labels must clear the candle high; 1S=${sell1LabelY} 2S=${sell2LabelY} highY=${highY}`,
+    );
+    assert.ok(
+      sell1LabelY > sell2LabelY,
+      `lower-priced sell must stack nearer the candle; 1S=${sell1LabelY} 2S=${sell2LabelY}`,
+    );
+  } finally {
+    restore();
+  }
+});
+
+test("missing candle falls back to candidate price and still stacks", async () => {
+  const drawCalls = [];
+  const restore = installDom(drawCalls);
+  try {
+    const lc = await import(
+      "../node_modules/lightweight-charts/dist/lightweight-charts.development.mjs"
+    );
+    const model = await buildFixtureModel();
+    assert.ok(model.price.length >= 2, "fixture must provide at least two bars");
+
+    const { priceSeries, czscMarkerPrimitive } =
+      await buildChartWithPrimitives(lc);
+    // 最后一根用 whitespace（只有 time，无 high/low）占位：时间轴上有该点，
+    // 但 barByTime 不会索引它，触发候选点价格回退路径。
+    const orphan = model.price.at(-1);
+    const orphanTime = parseMarketTimestamp(orphan.timestamp);
+    priceSeries.setData(
+      model.price.slice(0, -1).map((point) => ({
+        time: parseMarketTimestamp(point.timestamp),
+        open: point.open,
+        high: point.high,
+        low: point.low,
+        close: point.close,
+      })).concat([{ time: orphanTime }]),
+    );
+    globalThis.__flushRaf();
+
+    const mid = (orphan.high + orphan.low) / 2;
+    czscMarkerPrimitive.setMarkers([
+      { time: orphanTime, price: orphan.low, side: "buy", label: "2B" },
+      { time: orphanTime, price: mid, side: "buy", label: "1B" },
+      { time: orphanTime, price: mid, side: "sell", label: "1S" },
+      { time: orphanTime, price: orphan.high, side: "sell", label: "2S" },
+    ]);
+    globalThis.__flushRaf();
+
+    // 回退锚点：买组排序后 items[0]=mid（价高），卖组 items[0]=mid（价低）。
+    const anchorY = priceSeries.priceToCoordinate(mid);
+    assert.ok(anchorY !== null, "fallback anchor price must be on-screen");
+
+    const findY = (style, text) =>
+      drawCalls.find(
+        (c) => c.method === "fillText" && c.style === style && c.args[0] === text,
+      )?.args[2];
+    const buy1LabelY = findY(BUY_MARKER_COLOR, "1B");
+    const buy2LabelY = findY(BUY_MARKER_COLOR, "2B");
+    const sell1LabelY = findY(SELL_MARKER_COLOR, "1S");
+    const sell2LabelY = findY(SELL_MARKER_COLOR, "2S");
+    for (const [name, value] of Object.entries({
+      buy1LabelY,
+      buy2LabelY,
+      sell1LabelY,
+      sell2LabelY,
+    })) {
+      assert.ok(typeof value === "number", `expected ${name} draw call y coordinate`);
+    }
+
+    // 买点整组在回退锚点之下并纵向错开；卖点整组在回退锚点之上并纵向错开。
+    assert.ok(
+      buy1LabelY > anchorY && buy2LabelY > buy1LabelY,
+      `buy stack must fall below fallback anchor; 1B=${buy1LabelY} 2B=${buy2LabelY} anchorY=${anchorY}`,
+    );
+    assert.ok(
+      sell1LabelY < anchorY && sell2LabelY < sell1LabelY,
+      `sell stack must rise above fallback anchor; 1S=${sell1LabelY} 2S=${sell2LabelY} anchorY=${anchorY}`,
+    );
+  } finally {
+    restore();
+  }
+});
+
+test("stacked markers on viewport extreme bars stay inside the canvas", async () => {
+  const drawCalls = [];
+  const restore = installDom(drawCalls);
+  try {
+    const lc = await import(
+      "../node_modules/lightweight-charts/dist/lightweight-charts.development.mjs"
+    );
+    const model = await buildFixtureModel();
+    assert.ok(model.price.length >= 2, "fixture must provide multiple bars");
+
+    const { priceSeries, czscMarkerPrimitive } =
+      await buildChartWithPrimitives(lc);
+    // 关闭默认比例边距，确保裁切回归只由 primitive 的 AutoScaleMargins 负责。
+    priceSeries.priceScale().applyOptions({
+      scaleMargins: { top: 0, bottom: 0 },
+    });
+    setPriceData(priceSeries, model);
+
+    const lowest = model.price.reduce((a, b) => (a.low <= b.low ? a : b));
+    const highest = model.price.reduce((a, b) => (a.high >= b.high ? a : b));
+    const lowTime = parseMarketTimestamp(lowest.timestamp);
+    const highTime = parseMarketTimestamp(highest.timestamp);
+
+    // 深度 3 的堆叠（约 85px）远超零边距视口，没有 autoscaleInfo 必被裁掉。
+    czscMarkerPrimitive.setMarkers([
+      { time: lowTime, price: lowest.low, side: "buy", label: "1B" },
+      { time: lowTime, price: lowest.low + 0.01, side: "buy", label: "2B" },
+      { time: lowTime, price: lowest.low + 0.02, side: "buy", label: "3B" },
+      { time: highTime, price: highest.high, side: "sell", label: "1S" },
+      { time: highTime, price: highest.high - 0.01, side: "sell", label: "2S" },
+      { time: highTime, price: highest.high - 0.02, side: "sell", label: "3S" },
+    ]);
+    globalThis.__flushRaf();
+
+    const info = czscMarkerPrimitive.autoscaleInfo(0, model.price.length);
+    assert.ok(info?.margins, "autoscaleInfo must provide pixel margins");
+    // 深度 3：ARROW_GAP + 3*(13+2+10) + 2*STACK_GAP = 2 + 75 + 8 = 85
+    assert.equal(info.margins.below, 85, "buy stack depth 3 needs 85px below");
+    assert.equal(info.margins.above, 85, "sell stack depth 3 needs 85px above");
+
+    const canvasHeight = 400; // installDom 固定 devicePixelRatio=1、容器高 400
+    const markerYs = drawCalls
+      .filter((c) => c.method === "fillText" && isMarkerText(c))
+      .map((c) => Number(c.args[2]));
+    assert.ok(markerYs.length >= 12, "expected arrows+labels for 6 markers");
+    for (const y of markerYs) {
+      assert.ok(
+        y >= 0 && y <= canvasHeight,
+        `stacked marker text must stay inside the canvas; y=${y}`,
+      );
+    }
+  } finally {
+    restore();
+  }
+});
+
+test("barByTime cache invalidates when high/low shifts cancel in sum", async () => {
+  const drawCalls = [];
+  const restore = installDom(drawCalls);
+  try {
+    const lc = await import(
+      "../node_modules/lightweight-charts/dist/lightweight-charts.development.mjs"
+    );
+    const model = await buildFixtureModel();
+    const anchor = model.price.at(-1);
+    assert.ok(anchor, "fixture must provide a marker anchor bar");
+
+    const { priceSeries, czscMarkerPrimitive } =
+      await buildChartWithPrimitives(lc);
+    setPriceData(priceSeries, model);
+    const time = parseMarketTimestamp(anchor.timestamp);
+
+    // 预热签名缓存（旧实现只累加 high+low，下面的对称偏移总和不变）。
+    const warm = czscMarkerPrimitive.resolveBarByTime().get(time);
+    assert.ok(warm, "anchor bar must be indexed");
+    assert.equal(warm.high, anchor.high);
+    assert.equal(warm.low, anchor.low);
+
+    const delta = 0.1;
+    const nextHigh = anchor.high + delta;
+    const nextLow = anchor.low - delta;
+    assert.equal(
+      nextHigh + nextLow,
+      anchor.high + anchor.low,
+      "test premise: high/low shift must cancel in sum",
+    );
+
+    // 保留其余 bar，只改最后一根极值；条数与时间戳不变。
+    priceSeries.setData(
+      model.price.slice(0, -1).map((point) => ({
+        time: parseMarketTimestamp(point.timestamp),
+        open: point.open,
+        high: point.high,
+        low: point.low,
+        close: point.close,
+      })).concat([
+        {
+          time,
+          open: anchor.open,
+          high: nextHigh,
+          low: nextLow,
+          close: anchor.close,
+        },
+      ]),
+    );
+    globalThis.__flushRaf();
+
+    const refreshed = czscMarkerPrimitive.resolveBarByTime().get(time);
+    assert.ok(refreshed, "anchor bar must remain indexed after extreme update");
+    assert.equal(
+      refreshed.high,
+      nextHigh,
+      "cache must rebuild when high rises even if high+low sum is unchanged",
+    );
+    assert.equal(
+      refreshed.low,
+      nextLow,
+      "cache must rebuild when low falls even if high+low sum is unchanged",
+    );
+
+    czscMarkerPrimitive.setMarkers([
+      { time, price: nextLow, side: "buy", label: "1B" },
+      { time, price: nextHigh, side: "sell", label: "1S" },
+    ]);
+    globalThis.__flushRaf();
+
+    const findY = (style, text) =>
+      drawCalls.find(
+        (c) => c.method === "fillText" && c.style === style && c.args[0] === text,
+      )?.args[2];
+    const highY = priceSeries.priceToCoordinate(nextHigh);
+    const lowY = priceSeries.priceToCoordinate(nextLow);
+    const buyArrowY = findY(BUY_MARKER_COLOR, "↑");
+    const sellArrowY = findY(SELL_MARKER_COLOR, "↓");
+    assert.ok(highY !== null && lowY !== null, "updated extremes must be on-screen");
+    assert.ok(typeof buyArrowY === "number", "expected buy arrow draw");
+    assert.ok(typeof sellArrowY === "number", "expected sell arrow draw");
+    assert.ok(
+      buyArrowY > lowY,
+      `buy arrow must clear the updated low; arrowY=${buyArrowY} lowY=${lowY}`,
+    );
+    assert.ok(
+      sellArrowY < highY,
+      `sell arrow must clear the updated high; arrowY=${sellArrowY} highY=${highY}`,
+    );
   } finally {
     restore();
   }
