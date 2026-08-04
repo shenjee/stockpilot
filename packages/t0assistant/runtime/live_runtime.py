@@ -26,8 +26,11 @@ from .live_market_view import (
     LiveMarketViewError,
     MarketClosedReason,
     PollingProfile,
+    benchmark_probe_evidence,
+    benchmark_probe_target_date,
     day_switch_evidence_date,
     day_switch_target_date,
+    is_awaiting_benchmark_probe,
     is_awaiting_day_switch,
     resolve_live_market_context,
     resolve_market_closed_reason,
@@ -50,6 +53,12 @@ from .pipeline import (
 
 _CLOSE_RECONCILE_MAX_ATTEMPTS = 5
 _CLOSE_RECONCILE_RETRY_INTERVAL = timedelta(seconds=30)
+
+# --- Benchmark probe constants (#140) ---
+
+_BENCHMARK_PROBE_SYMBOL = "sh.000001"
+_BENCHMARK_PROBE_MAX_FAILURES = 5
+_BENCHMARK_PROBE_RETRY_INTERVAL = timedelta(seconds=30)
 
 
 class LiveBranchDataPort(LiveInitialInputPort, Protocol):
@@ -113,6 +122,10 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
         self._close_reconcile_status: CloseReconcileStatus = "not_started"
         self._close_reconcile_attempts = 0
         self._close_reconcile_next_retry_at: datetime | None = None
+        # Benchmark probe fields (#140)
+        self._benchmark_probe_failures = 0
+        self._benchmark_probe_next_retry_at: datetime | None = None
+        self._benchmark_probe_confirmed = False
 
     def set_on_projection_refresh(
         self,
@@ -163,6 +176,9 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             self._close_reconcile_status = "not_started"
             self._close_reconcile_attempts = 0
             self._close_reconcile_next_retry_at = None
+            self._benchmark_probe_failures = 0
+            self._benchmark_probe_next_retry_at = None
+            self._benchmark_probe_confirmed = False
         return prepared
 
     def advance_view_status(
@@ -185,6 +201,9 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             close_reconcile_status = self._close_reconcile_status
             close_reconcile_next_retry_at = self._close_reconcile_next_retry_at
             calendar = self._calendar
+            benchmark_probe_failures = self._benchmark_probe_failures
+            benchmark_probe_next_retry_at = self._benchmark_probe_next_retry_at
+            benchmark_probe_confirmed = self._benchmark_probe_confirmed
         awaiting = (
             calendar is not None
             and is_awaiting_day_switch(
@@ -195,6 +214,21 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
                 calendar_status=calendar_status,
             )
         )
+        benchmark_probe_active = (
+            calendar is not None
+            and not benchmark_probe_confirmed
+            and benchmark_probe_failures < _BENCHMARK_PROBE_MAX_FAILURES
+            and (
+                benchmark_probe_next_retry_at is None
+                or observed_at >= benchmark_probe_next_retry_at
+            )
+            and is_awaiting_benchmark_probe(
+                calendar,
+                observed_at=observed_at,
+                pinned_trade_date=session.trade_date,
+                market=market,
+            )
+        )
         return resolve_polling_profile(
             market_phase=market_phase,
             calendar_status=calendar_status,
@@ -203,6 +237,7 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             calendar=calendar,
             market=market,
             awaiting_day_switch=awaiting,
+            benchmark_probe_active=benchmark_probe_active,
             close_reconcile_status=close_reconcile_status,
             close_reconcile_retry_due=(
                 close_reconcile_next_retry_at is None
@@ -276,6 +311,10 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
         latest_data_time: datetime | None,
     ) -> LiveRefreshResult:
         epoch_at_start = self.market_epoch
+        # Benchmark probe (#140): break Calendar-unknown self-lock before
+        # phase advancement so the refreshed Calendar is visible to the
+        # resolver on this same cycle.
+        self._run_benchmark_probe_if_due(spec, observed_at)
         # Phase is Calendar/wall-clock state: advance it even when every market
         # branch later fails, and claim the transition under the lock so only
         # one worker publishes the full snapshot for that transition.
@@ -457,6 +496,102 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
                 # phase candidate built before sibling merges.
                 handler(candidate)
 
+    def _run_benchmark_probe_if_due(
+        self,
+        spec: SessionSpec,
+        observed_at: datetime,
+    ) -> None:
+        """Break the Calendar-unknown self-lock via ``sh.000001`` evidence (#140).
+
+        Loads the benchmark index quote/1m/5m for today and, if valid post-open
+        evidence is found, runtime-confirms today as open on the shared Calendar
+        and lifts ``_calendar_status`` to ``available``.  This lets the normal
+        day-switch path take over on the same or next refresh cycle.
+
+        Bounded retry: after ``_BENCHMARK_PROBE_MAX_FAILURES`` consecutive
+        failures (no evidence or provider error), the probe stops and the
+        polling profile falls back to ``idle``.
+        """
+
+        with self._lock:
+            if (
+                self._session is None
+                or self._market is None
+                or self._calendar is None
+            ):
+                return
+            if self._benchmark_probe_confirmed:
+                return
+            if self._benchmark_probe_failures >= _BENCHMARK_PROBE_MAX_FAILURES:
+                return
+            if (
+                self._benchmark_probe_next_retry_at is not None
+                and observed_at < self._benchmark_probe_next_retry_at
+            ):
+                return
+            calendar = self._calendar
+            market = self._market
+            pinned_trade_date = self._session.trade_date
+
+        if not is_awaiting_benchmark_probe(
+            calendar,
+            observed_at=observed_at,
+            pinned_trade_date=pinned_trade_date,
+            market=market,
+        ):
+            return
+
+        today = observed_at.date()
+        benchmark_spec = replace(spec, symbol=_BENCHMARK_PROBE_SYMBOL)
+
+        try:
+            quote_rows = tuple(
+                self._source.load_refresh_quotes(
+                    benchmark_spec,
+                    trade_date=today,
+                )
+            )
+            bars_1m = tuple(
+                self._source.load_refresh_bars(
+                    benchmark_spec,
+                    timeframe="1m",
+                    trade_date=today,
+                )
+            )
+            bars_5m = tuple(
+                self._source.load_refresh_bars(
+                    benchmark_spec,
+                    timeframe="5m",
+                    trade_date=today,
+                )
+            )
+        except BaseException:
+            with self._lock:
+                self._benchmark_probe_failures += 1
+                self._benchmark_probe_next_retry_at = (
+                    observed_at + _BENCHMARK_PROBE_RETRY_INTERVAL
+                )
+            return
+
+        if benchmark_probe_evidence(
+            quote_rows,
+            bars_1m,
+            bars_5m,
+            target_trade_date=today,
+            observed_at=observed_at,
+        ):
+            with self._lock:
+                if not self._benchmark_probe_confirmed:
+                    calendar.confirm_open_day(today)
+                    self._calendar_status = "available"
+                    self._benchmark_probe_confirmed = True
+        else:
+            with self._lock:
+                self._benchmark_probe_failures += 1
+                self._benchmark_probe_next_retry_at = (
+                    observed_at + _BENCHMARK_PROBE_RETRY_INTERVAL
+                )
+
     def _load_probe_rows(
         self,
         spec: SessionSpec,
@@ -626,6 +761,10 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             self._close_reconcile_status = "not_started"
             self._close_reconcile_attempts = 0
             self._close_reconcile_next_retry_at = None
+            # Reset benchmark probe state for the new session day (#140).
+            self._benchmark_probe_failures = 0
+            self._benchmark_probe_next_retry_at = None
+            self._benchmark_probe_confirmed = False
 
         return replace(candidate, market_epoch=new_epoch)
 
@@ -849,6 +988,9 @@ def _live_view_extras(
         session = input_port._session
         close_reconcile_status = input_port._close_reconcile_status
         close_reconcile_next_retry_at = input_port._close_reconcile_next_retry_at
+        benchmark_probe_failures = input_port._benchmark_probe_failures
+        benchmark_probe_next_retry_at = input_port._benchmark_probe_next_retry_at
+        benchmark_probe_confirmed = input_port._benchmark_probe_confirmed
     effective_pinned = (
         pinned_trade_date
         if pinned_trade_date is not None
@@ -871,6 +1013,21 @@ def _live_view_extras(
         )
     else:
         awaiting = awaiting_day_switch
+    benchmark_probe_active = (
+        calendar is not None
+        and not benchmark_probe_confirmed
+        and benchmark_probe_failures < _BENCHMARK_PROBE_MAX_FAILURES
+        and (
+            benchmark_probe_next_retry_at is None
+            or observed_at >= benchmark_probe_next_retry_at
+        )
+        and is_awaiting_benchmark_probe(
+            calendar,
+            observed_at=observed_at,
+            pinned_trade_date=effective_pinned,
+            market=effective_market,
+        )
+    )
     return {
         "polling_profile": resolve_polling_profile(
             market_phase=market_phase,  # type: ignore[arg-type]
@@ -880,6 +1037,7 @@ def _live_view_extras(
             calendar=calendar,
             market=effective_market,
             awaiting_day_switch=awaiting,
+            benchmark_probe_active=benchmark_probe_active,
             close_reconcile_status=close_reconcile_status,
             close_reconcile_retry_due=(
                 close_reconcile_next_retry_at is None
