@@ -274,6 +274,9 @@ async function buildChartWithPrimitives(lc) {
   const chart = createChart(container, {
     width: 800,
     height: 400,
+    // Production hides the time axis on the price pane. In LC 5.x this makes
+    // timeScale().width() return 0 even though the drawable pane is 800px wide.
+    timeScale: { visible: false },
   });
   globalThis.__flushRaf();
 
@@ -364,8 +367,13 @@ test("real LC + production primitive: czsc marker draw renders buy arrow and 1B 
       "fixture must yield a 1B buy marker",
     );
 
-    const { priceSeries, czscMarkerPrimitive } = await buildChartWithPrimitives(lc);
+    const { chart, priceSeries, czscMarkerPrimitive } = await buildChartWithPrimitives(lc);
     setPriceData(priceSeries, model);
+    assert.equal(
+      chart.timeScale().width(),
+      0,
+      "regression setup must match the hidden production time axis",
+    );
     czscMarkerPrimitive.setMarkers(buyMarkers);
     globalThis.__flushRaf();
 
@@ -419,6 +427,47 @@ test("real LC + production primitive: czsc marker draw renders sell arrow and 1S
       markerPaths.length > 0,
       "CzscMarkerPrimitive.draw must draw arrow paths for sell markers",
     );
+  } finally {
+    restore();
+  }
+});
+
+test("hidden time axis: structural candidates render Buy? and Sell? labels", async () => {
+  const drawCalls = [];
+  const restore = installDom(drawCalls);
+  try {
+    const lc = await import(
+      "../node_modules/lightweight-charts/dist/lightweight-charts.development.mjs"
+    );
+    const model = await buildFixtureModel();
+    const anchor = model.price.at(-1);
+    assert.ok(anchor, "fixture must provide a marker anchor bar");
+
+    const { chart, priceSeries, czscMarkerPrimitive } =
+      await buildChartWithPrimitives(lc);
+    setPriceData(priceSeries, model);
+    assert.equal(chart.timeScale().width(), 0);
+    czscMarkerPrimitive.setMarkers([
+      {
+        time: parseMarketTimestamp(anchor.timestamp),
+        price: anchor.low,
+        side: "buy",
+        label: "Buy?",
+      },
+      {
+        time: parseMarketTimestamp(anchor.timestamp),
+        price: anchor.high,
+        side: "sell",
+        label: "Sell?",
+      },
+    ]);
+    globalThis.__flushRaf();
+
+    const labels = drawCalls
+      .filter((call) => call.method === "fillText" && isMarkerText(call))
+      .map((call) => String(call.args[0]));
+    assert.ok(labels.includes("Buy?"), `expected Buy? label; got ${JSON.stringify(labels)}`);
+    assert.ok(labels.includes("Sell?"), `expected Sell? label; got ${JSON.stringify(labels)}`);
   } finally {
     restore();
   }

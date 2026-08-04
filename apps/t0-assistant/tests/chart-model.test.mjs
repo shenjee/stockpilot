@@ -349,7 +349,7 @@ test("5 minute BOLL is consumed from contract and preserves null warmup", () => 
   assert.deepEqual(intraday.boll, { upper: [], middle: [], lower: [] });
 });
 
-test("CZSC candidate points map to 1B/1S/2B/2S/3B/3S and preserve price", () => {
+test("CZSC candidate points map standard and structural labels while preserving price", () => {
   const layered = structuredClone(fixture);
   layered.chan_analysis = {
     candidate_buy_points: [
@@ -361,16 +361,19 @@ test("CZSC candidate points map to 1B/1S/2B/2S/3B/3S and preserve price", () => 
     candidate_sell_points: [
       { id: "sp-001", point_type: "first_sell", timestamp: "2026-07-22 10:00:00", price: 10.5, reference_id: "s3", confirmed: true, reason: "test" },
       { id: "sp-002", point_type: "unknown_type", timestamp: "2026-07-22 10:05:00", price: 10.3, reference_id: "s3", confirmed: false, reason: "test" },
+      { id: "sp-003", point_type: "structure_sell_candidate", timestamp: "2026-07-22 10:10:00", price: 10.6, reference_id: "s4", confirmed: false, reason: "test" },
     ],
   };
 
   const model = createChartGroupModel(layered, ChartGroupKind.FIVE_MINUTE);
   // 09:55 同时 1B + 2B 同价合并；10:05 只有 3B（unknown_type 卖点被忽略）；
-  // 10:10 的 structure_buy_candidate 不渲染。每个标记保留契约价格。
+  // 10:10 的结构候选点与 Chan Viewer 一致显示 Buy?/Sell?，并保留各自价格。
   assert.deepEqual(model.czscMarkers, [
     { timestamp: "2026-07-22 09:55:00", side: "buy", price: 10.1, label: "1B, 2B" },
     { timestamp: "2026-07-22 10:00:00", side: "sell", price: 10.5, label: "1S" },
     { timestamp: "2026-07-22 10:05:00", side: "buy", price: 10.3, label: "3B" },
+    { timestamp: "2026-07-22 10:10:00", side: "buy", price: 10.4, label: "Buy?" },
+    { timestamp: "2026-07-22 10:10:00", side: "sell", price: 10.6, label: "Sell?" },
   ]);
 });
 

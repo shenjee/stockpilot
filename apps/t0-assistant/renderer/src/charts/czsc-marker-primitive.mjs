@@ -32,9 +32,6 @@ class CzscMarkerRenderer {
       return;
     }
     const timeScale = this.chart.timeScale();
-    if (timeScale.width() <= 0) {
-      return;
-    }
 
     target.useBitmapCoordinateSpace((scope) => {
       const ctx = scope.context;

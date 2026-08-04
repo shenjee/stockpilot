@@ -298,7 +298,8 @@ export function createChartGroupModel(snapshot, kind, layers = {}, trades = []) 
           timestampSet,
         )
       : [];
-  // CZSC 买卖点只映射 1B/1S/2B/2S/3B/3S；开关只控制显示，不影响 CZSC 数据。
+  // CZSC 买卖点映射标准 1B/1S/2B/2S/3B/3S 和结构候选 Buy?/Sell?；
+  // 显示投影不修改后端 CZSC 数据。
   const czscMarkers =
     kind === FIVE_MINUTE
       ? normalizeCzscMarkers(
@@ -495,8 +496,8 @@ function normalizePivotZones(zones, timestampSet) {
     }));
 }
 
-// 按 chantheory point_type 映射 1B/1S/2B/2S/3B/3S（与 packages/chantheory/plotting.py 一致）。
-// structure_*_candidate 等非标准类型不渲染，避免产生歧义或建议性标记。
+// 按 chantheory point_type 映射 1B/1S/2B/2S/3B/3S，并与 Chan Viewer 一致
+// 将纯结构候选点显示为 Buy?/Sell?。问号明确表达“候选、未确认”，不是交易建议。
 function czscPointLabel(pointType) {
   switch (pointType) {
     case "first_buy":
@@ -511,6 +512,10 @@ function czscPointLabel(pointType) {
       return "2S";
     case "third_sell":
       return "3S";
+    case "structure_buy_candidate":
+      return "Buy?";
+    case "structure_sell_candidate":
+      return "Sell?";
     default:
       return null;
   }
