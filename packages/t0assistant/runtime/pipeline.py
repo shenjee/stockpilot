@@ -119,6 +119,53 @@ class PipelineResult:
             "warnings": list(self.warnings),
         }
 
+    @classmethod
+    def degraded(
+        cls,
+        *,
+        session: MarketSession,
+        symbol: str,
+        target_time: datetime,
+    ) -> PipelineResult:
+        """Create a degraded result with empty data and a warning.
+
+        Used when the pipeline projection fails after a calendar-driven day
+        switch (#133).  The trade date and symbol are set correctly so the
+        workbench can display the new trading day; all market data and
+        indicators are empty.  Chan analysis is produced from an empty bar
+        prefix so the payload still satisfies the frozen schema contract.  A
+        structured warning explains the degradation so the renderer and
+        downstream consumers can surface it.
+        """
+
+        try:
+            chan_analysis = _default_analyze_5m((), symbol)
+        except Exception:
+            chan_analysis = {}
+        return cls(
+            target_time=target_time,
+            symbol=symbol,
+            trade_date=session.trade_date,
+            bars_1m=(),
+            bars_5m=(),
+            closed_5m_prefix=(),
+            daily_bars=(),
+            daily_bar=None,
+            quote=None,
+            indicators_1m=_empty_1m_indicators(),
+            indicators_5m=_empty_5m_indicators(),
+            chan_analysis=chan_analysis,
+            warnings=[
+                {
+                    "code": "degraded_projection",
+                    "message": (
+                        "Pipeline projection failed after day switch; "
+                        "showing empty market data for the new trading day."
+                    ),
+                }
+            ],
+        )
+
 
 def _default_analyze_5m(
     bars: Sequence[Mapping[str, Any]],

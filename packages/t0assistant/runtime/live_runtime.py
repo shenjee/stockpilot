@@ -46,6 +46,7 @@ from .pipeline import (
     CzscAnalyzerPort,
     MarketInputPort,
     PipelineMarketInput,
+    PipelineResult,
     WorkbenchPipeline,
 )
 
@@ -560,6 +561,19 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
         market_input: PipelineMarketInput,
         epoch_at_start: int,
     ) -> LiveSnapshotCandidate | None:
+        """Commit the calendar-driven day switch, then best-effort project.
+
+        The effective trade date, session, epoch, and all derived state are
+        committed atomically from the calendar + wall clock **before** any
+        projection computation.  This ensures that indicator, CZSC analyzer,
+        or projection-building failures can never roll back the date update
+        (#133).  When the projection fails, a degraded candidate with empty
+        data and a warning is published; the session stays on the new trading
+        day and subsequent refreshes use the new date.
+        """
+
+        # Step 1: Calendar + wall clock atomically commits the effective trade
+        # date, session, epoch, and derived state.
         with self._lock:
             if (
                 self._market_epoch != epoch_at_start
@@ -567,9 +581,20 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
                 or prepared.market_session.trade_date <= self._session.trade_date
             ):
                 return None
-            pinned_epoch = self._market_epoch
-            pinned_trade_date = self._session.trade_date
+            self._market_epoch += 1
+            new_epoch = self._market_epoch
+            self._session = prepared.market_session
+            self._market_input = market_input
+            self._calendar_status = prepared.calendar_status
+            self._market_phase = prepared.market_phase
+            self._close_reconcile_status = "not_started"
+            self._close_reconcile_attempts = 0
+            self._close_reconcile_next_retry_at = None
 
+        # Step 2: Best-effort projection.  If the pipeline fails (indicator
+        # calculation, CZSC analyzer, or projection building), publish a
+        # degraded candidate so the workbench shows the new trading day with
+        # empty data and a warning.
         preview_at = prepared.target_time
         try:
             result = WorkbenchPipeline(
@@ -578,7 +603,11 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
                 analyzer=self._analyzer,
             ).preview(preview_at)
         except BaseException:
-            return None
+            result = PipelineResult.degraded(
+                session=prepared.market_session,
+                symbol=market_input.symbol,
+                target_time=preview_at,
+            )
 
         candidate = LiveSnapshotCandidate(
             session_id=spec.session_id,
@@ -598,24 +627,6 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
                 awaiting_day_switch=False,
             ),
         )
-
-        with self._lock:
-            if (
-                self._market_epoch != pinned_epoch
-                or self._session is None
-                or self._session.trade_date != pinned_trade_date
-                or prepared.market_session.trade_date <= pinned_trade_date
-            ):
-                return None
-            self._market_epoch += 1
-            new_epoch = self._market_epoch
-            self._session = prepared.market_session
-            self._market_input = market_input
-            self._calendar_status = prepared.calendar_status
-            self._market_phase = prepared.market_phase
-            self._close_reconcile_status = "not_started"
-            self._close_reconcile_attempts = 0
-            self._close_reconcile_next_retry_at = None
 
         return replace(candidate, market_epoch=new_epoch)
 

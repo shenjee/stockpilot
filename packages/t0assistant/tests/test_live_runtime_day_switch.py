@@ -813,7 +813,16 @@ class DaySwitchFailureAtomicityTests(unittest.TestCase):
             trade_date=None,
         )
 
-    def test_preview_failure_does_not_commit_partial_day_switch(self) -> None:
+    def test_preview_failure_still_commits_day_switch(self) -> None:
+        """Projection failure must not prevent the calendar-driven day switch.
+
+        The effective trade date, session, and epoch are committed atomically
+        from the calendar + wall clock before any projection computation.
+        When the pipeline projection fails (indicator calculation, CZSC
+        analyzer, or projection building), a degraded candidate with empty
+        data and a warning is published, but the session stays on the new
+        trading day (#133).
+        """
         source = _SwitchableSource()
         switched: list[LiveSnapshotCandidate] = []
         port = BranchingLiveInput(
@@ -842,10 +851,21 @@ class DaySwitchFailureAtomicityTests(unittest.TestCase):
                 latest_data_time=None,
             )
 
-        self.assertEqual(port.market_epoch, 0)
-        self.assertEqual(switched, [])
+        # Day switch completed despite projection failure.
+        self.assertEqual(port.market_epoch, 1)
+        self.assertEqual(len(switched), 1)
+        self.assertEqual(
+            switched[0].pipeline_result.trade_date.isoformat(),
+            "2026-07-27",
+        )
+        # Degraded projection has empty data and a warning.
+        self.assertEqual(switched[0].pipeline_result.bars_1m, ())
+        self.assertEqual(switched[0].pipeline_result.quote, None)
+        warning_codes = [w["code"] for w in switched[0].pipeline_result.warnings]
+        self.assertIn("degraded_projection", warning_codes)
         self.assertEqual(source.prepare_calls, 2)
 
+        # Second refresh: already on Monday, no additional switch.
         port.refresh(
             LiveRefreshKind.QUOTE,
             self._spec(),
@@ -854,10 +874,6 @@ class DaySwitchFailureAtomicityTests(unittest.TestCase):
         )
         self.assertEqual(len(switched), 1)
         self.assertEqual(port.market_epoch, 1)
-        self.assertEqual(
-            switched[0].pipeline_result.trade_date.isoformat(),
-            "2026-07-27",
-        )
 
 
 class CloseReconciliationRetryTests(unittest.TestCase):
