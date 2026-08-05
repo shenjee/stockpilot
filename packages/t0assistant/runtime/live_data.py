@@ -119,6 +119,7 @@ class LiveDataPreparator(LiveInitialInputPort):
         spec: SessionSpec,
         *,
         minimum_preheat_5m: int,
+        target_trade_date: date | None = None,
     ) -> PreparedLiveWarmup:
         if not isinstance(spec, SessionSpec):
             raise TypeError("spec must be a SessionSpec")
@@ -135,34 +136,62 @@ class LiveDataPreparator(LiveInitialInputPort):
         market_candidate_date = market_candidate_session.trade_date
 
         quote_snapshots = self._load_quote_snapshots(code=code, market=market)
-        (
-            effective_session,
-            bars_1m,
-            official_5m,
-            daily_history,
-            target_time,
-        ) = self._resolve_effective_security_day(
-            code=code,
-            market=market,
-            start_date=market_candidate_date,
-            start_session=market_candidate_session,
-            observed_now=observed_now,
-            quote_snapshots=quote_snapshots,
-            session_validator=session_validator,
-        )
-        if target_time is None:
-            raise LiveDataUnavailableError(
-                "live initial load requires a quote or intraday bars for the "
-                f"effective trade_date {market_candidate_date.isoformat()}"
+        if target_trade_date is not None:
+            # Day-switch mode: force the session to the calendar target day.
+            # Market data is loaded best-effort so a suspended security or a
+            # failed provider request cannot block the day switch (#133).
+            (
+                effective_session,
+                bars_1m,
+                official_5m,
+                daily_history,
+                target_time,
+            ) = self._prepare_forced_target_day(
+                code=code,
+                market=market,
+                target_trade_date=target_trade_date,
+                observed_now=observed_now,
+                quote_snapshots=quote_snapshots,
+                session_validator=session_validator,
             )
+        else:
+            (
+                effective_session,
+                bars_1m,
+                official_5m,
+                daily_history,
+                target_time,
+            ) = self._resolve_effective_security_day(
+                code=code,
+                market=market,
+                start_date=market_candidate_date,
+                start_session=market_candidate_session,
+                observed_now=observed_now,
+                quote_snapshots=quote_snapshots,
+                session_validator=session_validator,
+            )
+            if target_time is None:
+                raise LiveDataUnavailableError(
+                    "live initial load requires a quote or intraday bars for the "
+                    f"effective trade_date {market_candidate_date.isoformat()}"
+                )
 
-        preheat_bars = self._load_preheat_5m(
-            code=code,
-            market=market,
-            session=effective_session,
-            minimum_preheat_5m=minimum_preheat_5m,
-            session_validator=session_validator,
-        )
+        if target_trade_date is not None:
+            preheat_bars = self._load_preheat_5m_best_effort(
+                code=code,
+                market=market,
+                session=effective_session,
+                minimum_preheat_5m=minimum_preheat_5m,
+                session_validator=session_validator,
+            )
+        else:
+            preheat_bars = self._load_preheat_5m(
+                code=code,
+                market=market,
+                session=effective_session,
+                minimum_preheat_5m=minimum_preheat_5m,
+                session_validator=session_validator,
+            )
         previous_close = _derive_previous_close(daily_history, preheat_bars)
         symbol_availability = assess_symbol_availability(
             market_candidate_trade_date=market_candidate_date,
@@ -384,6 +413,100 @@ class LiveDataPreparator(LiveInitialInputPort):
                 target_time,
             )
         return start_session, empty_bars, empty_bars, empty_daily, None
+
+    def _prepare_forced_target_day(
+        self,
+        *,
+        code: str,
+        market: str,
+        target_trade_date: date,
+        observed_now: datetime,
+        quote_snapshots: tuple[Mapping[str, Any], ...],
+        session_validator: Callable[[], bool] | None,
+    ) -> tuple[
+        Any,
+        tuple[Mapping[str, Any], ...],
+        tuple[Mapping[str, Any], ...],
+        tuple[Mapping[str, Any], ...],
+        datetime,
+    ]:
+        """Load data for a forced target trade date (day-switch mode).
+
+        Unlike :meth:`_resolve_effective_security_day`, this never falls back
+        to a prior day and never raises for missing intraday data.  A suspended
+        security simply yields empty bars / quotes with ``target_time`` set to
+        the wall clock clamped to the session (#133).
+        """
+
+        effective_session = self._calendar.require_session(
+            target_trade_date, market
+        )
+        trade_date_str = target_trade_date.isoformat()
+        bar_observed_at = _bar_filter_observed_at(observed_now, target_trade_date)
+        bars_1m = self._load_target_day_bars(
+            code=code,
+            market=market,
+            trade_date=trade_date_str,
+            timeframe="1m",
+            session_validator=session_validator,
+            observed_at=bar_observed_at,
+        )
+        official_5m = self._load_target_day_bars(
+            code=code,
+            market=market,
+            trade_date=trade_date_str,
+            timeframe="5m",
+            session_validator=session_validator,
+            observed_at=bar_observed_at,
+        )
+        target_time = _select_target_time(
+            observed_now=observed_now,
+            trade_date=target_trade_date,
+            session_end=effective_session.end,
+            bars_1m=bars_1m,
+            official_5m=official_5m,
+            quote_snapshots=quote_snapshots,
+        )
+        if target_time is None:
+            # No intraday evidence (e.g. suspended stock).  Fall back to the
+            # wall clock clamped to the session so the pipeline can still
+            # produce a projection from preheat / daily history alone.
+            target_time = min(observed_now, effective_session.end)
+        daily_history = self._load_daily_history(
+            code=code,
+            market=market,
+            trade_date=trade_date_str,
+            session_trade_date=target_trade_date,
+            session_validator=session_validator,
+        )
+        return effective_session, bars_1m, official_5m, daily_history, target_time
+
+    def _load_preheat_5m_best_effort(
+        self,
+        *,
+        code: str,
+        market: str,
+        session: Any,
+        minimum_preheat_5m: int,
+        session_validator: Callable[[], bool] | None,
+    ) -> tuple[Mapping[str, Any], ...]:
+        """Best-effort preheat loading for day-switch mode (#133).
+
+        Returns whatever closed 5m preheat bars can be loaded.  Unlike
+        :meth:`_load_preheat_5m`, this never raises ``LiveDataUnavailableError``
+        so a provider failure cannot block the day switch.
+        """
+
+        try:
+            return self._load_preheat_5m(
+                code=code,
+                market=market,
+                session=session,
+                minimum_preheat_5m=minimum_preheat_5m,
+                session_validator=session_validator,
+            )
+        except LiveDataError:
+            return ()
 
     def _load_intraday_discovery_range(
         self,

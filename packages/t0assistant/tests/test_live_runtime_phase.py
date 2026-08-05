@@ -41,7 +41,7 @@ class _PhaseSource:
         self.session = self.context.require_session("2026-07-24", "sh")
         self.fail_reads = False
 
-    def prepare(self, spec, *, minimum_preheat_5m):
+    def prepare(self, spec, *, minimum_preheat_5m, target_trade_date=None):
         market_input = PipelineMarketInput(
             symbol=spec.symbol,
             trade_date=date(2026, 7, 24),

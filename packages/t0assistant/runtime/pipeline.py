@@ -17,7 +17,13 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any, Protocol
 
-from packages.chantheory import analyze
+from packages.chantheory import (
+    ENGINE_NAME,
+    PINNED_ENGINE_VERSION,
+    AnalysisResult,
+    analyze,
+    get_default_parameters,
+)
 from packages.indicators import (
     calculate_five_minute_indicators,
     calculate_one_minute_indicators,
@@ -119,6 +125,57 @@ class PipelineResult:
             "warnings": list(self.warnings),
         }
 
+    @classmethod
+    def degraded(
+        cls,
+        *,
+        session: MarketSession,
+        symbol: str,
+        target_time: datetime,
+    ) -> PipelineResult:
+        """Create a degraded result with empty data and a warning.
+
+        Used when the pipeline projection fails after a calendar-driven day
+        switch (#133).  The trade date and symbol are set correctly so the
+        workbench can display the new trading day; all market data and
+        indicators are empty.  Chan analysis is produced from an empty bar
+        prefix so the payload still satisfies the frozen schema contract.  A
+        structured warning explains the degradation so the renderer and
+        downstream consumers can surface it.
+        """
+
+        try:
+            chan_analysis = _default_analyze_5m((), symbol)
+        except Exception:
+            chan_analysis = _empty_chan_analysis(symbol)
+        return cls(
+            target_time=target_time,
+            symbol=symbol,
+            trade_date=session.trade_date,
+            bars_1m=(),
+            bars_5m=(),
+            closed_5m_prefix=(),
+            daily_bars=(),
+            daily_bar=None,
+            quote=None,
+            indicators_1m=_empty_1m_indicators(),
+            indicators_5m=_empty_5m_indicators(),
+            chan_analysis=chan_analysis,
+            warnings=[
+                {
+                    "warning_code": "degraded_projection",
+                    "severity": "warning",
+                    "message": (
+                        "Pipeline projection failed after day switch; "
+                        "showing empty market data for the new trading day."
+                    ),
+                    "affected_capability": "intraday_chart",
+                    "affected_field": "market",
+                    "details": {},
+                }
+            ],
+        )
+
 
 def _default_analyze_5m(
     bars: Sequence[Mapping[str, Any]],
@@ -131,6 +188,25 @@ def _default_analyze_5m(
         symbol=symbol,
         timeframe="5m",
         source="tencent",
+    )
+    return result.to_dict()
+
+
+def _empty_chan_analysis(symbol: str) -> dict[str, Any]:
+    """Schema-valid empty chan analysis when the analyzer cannot run.
+
+    All array fields default to empty lists and ``meta`` to an empty dict,
+    satisfying the frozen ``chan_analysis`` contract without relying on the
+    CZSC engine.
+    """
+
+    result = AnalysisResult(
+        symbol=symbol,
+        timeframe="5m",
+        source="tencent",
+        engine=ENGINE_NAME,
+        engine_version=PINNED_ENGINE_VERSION,
+        parameters=get_default_parameters(),
     )
     return result.to_dict()
 

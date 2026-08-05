@@ -31,7 +31,11 @@ from packages.t0assistant.runtime.live_session import (
     LiveSnapshotCandidate,
     PreparedLiveWarmup,
 )
-from packages.t0assistant.runtime.pipeline import PipelineMarketInput, WorkbenchPipeline
+from packages.t0assistant.runtime.pipeline import (
+    PipelineMarketInput,
+    PipelineResult,
+    WorkbenchPipeline,
+)
 
 
 def _bar(timestamp: str, close: float = 10.0, *, closed: bool = True) -> dict[str, Any]:
@@ -95,7 +99,7 @@ class _SwitchableSource:
             quote_snapshots=[_quote("2026-07-27 09:31:00", 10.2)],
         )
 
-    def prepare(self, spec, *, minimum_preheat_5m):
+    def prepare(self, spec, *, minimum_preheat_5m, target_trade_date=None):
         self.prepare_calls += 1
         if self.prepare_calls == 1:
             market_input = self._friday_input(spec)
@@ -202,6 +206,39 @@ class PollingProfileTests(unittest.TestCase):
             )
         )
 
+    def test_calendar_unavailable_keeps_polling_reduced(self) -> None:
+        """Calendar unavailable must NOT stop market-data polling (#133 P1).
+
+        When the calendar cannot authoritatively resolve the day, the view
+        keeps refreshing quote / 1m / 5m at a reduced cadence instead of
+        going idle.
+        """
+        self.assertEqual(
+            resolve_polling_profile(
+                market_phase="unknown",
+                calendar_status="unavailable",
+                pinned_trade_date=date(2026, 7, 24),
+                observed_at=datetime(2026, 7, 27, 10, 0),
+                calendar=None,
+                market="sh",
+            ),
+            "reduced",
+        )
+
+    def test_calendar_unavailable_with_known_phase_still_polls(self) -> None:
+        """Even when phase is known but calendar is unavailable, keep polling."""
+        self.assertEqual(
+            resolve_polling_profile(
+                market_phase="pre_open",
+                calendar_status="unavailable",
+                pinned_trade_date=date(2026, 7, 27),
+                observed_at=datetime(2026, 7, 27, 9, 0),
+                calendar=None,
+                market="sh",
+            ),
+            "reduced",
+        )
+
 
 class AtomicDaySwitchTests(unittest.TestCase):
     def _spec(self) -> SessionSpec:
@@ -213,14 +250,14 @@ class AtomicDaySwitchTests(unittest.TestCase):
             trade_date=None,
         )
 
-    def test_auction_quote_before_0930_does_not_switch(self) -> None:
-        class _AuctionSource(_SwitchableSource):
-            def load_refresh_quotes(self, spec, *, trade_date):
-                if str(trade_date) == "2026-07-27":
-                    return (_quote("2026-07-27 09:20:00", 10.1),)
-                return ()
+    def test_before_market_open_does_not_switch(self) -> None:
+        """Wall clock before 09:30 must not trigger a day switch.
 
-        source = _AuctionSource()
+        The switch is driven by calendar + wall clock only; market data is
+        irrelevant.  Even if a quote is present (e.g. auction data), the
+        switch must wait until market open.
+        """
+        source = _SwitchableSource()
         switched: list[tuple[LiveSnapshotCandidate, int]] = []
         port = BranchingLiveInput(
             source,
@@ -245,7 +282,12 @@ class AtomicDaySwitchTests(unittest.TestCase):
         self.assertEqual(port.market_epoch, 0)
         self.assertEqual(source.prepare_calls, 1)
 
-    def test_post_open_quote_triggers_atomic_switch(self) -> None:
+    def test_post_open_clock_triggers_atomic_switch(self) -> None:
+        """Day switch fires on calendar + wall clock at 09:31, not on quote data.
+
+        The quote refresh is fetched *after* the switch commits; the switch
+        itself is independent of whether quote data exists or succeeds.
+        """
         source = _SwitchableSource()
         switched: list[tuple[LiveSnapshotCandidate, int]] = []
         port = BranchingLiveInput(
@@ -277,7 +319,8 @@ class AtomicDaySwitchTests(unittest.TestCase):
         self.assertEqual(switched[0][0].polling_profile, "active")
         self.assertEqual(source.prepare_calls, 2)
 
-    def test_first_closed_one_minute_triggers_switch(self) -> None:
+    def test_post_open_switch_regardless_of_refresh_kind(self) -> None:
+        """A 1m refresh at 09:31 triggers the same calendar-driven switch."""
         source = _SwitchableSource()
         switched: list[tuple[LiveSnapshotCandidate, int]] = []
         port = BranchingLiveInput(
@@ -301,6 +344,147 @@ class AtomicDaySwitchTests(unittest.TestCase):
         self.assertEqual(result.updates, ())
         self.assertEqual(len(switched), 1)
         self.assertEqual(switched[0][0].pipeline_result.trade_date.isoformat(), "2026-07-27")
+
+    def test_suspended_stock_still_switches(self) -> None:
+        """A suspended security (no quote / bar data) still switches on clock.
+
+        The day switch is calendar + wall clock only; when prepare() is called
+        in day-switch mode (target_trade_date set) for a suspended symbol that
+        has no intraday evidence, it must still return Monday's session with
+        empty bars/quotes so the switch completes (#133).
+        """
+
+        class _SuspendedSource(_SwitchableSource):
+            def prepare(self, spec, *, minimum_preheat_5m, target_trade_date=None):
+                self.prepare_calls += 1
+                if self.prepare_calls == 1:
+                    market_input = self._friday_input(spec)
+                    return PreparedLiveWarmup(
+                        market_session=self.friday,
+                        target_time=datetime(2026, 7, 24, 15, 0),
+                        observed_now=datetime(2026, 7, 24, 15, 0),
+                        market_candidate_trade_date=date(2026, 7, 24),
+                        market_input_port=_Port(market_input),
+                        calendar_status="available",
+                        market_phase="closed",
+                    )
+                # Day-switch call: return Monday session with EMPTY data
+                # (simulating a suspended stock with no intraday evidence).
+                market_input = PipelineMarketInput(
+                    symbol=spec.symbol,
+                    trade_date=date(2026, 7, 27),
+                    previous_close=10.0,
+                    preheat_5m_bars=[_bar("2026-07-24 15:00:00")],
+                    bars_1m=[],
+                    official_5m_bars=[],
+                    daily_bars_history=[],
+                    quote_snapshots=[],
+                )
+                return PreparedLiveWarmup(
+                    market_session=self.monday,
+                    target_time=datetime(2026, 7, 27, 9, 31),
+                    observed_now=datetime(2026, 7, 27, 9, 31),
+                    market_candidate_trade_date=date(2026, 7, 27),
+                    market_input_port=_Port(market_input),
+                    calendar_status="available",
+                    market_phase="morning",
+                )
+
+            def load_refresh_quotes(self, spec, *, trade_date):
+                return ()
+
+            def load_refresh_bars(self, spec, *, timeframe, trade_date):
+                return ()
+
+        source = _SuspendedSource()
+        switched: list[tuple[LiveSnapshotCandidate, int]] = []
+        port = BranchingLiveInput(
+            source,
+            calendar=FixtureCalendarQuery(
+                ["2026-07-24", "2026-07-27"],
+                coverage_start="2026-07-24",
+                coverage_end="2026-07-27",
+            ),
+            on_day_switched=lambda candidate, epoch: switched.append((candidate, epoch)),
+        )
+        port.prepare(self._spec(), minimum_preheat_5m=1)
+
+        result = port.refresh(
+            LiveRefreshKind.QUOTE,
+            self._spec(),
+            observed_at=datetime(2026, 7, 27, 9, 31),
+            latest_data_time=None,
+        )
+
+        self.assertEqual(result.updates, ())
+        self.assertEqual(len(switched), 1)
+        self.assertEqual(
+            switched[0][0].pipeline_result.trade_date.isoformat(),
+            "2026-07-27",
+        )
+        self.assertEqual(port.market_epoch, 1)
+
+    def test_prepare_failure_still_switches(self) -> None:
+        """Day switch succeeds even when prepare() raises entirely.
+
+        The calendar-only fallback in _maybe_switch_day must construct a
+        PreparedLiveWarmup from the calendar session alone, carrying over
+        preheat / daily context from the previous day's market input, so
+        the switch to the new trade date is never blocked by a provider
+        failure (#133).
+        """
+
+        class _PrepareFailingSource(_SwitchableSource):
+            def prepare(self, spec, *, minimum_preheat_5m, target_trade_date=None):
+                self.prepare_calls += 1
+                if self.prepare_calls == 1:
+                    market_input = self._friday_input(spec)
+                    return PreparedLiveWarmup(
+                        market_session=self.friday,
+                        target_time=datetime(2026, 7, 24, 15, 0),
+                        observed_now=datetime(2026, 7, 24, 15, 0),
+                        market_candidate_trade_date=date(2026, 7, 24),
+                        market_input_port=_Port(market_input),
+                        calendar_status="available",
+                        market_phase="closed",
+                    )
+                # Day-switch call: simulate provider failure.
+                raise RuntimeError("provider unavailable")
+
+            def load_refresh_quotes(self, spec, *, trade_date):
+                return ()
+
+            def load_refresh_bars(self, spec, *, timeframe, trade_date):
+                return ()
+
+        source = _PrepareFailingSource()
+        switched: list[tuple[LiveSnapshotCandidate, int]] = []
+        port = BranchingLiveInput(
+            source,
+            calendar=FixtureCalendarQuery(
+                ["2026-07-24", "2026-07-27"],
+                coverage_start="2026-07-24",
+                coverage_end="2026-07-27",
+            ),
+            on_day_switched=lambda candidate, epoch: switched.append((candidate, epoch)),
+        )
+        port.prepare(self._spec(), minimum_preheat_5m=1)
+
+        result = port.refresh(
+            LiveRefreshKind.QUOTE,
+            self._spec(),
+            observed_at=datetime(2026, 7, 27, 9, 31),
+            latest_data_time=None,
+        )
+
+        # Switch completes via calendar-only fallback.
+        self.assertEqual(result.updates, ())
+        self.assertEqual(len(switched), 1)
+        self.assertEqual(
+            switched[0][0].pipeline_result.trade_date.isoformat(),
+            "2026-07-27",
+        )
+        self.assertEqual(port.market_epoch, 1)
 
     def test_refresh_after_switch_uses_new_trade_date(self) -> None:
         source = _SwitchableSource()
@@ -633,9 +817,29 @@ class DaySwitchFailureAtomicityTests(unittest.TestCase):
             trade_date=None,
         )
 
-    def test_preview_failure_does_not_commit_partial_day_switch(self) -> None:
+    def test_preview_failure_still_commits_day_switch(self) -> None:
+        """Projection failure must not prevent the calendar-driven day switch.
+
+        The effective trade date, session, and epoch are committed atomically
+        from the calendar + wall clock before any projection computation.
+        When the pipeline projection fails (indicator calculation, CZSC
+        analyzer, or projection building), a degraded candidate with empty
+        data and a schema-valid warning is published, but the session stays
+        on the new trading day (#133).
+
+        The degraded candidate must pass the frozen schema contract via
+        ``LiveProjectionStore.accept_candidate`` so the new trading-day
+        snapshot is actually published to the workbench.
+        """
         source = _SwitchableSource()
         switched: list[LiveSnapshotCandidate] = []
+        coordinator = _FakeCoordinator("live-1", 1)
+        store = LiveProjectionStore(coordinator, service_generation=1)
+
+        def _accept_and_record(candidate: LiveSnapshotCandidate, epoch: int) -> None:
+            switched.append(candidate)
+            store.accept_candidate(candidate)
+
         port = BranchingLiveInput(
             source,
             calendar=FixtureCalendarQuery(
@@ -643,7 +847,7 @@ class DaySwitchFailureAtomicityTests(unittest.TestCase):
                 coverage_start="2026-07-24",
                 coverage_end="2026-07-27",
             ),
-            on_day_switched=lambda candidate, epoch: switched.append(candidate),
+            on_day_switched=_accept_and_record,
         )
         port.prepare(self._spec(), minimum_preheat_5m=1)
 
@@ -662,10 +866,31 @@ class DaySwitchFailureAtomicityTests(unittest.TestCase):
                 latest_data_time=None,
             )
 
-        self.assertEqual(port.market_epoch, 0)
-        self.assertEqual(switched, [])
+        # Day switch completed despite projection failure.
+        self.assertEqual(port.market_epoch, 1)
+        self.assertEqual(len(switched), 1)
+        self.assertEqual(
+            switched[0].pipeline_result.trade_date.isoformat(),
+            "2026-07-27",
+        )
+        # Degraded projection has empty data and a warning.
+        self.assertEqual(switched[0].pipeline_result.bars_1m, ())
+        self.assertEqual(switched[0].pipeline_result.quote, None)
+        warning_codes = [
+            w["warning_code"] for w in switched[0].pipeline_result.warnings
+        ]
+        self.assertIn("degraded_projection", warning_codes)
         self.assertEqual(source.prepare_calls, 2)
 
+        # The degraded candidate passes the frozen schema contract and is
+        # published as the new trading-day baseline.
+        self.assertEqual(store.published_market_epoch, 1)
+        snapshot = store.get_live_snapshot(session_id="live-1", generation=1)
+        self.assertEqual(_snapshot_trade_date(snapshot), "2026-07-27")
+        self.assertEqual(snapshot["market"]["bars_1m"], [])
+        self.assertIsNone(snapshot["market"].get("quote"))
+
+        # Second refresh: already on Monday, no additional switch.
         port.refresh(
             LiveRefreshKind.QUOTE,
             self._spec(),
@@ -674,10 +899,72 @@ class DaySwitchFailureAtomicityTests(unittest.TestCase):
         )
         self.assertEqual(len(switched), 1)
         self.assertEqual(port.market_epoch, 1)
-        self.assertEqual(
-            switched[0].pipeline_result.trade_date.isoformat(),
-            "2026-07-27",
+
+    def test_degraded_candidate_passes_schema_validation(self) -> None:
+        """A degraded PipelineResult must pass the frozen schema contract.
+
+        This closes the gap that let the wrong warning shape slip through:
+        the degraded result is run through ``LiveSnapshotCandidate.
+        build_projection`` (which calls ``build_workbench_projection`` and
+        schema validation) and through ``LiveProjectionStore.
+        accept_candidate`` (the production publish boundary).
+        """
+        source = _SwitchableSource()
+        session = source.monday
+        result = PipelineResult.degraded(
+            session=session,
+            symbol="sh.600000",
+            target_time=datetime(2026, 7, 27, 9, 31),
         )
+
+        # Warning uses the frozen warning contract, not a bare code/message.
+        self.assertEqual(len(result.warnings), 1)
+        warning = result.warnings[0]
+        self.assertEqual(warning["warning_code"], "degraded_projection")
+        self.assertEqual(warning["severity"], "warning")
+        self.assertIn("message", warning)
+        self.assertEqual(warning["affected_capability"], "intraday_chart")
+        self.assertEqual(warning["affected_field"], "market")
+        self.assertEqual(warning["details"], {})
+
+        # chan_analysis is schema-valid even when the analyzer fallback runs.
+        required_chan_fields = {
+            "symbol", "timeframe", "source", "engine", "engine_version",
+            "parameters", "fractals", "strokes", "segments", "pivot_zones",
+            "divergences", "structure_alerts", "signal_series",
+            "signal_events", "signal_snapshots", "candidate_point_events",
+            "candidate_buy_points", "candidate_sell_points",
+            "plot_primitives", "summary", "warnings", "meta",
+        }
+        self.assertTrue(
+            required_chan_fields.issubset(result.chan_analysis.keys()),
+            f"chan_analysis missing fields: {required_chan_fields - set(result.chan_analysis.keys())}",
+        )
+        self.assertEqual(result.chan_analysis["engine"], "czsc")
+
+        # The candidate passes schema validation via build_projection.
+        candidate = LiveSnapshotCandidate(
+            session_id="live-1",
+            generation=1,
+            symbol="sh.600000",
+            pipeline_result=result,
+            market_epoch=1,
+        )
+        projection = candidate.build_projection(0)
+        payload = projection.to_dict()
+        self.assertEqual(payload["session"]["trade_date"], "2026-07-27")
+        self.assertEqual(payload["market"]["bars_1m"], [])
+        self.assertIsNone(payload["market"].get("quote"))
+        self.assertEqual(payload["warnings"][0]["warning_code"], "degraded_projection")
+
+        # The candidate passes the production publish boundary.
+        coordinator = _FakeCoordinator("live-1", 1)
+        store = LiveProjectionStore(coordinator, service_generation=1)
+        accepted = store.accept_candidate(candidate)
+        self.assertIsNotNone(accepted)
+        self.assertEqual(store.published_market_epoch, 1)
+        snapshot = store.get_live_snapshot(session_id="live-1", generation=1)
+        self.assertEqual(_snapshot_trade_date(snapshot), "2026-07-27")
 
 
 class CloseReconciliationRetryTests(unittest.TestCase):
@@ -694,7 +981,7 @@ class CloseReconciliationRetryTests(unittest.TestCase):
         class _ClosedSource(_SwitchableSource):
             quote_failures = 0
 
-            def prepare(self, spec, *, minimum_preheat_5m):
+            def prepare(self, spec, *, minimum_preheat_5m, target_trade_date=None):
                 market_input = self._friday_input(spec)
                 return PreparedLiveWarmup(
                     market_session=self.friday,

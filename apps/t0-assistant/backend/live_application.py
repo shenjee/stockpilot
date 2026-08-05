@@ -684,7 +684,7 @@ def create_live_application_api(
     paths.ensure_dirs()
     resolved_provider = provider or TencentStockDataProvider()
     store = KLineStore(market_db_path or paths.db_dir / "market_data.sqlite")
-    context, authoritative_through = _build_live_market_context(
+    context = _build_live_market_context(
         resolved_provider,
         store,
         (clock or date.today)(),
@@ -700,11 +700,7 @@ def create_live_application_api(
     preferences = PreferenceService(SqlitePreferenceRepository(database))
     securities_store = SecuritiesStore(paths.db_dir / "market_data.sqlite")
     search_service = SecuritiesSearchService(securities_store)
-    calendar = MarketContextCalendarAdapter(
-        context,
-        authoritative_through=authoritative_through,
-        evidence_authoritative=authoritative_through is not None,
-    )
+    calendar = MarketContextCalendarAdapter(context)
     preparator = LiveDataPreparator(
         market_data,
         context,

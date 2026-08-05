@@ -60,7 +60,7 @@ class _SaturdayResolverLiveInput(_DeterministicLiveInput):
             coverage_end="2026-07-25",
         )
 
-    def prepare(self, spec, *, minimum_preheat_5m):
+    def prepare(self, spec, *, minimum_preheat_5m, target_trade_date=None):
         self.requests.append((spec, minimum_preheat_5m))
         if self.outcomes:
             outcome = self.outcomes.pop(0)
@@ -142,7 +142,7 @@ class _DaySwitchLiveInput(_DeterministicLiveInput):
         )
         self.prepare_calls = 0
 
-    def prepare(self, spec, *, minimum_preheat_5m):
+    def prepare(self, spec, *, minimum_preheat_5m, target_trade_date=None):
         self.prepare_calls += 1
         self.requests.append((spec, minimum_preheat_5m))
         if self.prepare_calls == 1:

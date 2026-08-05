@@ -8,7 +8,10 @@ from threading import Event, RLock, Thread, current_thread
 from typing import Callable, Mapping, Protocol, Sequence
 
 from packages.marketdata.calendar_query import CalendarQueryPort
-from packages.marketdata.services.market_context_service import MarketSession
+from packages.marketdata.services.market_context_service import (
+    MarketContextError,
+    MarketSession,
+)
 
 from .computation_executor import BoundedComputationExecutor
 from .coordinator import SessionSpec
@@ -26,11 +29,7 @@ from .live_market_view import (
     LiveMarketViewError,
     MarketClosedReason,
     PollingProfile,
-    benchmark_probe_evidence,
-    benchmark_probe_target_date,
-    day_switch_evidence_date,
     day_switch_target_date,
-    is_awaiting_benchmark_probe,
     is_awaiting_day_switch,
     resolve_live_market_context,
     resolve_market_closed_reason,
@@ -47,34 +46,13 @@ from .pipeline import (
     CzscAnalyzerPort,
     MarketInputPort,
     PipelineMarketInput,
+    PipelineResult,
     WorkbenchPipeline,
 )
 
 
 _CLOSE_RECONCILE_MAX_ATTEMPTS = 5
 _CLOSE_RECONCILE_RETRY_INTERVAL = timedelta(seconds=30)
-
-# --- Benchmark probe constants (#140) ---
-
-_BENCHMARK_PROBE_SYMBOL = "sh.000001"
-_BENCHMARK_PROBE_MAX_FAILURES = 5
-_BENCHMARK_PROBE_RETRY_INTERVAL = timedelta(seconds=30)
-
-
-def _safe_probe_rows(
-    loader: Callable[[], Sequence[Mapping[str, object]]],
-) -> tuple[Mapping[str, object], ...]:
-    """Run one benchmark probe source read, returning ``()`` on provider error.
-
-    Each evidence source (quote / 1m / 5m) is loaded independently so a
-    failure in one cannot discard evidence already returned by another; any
-    single source is sufficient to confirm the market opened (#140 P2).
-    """
-
-    try:
-        return tuple(loader())
-    except Exception:
-        return ()
 
 
 class LiveBranchDataPort(LiveInitialInputPort, Protocol):
@@ -138,15 +116,6 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
         self._close_reconcile_status: CloseReconcileStatus = "not_started"
         self._close_reconcile_attempts = 0
         self._close_reconcile_next_retry_at: datetime | None = None
-        # Benchmark probe fields (#140)
-        self._benchmark_probe_failures = 0
-        self._benchmark_probe_next_retry_at: datetime | None = None
-        self._benchmark_probe_confirmed = False
-        # Ownership token for the in-flight benchmark probe.  ``None`` means no
-        # probe is running; a non-None ``object`` token identifies the single
-        # worker that claimed the probe so the quote/1m/5m refresh workers do
-        # not each fire a full probe in the same cycle (#140 P2).
-        self._benchmark_probe_owner: object | None = None
 
     def set_on_projection_refresh(
         self,
@@ -179,10 +148,12 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
         spec: SessionSpec,
         *,
         minimum_preheat_5m: int,
+        target_trade_date: date | None = None,
     ) -> PreparedLiveWarmup:
         prepared = self._source.prepare(
             spec,
             minimum_preheat_5m=minimum_preheat_5m,
+            target_trade_date=target_trade_date,
         )
         market_input = prepared.market_input_port.read(prepared.target_time)
         _, _, market = _parse_market_from_symbol(spec.symbol)
@@ -197,10 +168,6 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             self._close_reconcile_status = "not_started"
             self._close_reconcile_attempts = 0
             self._close_reconcile_next_retry_at = None
-            self._benchmark_probe_failures = 0
-            self._benchmark_probe_next_retry_at = None
-            self._benchmark_probe_confirmed = False
-            self._benchmark_probe_owner = None
         return prepared
 
     def advance_view_status(
@@ -223,9 +190,6 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             close_reconcile_status = self._close_reconcile_status
             close_reconcile_next_retry_at = self._close_reconcile_next_retry_at
             calendar = self._calendar
-            benchmark_probe_failures = self._benchmark_probe_failures
-            benchmark_probe_next_retry_at = self._benchmark_probe_next_retry_at
-            benchmark_probe_confirmed = self._benchmark_probe_confirmed
         awaiting = (
             calendar is not None
             and is_awaiting_day_switch(
@@ -236,21 +200,6 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
                 calendar_status=calendar_status,
             )
         )
-        benchmark_probe_active = (
-            calendar is not None
-            and not benchmark_probe_confirmed
-            and benchmark_probe_failures < _BENCHMARK_PROBE_MAX_FAILURES
-            and (
-                benchmark_probe_next_retry_at is None
-                or observed_at >= benchmark_probe_next_retry_at
-            )
-            and is_awaiting_benchmark_probe(
-                calendar,
-                observed_at=observed_at,
-                pinned_trade_date=session.trade_date,
-                market=market,
-            )
-        )
         return resolve_polling_profile(
             market_phase=market_phase,
             calendar_status=calendar_status,
@@ -259,7 +208,6 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             calendar=calendar,
             market=market,
             awaiting_day_switch=awaiting,
-            benchmark_probe_active=benchmark_probe_active,
             close_reconcile_status=close_reconcile_status,
             close_reconcile_retry_due=(
                 close_reconcile_next_retry_at is None
@@ -333,10 +281,6 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
         latest_data_time: datetime | None,
     ) -> LiveRefreshResult:
         epoch_at_start = self.market_epoch
-        # Benchmark probe (#140): break Calendar-unknown self-lock before
-        # phase advancement so the refreshed Calendar is visible to the
-        # resolver on this same cycle.
-        self._run_benchmark_probe_if_due(spec, observed_at)
         # Phase is Calendar/wall-clock state: advance it even when every market
         # branch later fails, and claim the transition under the lock so only
         # one worker publishes the full snapshot for that transition.
@@ -358,12 +302,9 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
                 market=market,
             )
         if target_date is not None:
-            probe_rows = self._load_probe_rows(spec, kind, target_date)
             if self._maybe_switch_day(
                 spec,
                 observed_at=observed_at,
-                kind=kind,
-                rows=probe_rows,
                 epoch_at_start=epoch_at_start,
             ):
                 return LiveRefreshResult.no_change(market_epoch=epoch_at_start)
@@ -518,147 +459,23 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
                 # phase candidate built before sibling merges.
                 handler(candidate)
 
-    def _run_benchmark_probe_if_due(
-        self,
-        spec: SessionSpec,
-        observed_at: datetime,
-    ) -> None:
-        """Break the Calendar-unknown self-lock via ``sh.000001`` evidence (#140).
-
-        Loads the benchmark index quote/1m/5m for today and, if valid post-open
-        evidence is found, runtime-confirms today as open on the shared Calendar
-        and lifts ``_calendar_status`` to ``available``.  This lets the normal
-        day-switch path take over on the same or next refresh cycle.
-
-        Bounded retry: after ``_BENCHMARK_PROBE_MAX_FAILURES`` consecutive
-        failures (no evidence or provider error), the probe stops and the
-        polling profile falls back to ``idle``.
-        """
-
-        with self._lock:
-            if (
-                self._session is None
-                or self._market is None
-                or self._calendar is None
-            ):
-                return
-            if self._benchmark_probe_confirmed:
-                return
-            if self._benchmark_probe_failures >= _BENCHMARK_PROBE_MAX_FAILURES:
-                return
-            if (
-                self._benchmark_probe_next_retry_at is not None
-                and observed_at < self._benchmark_probe_next_retry_at
-            ):
-                return
-            # Atomic probe ownership: the quote/1m/5m refresh workers all call
-            # ``refresh`` (and therefore this method) within the same scheduler
-            # cycle.  Without claiming ownership under the lock, every worker
-            # would pass the checks above and fire its own quote/1m/5m request
-            # set, exhausting the bounded retry budget several times per cycle
-            # (#140 P2).  Only one worker proceeds; the rest skip.
-            if self._benchmark_probe_owner is not None:
-                return
-            owner_token = object()
-            self._benchmark_probe_owner = owner_token
-            calendar = self._calendar
-            market = self._market
-            pinned_trade_date = self._session.trade_date
-
-        try:
-            if not is_awaiting_benchmark_probe(
-                calendar,
-                observed_at=observed_at,
-                pinned_trade_date=pinned_trade_date,
-                market=market,
-            ):
-                return
-
-            today = observed_at.date()
-            benchmark_spec = replace(spec, symbol=_BENCHMARK_PROBE_SYMBOL)
-
-            # Load each evidence source independently so a failure in one
-            # (e.g. 1m/5m) does not discard valid evidence already returned by
-            # another (e.g. quote).  The contract is that any single source
-            # suffices to confirm the market opened (#140 P2).
-            quote_rows = _safe_probe_rows(
-                lambda: self._source.load_refresh_quotes(
-                    benchmark_spec,
-                    trade_date=today,
-                )
-            )
-            bars_1m = _safe_probe_rows(
-                lambda: self._source.load_refresh_bars(
-                    benchmark_spec,
-                    timeframe="1m",
-                    trade_date=today,
-                )
-            )
-            bars_5m = _safe_probe_rows(
-                lambda: self._source.load_refresh_bars(
-                    benchmark_spec,
-                    timeframe="5m",
-                    trade_date=today,
-                )
-            )
-
-            if benchmark_probe_evidence(
-                quote_rows,
-                bars_1m,
-                bars_5m,
-                target_trade_date=today,
-                observed_at=observed_at,
-            ):
-                with self._lock:
-                    if not self._benchmark_probe_confirmed:
-                        calendar.confirm_open_day(today)
-                        self._calendar_status = "available"
-                        self._benchmark_probe_confirmed = True
-            else:
-                with self._lock:
-                    self._benchmark_probe_failures += 1
-                    self._benchmark_probe_next_retry_at = (
-                        observed_at + _BENCHMARK_PROBE_RETRY_INTERVAL
-                    )
-        finally:
-            with self._lock:
-                # Only release ownership if this probe still holds it.  A
-                # concurrent ``prepare`` / day-switch reset may have already
-                # cleared the slot (and let a newer probe claim it); releasing
-                # unconditionally would then clear that newer probe's claim.
-                if self._benchmark_probe_owner is owner_token:
-                    self._benchmark_probe_owner = None
-
-    def _load_probe_rows(
-        self,
-        spec: SessionSpec,
-        kind: LiveRefreshKind,
-        target_trade_date: date,
-    ) -> tuple[Mapping[str, object], ...]:
-        if kind is LiveRefreshKind.QUOTE:
-            return tuple(
-                self._source.load_refresh_quotes(
-                    spec,
-                    trade_date=target_trade_date,
-                )
-            )
-        return tuple(
-            self._source.load_refresh_bars(
-                spec,
-                timeframe="1m" if kind is LiveRefreshKind.ONE_MINUTE else "5m",
-                trade_date=target_trade_date,
-            )
-        )
-
     def _maybe_switch_day(
         self,
         spec: SessionSpec,
         *,
         observed_at: datetime,
-        kind: LiveRefreshKind,
-        rows: Sequence[Mapping[str, object]],
         epoch_at_start: int,
     ) -> bool:
+        """Switch the pinned trade day on calendar + wall clock alone.
+
+        The effective trade date is determined **only** by the calendar and the
+        current wall-clock time (see :func:`day_switch_target_date`).  Market
+        data is never used as evidence: a suspended security, a temporarily
+        empty quote, or a failed provider request must not block the day
+        switch.  After the switch commits, each refresh branch independently
+        fetches quote / 1m / 5m data for the new day.
+        """
+
         with self._lock:
             if (
                 self._session is None
@@ -680,15 +497,6 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
         if target_date is None:
             return False
 
-        require_closed = kind is not LiveRefreshKind.QUOTE
-        if not day_switch_evidence_date(
-            rows,
-            target_trade_date=target_date,
-            observed_at=observed_at,
-            require_closed=require_closed,
-        ):
-            return False
-
         with self._lock:
             if (
                 self._day_switch_in_progress
@@ -703,15 +511,26 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             prepared = self._source.prepare(
                 spec,
                 minimum_preheat_5m=LiveSession.MINIMUM_PREHEAT_5M,
+                target_trade_date=target_date,
             )
         except BaseException:
-            with self._lock:
-                self._day_switch_in_progress = False
-            raise
+            # Provider failure must not block the calendar-driven day switch.
+            # Fall back to a calendar-only prepared warmup with the previous
+            # day's preheat / daily context carried over (#133).
+            try:
+                prepared = self._build_calendar_only_prepared(
+                    spec,
+                    target_date=target_date,
+                    observed_at=observed_at,
+                    calendar=calendar,
+                    market=market,
+                )
+            except BaseException:
+                with self._lock:
+                    self._day_switch_in_progress = False
+                return False
 
         try:
-            if prepared.market_session.trade_date != target_date:
-                return False
             market_input = prepared.market_input_port.read(prepared.target_time)
             candidate = self._commit_day_switch(
                 spec,
@@ -742,6 +561,19 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
         market_input: PipelineMarketInput,
         epoch_at_start: int,
     ) -> LiveSnapshotCandidate | None:
+        """Commit the calendar-driven day switch, then best-effort project.
+
+        The effective trade date, session, epoch, and all derived state are
+        committed atomically from the calendar + wall clock **before** any
+        projection computation.  This ensures that indicator, CZSC analyzer,
+        or projection-building failures can never roll back the date update
+        (#133).  When the projection fails, a degraded candidate with empty
+        data and a warning is published; the session stays on the new trading
+        day and subsequent refreshes use the new date.
+        """
+
+        # Step 1: Calendar + wall clock atomically commits the effective trade
+        # date, session, epoch, and derived state.
         with self._lock:
             if (
                 self._market_epoch != epoch_at_start
@@ -749,9 +581,20 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
                 or prepared.market_session.trade_date <= self._session.trade_date
             ):
                 return None
-            pinned_epoch = self._market_epoch
-            pinned_trade_date = self._session.trade_date
+            self._market_epoch += 1
+            new_epoch = self._market_epoch
+            self._session = prepared.market_session
+            self._market_input = market_input
+            self._calendar_status = prepared.calendar_status
+            self._market_phase = prepared.market_phase
+            self._close_reconcile_status = "not_started"
+            self._close_reconcile_attempts = 0
+            self._close_reconcile_next_retry_at = None
 
+        # Step 2: Best-effort projection.  If the pipeline fails (indicator
+        # calculation, CZSC analyzer, or projection building), publish a
+        # degraded candidate so the workbench shows the new trading day with
+        # empty data and a warning.
         preview_at = prepared.target_time
         try:
             result = WorkbenchPipeline(
@@ -760,7 +603,11 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
                 analyzer=self._analyzer,
             ).preview(preview_at)
         except BaseException:
-            return None
+            result = PipelineResult.degraded(
+                session=prepared.market_session,
+                symbol=market_input.symbol,
+                target_time=preview_at,
+            )
 
         candidate = LiveSnapshotCandidate(
             session_id=spec.session_id,
@@ -781,31 +628,57 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             ),
         )
 
-        with self._lock:
-            if (
-                self._market_epoch != pinned_epoch
-                or self._session is None
-                or self._session.trade_date != pinned_trade_date
-                or prepared.market_session.trade_date <= pinned_trade_date
-            ):
-                return None
-            self._market_epoch += 1
-            new_epoch = self._market_epoch
-            self._session = prepared.market_session
-            self._market_input = market_input
-            self._calendar_status = prepared.calendar_status
-            self._market_phase = prepared.market_phase
-            self._close_reconcile_status = "not_started"
-            self._close_reconcile_attempts = 0
-            self._close_reconcile_next_retry_at = None
-            # Reset benchmark probe state for the new session day (#140).
-            self._benchmark_probe_failures = 0
-            self._benchmark_probe_next_retry_at = None
-            self._benchmark_probe_confirmed = False
-            self._benchmark_probe_owner = None
-
         return replace(candidate, market_epoch=new_epoch)
 
+    def _build_calendar_only_prepared(
+        self,
+        spec: SessionSpec,
+        *,
+        target_date: date,
+        observed_at: datetime,
+        calendar: CalendarQueryPort,
+        market: str,
+    ) -> PreparedLiveWarmup:
+        """Build a calendar-only ``PreparedLiveWarmup`` when prepare() fails.
+
+        The session is forced to ``target_date`` from the calendar.  Intraday
+        data is empty (``symbol_availability = no_current_data``) and preheat /
+        daily history are carried over from the previous day's market input so
+        the workbench projection can still be built (#133).
+        """
+
+        resolved = resolve_live_market_context(
+            calendar,
+            observed_now=observed_at,
+            market=market,
+        )
+        session = resolved.market_session
+        target_time = min(observed_at, session.end)
+        with self._lock:
+            previous_input = self._market_input
+        if previous_input is not None:
+            fallback_input = replace(
+                previous_input,
+                trade_date=target_date,
+                bars_1m=(),
+                official_5m_bars=(),
+                quote_snapshots=(),
+            )
+        else:
+            fallback_input = PipelineMarketInput(
+                symbol=spec.symbol,
+                trade_date=target_date,
+            )
+        return PreparedLiveWarmup(
+            market_session=session,
+            target_time=target_time,
+            observed_now=observed_at,
+            market_candidate_trade_date=target_date,
+            market_input_port=_FixedMarketInput(fallback_input),
+            calendar_status=resolved.calendar_status,
+            market_phase=resolved.market_phase,
+            symbol_availability="no_current_data",
+        )
 
     def _market_candidate_trade_date(self, observed_at: datetime) -> date | None:
         with self._lock:
@@ -1026,9 +899,6 @@ def _live_view_extras(
         session = input_port._session
         close_reconcile_status = input_port._close_reconcile_status
         close_reconcile_next_retry_at = input_port._close_reconcile_next_retry_at
-        benchmark_probe_failures = input_port._benchmark_probe_failures
-        benchmark_probe_next_retry_at = input_port._benchmark_probe_next_retry_at
-        benchmark_probe_confirmed = input_port._benchmark_probe_confirmed
     effective_pinned = (
         pinned_trade_date
         if pinned_trade_date is not None
@@ -1051,21 +921,6 @@ def _live_view_extras(
         )
     else:
         awaiting = awaiting_day_switch
-    benchmark_probe_active = (
-        calendar is not None
-        and not benchmark_probe_confirmed
-        and benchmark_probe_failures < _BENCHMARK_PROBE_MAX_FAILURES
-        and (
-            benchmark_probe_next_retry_at is None
-            or observed_at >= benchmark_probe_next_retry_at
-        )
-        and is_awaiting_benchmark_probe(
-            calendar,
-            observed_at=observed_at,
-            pinned_trade_date=effective_pinned,
-            market=effective_market,
-        )
-    )
     return {
         "polling_profile": resolve_polling_profile(
             market_phase=market_phase,  # type: ignore[arg-type]
@@ -1075,7 +930,6 @@ def _live_view_extras(
             calendar=calendar,
             market=effective_market,
             awaiting_day_switch=awaiting,
-            benchmark_probe_active=benchmark_probe_active,
             close_reconcile_status=close_reconcile_status,
             close_reconcile_retry_due=(
                 close_reconcile_next_retry_at is None
@@ -1101,9 +955,9 @@ def _resolve_pinned_live_view(
 
     Trade-date switching is handled by PR-B ``_maybe_switch_day``. Cross-day
     classification consults the calendar: confirmed closed days stay
-    ``market_closed`` with ``calendar_status=available``; ``day_status=unknown``
-    (coverage gap) must degrade to ``unavailable`` + ``unknown``. Without open
-    evidence, never claim ``pre_open``.
+    ``market_closed`` with ``calendar_status=available``; out-of-coverage
+    dates (missing year JSON) degrade to ``unavailable`` + ``unknown``.
+    Without open evidence, never claim ``pre_open``.
     """
 
     if calendar_status == "unavailable":
@@ -1119,7 +973,10 @@ def _resolve_pinned_live_view(
     if calendar is None:
         # Cannot verify coverage; do not keep a stale available claim.
         return _PinnedLiveView(market_phase="unknown", calendar_status="unavailable")
-    day_status = calendar.day_status(observed_date, session.market)
+    try:
+        day_status = calendar.day_status(observed_date, session.market)
+    except MarketContextError:
+        return _PinnedLiveView(market_phase="unknown", calendar_status="unavailable")
     if day_status == "open":
         phase = (
             "pre_open"
@@ -1127,12 +984,11 @@ def _resolve_pinned_live_view(
             else "market_closed"
         )
         return _PinnedLiveView(market_phase=phase, calendar_status="available")
-    if day_status == "closed":
-        return _PinnedLiveView(
-            market_phase="market_closed",
-            calendar_status="available",
-        )
-    return _PinnedLiveView(market_phase="unknown", calendar_status="unavailable")
+    # day_status == "closed"
+    return _PinnedLiveView(
+        market_phase="market_closed",
+        calendar_status="available",
+    )
 
 
 def _parse_market_from_symbol(symbol: str) -> tuple[str, str, str]:
