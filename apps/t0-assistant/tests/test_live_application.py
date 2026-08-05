@@ -91,7 +91,7 @@ class _DeterministicLiveInput:
         self.refresh_outcomes = {"quote": [], "1m": [], "5m": []}
         self.context = MarketContextService(["2026-07-23", "2026-07-24"])
 
-    def prepare(self, spec, *, minimum_preheat_5m):
+    def prepare(self, spec, *, minimum_preheat_5m, target_trade_date=None):
         self.requests.append((spec, minimum_preheat_5m))
         if self.outcomes:
             outcome = self.outcomes.pop(0)

@@ -147,10 +147,12 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
         spec: SessionSpec,
         *,
         minimum_preheat_5m: int,
+        target_trade_date: date | None = None,
     ) -> PreparedLiveWarmup:
         prepared = self._source.prepare(
             spec,
             minimum_preheat_5m=minimum_preheat_5m,
+            target_trade_date=target_trade_date,
         )
         market_input = prepared.market_input_port.read(prepared.target_time)
         _, _, market = _parse_market_from_symbol(spec.symbol)
@@ -508,15 +510,26 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             prepared = self._source.prepare(
                 spec,
                 minimum_preheat_5m=LiveSession.MINIMUM_PREHEAT_5M,
+                target_trade_date=target_date,
             )
         except BaseException:
-            with self._lock:
-                self._day_switch_in_progress = False
-            raise
+            # Provider failure must not block the calendar-driven day switch.
+            # Fall back to a calendar-only prepared warmup with the previous
+            # day's preheat / daily context carried over (#133).
+            try:
+                prepared = self._build_calendar_only_prepared(
+                    spec,
+                    target_date=target_date,
+                    observed_at=observed_at,
+                    calendar=calendar,
+                    market=market,
+                )
+            except BaseException:
+                with self._lock:
+                    self._day_switch_in_progress = False
+                return False
 
         try:
-            if prepared.market_session.trade_date != target_date:
-                return False
             market_input = prepared.market_input_port.read(prepared.target_time)
             candidate = self._commit_day_switch(
                 spec,
@@ -606,6 +619,55 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
 
         return replace(candidate, market_epoch=new_epoch)
 
+    def _build_calendar_only_prepared(
+        self,
+        spec: SessionSpec,
+        *,
+        target_date: date,
+        observed_at: datetime,
+        calendar: CalendarQueryPort,
+        market: str,
+    ) -> PreparedLiveWarmup:
+        """Build a calendar-only ``PreparedLiveWarmup`` when prepare() fails.
+
+        The session is forced to ``target_date`` from the calendar.  Intraday
+        data is empty (``symbol_availability = no_current_data``) and preheat /
+        daily history are carried over from the previous day's market input so
+        the workbench projection can still be built (#133).
+        """
+
+        resolved = resolve_live_market_context(
+            calendar,
+            observed_now=observed_at,
+            market=market,
+        )
+        session = resolved.market_session
+        target_time = min(observed_at, session.end)
+        with self._lock:
+            previous_input = self._market_input
+        if previous_input is not None:
+            fallback_input = replace(
+                previous_input,
+                trade_date=target_date,
+                bars_1m=(),
+                official_5m_bars=(),
+                quote_snapshots=(),
+            )
+        else:
+            fallback_input = PipelineMarketInput(
+                symbol=spec.symbol,
+                trade_date=target_date,
+            )
+        return PreparedLiveWarmup(
+            market_session=session,
+            target_time=target_time,
+            observed_now=observed_at,
+            market_candidate_trade_date=target_date,
+            market_input_port=_FixedMarketInput(fallback_input),
+            calendar_status=resolved.calendar_status,
+            market_phase=resolved.market_phase,
+            symbol_availability="no_current_data",
+        )
 
     def _market_candidate_trade_date(self, observed_at: datetime) -> date | None:
         with self._lock:

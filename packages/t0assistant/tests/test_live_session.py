@@ -76,6 +76,7 @@ class _PreparedPort:
         spec: SessionSpec,
         *,
         minimum_preheat_5m: int,
+        target_trade_date: date | None = None,
     ) -> PreparedLiveWarmup:
         self.requests.append((spec, minimum_preheat_5m))
         return self.prepared
@@ -87,6 +88,7 @@ class _FailingPort:
         spec: SessionSpec,
         *,
         minimum_preheat_5m: int,
+        target_trade_date: date | None = None,
     ) -> PreparedLiveWarmup:
         raise RuntimeError("boom")
 
@@ -102,6 +104,7 @@ class _BlockingPort:
         spec: SessionSpec,
         *,
         minimum_preheat_5m: int,
+        target_trade_date: date | None = None,
     ) -> PreparedLiveWarmup:
         self.entered.set()
         self.release.wait(timeout=1)

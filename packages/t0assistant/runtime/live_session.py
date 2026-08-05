@@ -73,8 +73,16 @@ class LiveInitialInputPort(Protocol):
         spec: SessionSpec,
         *,
         minimum_preheat_5m: int,
+        target_trade_date: date | None = None,
     ) -> PreparedLiveWarmup:
-        """Return the prepared warmup input for the first full computation."""
+        """Return the prepared warmup input for the first full computation.
+
+        When ``target_trade_date`` is set (day-switch mode) the implementation
+        must force the effective session to that calendar trading day and treat
+        all market-data loading as best-effort: a suspended security, an empty
+        quote, or a failed provider request must not prevent the session from
+        being pinned to ``target_trade_date``.
+        """
 
 
 @dataclass(frozen=True, slots=True)

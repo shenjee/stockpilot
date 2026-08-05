@@ -95,7 +95,7 @@ class _SwitchableSource:
             quote_snapshots=[_quote("2026-07-27 09:31:00", 10.2)],
         )
 
-    def prepare(self, spec, *, minimum_preheat_5m):
+    def prepare(self, spec, *, minimum_preheat_5m, target_trade_date=None):
         self.prepare_calls += 1
         if self.prepare_calls == 1:
             market_input = self._friday_input(spec)
@@ -344,11 +344,48 @@ class AtomicDaySwitchTests(unittest.TestCase):
     def test_suspended_stock_still_switches(self) -> None:
         """A suspended security (no quote / bar data) still switches on clock.
 
-        The day switch is calendar + wall clock only; empty refresh data from
-        a suspended symbol must not block the transition to the new trade date.
+        The day switch is calendar + wall clock only; when prepare() is called
+        in day-switch mode (target_trade_date set) for a suspended symbol that
+        has no intraday evidence, it must still return Monday's session with
+        empty bars/quotes so the switch completes (#133).
         """
 
         class _SuspendedSource(_SwitchableSource):
+            def prepare(self, spec, *, minimum_preheat_5m, target_trade_date=None):
+                self.prepare_calls += 1
+                if self.prepare_calls == 1:
+                    market_input = self._friday_input(spec)
+                    return PreparedLiveWarmup(
+                        market_session=self.friday,
+                        target_time=datetime(2026, 7, 24, 15, 0),
+                        observed_now=datetime(2026, 7, 24, 15, 0),
+                        market_candidate_trade_date=date(2026, 7, 24),
+                        market_input_port=_Port(market_input),
+                        calendar_status="available",
+                        market_phase="closed",
+                    )
+                # Day-switch call: return Monday session with EMPTY data
+                # (simulating a suspended stock with no intraday evidence).
+                market_input = PipelineMarketInput(
+                    symbol=spec.symbol,
+                    trade_date=date(2026, 7, 27),
+                    previous_close=10.0,
+                    preheat_5m_bars=[_bar("2026-07-24 15:00:00")],
+                    bars_1m=[],
+                    official_5m_bars=[],
+                    daily_bars_history=[],
+                    quote_snapshots=[],
+                )
+                return PreparedLiveWarmup(
+                    market_session=self.monday,
+                    target_time=datetime(2026, 7, 27, 9, 31),
+                    observed_now=datetime(2026, 7, 27, 9, 31),
+                    market_candidate_trade_date=date(2026, 7, 27),
+                    market_input_port=_Port(market_input),
+                    calendar_status="available",
+                    market_phase="morning",
+                )
+
             def load_refresh_quotes(self, spec, *, trade_date):
                 return ()
 
@@ -375,6 +412,68 @@ class AtomicDaySwitchTests(unittest.TestCase):
             latest_data_time=None,
         )
 
+        self.assertEqual(result.updates, ())
+        self.assertEqual(len(switched), 1)
+        self.assertEqual(
+            switched[0][0].pipeline_result.trade_date.isoformat(),
+            "2026-07-27",
+        )
+        self.assertEqual(port.market_epoch, 1)
+
+    def test_prepare_failure_still_switches(self) -> None:
+        """Day switch succeeds even when prepare() raises entirely.
+
+        The calendar-only fallback in _maybe_switch_day must construct a
+        PreparedLiveWarmup from the calendar session alone, carrying over
+        preheat / daily context from the previous day's market input, so
+        the switch to the new trade date is never blocked by a provider
+        failure (#133).
+        """
+
+        class _PrepareFailingSource(_SwitchableSource):
+            def prepare(self, spec, *, minimum_preheat_5m, target_trade_date=None):
+                self.prepare_calls += 1
+                if self.prepare_calls == 1:
+                    market_input = self._friday_input(spec)
+                    return PreparedLiveWarmup(
+                        market_session=self.friday,
+                        target_time=datetime(2026, 7, 24, 15, 0),
+                        observed_now=datetime(2026, 7, 24, 15, 0),
+                        market_candidate_trade_date=date(2026, 7, 24),
+                        market_input_port=_Port(market_input),
+                        calendar_status="available",
+                        market_phase="closed",
+                    )
+                # Day-switch call: simulate provider failure.
+                raise RuntimeError("provider unavailable")
+
+            def load_refresh_quotes(self, spec, *, trade_date):
+                return ()
+
+            def load_refresh_bars(self, spec, *, timeframe, trade_date):
+                return ()
+
+        source = _PrepareFailingSource()
+        switched: list[tuple[LiveSnapshotCandidate, int]] = []
+        port = BranchingLiveInput(
+            source,
+            calendar=FixtureCalendarQuery(
+                ["2026-07-24", "2026-07-27"],
+                coverage_start="2026-07-24",
+                coverage_end="2026-07-27",
+            ),
+            on_day_switched=lambda candidate, epoch: switched.append((candidate, epoch)),
+        )
+        port.prepare(self._spec(), minimum_preheat_5m=1)
+
+        result = port.refresh(
+            LiveRefreshKind.QUOTE,
+            self._spec(),
+            observed_at=datetime(2026, 7, 27, 9, 31),
+            latest_data_time=None,
+        )
+
+        # Switch completes via calendar-only fallback.
         self.assertEqual(result.updates, ())
         self.assertEqual(len(switched), 1)
         self.assertEqual(
@@ -775,7 +874,7 @@ class CloseReconciliationRetryTests(unittest.TestCase):
         class _ClosedSource(_SwitchableSource):
             quote_failures = 0
 
-            def prepare(self, spec, *, minimum_preheat_5m):
+            def prepare(self, spec, *, minimum_preheat_5m, target_trade_date=None):
                 market_input = self._friday_input(spec)
                 return PreparedLiveWarmup(
                     market_session=self.friday,
