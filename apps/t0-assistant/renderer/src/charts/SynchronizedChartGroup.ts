@@ -23,6 +23,7 @@ import {
 } from "lightweight-charts";
 import {
   ChartGroupKind,
+  calculateIntradayPriceRange,
   createPriceExactPriceFormat,
   formatMarketTick,
   formatPriceAxisTickLabels,
@@ -93,6 +94,12 @@ const VOLUME_PRICE_FORMAT = {
   tickmarksFormatter: formatVolumeAxisLabels,
   minMove: 1,
 };
+// LC default right-price-scale margins; restored when the intraday chart falls
+// back to auto-scale (no valid previous close).
+const AUTOSCALE_MARGINS = { top: 0.2, bottom: 0.1 };
+// Zero margins so the previous-close-centred symmetric range maps edge-to-edge:
+// P0 at vertical centre, yMax/yMin at the top/bottom boundary (spec §6.2.1).
+const INTRADAY_FIXED_MARGINS = { top: 0, bottom: 0 };
 
 export class SynchronizedChartGroup {
   private readonly containers: ChartGroupContainers;
@@ -313,6 +320,7 @@ export class SynchronizedChartGroup {
       this.model = model;
       this.rebuildTimeMaps();
       this.setSeriesData();
+      this.applyIntradayPriceRange();
       this.syncPriceAxisMinMove();
       this.syncRightPriceScaleWidths();
       this.applyViewport();
@@ -939,6 +947,43 @@ export class SynchronizedChartGroup {
       this.priceAxisMinMoveFrame = null;
       this.syncPriceAxisMinMove();
     });
+  }
+
+  // 分时价格图纵轴：以前收价 P0 为固定中轴，按当日开盘至当前数据前缀的最大绝对
+  // 偏离生成上下镜像范围（spec §6.2.1, issue #143）。R 是数据前缀的纯派生值，不保存
+  // 历史状态——实盘只扩不缩、回放确定性重算和组件重建一致性由同一套算法满足。
+  // previousClose 无效时回退到 LC 自动缩放，不指定中心价格。
+  private applyIntradayPriceRange() {
+    if (this.kind !== ChartGroupKind.ONE_MINUTE || !this.model) {
+      return;
+    }
+    const scale = this.priceSeries.priceScale();
+    const result = calculateIntradayPriceRange(
+      this.model.previousClose,
+      this.model.bars,
+    );
+    if (result === null) {
+      // previousClose 缺失/无效：沿用 LC 自动缩放与默认边距。
+      if (scale.options().autoScale) {
+        return;
+      }
+      scale.applyOptions({ scaleMargins: AUTOSCALE_MARGINS });
+      scale.setAutoScale(true);
+      return;
+    }
+    // previousClose 有效：固定中轴 + 零边距镜像范围。
+    const margins = scale.options().scaleMargins;
+    if (margins.top !== 0 || margins.bottom !== 0) {
+      scale.applyOptions({ scaleMargins: INTRADAY_FIXED_MARGINS });
+    }
+    const current = scale.getVisibleRange();
+    const needsUpdate =
+      !current ||
+      Math.abs(current.from - result.yMin) > 1e-9 ||
+      Math.abs(current.to - result.yMax) > 1e-9;
+    if (needsUpdate) {
+      scale.setVisibleRange({ from: result.yMin, to: result.yMax });
+    }
   }
 
   private syncPriceAxisMinMove() {

@@ -170,6 +170,8 @@ export interface ChartGroupModel {
   timestamps: string[];
   timeByTimestamp: Record<string, number>;
   bars: MarketBar[];
+  /** Previous close (P0) for intraday symmetric price-range, or null. */
+  previousClose: number | null;
   price: Array<
     | {
         timestamp: string;
@@ -202,6 +204,13 @@ export interface ChartGroupModel {
     histogram: IndicatorPoint[];
   };
   tradeMarkers: TradeMarkerModel[];
+}
+
+export interface IntradayPriceRange {
+  P0: number;
+  R: number;
+  yMin: number;
+  yMax: number;
 }
 
 export const ChartGroupKind: Readonly<{
@@ -245,6 +254,11 @@ export const PRICE_EXACT_PRICE_FORMAT: Readonly<{
   tickmarksFormatter: (prices: readonly number[]) => string[];
   minMove: number;
 }>;
+export function calculateIntradayPriceRange(
+  previousClose: number | null | undefined,
+  bars: ReadonlyArray<{ open: number; high: number; low: number }> | null,
+): IntradayPriceRange | null;
+
 export function createChartGroupModel(
   snapshot: WorkbenchChartSnapshot,
   kind: ChartGroupKindValue,

@@ -9,6 +9,7 @@ import {
   PRICE_AXIS_FINE_MIN_MOVE,
   PRICE_AXIS_INTEGER_MIN_MOVE,
   PRICE_EXACT_PRICE_FORMAT,
+  calculateIntradayPriceRange,
   createChartGroupModel,
   createPriceExactPriceFormat,
   formatMarketTick,
@@ -501,4 +502,175 @@ test("replay asOf truncation drops bars, indicators, and CZSC layers after curre
     model.macd.histogram.at(-1)?.timestamp ?? null,
     "2026-07-22 10:00:00",
   );
+});
+
+// ---------------------------------------------------------------------------
+// calculateIntradayPriceRange — spec §6.2.1 / issue #143
+// ---------------------------------------------------------------------------
+
+test("intraday price range returns null for invalid previousClose", () => {
+  const bars = [{ open: 10, high: 11, low: 9 }];
+  assert.equal(calculateIntradayPriceRange(null, bars), null);
+  assert.equal(calculateIntradayPriceRange(undefined, bars), null);
+  assert.equal(calculateIntradayPriceRange(NaN, bars), null);
+  assert.equal(calculateIntradayPriceRange(0, bars), null);
+  assert.equal(calculateIntradayPriceRange(-1, bars), null);
+  assert.equal(calculateIntradayPriceRange(Infinity, bars), null);
+});
+
+test("intraday price range uses ±1% when no valid bars", () => {
+  const result = calculateIntradayPriceRange(100, []);
+  assert.ok(result);
+  assert.equal(result.P0, 100);
+  assert.equal(result.R, 0.01);
+  assert.equal(result.yMin, 99);
+  assert.equal(result.yMax, 101);
+});
+
+test("intraday price range uses ±1% when bars are empty or invalid", () => {
+  assert.ok(calculateIntradayPriceRange(100, null));
+  assert.ok(calculateIntradayPriceRange(100, undefined));
+  const withNaN = calculateIntradayPriceRange(100, [
+    { open: NaN, high: NaN, low: NaN },
+  ]);
+  assert.ok(withNaN);
+  assert.equal(withNaN.R, 0.01);
+});
+
+test("intraday price range is symmetric around P0 with upward-dominant deviation", () => {
+  // P0=100, H=108 (8% up), L=99 (1% down) → R = 8%, mirror to 92
+  const result = calculateIntradayPriceRange(100, [
+    { open: 100, high: 108, low: 99 },
+  ]);
+  assert.ok(result);
+  assert.equal(result.P0, 100);
+  assert.ok(Math.abs(result.R - 0.08) < 1e-9);
+  assert.ok(Math.abs(result.yMax - 108) < 1e-9);
+  assert.ok(Math.abs(result.yMin - 92) < 1e-9);
+  // P0 at vertical centre
+  assert.ok(Math.abs((result.yMax + result.yMin) / 2 - 100) < 1e-9);
+});
+
+test("intraday price range is symmetric around P0 with downward-dominant deviation", () => {
+  // P0=100, H=101 (1% up), L=90 (10% down) → R = 10%, mirror to 110
+  const result = calculateIntradayPriceRange(100, [
+    { open: 100, high: 101, low: 90 },
+  ]);
+  assert.ok(result);
+  assert.ok(Math.abs(result.R - 0.1) < 1e-9);
+  assert.ok(Math.abs(result.yMax - 110) < 1e-9);
+  assert.ok(Math.abs(result.yMin - 90) < 1e-9);
+});
+
+test("intraday price range respects initial_range floor from gap open", () => {
+  // P0=100, O=105 (5% gap), H=103, L=99 → observed=3%, initial=5%, R=5%
+  const result = calculateIntradayPriceRange(100, [
+    { open: 105, high: 103, low: 99 },
+  ]);
+  assert.ok(result);
+  assert.ok(Math.abs(result.R - 0.05) < 1e-9);
+  assert.ok(Math.abs(result.yMax - 105) < 1e-9);
+  assert.ok(Math.abs(result.yMin - 95) < 1e-9);
+});
+
+test("intraday price range uses ±1% minimum when open equals P0", () => {
+  // P0=100, O=100, H=100.5, L=99.8 → observed=0.5%, initial=1%, R=1%
+  const result = calculateIntradayPriceRange(100, [
+    { open: 100, high: 100.5, low: 99.8 },
+  ]);
+  assert.ok(result);
+  assert.equal(result.R, 0.01);
+});
+
+test("intraday price range only expands as more bars arrive (live)", () => {
+  const P0 = 100;
+  // Prefix 1: H=102, L=99 → R = 2%
+  const r1 = calculateIntradayPriceRange(P0, [
+    { open: 100, high: 102, low: 99 },
+  ]);
+  assert.ok(Math.abs(r1.R - 0.02) < 1e-9);
+
+  // Prefix 2: H=102, L=98 → R = 2% (still 2%, up-side dominant, only expands)
+  const r2 = calculateIntradayPriceRange(P0, [
+    { open: 100, high: 102, low: 99 },
+    { open: 101, high: 102, low: 98 },
+  ]);
+  assert.ok(Math.abs(r2.R - 0.02) < 1e-9);
+
+  // Prefix 3: H=105 → R = 5% (expanded)
+  const r3 = calculateIntradayPriceRange(P0, [
+    { open: 100, high: 102, low: 99 },
+    { open: 101, high: 102, low: 98 },
+    { open: 103, high: 105, low: 103 },
+  ]);
+  assert.ok(Math.abs(r3.R - 0.05) < 1e-9);
+});
+
+test("intraday price range deterministically recomputes on replay cursor movement", () => {
+  const P0 = 100;
+  const allBars = [
+    { open: 100, high: 108, low: 99 },
+    { open: 107, high: 109, low: 106 },
+    { open: 108, high: 110, low: 107 },
+  ];
+
+  // Forward to cursor 2: H=109, L=99 → R = 9%
+  const forward = calculateIntradayPriceRange(P0, allBars.slice(0, 2));
+  assert.ok(Math.abs(forward.R - 0.09) < 1e-9);
+
+  // Backward to cursor 1: H=108, L=99 → R = 8% (shrinks, no state retained)
+  const backward = calculateIntradayPriceRange(P0, allBars.slice(0, 1));
+  assert.ok(Math.abs(backward.R - 0.08) < 1e-9);
+
+  // Forward again to cursor 2: same R as before (deterministic)
+  const forwardAgain = calculateIntradayPriceRange(P0, allBars.slice(0, 2));
+  assert.ok(Math.abs(forwardAgain.R - forward.R) < 1e-9);
+});
+
+test("intraday price range matches issue #143 example: 600584", () => {
+  // P0=65.41, H=70.59 → R ≈ 7.92%, yMax=70.59, yMin ≈ 60.23
+  const result = calculateIntradayPriceRange(65.41, [
+    { open: 65.41, high: 70.59, low: 65.00 },
+  ]);
+  assert.ok(result);
+  assert.ok(Math.abs(result.R - (70.59 / 65.41 - 1)) < 1e-9);
+  assert.ok(Math.abs(result.yMax - 70.59) < 1e-6);
+  assert.ok(Math.abs(result.yMin - 65.41 * (1 - result.R)) < 1e-6);
+  // P0 at centre
+  assert.ok(Math.abs((result.yMax + result.yMin) / 2 - 65.41) < 1e-6);
+});
+
+test("intraday model exposes previousClose from snapshot quote", () => {
+  const model = createChartGroupModel(fixture, ChartGroupKind.ONE_MINUTE);
+  assert.equal(model.previousClose, 10.10);
+});
+
+test("intraday model previousClose is null when quote is absent", () => {
+  const noQuote = structuredClone(fixture);
+  delete noQuote.market.quote;
+  const model = createChartGroupModel(noQuote, ChartGroupKind.ONE_MINUTE);
+  assert.equal(model.previousClose, null);
+});
+
+test("intraday model previousClose is null when previous_close is non-finite", () => {
+  const badQuote = structuredClone(fixture);
+  badQuote.market.quote.previous_close = "not-a-number";
+  const model = createChartGroupModel(badQuote, ChartGroupKind.ONE_MINUTE);
+  assert.equal(model.previousClose, null);
+});
+
+test("intraday model range from fixture bars matches P0-centred mirror", () => {
+  // Fixture: P0=10.10, H=10.35, L=10.23, O=10.24
+  const model = createChartGroupModel(fixture, ChartGroupKind.ONE_MINUTE);
+  const result = calculateIntradayPriceRange(model.previousClose, model.bars);
+  assert.ok(result);
+  // Up-side dominant: H/P0-1 = 10.35/10.10-1 ≈ 2.475%
+  // Down-side: 1-L/P0 = 1-10.23/10.10 ≈ negative → 0
+  // initial_range = max(1%, |10.24/10.10-1|) = max(1%, 1.386%) = 1.386%
+  // R = max(1.386%, 2.475%) = 2.475%
+  const expectedR = 10.35 / 10.10 - 1;
+  assert.ok(Math.abs(result.R - expectedR) < 1e-9);
+  assert.ok(Math.abs(result.yMax - 10.35) < 1e-6);
+  // P0 at centre
+  assert.ok(Math.abs((result.yMax + result.yMin) / 2 - 10.10) < 1e-6);
 });

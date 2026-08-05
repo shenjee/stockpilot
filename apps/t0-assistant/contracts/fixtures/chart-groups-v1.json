@@ -24,7 +24,21 @@
       {"timestamp":"2026-07-22 13:02:00","open":10.30,"high":10.32,"low":10.28,"close":10.29,"volume":8800,"amount":90552,"closed":true},
       {"timestamp":"2026-07-22 13:03:00","open":10.29,"high":10.33,"low":10.29,"close":10.32,"volume":10900,"amount":112488,"closed":true},
       {"timestamp":"2026-07-22 13:04:00","open":10.32,"high":10.35,"low":10.31,"close":10.34,"volume":14100,"amount":145794,"closed":true}
-    ]
+    ],
+    "quote": {
+      "timestamp": "2026-07-22 13:04:00",
+      "latest_price": 10.34,
+      "change_percent": 2.38,
+      "open": 10.24,
+      "high": 10.35,
+      "low": 10.23,
+      "previous_close": 10.10,
+      "volume": 83900,
+      "amount": 863637,
+      "volume_ratio": null,
+      "order_imbalance": null,
+      "turnover_rate": null
+    }
   },
   "chan_analysis": {
     "strokes": [

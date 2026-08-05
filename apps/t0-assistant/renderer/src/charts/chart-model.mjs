@@ -199,6 +199,58 @@ export function formatMarketTick(time, previousTime = null) {
   ).padStart(2, "0")}`;
 }
 
+/**
+ * Intraday price-chart vertical axis range centred on the previous close (P0).
+ *
+ * Returns `null` when `previousClose` is not a positive finite number — callers
+ * should fall back to the chart library's default auto-scale in that case.
+ *
+ * The half-axis range `R` is derived purely from the supplied bar prefix (open
+ * to cursor), so live mode (bars only append) naturally only expands, and replay
+ * backward/forward movement deterministically recomputes from the current prefix.
+ *
+ * @see docs/t0assistant/ui_layout_spec.md §6.2.1
+ * @see https://github.com/shenjee/stockpilot/issues/143
+ */
+export function calculateIntradayPriceRange(previousClose, bars) {
+  const P0 = previousClose;
+  if (typeof P0 !== "number" || !Number.isFinite(P0) || P0 <= 0) {
+    return null;
+  }
+
+  const INITIAL_RANGE_FLOOR = 0.01;
+  const validBars = Array.isArray(bars)
+    ? bars.filter(
+        (bar) =>
+          Number.isFinite(bar?.high) && Number.isFinite(bar?.low),
+      )
+    : [];
+
+  if (validBars.length === 0) {
+    const R = INITIAL_RANGE_FLOOR;
+    return { P0, R, yMin: P0 * (1 - R), yMax: P0 * (1 + R) };
+  }
+
+  const O = validBars[0].open;
+  let H = -Infinity;
+  let L = Infinity;
+  for (const bar of validBars) {
+    H = Math.max(H, bar.high);
+    L = Math.min(L, bar.low);
+  }
+
+  const upRatio = Math.max(0, H / P0 - 1);
+  const downRatio = Math.max(0, 1 - L / P0);
+  const observedRange = Math.max(upRatio, downRatio);
+  const initialRange =
+    Number.isFinite(O) && O > 0
+      ? Math.max(INITIAL_RANGE_FLOOR, Math.abs(O / P0 - 1))
+      : INITIAL_RANGE_FLOOR;
+  const R = Math.max(initialRange, observedRange);
+
+  return { P0, R, yMin: P0 * (1 - R), yMax: P0 * (1 + R) };
+}
+
 import { projectTradeMarkers } from "./trade-markers.mjs";
 
 export function createChartGroupModel(snapshot, kind, layers = {}, trades = []) {
@@ -227,6 +279,11 @@ export function createChartGroupModel(snapshot, kind, layers = {}, trades = []) 
       ? snapshot.market.bars_5m
       : snapshot.market.bars_1m,
   );
+  const previousClose =
+    typeof snapshot.market.quote?.previous_close === "number" &&
+    Number.isFinite(snapshot.market.quote.previous_close)
+      ? snapshot.market.quote.previous_close
+      : null;
   const indicator =
     kind === FIVE_MINUTE
       ? snapshot.indicators.five_minute
@@ -334,6 +391,7 @@ export function createChartGroupModel(snapshot, kind, layers = {}, trades = []) 
     timestamps,
     timeByTimestamp,
     bars: bars.map((bar) => ({ ...bar })),
+    previousClose,
     price:
       kind === FIVE_MINUTE
         ? bars.map((bar) => ({
