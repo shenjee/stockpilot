@@ -17,7 +17,13 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any, Protocol
 
-from packages.chantheory import analyze
+from packages.chantheory import (
+    ENGINE_NAME,
+    PINNED_ENGINE_VERSION,
+    AnalysisResult,
+    analyze,
+    get_default_parameters,
+)
 from packages.indicators import (
     calculate_five_minute_indicators,
     calculate_one_minute_indicators,
@@ -141,7 +147,7 @@ class PipelineResult:
         try:
             chan_analysis = _default_analyze_5m((), symbol)
         except Exception:
-            chan_analysis = {}
+            chan_analysis = _empty_chan_analysis(symbol)
         return cls(
             target_time=target_time,
             symbol=symbol,
@@ -157,11 +163,15 @@ class PipelineResult:
             chan_analysis=chan_analysis,
             warnings=[
                 {
-                    "code": "degraded_projection",
+                    "warning_code": "degraded_projection",
+                    "severity": "warning",
                     "message": (
                         "Pipeline projection failed after day switch; "
                         "showing empty market data for the new trading day."
                     ),
+                    "affected_capability": "intraday_chart",
+                    "affected_field": "market",
+                    "details": {},
                 }
             ],
         )
@@ -178,6 +188,25 @@ def _default_analyze_5m(
         symbol=symbol,
         timeframe="5m",
         source="tencent",
+    )
+    return result.to_dict()
+
+
+def _empty_chan_analysis(symbol: str) -> dict[str, Any]:
+    """Schema-valid empty chan analysis when the analyzer cannot run.
+
+    All array fields default to empty lists and ``meta`` to an empty dict,
+    satisfying the frozen ``chan_analysis`` contract without relying on the
+    CZSC engine.
+    """
+
+    result = AnalysisResult(
+        symbol=symbol,
+        timeframe="5m",
+        source="tencent",
+        engine=ENGINE_NAME,
+        engine_version=PINNED_ENGINE_VERSION,
+        parameters=get_default_parameters(),
     )
     return result.to_dict()
 

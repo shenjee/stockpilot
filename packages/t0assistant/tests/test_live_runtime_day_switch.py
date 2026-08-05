@@ -31,7 +31,11 @@ from packages.t0assistant.runtime.live_session import (
     LiveSnapshotCandidate,
     PreparedLiveWarmup,
 )
-from packages.t0assistant.runtime.pipeline import PipelineMarketInput, WorkbenchPipeline
+from packages.t0assistant.runtime.pipeline import (
+    PipelineMarketInput,
+    PipelineResult,
+    WorkbenchPipeline,
+)
 
 
 def _bar(timestamp: str, close: float = 10.0, *, closed: bool = True) -> dict[str, Any]:
@@ -820,11 +824,22 @@ class DaySwitchFailureAtomicityTests(unittest.TestCase):
         from the calendar + wall clock before any projection computation.
         When the pipeline projection fails (indicator calculation, CZSC
         analyzer, or projection building), a degraded candidate with empty
-        data and a warning is published, but the session stays on the new
-        trading day (#133).
+        data and a schema-valid warning is published, but the session stays
+        on the new trading day (#133).
+
+        The degraded candidate must pass the frozen schema contract via
+        ``LiveProjectionStore.accept_candidate`` so the new trading-day
+        snapshot is actually published to the workbench.
         """
         source = _SwitchableSource()
         switched: list[LiveSnapshotCandidate] = []
+        coordinator = _FakeCoordinator("live-1", 1)
+        store = LiveProjectionStore(coordinator, service_generation=1)
+
+        def _accept_and_record(candidate: LiveSnapshotCandidate, epoch: int) -> None:
+            switched.append(candidate)
+            store.accept_candidate(candidate)
+
         port = BranchingLiveInput(
             source,
             calendar=FixtureCalendarQuery(
@@ -832,7 +847,7 @@ class DaySwitchFailureAtomicityTests(unittest.TestCase):
                 coverage_start="2026-07-24",
                 coverage_end="2026-07-27",
             ),
-            on_day_switched=lambda candidate, epoch: switched.append(candidate),
+            on_day_switched=_accept_and_record,
         )
         port.prepare(self._spec(), minimum_preheat_5m=1)
 
@@ -861,9 +876,19 @@ class DaySwitchFailureAtomicityTests(unittest.TestCase):
         # Degraded projection has empty data and a warning.
         self.assertEqual(switched[0].pipeline_result.bars_1m, ())
         self.assertEqual(switched[0].pipeline_result.quote, None)
-        warning_codes = [w["code"] for w in switched[0].pipeline_result.warnings]
+        warning_codes = [
+            w["warning_code"] for w in switched[0].pipeline_result.warnings
+        ]
         self.assertIn("degraded_projection", warning_codes)
         self.assertEqual(source.prepare_calls, 2)
+
+        # The degraded candidate passes the frozen schema contract and is
+        # published as the new trading-day baseline.
+        self.assertEqual(store.published_market_epoch, 1)
+        snapshot = store.get_live_snapshot(session_id="live-1", generation=1)
+        self.assertEqual(_snapshot_trade_date(snapshot), "2026-07-27")
+        self.assertEqual(snapshot["market"]["bars_1m"], [])
+        self.assertIsNone(snapshot["market"].get("quote"))
 
         # Second refresh: already on Monday, no additional switch.
         port.refresh(
@@ -874,6 +899,72 @@ class DaySwitchFailureAtomicityTests(unittest.TestCase):
         )
         self.assertEqual(len(switched), 1)
         self.assertEqual(port.market_epoch, 1)
+
+    def test_degraded_candidate_passes_schema_validation(self) -> None:
+        """A degraded PipelineResult must pass the frozen schema contract.
+
+        This closes the gap that let the wrong warning shape slip through:
+        the degraded result is run through ``LiveSnapshotCandidate.
+        build_projection`` (which calls ``build_workbench_projection`` and
+        schema validation) and through ``LiveProjectionStore.
+        accept_candidate`` (the production publish boundary).
+        """
+        source = _SwitchableSource()
+        session = source.monday
+        result = PipelineResult.degraded(
+            session=session,
+            symbol="sh.600000",
+            target_time=datetime(2026, 7, 27, 9, 31),
+        )
+
+        # Warning uses the frozen warning contract, not a bare code/message.
+        self.assertEqual(len(result.warnings), 1)
+        warning = result.warnings[0]
+        self.assertEqual(warning["warning_code"], "degraded_projection")
+        self.assertEqual(warning["severity"], "warning")
+        self.assertIn("message", warning)
+        self.assertEqual(warning["affected_capability"], "intraday_chart")
+        self.assertEqual(warning["affected_field"], "market")
+        self.assertEqual(warning["details"], {})
+
+        # chan_analysis is schema-valid even when the analyzer fallback runs.
+        required_chan_fields = {
+            "symbol", "timeframe", "source", "engine", "engine_version",
+            "parameters", "fractals", "strokes", "segments", "pivot_zones",
+            "divergences", "structure_alerts", "signal_series",
+            "signal_events", "signal_snapshots", "candidate_point_events",
+            "candidate_buy_points", "candidate_sell_points",
+            "plot_primitives", "summary", "warnings", "meta",
+        }
+        self.assertTrue(
+            required_chan_fields.issubset(result.chan_analysis.keys()),
+            f"chan_analysis missing fields: {required_chan_fields - set(result.chan_analysis.keys())}",
+        )
+        self.assertEqual(result.chan_analysis["engine"], "czsc")
+
+        # The candidate passes schema validation via build_projection.
+        candidate = LiveSnapshotCandidate(
+            session_id="live-1",
+            generation=1,
+            symbol="sh.600000",
+            pipeline_result=result,
+            market_epoch=1,
+        )
+        projection = candidate.build_projection(0)
+        payload = projection.to_dict()
+        self.assertEqual(payload["session"]["trade_date"], "2026-07-27")
+        self.assertEqual(payload["market"]["bars_1m"], [])
+        self.assertIsNone(payload["market"].get("quote"))
+        self.assertEqual(payload["warnings"][0]["warning_code"], "degraded_projection")
+
+        # The candidate passes the production publish boundary.
+        coordinator = _FakeCoordinator("live-1", 1)
+        store = LiveProjectionStore(coordinator, service_generation=1)
+        accepted = store.accept_candidate(candidate)
+        self.assertIsNotNone(accepted)
+        self.assertEqual(store.published_market_epoch, 1)
+        snapshot = store.get_live_snapshot(session_id="live-1", generation=1)
+        self.assertEqual(_snapshot_trade_date(snapshot), "2026-07-27")
 
 
 class CloseReconciliationRetryTests(unittest.TestCase):
