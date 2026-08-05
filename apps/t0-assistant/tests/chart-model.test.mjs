@@ -10,6 +10,7 @@ import {
   PRICE_AXIS_INTEGER_MIN_MOVE,
   PRICE_EXACT_PRICE_FORMAT,
   calculateIntradayPriceRange,
+  calculateIntradayPriceTicks,
   createChartGroupModel,
   createPriceExactPriceFormat,
   formatMarketTick,
@@ -673,4 +674,107 @@ test("intraday model range from fixture bars matches P0-centred mirror", () => {
   assert.ok(Math.abs(result.yMax - 10.35) < 1e-6);
   // P0 at centre
   assert.ok(Math.abs((result.yMax + result.yMin) / 2 - 10.10) < 1e-6);
+});
+// calculateIntradayPriceTicks + tickStep - spec §6.2.1
+// 中轴到上下沿各四等分，刻度比例为:
+// +R, +3R/4, +R/2, +R/4, 0, -R/4, -R/2, -3R/4, -R
+
+test("intraday price range exposes tickStep = R*P0/4", () => {
+  const P0 = 65.41;
+  const result = calculateIntradayPriceRange(P0, [
+    { open: 65.5, high: 70.59, low: 65.2 },
+  ]);
+  assert.ok(result);
+  const expectedTickStep = (result.R * P0) / 4;
+  assert.ok(Math.abs(result.tickStep - expectedTickStep) < 1e-9);
+});
+
+test("intraday price range tickStep uses ±1% floor when no bars", () => {
+  const result = calculateIntradayPriceRange(100, []);
+  assert.ok(result);
+  // R = 1%, tickStep = 0.01 * 100 / 4 = 0.25
+  assert.ok(Math.abs(result.tickStep - 0.25) < 1e-9);
+});
+
+test("calculateIntradayPriceTicks returns 9 ticks at quarter-range ratios", () => {
+  const P0 = 100;
+  const R = 0.08;
+  const ticks = calculateIntradayPriceTicks(P0, R);
+  assert.ok(ticks);
+  assert.equal(ticks.length, 9);
+  // Ratios: +R, +3R/4, +R/2, +R/4, 0, -R/4, -R/2, -3R/4, -R
+  const expected = [
+    100 * (1 + R),       // +R
+    100 * (1 + (3 * R) / 4), // +3R/4
+    100 * (1 + R / 2),   // +R/2
+    100 * (1 + R / 4),   // +R/4
+    100,                  // 0
+    100 * (1 - R / 4),   // -R/4
+    100 * (1 - R / 2),   // -R/2
+    100 * (1 - (3 * R) / 4), // -3R/4
+    100 * (1 - R),       // -R
+  ];
+  for (let i = 0; i < 9; i++) {
+    assert.ok(Math.abs(ticks[i] - expected[i]) < 1e-9, `tick[${i}]`);
+  }
+});
+
+test("calculateIntradayPriceTicks are symmetric around P0", () => {
+  const P0 = 65.41;
+  const R = 0.0792;
+  const ticks = calculateIntradayPriceTicks(P0, R);
+  assert.ok(ticks);
+  // ticks[4] = P0 (centre)
+  assert.ok(Math.abs(ticks[4] - P0) < 1e-9);
+  // Symmetric pairs: ticks[4-k] and ticks[4+k] are equidistant from P0
+  for (let k = 1; k <= 4; k++) {
+    const upper = ticks[4 - k];
+    const lower = ticks[4 + k];
+    assert.ok(Math.abs((P0 - upper) - (lower - P0)) < 1e-9, `symmetry k=${k}`);
+  }
+});
+
+test("calculateIntradayPriceTicks edges match yMin and yMax", () => {
+  const P0 = 100;
+  const R = 0.05;
+  const ticks = calculateIntradayPriceTicks(P0, R);
+  assert.ok(ticks);
+  assert.ok(Math.abs(ticks[0] - P0 * (1 + R)) < 1e-9);   // yMax
+  assert.ok(Math.abs(ticks[8] - P0 * (1 - R)) < 1e-9);   // yMin
+});
+
+test("calculateIntradayPriceTicks uniform spacing equals tickStep", () => {
+  const P0 = 65.41;
+  const R = 0.0792;
+  const ticks = calculateIntradayPriceTicks(P0, R);
+  assert.ok(ticks);
+  const tickStep = (R * P0) / 4;
+  for (let i = 1; i < 9; i++) {
+    const spacing = ticks[i - 1] - ticks[i]; // descending order
+    assert.ok(Math.abs(spacing - tickStep) < 1e-9, `spacing[${i}]`);
+  }
+});
+
+test("calculateIntradayPriceTicks returns null for invalid inputs", () => {
+  assert.equal(calculateIntradayPriceTicks(0, 0.05), null);
+  assert.equal(calculateIntradayPriceTicks(-1, 0.05), null);
+  assert.equal(calculateIntradayPriceTicks(NaN, 0.05), null);
+  assert.equal(calculateIntradayPriceTicks(100, -0.05), null);
+  assert.equal(calculateIntradayPriceTicks(100, NaN), null);
+});
+
+test("calculateIntradayPriceTicks matches issue #143 example: 600584", () => {
+  const P0 = 65.41;
+  const result = calculateIntradayPriceRange(P0, [
+    { open: 65.5, high: 70.59, low: 65.2 },
+  ]);
+  assert.ok(result);
+  const ticks = calculateIntradayPriceTicks(P0, result.R);
+  assert.ok(ticks);
+  // Top tick = yMax = 70.59
+  assert.ok(Math.abs(ticks[0] - 70.59) < 1e-6);
+  // Bottom tick = yMin ≈ 60.23
+  assert.ok(Math.abs(ticks[8] - P0 * (1 - result.R)) < 1e-6);
+  // Centre tick = P0
+  assert.ok(Math.abs(ticks[4] - 65.41) < 1e-9);
 });

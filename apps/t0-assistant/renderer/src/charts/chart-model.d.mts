@@ -209,6 +209,7 @@ export interface ChartGroupModel {
 export interface IntradayPriceRange {
   P0: number;
   R: number;
+  tickStep: number;
   yMin: number;
   yMax: number;
 }
@@ -258,6 +259,11 @@ export function calculateIntradayPriceRange(
   previousClose: number | null | undefined,
   bars: ReadonlyArray<{ open: number; high: number; low: number }> | null,
 ): IntradayPriceRange | null;
+
+export function calculateIntradayPriceTicks(
+  P0: number,
+  R: number,
+): number[] | null;
 
 export function createChartGroupModel(
   snapshot: WorkbenchChartSnapshot,

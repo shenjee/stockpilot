@@ -228,7 +228,8 @@ export function calculateIntradayPriceRange(previousClose, bars) {
 
   if (validBars.length === 0) {
     const R = INITIAL_RANGE_FLOOR;
-    return { P0, R, yMin: P0 * (1 - R), yMax: P0 * (1 + R) };
+    const tickStep = (R * P0) / 4;
+    return { P0, R, tickStep, yMin: P0 * (1 - R), yMax: P0 * (1 + R) };
   }
 
   const O = validBars[0].open;
@@ -247,8 +248,31 @@ export function calculateIntradayPriceRange(previousClose, bars) {
       ? Math.max(INITIAL_RANGE_FLOOR, Math.abs(O / P0 - 1))
       : INITIAL_RANGE_FLOOR;
   const R = Math.max(initialRange, observedRange);
+  const tickStep = (R * P0) / 4;
+  return { P0, R, tickStep, yMin: P0 * (1 - R), yMax: P0 * (1 + R) };
+}
 
-  return { P0, R, yMin: P0 * (1 - R), yMax: P0 * (1 + R) };
+/**
+ * Spec §6.2.1: 中轴到上下沿各四等分，刻度比例为
+ * +R, +3R/4, +R/2, +R/4, 0, -R/4, -R/2, -3R/4, -R.
+ * 价格刻度按 price = P0 * (1 + ratio) 计算，共 9 个刻度。
+ */
+export function calculateIntradayPriceTicks(P0, R) {
+  if (
+    typeof P0 !== "number" ||
+    !Number.isFinite(P0) ||
+    P0 <= 0 ||
+    typeof R !== "number" ||
+    !Number.isFinite(R) ||
+    R < 0
+  ) {
+    return null;
+  }
+  const ticks = [];
+  for (let k = 4; k >= -4; k--) {
+    ticks.push(P0 * (1 + (k * R) / 4));
+  }
+  return ticks;
 }
 
 import { projectTradeMarkers } from "./trade-markers.mjs";

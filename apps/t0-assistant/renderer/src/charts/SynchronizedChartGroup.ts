@@ -987,10 +987,24 @@ export class SynchronizedChartGroup {
   }
 
   private syncPriceAxisMinMove() {
-    const priceMinMove = resolvePriceAxisMinMove(
-      ...this.priceAxisExtent(this.priceSeries),
-    );
-    this.applyPriceExactMinMove(this.priceSeries, priceMinMove);
+    // 分时价格图使用前收居中四等分刻度（spec §6.2.1）：minMove = R*P0/4，
+    // 使 LC 以四分之一半轴间距生成刻度。previousClose 无效时回退通用规则。
+    const intradayResult =
+      this.kind === ChartGroupKind.ONE_MINUTE && this.model
+        ? calculateIntradayPriceRange(
+            this.model.previousClose,
+            this.model.bars,
+          )
+        : null;
+
+    if (intradayResult !== null) {
+      this.applyPriceExactMinMove(this.priceSeries, intradayResult.tickStep);
+    } else {
+      const priceMinMove = resolvePriceAxisMinMove(
+        ...this.priceAxisExtent(this.priceSeries),
+      );
+      this.applyPriceExactMinMove(this.priceSeries, priceMinMove);
+    }
 
     const macdExtent = this.macdAxisExtent();
     const macdMinMove = resolvePriceAxisMinMove(...macdExtent);

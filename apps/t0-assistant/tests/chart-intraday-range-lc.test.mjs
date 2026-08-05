@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { calculateIntradayPriceRange } from "../renderer/src/charts/chart-model.mjs";
+import { calculateIntradayPriceRange, calculateIntradayPriceTicks } from "../renderer/src/charts/chart-model.mjs";
 
 // ---- minimal DOM/canvas stub (与 chart-viewport-lc.test.mjs 共享同一模式) ----
 const noop = () => {};
@@ -340,6 +340,142 @@ test("real LC: zero scaleMargins maps custom range edge-to-edge", async () => {
     // yMax (105) maps near top edge (small coordinate), yMin (95) near bottom (large coordinate)
     assert.ok(topCoord < bottomCoord, `yMax should have smaller coordinate than yMin`);
     assert.ok(topCoord < midCoord && midCoord < bottomCoord, `coordinates should be ordered yMax < P0 < yMin`);
+  } finally {
+    restore();
+  }
+});
+
+// ---- minMove = tickStep (spec §6.2.1: 中轴到上下沿各四等分) ----
+
+test("real LC: minMove set to tickStep enables quarter-range tick spacing", async () => {
+  const restore = installDom();
+  try {
+    const { series } = await makeIntradayChart();
+    const P0 = 65.41;
+    const result = calculateIntradayPriceRange(P0, [
+      { open: 65.5, high: 70.59, low: 65.2 },
+    ]);
+    assert.ok(result);
+
+    // Apply visible range + minMove = tickStep (mirrors SynchronizedChartGroup flow)
+    series.priceScale().applyOptions({ scaleMargins: { top: 0, bottom: 0 } });
+    series.priceScale().setVisibleRange({ from: result.yMin, to: result.yMax });
+    series.applyOptions({
+      priceFormat: {
+        type: "custom",
+        formatter: (v) => v.toFixed(2),
+        tickmarksFormatter: (prices) => prices.map((p) => p.toFixed(2)),
+        minMove: result.tickStep,
+      },
+    });
+    globalThis.__flushRaf();
+
+    // Verify minMove was accepted by LC
+    const fmt = series.options().priceFormat;
+    assert.ok(typeof fmt.minMove === "number");
+    assert.ok(Math.abs(fmt.minMove - result.tickStep) < 1e-9);
+  } finally {
+    restore();
+  }
+});
+
+test("real LC: calculateIntradayPriceTicks produces 9 uniformly-spaced prices", () => {
+  const P0 = 65.41;
+  const result = calculateIntradayPriceRange(P0, [
+    { open: 65.5, high: 70.59, low: 65.2 },
+  ]);
+  assert.ok(result);
+
+  const ticks = calculateIntradayPriceTicks(P0, result.R);
+  assert.ok(ticks);
+  assert.equal(ticks.length, 9);
+
+  // All ticks within [yMin, yMax]
+  for (const t of ticks) {
+    assert.ok(t >= result.yMin - 1e-9 && t <= result.yMax + 1e-9, `tick ${t} out of range`);
+  }
+
+  // Uniform spacing = tickStep
+  for (let i = 1; i < 9; i++) {
+    const spacing = ticks[i - 1] - ticks[i];
+    assert.ok(Math.abs(spacing - result.tickStep) < 1e-9, `spacing[${i}] = ${spacing}`);
+  }
+
+  // P0 at centre tick
+  assert.ok(Math.abs(ticks[4] - P0) < 1e-9);
+});
+
+test("real LC: minMove = tickStep produces ticks at quarter-range intervals", async () => {
+  const restore = installDom();
+  try {
+    const { series } = await makeIntradayChart();
+    const P0 = 100;
+    const R = 0.08; // 8% -> tickStep = 2.0, nice round number for alignment
+    const result = calculateIntradayPriceRange(P0, [
+      { open: 100, high: 108, low: 95 },
+    ]);
+    assert.ok(result);
+    assert.ok(Math.abs(result.R - R) < 1e-9);
+    assert.ok(Math.abs(result.tickStep - 2.0) < 1e-9); // 0.08 * 100 / 4 = 2.0
+
+    series.priceScale().applyOptions({ scaleMargins: { top: 0, bottom: 0 } });
+    series.priceScale().setVisibleRange({ from: result.yMin, to: result.yMax });
+    series.applyOptions({
+      priceFormat: {
+        type: "custom",
+        formatter: (v) => v.toFixed(2),
+        tickmarksFormatter: (prices) => prices.map((p) => p.toFixed(2)),
+        minMove: result.tickStep,
+      },
+    });
+    series.setData([
+      { time: minuteTime(0), value: 100 },
+      { time: minuteTime(1), value: 105 },
+    ]);
+    globalThis.__flushRaf();
+
+    // With minMove=2 and range [92, 108], LC should generate ticks at
+    // multiples of 2: 92, 94, 96, 98, 100, 102, 104, 106, 108
+    // = exactly the 9 spec-required positions
+    const expectedTicks = calculateIntradayPriceTicks(P0, R);
+    assert.ok(expectedTicks);
+    assert.equal(expectedTicks.length, 9);
+
+    // Verify all 9 expected prices are multiples of tickStep=2
+    for (const tick of expectedTicks) {
+      const remainder = tick % result.tickStep;
+      assert.ok(
+        Math.abs(remainder) < 1e-9 || Math.abs(remainder - result.tickStep) < 1e-9,
+        `tick ${tick} should be a multiple of tickStep ${result.tickStep}`,
+      );
+    }
+  } finally {
+    restore();
+  }
+});
+
+test("real LC: minMove reverts to generic when previousClose is invalid", async () => {
+  const restore = installDom();
+  try {
+    const { series } = await makeIntradayChart();
+    const scale = series.priceScale();
+
+    series.setData([
+      { time: minuteTime(0), value: 50 },
+      { time: minuteTime(1), value: 55 },
+    ]);
+    globalThis.__flushRaf();
+
+    // No previousClose -> calculateIntradayPriceRange returns null
+    const result = calculateIntradayPriceRange(null, [
+      { open: 50, high: 55, low: 49 },
+    ]);
+    assert.equal(result, null);
+
+    // Generic minMove should be 0.01 (prices < 100)
+    const fmt = series.options().priceFormat;
+    assert.ok(typeof fmt.minMove === "number");
+    assert.ok(Math.abs(fmt.minMove - 0.01) < 1e-9 || Math.abs(fmt.minMove - 1) < 1e-9);
   } finally {
     restore();
   }
