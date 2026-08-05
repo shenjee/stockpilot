@@ -16,6 +16,7 @@ cover the acceptance range from the #133 spec:
 
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from datetime import date, time
@@ -269,6 +270,137 @@ class TradingCalendarMarketContextCompatibilityTests(unittest.TestCase):
         session = context.require_session("2026-08-04", "sh")
         self.assertEqual(session.start.strftime("%H:%M"), "09:30")
         self.assertEqual(session.end.strftime("%H:%M"), "15:00")
+
+
+class TradingCalendarValidationTests(unittest.TestCase):
+    """Yearly JSON validation: reject malformed market/year/overlap (#133)."""
+
+    def _make_calendar_dir(
+        self,
+        *,
+        market: str = "sh",
+        year: int = 2026,
+        file_market: str | None = None,
+        file_year: int | None = None,
+        closed_dates: list[str] | None = None,
+        half_day_dates: list[str] | None = None,
+        sessions: dict | None = None,
+    ) -> Path:
+        import tempfile
+
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(tmp, ignore_errors=True))
+
+        cal = tmp / "calendars"
+        cal.mkdir()
+        # Always write a valid market_sessions.json.
+        sessions_data = sessions or {
+            "sh": {
+                "timezone": "Asia/Shanghai",
+                "regular_sessions": [["09:30", "11:30"], ["13:00", "15:00"]],
+            },
+            "sz": {
+                "timezone": "Asia/Shanghai",
+                "regular_sessions": [["09:30", "11:30"], ["13:00", "15:00"]],
+            },
+            "hk": {
+                "timezone": "Asia/Hong_Kong",
+                "regular_sessions": [["09:30", "12:00"], ["13:00", "16:00"]],
+                "half_day_sessions": [["09:30", "12:00"]],
+            },
+        }
+        (cal / "market_sessions.json").write_text(
+            json.dumps(sessions_data), encoding="utf-8"
+        )
+
+        market_dir = cal / market
+        market_dir.mkdir()
+        payload = {
+            "market": file_market if file_market is not None else market,
+            "year": file_year if file_year is not None else year,
+            "closed_dates": closed_dates if closed_dates is not None else [],
+        }
+        if half_day_dates is not None:
+            payload["half_day_dates"] = half_day_dates
+        (market_dir / f"{year}.json").write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+        return cal
+
+    def test_wrong_market_header_rejected(self) -> None:
+        cal = self._make_calendar_dir(market="sh", file_market="sz")
+        calendar = TradingCalendar(calendars_dir=cal)
+        with self.assertRaisesRegex(CalendarUnavailableError, "declares market"):
+            calendar.is_trading_day("2026-08-04", "sh")
+
+    def test_wrong_year_header_rejected(self) -> None:
+        cal = self._make_calendar_dir(year=2026, file_year=2027)
+        calendar = TradingCalendar(calendars_dir=cal)
+        with self.assertRaisesRegex(CalendarUnavailableError, "declares year"):
+            calendar.is_trading_day("2026-08-04", "sh")
+
+    def test_date_from_wrong_year_in_closed_dates_rejected(self) -> None:
+        cal = self._make_calendar_dir(
+            closed_dates=["2027-01-01"],  # belongs to 2027, not 2026
+        )
+        calendar = TradingCalendar(calendars_dir=cal)
+        with self.assertRaisesRegex(CalendarUnavailableError, "does not belong to year"):
+            calendar.is_trading_day("2026-08-04", "sh")
+
+    def test_closed_and_half_day_overlap_rejected(self) -> None:
+        cal = self._make_calendar_dir(
+            market="hk",
+            closed_dates=["2026-12-24"],
+            half_day_dates=["2026-12-24"],
+        )
+        calendar = TradingCalendar(calendars_dir=cal)
+        with self.assertRaisesRegex(CalendarUnavailableError, "both closed_dates and half_day_dates"):
+            calendar.is_trading_day("2026-12-24", "hk")
+
+    def test_half_day_dates_without_half_day_sessions_rejected(self) -> None:
+        # sh has no half_day_sessions in the template, but the JSON declares one.
+        cal = self._make_calendar_dir(
+            market="sh",
+            half_day_dates=["2026-12-31"],
+            sessions={
+                "sh": {
+                    "timezone": "Asia/Shanghai",
+                    "regular_sessions": [["09:30", "11:30"], ["13:00", "15:00"]],
+                    # No half_day_sessions key.
+                },
+            },
+        )
+        calendar = TradingCalendar(calendars_dir=cal)
+        with self.assertRaisesRegex(CalendarUnavailableError, "defines no half_day_sessions"):
+            calendar.is_trading_day("2026-12-31", "sh")
+
+
+class WheelPackagingTests(unittest.TestCase):
+    """Calendar JSON must be packaged into the built wheel (#133 P1)."""
+
+    def test_calendar_json_globs_in_package_data(self) -> None:
+        """Verify pyproject.toml declares calendar JSON in package-data."""
+        pyproject = ROOT / "pyproject.toml"
+        text = pyproject.read_text(encoding="utf-8")
+        # The package-data section for packages.marketdata must include
+        # calendar JSON globs so wheels ship the holiday files.
+        self.assertIn('"packages.marketdata"', text)
+        self.assertIn("calendars/market_sessions.json", text)
+        self.assertIn("calendars/sh/*.json", text)
+        self.assertIn("calendars/sz/*.json", text)
+        self.assertIn("calendars/hk/*.json", text)
+
+    def test_bundled_calendar_files_exist(self) -> None:
+        """Verify shipped calendar JSON files are present on disk."""
+        cal_dir = ROOT / "packages" / "marketdata" / "calendars"
+        self.assertTrue((cal_dir / "market_sessions.json").is_file())
+        for market in ("sh", "sz", "hk"):
+            market_dir = cal_dir / market
+            json_files = list(market_dir.glob("*.json"))
+            self.assertTrue(
+                json_files,
+                f"no calendar JSON files found for market {market!r}",
+            )
 
 
 if __name__ == "__main__":

@@ -278,9 +278,32 @@ class TradingCalendar:
             ) from exc
         if not isinstance(raw, dict):
             raise CalendarUnavailableError(f"calendar file {path} must be a JSON object")
+        _validate_year_payload(raw, year=year, market=market, path=path)
+        closed_dates = _parse_date_set(
+            raw.get("closed_dates"), "closed_dates", path, year=year
+        )
+        half_day_dates = _parse_date_set(
+            raw.get("half_day_dates"), "half_day_dates", path, year=year
+        )
+        overlap = closed_dates & half_day_dates
+        if overlap:
+            sample = sorted(overlap)[0].isoformat()
+            raise CalendarUnavailableError(
+                f"calendar file {path} has dates in both closed_dates and "
+                f"half_day_dates (e.g. {sample}); a day cannot be both closed "
+                f"and a half trading day"
+            )
+        if half_day_dates:
+            sessions = self._load_sessions(market)
+            if not sessions.half_day_sessions:
+                raise CalendarUnavailableError(
+                    f"calendar file {path} declares half_day_dates for market "
+                    f"{market!r} but market_sessions.json defines no "
+                    f"half_day_sessions for that market"
+                )
         year_data = _YearData(
-            closed_dates=_parse_date_set(raw.get("closed_dates"), "closed_dates", path),
-            half_day_dates=_parse_date_set(raw.get("half_day_dates"), "half_day_dates", path),
+            closed_dates=closed_dates,
+            half_day_dates=half_day_dates,
         )
         with self._lock:
             self._year_cache[key] = year_data
@@ -338,12 +361,49 @@ class TradingCalendar:
         return result
 
 
+def _validate_year_payload(
+    raw: dict,
+    *,
+    year: int,
+    market: str,
+    path: Path,
+) -> None:
+    """Validate the ``market`` and ``year`` header fields of a year JSON file.
+
+    Catches human copy/paste/edit mistakes (e.g. dropping ``sh/2027.json`` with
+    ``"year": 2026`` inside) before they silently produce a wrong calendar.
+    """
+
+    file_market = raw.get("market")
+    if not isinstance(file_market, str) or file_market.strip().lower() != market:
+        raise CalendarUnavailableError(
+            f"calendar file {path} declares market {file_market!r} but path "
+            f"expects {market!r}"
+        )
+    file_year = raw.get("year")
+    if (
+        not isinstance(file_year, int)
+        or isinstance(file_year, bool)
+        or file_year != year
+    ):
+        raise CalendarUnavailableError(
+            f"calendar file {path} declares year {file_year!r} but filename "
+            f"expects {year}"
+        )
+
+
 def _parse_date_set(
     raw: object,
     field: str,
     path: Path,
+    *,
+    year: int,
 ) -> frozenset[date]:
-    """Parse a JSON list of ``YYYY-MM-DD`` strings into a date frozenset."""
+    """Parse a JSON list of ``YYYY-MM-DD`` strings into a date frozenset.
+
+    Every parsed date must belong to *year*; a stray date from another year is
+    a strong sign the file was edited or copied incorrectly.
+    """
     if raw is None:
         return frozenset()
     if not isinstance(raw, list):
@@ -362,6 +422,12 @@ def _parse_date_set(
             raise CalendarUnavailableError(
                 f"{field!r} entry {item!r} in {path} is not YYYY-MM-DD: {exc}"
             ) from exc
+    for value in values:
+        if value.year != year:
+            raise CalendarUnavailableError(
+                f"{field!r} entry {value.isoformat()} in {path} does not "
+                f"belong to year {year}"
+            )
     return frozenset(values)
 
 

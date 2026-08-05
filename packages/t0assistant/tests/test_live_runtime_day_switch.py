@@ -202,6 +202,39 @@ class PollingProfileTests(unittest.TestCase):
             )
         )
 
+    def test_calendar_unavailable_keeps_polling_reduced(self) -> None:
+        """Calendar unavailable must NOT stop market-data polling (#133 P1).
+
+        When the calendar cannot authoritatively resolve the day, the view
+        keeps refreshing quote / 1m / 5m at a reduced cadence instead of
+        going idle.
+        """
+        self.assertEqual(
+            resolve_polling_profile(
+                market_phase="unknown",
+                calendar_status="unavailable",
+                pinned_trade_date=date(2026, 7, 24),
+                observed_at=datetime(2026, 7, 27, 10, 0),
+                calendar=None,
+                market="sh",
+            ),
+            "reduced",
+        )
+
+    def test_calendar_unavailable_with_known_phase_still_polls(self) -> None:
+        """Even when phase is known but calendar is unavailable, keep polling."""
+        self.assertEqual(
+            resolve_polling_profile(
+                market_phase="pre_open",
+                calendar_status="unavailable",
+                pinned_trade_date=date(2026, 7, 27),
+                observed_at=datetime(2026, 7, 27, 9, 0),
+                calendar=None,
+                market="sh",
+            ),
+            "reduced",
+        )
+
 
 class AtomicDaySwitchTests(unittest.TestCase):
     def _spec(self) -> SessionSpec:
@@ -213,14 +246,14 @@ class AtomicDaySwitchTests(unittest.TestCase):
             trade_date=None,
         )
 
-    def test_auction_quote_before_0930_does_not_switch(self) -> None:
-        class _AuctionSource(_SwitchableSource):
-            def load_refresh_quotes(self, spec, *, trade_date):
-                if str(trade_date) == "2026-07-27":
-                    return (_quote("2026-07-27 09:20:00", 10.1),)
-                return ()
+    def test_before_market_open_does_not_switch(self) -> None:
+        """Wall clock before 09:30 must not trigger a day switch.
 
-        source = _AuctionSource()
+        The switch is driven by calendar + wall clock only; market data is
+        irrelevant.  Even if a quote is present (e.g. auction data), the
+        switch must wait until market open.
+        """
+        source = _SwitchableSource()
         switched: list[tuple[LiveSnapshotCandidate, int]] = []
         port = BranchingLiveInput(
             source,
@@ -245,7 +278,12 @@ class AtomicDaySwitchTests(unittest.TestCase):
         self.assertEqual(port.market_epoch, 0)
         self.assertEqual(source.prepare_calls, 1)
 
-    def test_post_open_quote_triggers_atomic_switch(self) -> None:
+    def test_post_open_clock_triggers_atomic_switch(self) -> None:
+        """Day switch fires on calendar + wall clock at 09:31, not on quote data.
+
+        The quote refresh is fetched *after* the switch commits; the switch
+        itself is independent of whether quote data exists or succeeds.
+        """
         source = _SwitchableSource()
         switched: list[tuple[LiveSnapshotCandidate, int]] = []
         port = BranchingLiveInput(
@@ -277,7 +315,8 @@ class AtomicDaySwitchTests(unittest.TestCase):
         self.assertEqual(switched[0][0].polling_profile, "active")
         self.assertEqual(source.prepare_calls, 2)
 
-    def test_first_closed_one_minute_triggers_switch(self) -> None:
+    def test_post_open_switch_regardless_of_refresh_kind(self) -> None:
+        """A 1m refresh at 09:31 triggers the same calendar-driven switch."""
         source = _SwitchableSource()
         switched: list[tuple[LiveSnapshotCandidate, int]] = []
         port = BranchingLiveInput(
@@ -301,6 +340,48 @@ class AtomicDaySwitchTests(unittest.TestCase):
         self.assertEqual(result.updates, ())
         self.assertEqual(len(switched), 1)
         self.assertEqual(switched[0][0].pipeline_result.trade_date.isoformat(), "2026-07-27")
+
+    def test_suspended_stock_still_switches(self) -> None:
+        """A suspended security (no quote / bar data) still switches on clock.
+
+        The day switch is calendar + wall clock only; empty refresh data from
+        a suspended symbol must not block the transition to the new trade date.
+        """
+
+        class _SuspendedSource(_SwitchableSource):
+            def load_refresh_quotes(self, spec, *, trade_date):
+                return ()
+
+            def load_refresh_bars(self, spec, *, timeframe, trade_date):
+                return ()
+
+        source = _SuspendedSource()
+        switched: list[tuple[LiveSnapshotCandidate, int]] = []
+        port = BranchingLiveInput(
+            source,
+            calendar=FixtureCalendarQuery(
+                ["2026-07-24", "2026-07-27"],
+                coverage_start="2026-07-24",
+                coverage_end="2026-07-27",
+            ),
+            on_day_switched=lambda candidate, epoch: switched.append((candidate, epoch)),
+        )
+        port.prepare(self._spec(), minimum_preheat_5m=1)
+
+        result = port.refresh(
+            LiveRefreshKind.QUOTE,
+            self._spec(),
+            observed_at=datetime(2026, 7, 27, 9, 31),
+            latest_data_time=None,
+        )
+
+        self.assertEqual(result.updates, ())
+        self.assertEqual(len(switched), 1)
+        self.assertEqual(
+            switched[0][0].pipeline_result.trade_date.isoformat(),
+            "2026-07-27",
+        )
+        self.assertEqual(port.market_epoch, 1)
 
     def test_refresh_after_switch_uses_new_trade_date(self) -> None:
         source = _SwitchableSource()

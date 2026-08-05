@@ -250,7 +250,15 @@ def resolve_polling_profile(
     close_reconcile_status: CloseReconcileStatus = "not_started",
     close_reconcile_retry_due: bool = False,
 ) -> PollingProfile:
-    """Return the refresh cadence for the current Live view (#130 PR-B)."""
+    """Return the refresh cadence for the current Live view (#130 PR-B).
+
+    Calendar availability never shuts down market-data polling.  When the
+    calendar is unavailable (missing, corrupt, or out-of-year JSON) the view
+    keeps refreshing quote / 1m / 5m at a reduced cadence so data can still
+    arrive and recover: market-data fetching has higher priority than calendar
+    status.  Only a genuinely closed market (with an authoritative calendar)
+    goes idle.
+    """
 
     if awaiting_day_switch:
         return "reduced"
@@ -264,9 +272,11 @@ def resolve_polling_profile(
         if observed_at.time() >= _CLOSE_RECONCILE:
             return "active"
         return "idle"
-    if market_phase in {"pre_open", "lunch_break", "market_closed", "unknown"}:
-        return "idle"
     if calendar_status == "unavailable":
+        # Cannot authoritatively resolve the day/phase; keep polling market
+        # data at reduced cadence instead of going idle.
+        return "reduced"
+    if market_phase in {"pre_open", "lunch_break", "market_closed", "unknown"}:
         return "idle"
     if calendar is not None and is_awaiting_day_switch(
         calendar,
@@ -337,7 +347,14 @@ def day_switch_target_date(
     pinned_trade_date: date,
     market: str,
 ) -> date | None:
-    """Return the calendar target day when a switch is due, else ``None``."""
+    """Return the calendar target day when a switch is due, else ``None``.
+
+    The target is derived from the calendar + wall clock only.  When the
+    calendar cannot authoritatively resolve the day (``calendar_status ==
+    unavailable``, e.g. a missing year JSON), no switch is attempted: the Live
+    view stays pinned to its prepared day and keeps polling at a reduced cadence
+    rather than jumping to an unreliable best-effort date.
+    """
 
     if observed_at.time() < _MARKET_OPEN:
         return None
@@ -348,6 +365,8 @@ def day_switch_target_date(
             market=market,
         )
     except LiveMarketViewError:
+        return None
+    if resolved.calendar_status == "unavailable":
         return None
     target = resolved.effective_trade_date
     if target <= pinned_trade_date:
@@ -385,30 +404,6 @@ def row_timestamp(row: Mapping[str, object]) -> datetime | None:
     except ValueError:
         return None
     return parsed if parsed.tzinfo is None else None
-
-
-def day_switch_evidence_date(
-    rows: Sequence[Mapping[str, object]],
-    *,
-    target_trade_date: date,
-    observed_at: datetime,
-    require_closed: bool = False,
-) -> bool:
-    """Return whether branch rows carry post-open evidence for ``target_trade_date``."""
-
-    if observed_at.time() < _MARKET_OPEN:
-        return False
-    for row in rows:
-        if require_closed and row.get("closed") is not True:
-            continue
-        timestamp = row_timestamp(row)
-        if timestamp is None:
-            continue
-        if timestamp.date() != target_trade_date:
-            continue
-        if timestamp.time() >= _MARKET_OPEN:
-            return True
-    return False
 
 
 def should_run_close_reconciliation(

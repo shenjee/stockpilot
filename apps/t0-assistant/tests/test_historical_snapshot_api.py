@@ -265,7 +265,32 @@ class HistoricalSnapshotApiTests(unittest.TestCase):
         )
         self.assertTrue(response["error"]["retryable"])
 
-    def test_invalid_request_category_is_validation(self) -> None:
+    def test_date_outside_calendar_coverage_is_unavailable(self) -> None:
+        """A date outside calendar coverage must not fabricate trading days (#133).
+
+        When the year's holiday JSON is missing, the calendar cannot
+        authoritatively determine whether a weekday is a trading day.
+        The API must return ``historical_data_unavailable`` rather than
+        silently treating unknown weekdays as open.
+        """
+        api = HistoricalSnapshotApi(
+            service_generation=1,
+            store=MagicMock(spec=KLineStore),
+            provider=MagicMock(),
+            market_context=self._market_context(),
+        )
+        # 2027-01-05 is outside the 2026-07-20..2026-07-22 coverage window.
+        response = api.get_historical_snapshot(
+            request_id="req-missing-year",
+            symbol="sh.600000",
+            trade_date="2027-01-05",
+        )
+        self.assertFalse(response["accepted"])
+        self.assertEqual(
+            response["error"]["error_code"], "historical_data_unavailable"
+        )
+        self.assertEqual(response["error"]["category"], "data")
+        self.assertTrue(response["error"]["retryable"])
         api = HistoricalSnapshotApi(
             service_generation=1,
             store=MagicMock(spec=KLineStore),
@@ -439,12 +464,12 @@ class CreateHistoricalSnapshotApiTests(unittest.TestCase):
             # Factory must not perform network I/O during startup.
             provider.get_kline_result.assert_not_called()
             provider.get_kline.assert_not_called()
-            # Weekday fallback keeps the API usable.
+            # Bundled calendar keeps the API usable.
             self.assertTrue(
                 api._market_context.is_trading_day("2026-07-21", "sh")
             )
 
-    def test_factory_uses_benchmark_calendar_when_cached(self) -> None:
+    def test_factory_uses_bundled_calendar_when_cached(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "market_data.sqlite"
             store = KLineStore(db_path)
@@ -484,7 +509,7 @@ class CreateHistoricalSnapshotApiTests(unittest.TestCase):
             )
             provider.get_kline_result.assert_not_called()
 
-    def test_factory_falls_back_to_all_trade_dates_when_no_benchmark(self) -> None:
+    def test_factory_uses_bundled_calendar_when_no_benchmark(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "market_data.sqlite"
             store = KLineStore(db_path)
@@ -512,7 +537,7 @@ class CreateHistoricalSnapshotApiTests(unittest.TestCase):
             )
             provider.get_kline_result.assert_not_called()
 
-    def test_factory_falls_back_to_weekday_calendar_when_store_empty(self) -> None:
+    def test_factory_uses_bundled_calendar_when_store_empty(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "market_data.sqlite"
             provider = MagicMock(spec=TencentStockDataProvider)
@@ -532,16 +557,18 @@ class CreateHistoricalSnapshotApiTests(unittest.TestCase):
             )
             provider.get_kline_result.assert_not_called()
 
-    def test_date_newer_than_cached_benchmark_reaches_provider(self) -> None:
-        """A weekday newer than the cached benchmark calendar must not be rejected.
+    def test_date_newer_than_cached_bars_reaches_provider(self) -> None:
+        """A weekday newer than cached bars must not be rejected.
 
-        The provider must be consulted before the request is classified as
-        unavailable, even when sh.000001 bars stop before the requested date.
+        The calendar comes from bundled TradingCalendar JSON and covers the
+        full year, so a date beyond the last cached bar is still within
+        coverage.  The provider must be consulted before the request is
+        classified as unavailable.
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "market_data.sqlite"
             store = KLineStore(db_path)
-            # Benchmark cached only through 2026-07-20 (Monday), inserting only
+            # Cache bars only through 2026-07-20 (Monday), inserting only
             # weekdays so the cached dates are valid trading days.
             bars = [
                 {
@@ -564,7 +591,7 @@ class CreateHistoricalSnapshotApiTests(unittest.TestCase):
                 provider=provider,
                 clock=self._clock,
             )
-            # 2026-07-21 is newer than the last cached benchmark bar but is a
+            # 2026-07-21 is newer than the last cached bar but is a
             # weekday inside the coverage window, so it must be a potential
             # trading day rather than a holiday.
             self.assertTrue(

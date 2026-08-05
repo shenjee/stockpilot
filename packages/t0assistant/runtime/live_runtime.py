@@ -29,7 +29,6 @@ from .live_market_view import (
     LiveMarketViewError,
     MarketClosedReason,
     PollingProfile,
-    day_switch_evidence_date,
     day_switch_target_date,
     is_awaiting_day_switch,
     resolve_live_market_context,
@@ -300,12 +299,9 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
                 market=market,
             )
         if target_date is not None:
-            probe_rows = self._load_probe_rows(spec, kind, target_date)
             if self._maybe_switch_day(
                 spec,
                 observed_at=observed_at,
-                kind=kind,
-                rows=probe_rows,
                 epoch_at_start=epoch_at_start,
             ):
                 return LiveRefreshResult.no_change(market_epoch=epoch_at_start)
@@ -460,36 +456,23 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
                 # phase candidate built before sibling merges.
                 handler(candidate)
 
-    def _load_probe_rows(
-        self,
-        spec: SessionSpec,
-        kind: LiveRefreshKind,
-        target_trade_date: date,
-    ) -> tuple[Mapping[str, object], ...]:
-        if kind is LiveRefreshKind.QUOTE:
-            return tuple(
-                self._source.load_refresh_quotes(
-                    spec,
-                    trade_date=target_trade_date,
-                )
-            )
-        return tuple(
-            self._source.load_refresh_bars(
-                spec,
-                timeframe="1m" if kind is LiveRefreshKind.ONE_MINUTE else "5m",
-                trade_date=target_trade_date,
-            )
-        )
-
     def _maybe_switch_day(
         self,
         spec: SessionSpec,
         *,
         observed_at: datetime,
-        kind: LiveRefreshKind,
-        rows: Sequence[Mapping[str, object]],
         epoch_at_start: int,
     ) -> bool:
+        """Switch the pinned trade day on calendar + wall clock alone.
+
+        The effective trade date is determined **only** by the calendar and the
+        current wall-clock time (see :func:`day_switch_target_date`).  Market
+        data is never used as evidence: a suspended security, a temporarily
+        empty quote, or a failed provider request must not block the day
+        switch.  After the switch commits, each refresh branch independently
+        fetches quote / 1m / 5m data for the new day.
+        """
+
         with self._lock:
             if (
                 self._session is None
@@ -509,15 +492,6 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             market=market,
         )
         if target_date is None:
-            return False
-
-        require_closed = kind is not LiveRefreshKind.QUOTE
-        if not day_switch_evidence_date(
-            rows,
-            target_trade_date=target_date,
-            observed_at=observed_at,
-            require_closed=require_closed,
-        ):
             return False
 
         with self._lock:

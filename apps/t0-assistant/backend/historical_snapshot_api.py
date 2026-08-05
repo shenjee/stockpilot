@@ -9,7 +9,7 @@ and returns a frozen ``command_response`` payload.
 from __future__ import annotations
 
 import re
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
@@ -19,7 +19,7 @@ from packages.marketdata.repositories.kline_store import KLineStore
 from packages.marketdata.runtime_paths import RuntimePaths
 from packages.marketdata.services.kline_data_service import KLineDataService
 from packages.marketdata.services.market_context_service import MarketContextService
-from packages.marketdata.trading_calendar import TradingCalendar
+from packages.marketdata.trading_calendar import CalendarUnavailableError, TradingCalendar
 from packages.t0assistant.runtime import (
     HistoricalDataUnavailableError,
     HistoricalSnapshotError,
@@ -41,16 +41,6 @@ def _error_category(error_code: str) -> str:
         return "service"
     # Unknown runtime failures should not be labelled as validation errors.
     return "service"
-
-
-def _weekday_dates(start: date, end: date) -> list[date]:
-    """Return every weekday in the inclusive date range."""
-
-    return [
-        start + timedelta(days=offset)
-        for offset in range((end - start).days + 1)
-        if (start + timedelta(days=offset)).weekday() < 5
-    ]
 
 
 def _build_market_context(
@@ -89,26 +79,23 @@ def _ensure_context_covers(
 ) -> MarketContextService:
     """Return a context whose coverage window includes ``trade_date``.
 
-    The initial coverage window is intentionally bounded so service startup
-    stays fast.  When a user requests a historical date outside that window,
-    the calendar is extended on demand using generated weekdays.  This keeps
-    the fixed 730-day lookback from becoming a hard limit on historical chart
-    range, while still avoiding network I/O during startup.
+    The calendar's coverage window is materialised from the bundled yearly
+    holiday JSON.  A date outside that window means the corresponding year's
+    JSON is missing: the calendar must **not** fabricate weekday trading days
+    for an unknown year (a holiday would be misreported as a trading day).
+    Instead this raises :class:`CalendarUnavailableError` so the caller can
+    surface a clear ``calendar year missing`` failure rather than silently
+    trusting made-up data.
     """
 
     start = context.coverage_start
     end = context.coverage_end
     if start <= trade_date <= end:
         return context
-    new_start = min(start, trade_date)
-    new_end = max(end, trade_date)
-    trading_days = sorted(
-        set(context.trading_days) | set(_weekday_dates(new_start, new_end))
-    )
-    return MarketContextService(
-        trading_days=[value.isoformat() for value in trading_days],
-        coverage_start=new_start.isoformat(),
-        coverage_end=new_end.isoformat(),
+    raise CalendarUnavailableError(
+        f"trade_date {trade_date.isoformat()} is outside calendar coverage "
+        f"({start.isoformat()}..{end.isoformat()}); the year's holiday JSON "
+        f"is missing and the calendar will not fabricate trading days"
     )
 
 
@@ -196,17 +183,23 @@ class HistoricalSnapshotApi:
                 "trade_date must be a valid calendar date",
             )
 
-        effective_context = _ensure_context_covers(
-            self._market_context,
-            resolved_trade_date,
-        )
-
         try:
+            effective_context = _ensure_context_covers(
+                self._market_context,
+                resolved_trade_date,
+            )
             snapshot = build_historical_snapshot(
                 symbol=symbol,
                 trade_date=trade_date,
                 market_data=self._market_data(effective_context),
                 market_context=effective_context,
+            )
+        except CalendarUnavailableError as exc:
+            return self._reject(
+                request_id,
+                "historical_data_unavailable",
+                str(exc),
+                retryable=True,
             )
         except HistoricalDataUnavailableError as exc:
             return self._reject(
