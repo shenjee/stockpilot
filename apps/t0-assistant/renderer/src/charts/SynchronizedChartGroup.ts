@@ -148,6 +148,13 @@ export class SynchronizedChartGroup {
   private lastTrackedLcRange: { from: number; to: number } | null = null;
   private lastReportedFollowState: "following" | "manual" | null = null;
   private lastReportedRange: { from: number; to: number } | null = null;
+  // Live 追加竞态抑制窗口：setModel 后，LC 可能在数据追加的下一帧布局时发出
+  // “视图尚未跟进”的落后范围通知（其 to 仍指向追加前的旧右边缘）。该通知是
+  // 图表库副作用而非用户操作，若在 following 下交给 setManualRange 会把视图钉在
+  // 旧右边缘，导致后续新 K 线不再右移。setModel 用 requestAnimationFrame 把该
+  // 标记保持到数据追加的下一帧结束之后；窗口内 setupViewportTracking 忽略范围
+  // 通知。用户真实交互（指针/滚轮）发生在更晚的独立事件循环，不受该窗口影响。
+  private suppressUntilFrame: number | null = null;
   private reportTimer: ReturnType<typeof setTimeout> | null = null;
   private viewportRangeHandler:
     | ((range: LogicalRange | null) => void)
@@ -327,6 +334,19 @@ export class SynchronizedChartGroup {
     } finally {
       this.applyingViewportRange = wasApplyingViewportRange;
     }
+    // 异步竞态窗口：LC 在数据追加的下一帧布局时可能再发出“视图尚未跟进”的落后
+    // 范围通知（to 仍指向追加前旧右边缘）。suppressUntilFrame 覆盖到该帧结束之后，
+    // 让 setupViewportTracking 忽略它。嵌套 rAF 确保清除晚于 LC 同帧的布局通知。
+    // 每次 setModel 重置窗口（取消前一次的 rAF 再重新设置），确保高频连续追加时
+    // 每次都有独立覆盖窗口，不因前一次窗口提前过期而遗漏后续追加的落后通知。
+    if (this.suppressUntilFrame !== null) {
+      cancelAnimationFrame(this.suppressUntilFrame);
+    }
+    this.suppressUntilFrame = requestAnimationFrame(() => {
+      this.suppressUntilFrame = requestAnimationFrame(() => {
+        this.suppressUntilFrame = null;
+      });
+    });
   }
 
   // 视口状态机：following 右对齐最新；manual 保留逻辑范围；空数据重置。
@@ -475,6 +495,18 @@ export class SynchronizedChartGroup {
       // LC 连续逻辑范围 -> 内部排他范围，再交给状态机判定 following/manual。
       const length = this.viewport.logicalToTime.length;
       const internal = fromChartLogicalRange(range, length);
+      // Live 追加竞态（异步变体）：following 下 setModel 已把视图推进到新 latest，
+      // 但 LC 可能在 guard 释放后、于数据追加的下一帧布局时再发出一条“视图尚未跟
+      // 进”的过渡通知，其范围仍停留在追加前的旧位置。它不是用户操作（用户交互由
+      // 指针/滚轮驱动，发生在独立事件循环，远晚于该过渡帧）。若按用户操作走
+      // setManualRange，atLatestEdge=false 会把 following 翻成 manual 并把视图钉在
+      // 旧右边缘，之后的新 K 线全部停在可视窗口之外（Live 不右移）。
+      // setModel 会把 suppressUntilFrame 标记到“下一帧结束之后”；此处若仍处于该
+      // 帧窗口内，判定为 LC 过渡通知并忽略，保持 following。提前返回避免无谓的
+      // span/isZoom 计算（被忽略的通知不应污染缩放判定基线）。
+      if (this.suppressUntilFrame !== null) {
+        return;
+      }
       const previousSpan = this.lastTrackedLcRange
         ? this.lastTrackedLcRange.to - this.lastTrackedLcRange.from
         : range.to - range.from;
@@ -520,6 +552,10 @@ export class SynchronizedChartGroup {
     if (this.priceAxisMinMoveFrame !== null) {
       cancelAnimationFrame(this.priceAxisMinMoveFrame);
       this.priceAxisMinMoveFrame = null;
+    }
+    if (this.suppressUntilFrame !== null) {
+      cancelAnimationFrame(this.suppressUntilFrame);
+      this.suppressUntilFrame = null;
     }
     this.cancelCrosshairClear();
     this.resizeObserver.disconnect();
@@ -573,8 +609,11 @@ export class SynchronizedChartGroup {
         timeVisible: true,
         secondsVisible: false,
         rightOffset: 0,
-        fixLeftEdge: false,
-        fixRightEdge: false,
+        // 滚动边界钳制：latest K 线与右边框对齐后不可再往右拖出空白，oldest K 线
+        // 与左边框对齐后不可再往左拖出空白。由 LC 渲染层钳制，对实时/回放/纯历史
+        // 所有场景一致生效（不依赖 followState）。rightOffset:0 下右缘即最新 K。
+        fixLeftEdge: true,
+        fixRightEdge: true,
         // 布局变化时锁定可见时间范围（仅改 barSpacing，不增减可见 K）：manual 下保留
         // 用户逻辑范围不被 LC 自动左移露更多 K；following 仍由 resize() 显式重算 N 覆盖。
         lockVisibleTimeRangeOnResize: true,
