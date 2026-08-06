@@ -107,12 +107,56 @@ export function resolvePriceAxisMinMove(rangeMin, rangeMax) {
     : PRICE_AXIS_FINE_MIN_MOVE;
 }
 
+/**
+ * Compute a valid LC tick-generation `base` from an arbitrary `minMove`.
+ *
+ * TODO: 这是 lightweight-charts 的设计缺陷，以后换图表引擎时可以删掉。
+ *
+ * lightweight-charts 的 PriceTickSpanCalculator 生成 Y 轴刻度的算法只允许
+ * 基数的质因子是 2 或 5（或基数本身是 10 的幂）。原因是：我们用十进制，
+ * 10 = 2 × 5，只有 2 和 5 作为因子的数才能被 10 整除，刻度才会落在
+ * "整"的位置上（0, 1, 2, 5, 10, 20, 50, 100 ...）。
+ * 一旦出现其他质因子（比如 3），刻度就永远落不到整齐的小数位上。
+ * 但 lightweight-charts 的处理方式不是优雅降级，而是直接抛
+ * `Error: unexpected base`，把整个图表搞崩。
+ *
+ * 典型案例：300133（华宇电子，P0=7.61）算出 tickStep=0.08，
+ * LC 内部 base = Math.round(1/0.08) = Math.round(12.5) = 12 = 2²×3，
+ * 因为含因子 3，直接崩。而 600584 算出 tickStep=1.725，
+ * base = Math.round(1/1.725) = 1，恰好合法所以不崩。
+ *
+ * 修复方式：我们自己算 base，如果只含 2 和 5 就用原值，
+ * 否则取最近的 10 的幂。这只影响内部刻度间距，
+ * 实际显示的价格标签由 formatter / tickmarksFormatter 控制。
+ *
+ * @param {number} minMove
+ * @returns {number} a positive integer factorable into 2s and 5s
+ */
+export function computeValidPriceBase(minMove) {
+  if (!Number.isFinite(minMove) || minMove <= 0) return 100;
+  let base = Math.round(1 / minMove);
+  if (base < 1) base = 1;
+  let rest = base;
+  while (rest > 1) {
+    if (rest % 2 === 0) {
+      rest = Math.floor(rest / 2);
+    } else if (rest % 5 === 0) {
+      rest = Math.floor(rest / 5);
+    } else {
+      // Not factorable – snap to nearest power of 10.
+      return 10 ** Math.max(0, Math.round(Math.log10(base)));
+    }
+  }
+  return base;
+}
+
 export function createPriceExactPriceFormat(minMove = PRICE_AXIS_FINE_MIN_MOVE) {
   return Object.freeze({
     type: "custom",
     formatter: formatPriceExactLabel,
     tickmarksFormatter: formatPriceAxisTickLabels,
     minMove,
+    base: computeValidPriceBase(minMove),
   });
 }
 
