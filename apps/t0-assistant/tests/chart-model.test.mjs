@@ -11,6 +11,7 @@ import {
   PRICE_EXACT_PRICE_FORMAT,
   calculateIntradayPriceRange,
   calculateIntradayPriceTicks,
+  computeValidPriceBase,
   createChartGroupModel,
   createPriceExactPriceFormat,
   formatMarketTick,
@@ -213,6 +214,57 @@ test("resolvePriceAxisMinMove forces integer ticks when abs range reaches 100", 
     createPriceExactPriceFormat(PRICE_AXIS_INTEGER_MIN_MOVE).minMove,
     1,
   );
+});
+
+// ---------------------------------------------------------------------------
+// computeValidPriceBase — LC PriceTickSpanCalculator only accepts bases whose
+// prime factors are 2 and/or 5 (issue #143 / 300133 unexpected-base crash).
+// ---------------------------------------------------------------------------
+
+function assertBaseFactorableBy2And5(base) {
+  assert.ok(Number.isInteger(base) && base >= 1, `base must be positive int: ${base}`);
+  let rest = base;
+  while (rest > 1) {
+    if (rest % 2 === 0) {
+      rest = Math.floor(rest / 2);
+    } else if (rest % 5 === 0) {
+      rest = Math.floor(rest / 5);
+    } else {
+      assert.fail(`base ${base} has non-2/5 factor (rest=${rest})`);
+    }
+  }
+}
+
+test("computeValidPriceBase keeps 2/5-only bases and snaps invalid ones", () => {
+  assert.equal(computeValidPriceBase(0.01), 100);
+  assert.equal(computeValidPriceBase(1), 1);
+  assert.equal(computeValidPriceBase(0.25), 4);
+  assert.equal(computeValidPriceBase(0.2), 5);
+  // 300133-like: Math.round(1/0.08)=13 → snap to nearest power of 10.
+  assert.equal(Math.round(1 / 0.08), 13);
+  assert.equal(computeValidPriceBase(0.08), 10);
+  assert.equal(computeValidPriceBase(1.725), 1);
+  assert.equal(computeValidPriceBase(0.03), 100);
+  assertBaseFactorableBy2And5(computeValidPriceBase(0.08));
+  assertBaseFactorableBy2And5(computeValidPriceBase(0.03));
+});
+
+test("computeValidPriceBase falls back for non-positive / non-finite minMove", () => {
+  assert.equal(computeValidPriceBase(NaN), 100);
+  assert.equal(computeValidPriceBase(0), 100);
+  assert.equal(computeValidPriceBase(-0.01), 100);
+  assert.equal(computeValidPriceBase(Infinity), 100);
+});
+
+test("createPriceExactPriceFormat includes a valid LC base alongside minMove", () => {
+  const fine = createPriceExactPriceFormat(PRICE_AXIS_FINE_MIN_MOVE);
+  assert.equal(fine.minMove, 0.01);
+  assert.equal(fine.base, 100);
+  const crashy = createPriceExactPriceFormat(0.08);
+  assert.equal(crashy.minMove, 0.08);
+  assert.equal(crashy.base, 10);
+  assertBaseFactorableBy2And5(crashy.base);
+  assert.equal(PRICE_EXACT_PRICE_FORMAT.base, 100);
 });
 
 test("5 minute layer preferences control MA, stroke, and pivot model data", () => {

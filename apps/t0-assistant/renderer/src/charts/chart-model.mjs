@@ -120,9 +120,9 @@ export function resolvePriceAxisMinMove(rangeMin, rangeMax) {
  * 但 lightweight-charts 的处理方式不是优雅降级，而是直接抛
  * `Error: unexpected base`，把整个图表搞崩。
  *
- * 典型案例：300133（华宇电子，P0=7.61）算出 tickStep=0.08，
- * LC 内部 base = Math.round(1/0.08) = Math.round(12.5) = 12 = 2²×3，
- * 因为含因子 3，直接崩。而 600584 算出 tickStep=1.725，
+ * 典型案例：300133（华宇电子，P0=7.61）算出 tickStep≈0.08，
+ * LC 内部 base = Math.round(1/0.08) = Math.round(12.5) = 13（质数），
+ * 因为含非 2/5 因子，直接崩。而 600584 算出 tickStep=1.725，
  * base = Math.round(1/1.725) = 1，恰好合法所以不崩。
  *
  * 修复方式：我们自己算 base，如果只含 2 和 5 就用原值，

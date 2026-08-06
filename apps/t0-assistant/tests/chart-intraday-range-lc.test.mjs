@@ -9,7 +9,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { calculateIntradayPriceRange, calculateIntradayPriceTicks } from "../renderer/src/charts/chart-model.mjs";
+import {
+  calculateIntradayPriceRange,
+  calculateIntradayPriceTicks,
+  createPriceExactPriceFormat,
+} from "../renderer/src/charts/chart-model.mjs";
 
 // ---- minimal DOM/canvas stub (与 chart-viewport-lc.test.mjs 共享同一模式) ----
 const noop = () => {};
@@ -476,6 +480,71 @@ test("real LC: minMove reverts to generic when previousClose is invalid", async 
     const fmt = series.options().priceFormat;
     assert.ok(typeof fmt.minMove === "number");
     assert.ok(Math.abs(fmt.minMove - 0.01) < 1e-9 || Math.abs(fmt.minMove - 1) < 1e-9);
+  } finally {
+    restore();
+  }
+});
+
+// ---- computeValidPriceBase / unexpected-base crash (issue #143, 300133) ----
+
+test("real LC: raw tickStep≈0.08 without valid base throws unexpected base", async () => {
+  const restore = installDom();
+  try {
+    const { series } = await makeIntradayChart();
+    const P0 = 7.61;
+    const result = calculateIntradayPriceRange(P0, [
+      { open: 7.61, high: 7.93, low: 7.5 },
+    ]);
+    assert.ok(result);
+    assert.ok(Math.abs(result.tickStep - 0.08) < 1e-9);
+    assert.equal(Math.round(1 / result.tickStep), 13);
+
+    series.priceScale().applyOptions({ scaleMargins: { top: 0, bottom: 0 } });
+    series.priceScale().setVisibleRange({ from: result.yMin, to: result.yMax });
+    series.applyOptions({
+      priceFormat: {
+        type: "custom",
+        formatter: (v) => v.toFixed(2),
+        tickmarksFormatter: (prices) => prices.map((p) => p.toFixed(2)),
+        minMove: result.tickStep,
+      },
+    });
+    series.setData([
+      { time: minuteTime(0), value: 7.61 },
+      { time: minuteTime(1), value: 7.8 },
+    ]);
+    assert.throws(() => globalThis.__flushRaf(), /unexpected base/);
+  } finally {
+    restore();
+  }
+});
+
+test("real LC: createPriceExactPriceFormat prevents unexpected-base crash for 300133-like tickStep", async () => {
+  const restore = installDom();
+  try {
+    const { series } = await makeIntradayChart();
+    const P0 = 7.61;
+    const result = calculateIntradayPriceRange(P0, [
+      { open: 7.61, high: 7.93, low: 7.5 },
+    ]);
+    assert.ok(result);
+    assert.ok(Math.abs(result.tickStep - 0.08) < 1e-9);
+
+    const priceFormat = createPriceExactPriceFormat(result.tickStep);
+    assert.equal(priceFormat.base, 10);
+
+    series.priceScale().applyOptions({ scaleMargins: { top: 0, bottom: 0 } });
+    series.priceScale().setVisibleRange({ from: result.yMin, to: result.yMax });
+    series.applyOptions({ priceFormat });
+    series.setData([
+      { time: minuteTime(0), value: 7.61 },
+      { time: minuteTime(1), value: 7.8 },
+    ]);
+    globalThis.__flushRaf();
+
+    const fmt = series.options().priceFormat;
+    assert.equal(fmt.minMove, result.tickStep);
+    assert.equal(fmt.base, 10);
   } finally {
     restore();
   }

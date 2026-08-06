@@ -243,17 +243,20 @@ export function resolvePriceAxisMinMove(
   rangeMin: number | null | undefined,
   rangeMax: number | null | undefined,
 ): number;
+export function computeValidPriceBase(minMove: number): number;
 export function createPriceExactPriceFormat(minMove?: number): Readonly<{
   type: "custom";
   formatter: (value: number) => string;
   tickmarksFormatter: (prices: readonly number[]) => string[];
   minMove: number;
+  base: number;
 }>;
 export const PRICE_EXACT_PRICE_FORMAT: Readonly<{
   type: "custom";
   formatter: (value: number) => string;
   tickmarksFormatter: (prices: readonly number[]) => string[];
   minMove: number;
+  base: number;
 }>;
 export function calculateIntradayPriceRange(
   previousClose: number | null | undefined,
