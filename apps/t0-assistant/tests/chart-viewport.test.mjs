@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  FOLLOW_MIN_VISIBLE_BARS_5M,
   FollowState,
+  MANUAL_MIN_VISIBLE_BARS_5M,
+  MAX_VISIBLE_BARS,
   applyModel,
   calculateVisibleCount,
   createViewportState,
@@ -40,6 +43,15 @@ test("calculateVisibleCount supports Chan Viewer compatible 40–360 bounds", ()
   assert.equal(calculateVisibleCount(3, 8, bounds), 40);
   assert.equal(calculateVisibleCount(800, 8, bounds), 100);
   assert.equal(calculateVisibleCount(8_000, 8, bounds), 360);
+});
+
+test("calculateVisibleCount enforces 5m follow-latest floor of 72 bars (1.5 trading days)", () => {
+  // 使用生产常量，确保常量值变更时测试同步失败而非静默漂移。
+  const bounds = { minimum: FOLLOW_MIN_VISIBLE_BARS_5M, maximum: MAX_VISIBLE_BARS };
+  assert.equal(FOLLOW_MIN_VISIBLE_BARS_5M, 72);
+  assert.equal(calculateVisibleCount(3, 8, bounds), FOLLOW_MIN_VISIBLE_BARS_5M);
+  assert.equal(calculateVisibleCount(800, 8, bounds), 100);
+  assert.equal(calculateVisibleCount(8_000, 8, bounds), MAX_VISIBLE_BARS);
 });
 
 test("calculateVisibleCount can lock intraday to the complete trading session", () => {
@@ -143,16 +155,20 @@ test("setManualRange with allowResumeFollowing:false stays manual at the latest 
   assert.equal(resumed.followState, FollowState.FOLLOWING);
 });
 
-test("manual zoom cannot show fewer than 40 bars when history is available", () => {
+test("manual zoom cannot show fewer than 48 bars (one trading day) when history is available", () => {
   const bars = Array.from({ length: 120 }, (_, i) => `b${i}`);
   const following = followLatest(createViewportState(bars), 80);
   const bounded = setManualRange(following, 118, 120, {
     allowResumeFollowing: false,
-    minimumVisibleCount: 40,
-    maximumVisibleCount: 360,
+    minimumVisibleCount: MANUAL_MIN_VISIBLE_BARS_5M,
+    maximumVisibleCount: MAX_VISIBLE_BARS,
   });
+  assert.equal(MANUAL_MIN_VISIBLE_BARS_5M, 48);
   assert.equal(bounded.followState, FollowState.MANUAL);
-  assert.deepEqual(visibleLogicalRange(bounded), { from: 80, to: 120 });
+  assert.deepEqual(visibleLogicalRange(bounded), {
+    from: 120 - MANUAL_MIN_VISIBLE_BARS_5M,
+    to: 120,
+  });
 });
 
 test("manual zoom-out is capped at 360 bars", () => {
@@ -160,8 +176,8 @@ test("manual zoom-out is capped at 360 bars", () => {
   const following = followLatest(createViewportState(bars), 120);
   const bounded = setManualRange(following, 0, 500, {
     allowResumeFollowing: false,
-    minimumVisibleCount: 40,
-    maximumVisibleCount: 360,
+    minimumVisibleCount: MANUAL_MIN_VISIBLE_BARS_5M,
+    maximumVisibleCount: MAX_VISIBLE_BARS,
   });
   assert.equal(bounded.followState, FollowState.MANUAL);
   assert.deepEqual(visibleLogicalRange(bounded), { from: 140, to: 500 });
@@ -171,8 +187,8 @@ test("minimum visible count degrades to all bars for a genuinely short series", 
   const bars = Array.from({ length: 12 }, (_, i) => `b${i}`);
   const bounded = setManualRange(createViewportState(bars), 10, 12, {
     allowResumeFollowing: false,
-    minimumVisibleCount: 40,
-    maximumVisibleCount: 360,
+    minimumVisibleCount: MANUAL_MIN_VISIBLE_BARS_5M,
+    maximumVisibleCount: MAX_VISIBLE_BARS,
   });
   assert.deepEqual(visibleLogicalRange(bounded), { from: 0, to: 12 });
 });

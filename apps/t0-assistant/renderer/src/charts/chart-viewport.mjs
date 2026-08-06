@@ -21,6 +21,16 @@ export const FollowState = Object.freeze({
 
 const DEFAULT_BAR_SLOT_WIDTH = 8;
 
+// 一个完整交易日 5 分钟 K 线根数（早盘 24 + 午盘 24），与
+// kline_data_service bars_per_day["5m"] 口径一致。
+export const BARS_PER_TRADING_DAY_5M = 48;
+// 跟随最新：至少 1.5 个交易日（72 根），窄窗口也不得少于一天半。
+export const FOLLOW_MIN_VISIBLE_BARS_5M = Math.round(BARS_PER_TRADING_DAY_5M * 1.5); // 72
+// 手动浏览：至少 1 个交易日（48 根），允许用户放大到一天但不能更少。
+export const MANUAL_MIN_VISIBLE_BARS_5M = BARS_PER_TRADING_DAY_5M; // 48
+// 两种状态的上限均为 360 根（约 7.5 个交易日）。
+export const MAX_VISIBLE_BARS = 360;
+
 export function createViewportState(times, options = {}) {
   const barSlotWidth =
     options.barSlotWidth && options.barSlotWidth > 0

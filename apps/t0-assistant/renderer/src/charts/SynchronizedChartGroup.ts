@@ -41,7 +41,10 @@ import {
   syncChartGroupPriceScaleWidths,
 } from "./chart-scale-alignment.mjs";
 import {
+  FOLLOW_MIN_VISIBLE_BARS_5M,
   FollowState,
+  MANUAL_MIN_VISIBLE_BARS_5M,
+  MAX_VISIBLE_BARS,
   applyModel,
   calculateVisibleCount,
   followLatest,
@@ -77,10 +80,6 @@ const BOLL_COLOR = "#e879f9";
 // 缩放/平移判定阈值（LC 连续逻辑范围跨度差）。纯平移跨度精确不变（浮点误差 ~1e-9），
 // 缩放跨度变化至少数个 K；0.01 仅吸收浮点漂移，可靠区分二者。
 const ZOOM_SPAN_EPSILON = 0.01;
-// Match Chan Viewer's horizontal window policy: never let an interaction or
-// transient zero-width layout collapse a populated chart to a handful of bars.
-const MIN_VISIBLE_BARS = 40;
-const MAX_VISIBLE_BARS = 360;
 const MA_COLORS = {
   ma5: "#f6d365",
   ma10: "#7dd3fc",
@@ -1162,7 +1161,7 @@ export class SynchronizedChartGroup {
       return seriesLength;
     }
     return calculateVisibleCount(plotWidth, this.barSlotWidth, {
-      minimum: MIN_VISIBLE_BARS,
+      minimum: FOLLOW_MIN_VISIBLE_BARS_5M,
       maximum: MAX_VISIBLE_BARS,
     });
   }
@@ -1237,7 +1236,7 @@ export class SynchronizedChartGroup {
       };
     }
     return {
-      minimumVisibleCount: MIN_VISIBLE_BARS,
+      minimumVisibleCount: MANUAL_MIN_VISIBLE_BARS_5M,
       maximumVisibleCount: MAX_VISIBLE_BARS,
     };
   }

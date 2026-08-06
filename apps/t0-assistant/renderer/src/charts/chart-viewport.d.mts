@@ -25,6 +25,15 @@ export interface ChartViewportSnapshot {
   followState: FollowStateValue;
 }
 
+/** 一个完整交易日 5 分钟 K 线根数（早盘 24 + 午盘 24）。 */
+export const BARS_PER_TRADING_DAY_5M: number;
+/** 跟随最新状态下 N 的下限（1.5 个交易日 = 72 根）。 */
+export const FOLLOW_MIN_VISIBLE_BARS_5M: number;
+/** 手动浏览状态下 N 的下限（1 个交易日 = 48 根）。 */
+export const MANUAL_MIN_VISIBLE_BARS_5M: number;
+/** 两种状态下 N 的上限（360 根）。 */
+export const MAX_VISIBLE_BARS: number;
+
 export function createViewportState(
   times: readonly string[],
   options?: { barSlotWidth?: number },
