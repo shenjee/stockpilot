@@ -232,7 +232,7 @@ test("real controller: genuine user pan outside suppress window still flips to m
   }
 });
 
-test("real controller: scroll clamped at both edges (no blank beyond latest/oldest)", async () => {
+test("real controller: 5m scroll clamped at both edges (no blank beyond latest/oldest)", async () => {
   const restore = installDom();
   try {
     const reports = [];

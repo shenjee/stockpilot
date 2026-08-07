@@ -609,11 +609,12 @@ export class SynchronizedChartGroup {
         timeVisible: true,
         secondsVisible: false,
         rightOffset: 0,
-        // 滚动边界钳制：latest K 线与右边框对齐后不可再往右拖出空白，oldest K 线
-        // 与左边框对齐后不可再往左拖出空白。由 LC 渲染层钳制，对实时/回放/纯历史
-        // 所有场景一致生效（不依赖 followState）。rightOffset:0 下右缘即最新 K。
-        fixLeftEdge: true,
-        fixRightEdge: true,
+        // 5 分钟：钳制滚动边界，latest/oldest 贴边后不可拖出空白（右缘=最新 K）。
+        // 分时：必须关闭。分时用全日交易分钟轴 + 未来分钟 whitespace；若开启
+        // fixRightEdge，LC 会把右缘钉在最后一根有值分钟上，把 {from:0,to:全日}
+        // 钳成「贴右、新分钟往左顶」——与 09:30→15:00 从左往右生长相反。
+        fixLeftEdge: this.kind === ChartGroupKind.FIVE_MINUTE,
+        fixRightEdge: this.kind === ChartGroupKind.FIVE_MINUTE,
         // 布局变化时锁定可见时间范围（仅改 barSpacing，不增减可见 K）：manual 下保留
         // 用户逻辑范围不被 LC 自动左移露更多 K；following 仍由 resize() 显式重算 N 覆盖。
         lockVisibleTimeRangeOnResize: true,
