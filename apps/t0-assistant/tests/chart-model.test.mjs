@@ -112,6 +112,27 @@ test("fixture chan_analysis is complete and rendered in 5 minute model", () => {
     sellMarkers.some((m) => m.label.includes("1S")),
     "sell markers must include 1S",
   );
+  assert.ok(
+    Array.isArray(fixture.chan_analysis.divergences) &&
+      fixture.chan_analysis.divergences.length > 0,
+    "fixture chan_analysis.divergences must be non-empty",
+  );
+  assert.equal(
+    model.divergenceMarkers.length,
+    fixture.chan_analysis.divergences.length,
+  );
+  assert.ok(
+    model.divergenceMarkers.some(
+      (m) => m.label === "Bull Div" && m.divergenceType === "bullish",
+    ),
+    "must have Bull Div marker",
+  );
+  assert.ok(
+    model.divergenceMarkers.some(
+      (m) => m.label === "Bear Div" && m.divergenceType === "bearish",
+    ),
+    "must have Bear Div marker",
+  );
 });
 
 test("logical ordering has one slot per real bar across overnight gaps", () => {
@@ -475,6 +496,77 @@ test("CZSC markers and BOLL are absent for the intraday group", () => {
   };
   const model = createChartGroupModel(layered, ChartGroupKind.ONE_MINUTE);
   assert.deepEqual(model.czscMarkers, []);
+  assert.deepEqual(model.divergenceMarkers, []);
+});
+
+test("divergence markers map Bull Div and Bear Div from chan_analysis", () => {
+  const layered = structuredClone(fixture);
+  layered.chan_analysis = {
+    divergences: [
+      {
+        id: "div-bull",
+        divergence_type: "bullish",
+        reference_type: "stroke",
+        reference_id: "s1",
+        timestamp: "2026-07-22 09:55:00",
+        strength: "normal",
+        confirmed: true,
+        description: "bull",
+        meta: { price: 10.17 },
+      },
+      {
+        id: "div-bear",
+        divergence_type: "bearish",
+        reference_type: "stroke",
+        reference_id: "s2",
+        timestamp: "2026-07-22 10:00:00",
+        strength: "strong",
+        confirmed: true,
+        description: "bear",
+        meta: { price: 10.3 },
+      },
+      {
+        id: "div-skip-type",
+        divergence_type: "unknown",
+        reference_type: "stroke",
+        reference_id: "s3",
+        timestamp: "2026-07-22 10:05:00",
+        strength: "normal",
+        confirmed: true,
+        description: "skip",
+        meta: { price: 10.2 },
+      },
+      {
+        id: "div-skip-price",
+        divergence_type: "bullish",
+        reference_type: "stroke",
+        reference_id: "s4",
+        timestamp: "2026-07-22 10:10:00",
+        strength: "normal",
+        confirmed: true,
+        description: "skip",
+        meta: {},
+      },
+    ],
+  };
+
+  const model = createChartGroupModel(layered, ChartGroupKind.FIVE_MINUTE);
+  assert.deepEqual(model.divergenceMarkers, [
+    {
+      timestamp: "2026-07-22 09:55:00",
+      side: "buy",
+      price: 10.17,
+      label: "Bull Div",
+      divergenceType: "bullish",
+    },
+    {
+      timestamp: "2026-07-22 10:00:00",
+      side: "sell",
+      price: 10.3,
+      label: "Bear Div",
+      divergenceType: "bearish",
+    },
+  ]);
 });
 
 test("pivot zone active flag is preserved through normalization", () => {
@@ -541,15 +633,29 @@ test("replay asOf truncation drops bars, indicators, and CZSC layers after curre
     candidate_buy_points: [
       { id: "bp-001", point_type: "first_buy", timestamp: "2026-07-22 10:05:00", price: 10.3, reference_id: "s1", confirmed: true, reason: "test" },
     ],
+    divergences: [
+      {
+        id: "div-future",
+        divergence_type: "bearish",
+        reference_type: "stroke",
+        reference_id: "s1",
+        timestamp: "2026-07-22 10:05:00",
+        strength: "normal",
+        confirmed: true,
+        description: "future",
+        meta: { price: 10.3 },
+      },
+    ],
   };
 
   const model = createChartGroupModel(replay, ChartGroupKind.FIVE_MINUTE);
   // 10:05 / 10:10 bars dropped；10:00 保留为右边界。
   assert.equal(model.timestamps.at(-1), "2026-07-22 10:00:00");
-  // 笔/中枢/买卖点 end 或 timestamp 越过 current_time -> 丢弃。
+  // 笔/中枢/买卖点/背驰 end 或 timestamp 越过 current_time -> 丢弃。
   assert.equal(model.strokes.length, 0);
   assert.equal(model.pivotZones.length, 0);
   assert.equal(model.czscMarkers.length, 0);
+  assert.equal(model.divergenceMarkers.length, 0);
   // MACD/Volume 指标在 10:05 的点也被截断，不抛错。
   assert.equal(
     model.macd.histogram.at(-1)?.timestamp ?? null,

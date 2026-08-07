@@ -21,9 +21,10 @@ import {
 } from "../renderer/src/charts/chart-model.mjs";
 import { PivotZonePrimitive } from "../renderer/src/charts/pivot-zone-primitive.mjs";
 import { CzscMarkerPrimitive } from "../renderer/src/charts/czsc-marker-primitive.mjs";
+import { DivergenceMarkerPrimitive } from "../renderer/src/charts/divergence-marker-primitive.mjs";
 
 // 与 production primitive 同色的过滤集合（仅用于在共享 canvas 中区分 primitive 输出，
-// 不复制绘制逻辑）。见 pivot-zone-primitive.mjs / czsc-marker-primitive.mjs。
+// 不复制绘制逻辑）。见 pivot-zone / czsc-marker / divergence-marker primitive。
 const PIVOT_FILL_COLORS = new Set([
   "rgba(245, 158, 11, 0.18)",
   "rgba(148, 163, 184, 0.10)",
@@ -33,6 +34,7 @@ const PIVOT_STROKE_COLORS = new Set([
   "rgba(148, 163, 184, 0.55)",
 ]);
 const MARKER_COLORS = new Set(["#22c55e", "#ef4444"]);
+const DIVERGENCE_COLORS = new Set(["#059669", "#B91C1C"]);
 
 const noop = () => {};
 const classList = { add: noop, remove: noop, contains: () => false, toggle: noop };
@@ -266,6 +268,16 @@ function toPrimitiveMarkers(model) {
   }));
 }
 
+function toPrimitiveDivergences(model) {
+  return model.divergenceMarkers.map((marker) => ({
+    time: parseMarketTimestamp(marker.timestamp),
+    price: marker.price,
+    side: marker.side,
+    label: marker.label,
+    divergenceType: marker.divergenceType,
+  }));
+}
+
 async function buildChartWithPrimitives(lc) {
   const { createChart, CandlestickSeries } = lc;
   const container = globalThis.document.createElement("div");
@@ -290,10 +302,18 @@ async function buildChartWithPrimitives(lc) {
 
   const pivotZonePrimitive = new PivotZonePrimitive();
   const czscMarkerPrimitive = new CzscMarkerPrimitive();
+  const divergenceMarkerPrimitive = new DivergenceMarkerPrimitive();
   priceSeries.attachPrimitive(pivotZonePrimitive);
   priceSeries.attachPrimitive(czscMarkerPrimitive);
+  priceSeries.attachPrimitive(divergenceMarkerPrimitive);
 
-  return { chart, priceSeries, pivotZonePrimitive, czscMarkerPrimitive };
+  return {
+    chart,
+    priceSeries,
+    pivotZonePrimitive,
+    czscMarkerPrimitive,
+    divergenceMarkerPrimitive,
+  };
 }
 
 function setPriceData(priceSeries, model) {
@@ -311,10 +331,13 @@ function setPriceData(priceSeries, model) {
 
 const BUY_MARKER_COLOR = "#ef4444";
 const SELL_MARKER_COLOR = "#22c55e";
+const BULL_DIV_COLOR = "#059669";
+const BEAR_DIV_COLOR = "#B91C1C";
 
 const isPivotFill = (call) => PIVOT_FILL_COLORS.has(call.style);
 const isPivotStroke = (call) => PIVOT_STROKE_COLORS.has(call.style);
 const isMarkerText = (call) => MARKER_COLORS.has(call.style);
+const isDivergenceText = (call) => DIVERGENCE_COLORS.has(call.style);
 const markerTextsWithStyle = (drawCalls, style) =>
   drawCalls
     .filter((c) => c.method === "fillText" && c.style === style)
@@ -857,6 +880,45 @@ test("barByTime cache invalidates when high/low shifts cancel in sum", async () 
   }
 });
 
+test("real LC + production primitive: divergence draw renders Bull Div and Bear Div", async () => {
+  const drawCalls = [];
+  const restore = installDom(drawCalls);
+  try {
+    const lc = await import(
+      "../node_modules/lightweight-charts/dist/lightweight-charts.development.mjs"
+    );
+    const model = await buildFixtureModel();
+    const divergences = toPrimitiveDivergences(model);
+    assert.ok(
+      divergences.some((m) => m.label === "Bull Div"),
+      "fixture must yield a Bull Div marker",
+    );
+    assert.ok(
+      divergences.some((m) => m.label === "Bear Div"),
+      "fixture must yield a Bear Div marker",
+    );
+
+    const { priceSeries, divergenceMarkerPrimitive } =
+      await buildChartWithPrimitives(lc);
+    setPriceData(priceSeries, model);
+    divergenceMarkerPrimitive.setMarkers(divergences);
+    globalThis.__flushRaf();
+
+    const bullTexts = markerTextsWithStyle(drawCalls, BULL_DIV_COLOR);
+    const bearTexts = markerTextsWithStyle(drawCalls, BEAR_DIV_COLOR);
+    assert.ok(
+      bullTexts.includes("Bull Div"),
+      `DivergenceMarkerPrimitive.draw must render Bull Div; got ${JSON.stringify(bullTexts)}`,
+    );
+    assert.ok(
+      bearTexts.includes("Bear Div"),
+      `DivergenceMarkerPrimitive.draw must render Bear Div; got ${JSON.stringify(bearTexts)}`,
+    );
+  } finally {
+    restore();
+  }
+});
+
 test("real LC + production primitive: empty zones/markers do not emit primitive draw calls", async () => {
   const drawCalls = [];
   const restore = installDom(drawCalls);
@@ -865,19 +927,21 @@ test("real LC + production primitive: empty zones/markers do not emit primitive 
       "../node_modules/lightweight-charts/dist/lightweight-charts.development.mjs"
     );
     const model = await buildFixtureModel();
-    const { priceSeries, pivotZonePrimitive, czscMarkerPrimitive } =
+    const { priceSeries, pivotZonePrimitive, czscMarkerPrimitive, divergenceMarkerPrimitive } =
       await buildChartWithPrimitives(lc);
     setPriceData(priceSeries, model);
 
     pivotZonePrimitive.setZones([]);
     czscMarkerPrimitive.setMarkers([]);
+    divergenceMarkerPrimitive.setMarkers([]);
     globalThis.__flushRaf();
 
     const primitiveCalls = drawCalls.filter(
       (c) =>
         (c.method === "fillRect" && isPivotFill(c)) ||
         (c.method === "strokeRect" && isPivotStroke(c)) ||
-        (c.method === "fillText" && isMarkerText(c)),
+        (c.method === "fillText" && isMarkerText(c)) ||
+        (c.method === "fillText" && isDivergenceText(c)),
     );
     assert.equal(
       primitiveCalls.length,

@@ -94,6 +94,38 @@
         "confirmed": false,
         "reason": "upward_stroke_extension"
       }
+    ],
+    "divergences": [
+      {
+        "id": "divergence_bullish_2026-07-22 09:55:00_stroke-002",
+        "divergence_type": "bullish",
+        "reference_type": "stroke",
+        "reference_id": "stroke-002",
+        "timestamp": "2026-07-22 09:55:00",
+        "strength": "normal",
+        "confirmed": true,
+        "description": "Bullish divergence: stroke-002 extends price below pivot zone",
+        "meta": {
+          "price": 10.17,
+          "pivot_zone_id": "pivot-001",
+          "magnitude_ratio": 0.68
+        }
+      },
+      {
+        "id": "divergence_bearish_2026-07-22 10:00:00_stroke-003",
+        "divergence_type": "bearish",
+        "reference_type": "stroke",
+        "reference_id": "stroke-003",
+        "timestamp": "2026-07-22 10:00:00",
+        "strength": "normal",
+        "confirmed": true,
+        "description": "Bearish divergence: stroke-003 extends price above pivot zone",
+        "meta": {
+          "price": 10.30,
+          "pivot_zone_id": "pivot-001",
+          "magnitude_ratio": 0.75
+        }
+      }
     ]
   },
   "indicators": {

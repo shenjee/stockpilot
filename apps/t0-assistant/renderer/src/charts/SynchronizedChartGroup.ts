@@ -36,6 +36,7 @@ import {
 } from "./chart-model.mjs";
 import { PivotZonePrimitive } from "./pivot-zone-primitive.mjs";
 import { CzscMarkerPrimitive } from "./czsc-marker-primitive.mjs";
+import { DivergenceMarkerPrimitive } from "./divergence-marker-primitive.mjs";
 import {
   CHART_RIGHT_Y_AXIS_WIDTH,
   syncChartGroupPriceScaleWidths,
@@ -119,6 +120,7 @@ export class SynchronizedChartGroup {
   private readonly bollLowerSeries: ISeriesApi<"Line"> | null;
   private readonly pivotZonePrimitive: PivotZonePrimitive | null;
   private readonly czscMarkerPrimitive: CzscMarkerPrimitive | null;
+  private readonly divergenceMarkerPrimitive: DivergenceMarkerPrimitive | null;
   private readonly volumeSeries: ISeriesApi<"Histogram">;
   private readonly volumeMa5Series: ISeriesApi<"Line"> | null;
   private readonly volumeMa10Series: ISeriesApi<"Line"> | null;
@@ -244,6 +246,9 @@ export class SynchronizedChartGroup {
       // CZSC 买卖点按 (time, price) 精确定位，不依赖内置 markers 的 bar 相对定位。
       this.czscMarkerPrimitive = new CzscMarkerPrimitive();
       this.priceSeries.attachPrimitive(this.czscMarkerPrimitive);
+      // 背驰文本标注（Bull Div / Bear Div），视觉对齐 chan-viewer。
+      this.divergenceMarkerPrimitive = new DivergenceMarkerPrimitive();
+      this.priceSeries.attachPrimitive(this.divergenceMarkerPrimitive);
       this.volumeMa5Series = this.volumeChart.addSeries(LineSeries, {
         color: AMBER,
         lineWidth: 1,
@@ -276,6 +281,7 @@ export class SynchronizedChartGroup {
       this.bollLowerSeries = null;
       this.pivotZonePrimitive = null;
       this.czscMarkerPrimitive = null;
+      this.divergenceMarkerPrimitive = null;
       this.volumeMa5Series = null;
       this.volumeMa10Series = null;
     }
@@ -715,6 +721,7 @@ export class SynchronizedChartGroup {
       this.bollLowerSeries?.setData(this.toLineData(this.model.boll.lower, time));
       this.setStructureData(time);
       this.applyCzscMarkers(time);
+      this.applyDivergenceMarkers(time);
       this.setTradeMarkerData();
     } else {
       const priceData: Array<LineData<Time> | WhitespaceData<Time>> =
@@ -824,6 +831,23 @@ export class SynchronizedChartGroup {
         price: marker.price,
         side: marker.side,
         label: marker.label,
+      })),
+    );
+  }
+
+  private applyDivergenceMarkers(
+    time: (timestamp: string) => UTCTimestamp,
+  ) {
+    if (!this.model || this.kind !== ChartGroupKind.FIVE_MINUTE) {
+      return;
+    }
+    this.divergenceMarkerPrimitive?.setMarkers(
+      this.model.divergenceMarkers.map((marker) => ({
+        time: time(marker.timestamp),
+        price: marker.price,
+        side: marker.side,
+        label: marker.label,
+        divergenceType: marker.divergenceType,
       })),
     );
   }

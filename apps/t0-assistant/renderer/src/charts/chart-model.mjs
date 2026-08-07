@@ -433,6 +433,14 @@ export function createChartGroupModel(snapshot, kind, layers = {}, trades = []) 
           timestampSet,
         )
       : [];
+  // 背驰标注与 chan-viewer / chantheory plotting 一致：Bull Div 在下、Bear Div 在上。
+  const divergenceMarkers =
+    kind === FIVE_MINUTE
+      ? normalizeDivergenceMarkers(
+          clipRows(snapshot.chan_analysis?.divergences),
+          timestampSet,
+        )
+      : [];
 
   const normalizedVolumePoints = normalizePoints(
     clipRows(indicator.volume.values),
@@ -493,6 +501,7 @@ export function createChartGroupModel(snapshot, kind, layers = {}, trades = []) 
     strokes,
     pivotZones,
     czscMarkers,
+    divergenceMarkers,
     volume: volumePoints,
     volumeMa5:
       kind === FIVE_MINUTE
@@ -645,6 +654,40 @@ function czscPointLabel(pointType) {
     default:
       return null;
   }
+}
+
+function normalizeDivergenceMarkers(divergences, timestampSet) {
+  // 只消费契约中的已确认背驰；价格取 meta.price（与 chantheory plotting 一致）。
+  // bullish → 下方 Bull Div；bearish → 上方 Bear Div。非法类型或缺失价格跳过。
+  const markers = [];
+  for (const item of divergences ?? []) {
+    const timestamp = item?.timestamp;
+    if (!timestampSet.has(timestamp)) {
+      continue;
+    }
+    const divergenceType = item?.divergence_type;
+    if (divergenceType !== "bullish" && divergenceType !== "bearish") {
+      continue;
+    }
+    const price = item?.meta?.price;
+    if (!Number.isFinite(price)) {
+      continue;
+    }
+    markers.push({
+      timestamp,
+      side: divergenceType === "bullish" ? "buy" : "sell",
+      price,
+      label: divergenceType === "bullish" ? "Bull Div" : "Bear Div",
+      divergenceType,
+    });
+  }
+  markers.sort((left, right) => {
+    if (left.timestamp !== right.timestamp) {
+      return left.timestamp < right.timestamp ? -1 : 1;
+    }
+    return left.price - right.price;
+  });
+  return markers;
 }
 
 function normalizeCzscMarkers(buyPoints, sellPoints, timestampSet) {

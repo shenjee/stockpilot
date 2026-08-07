@@ -110,6 +110,22 @@ export interface WorkbenchChartSnapshot {
     }>;
     candidate_buy_points?: CandidatePoint[];
     candidate_sell_points?: CandidatePoint[];
+    divergences?: Divergence[];
+  };
+}
+
+export interface Divergence {
+  id: string;
+  divergence_type: "bullish" | "bearish" | string;
+  reference_type: string;
+  reference_id: string;
+  timestamp: string;
+  strength: string;
+  confirmed: boolean;
+  description: string;
+  meta?: {
+    price?: number;
+    [key: string]: unknown;
   };
 }
 
@@ -151,6 +167,15 @@ export interface CzscMarker {
   /** 候选点契约价格；标记按 (timestamp, side, price) 定位与去重。 */
   price: number;
   label: string;
+}
+
+export interface DivergenceMarker {
+  timestamp: string;
+  /** bullish → buy（K 线下方）；bearish → sell（K 线上方）。 */
+  side: "buy" | "sell";
+  price: number;
+  label: "Bull Div" | "Bear Div";
+  divergenceType: "bullish" | "bearish";
 }
 
 export interface TradeMarkerModel {
@@ -195,6 +220,7 @@ export interface ChartGroupModel {
   strokes: PriceLineOverlay[];
   pivotZones: PriceBoxOverlay[];
   czscMarkers: CzscMarker[];
+  divergenceMarkers: DivergenceMarker[];
   volume: IndicatorPoint[];
   volumeMa5: IndicatorPoint[];
   volumeMa10: IndicatorPoint[];

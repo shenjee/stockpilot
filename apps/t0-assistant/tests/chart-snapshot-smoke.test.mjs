@@ -37,11 +37,12 @@ const ALIGNED_STROKES = chartGroups.chan_analysis.strokes;
 const ALIGNED_PIVOT_ZONES = chartGroups.chan_analysis.pivot_zones;
 const ALIGNED_BUY_POINTS = chartGroups.chan_analysis.candidate_buy_points;
 const ALIGNED_SELL_POINTS = chartGroups.chan_analysis.candidate_sell_points;
+const ALIGNED_DIVERGENCES = chartGroups.chan_analysis.divergences;
 
-// 只替换 chan_analysis 的 4 个结构数组，保留原 fixture 的完整契约字段
+// 只替换 chan_analysis 的结构数组，保留原 fixture 的完整契约字段
 // （symbol / timeframe / source / engine / fractals / segments / divergences /
 //  structure_alerts / signal_* / candidate_point_events / plot_primitives /
-//  summary / warnings / meta），不退化为只有 4 个字段的局部 AnalysisResult。
+//  summary / warnings / meta），不退化为只有局部字段的 AnalysisResult。
 function withAlignedChanAnalysis(payload) {
   const base = payload.chan_analysis ?? {};
   return {
@@ -52,6 +53,7 @@ function withAlignedChanAnalysis(payload) {
       pivot_zones: ALIGNED_PIVOT_ZONES,
       candidate_buy_points: ALIGNED_BUY_POINTS,
       candidate_sell_points: ALIGNED_SELL_POINTS,
+      divergences: ALIGNED_DIVERGENCES,
     },
   };
 }
@@ -96,11 +98,28 @@ function assertModelStructureLayer(model, snapshot, label) {
     model.czscMarkers.some((m) => m.side === "sell" && m.label.includes("1S")),
     `${label}: model must produce 1S sell marker`,
   );
-  // 数据没有因时间戳不匹配被过滤：pivot zone / 候选点数量与快照契约一致。
+  assert.ok(
+    model.divergenceMarkers.some(
+      (m) => m.label === "Bull Div" && m.divergenceType === "bullish",
+    ),
+    `${label}: model must produce Bull Div marker`,
+  );
+  assert.ok(
+    model.divergenceMarkers.some(
+      (m) => m.label === "Bear Div" && m.divergenceType === "bearish",
+    ),
+    `${label}: model must produce Bear Div marker`,
+  );
+  // 数据没有因时间戳不匹配被过滤：pivot zone / 候选点 / 背驰数量与快照契约一致。
   assert.equal(
     model.pivotZones.length,
     snapshot.chan_analysis.pivot_zones.length,
     `${label}: pivotZones must match snapshot contract (no timestamp filtering)`,
+  );
+  assert.equal(
+    model.divergenceMarkers.length,
+    snapshot.chan_analysis.divergences.length,
+    `${label}: divergenceMarkers must match snapshot divergences count`,
   );
   const snapshotBuyCount = snapshot.chan_analysis.candidate_buy_points.length;
   const snapshotSellCount = snapshot.chan_analysis.candidate_sell_points.length;
