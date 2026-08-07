@@ -1,22 +1,36 @@
 /**
- * 背驰（Bull Div / Bear Div）文本原语。
+ * 背驰（Bull Div / Bear Div）原语。
  *
- * 视觉对齐 chan-viewer / chantheory plotting：
- * - Bull Div：绿色文字，锚定所在 K 线 low，画在 K 线下方
- * - Bear Div：红色文字，锚定所在 K 线 high，画在 K 线上方
- * 无箭头；字体略大于 CZSC 买卖点标签。
+ * 布局与 CZSC 买卖点一致：箭头 + 标签，锚定所在 K 线极值。
+ * - Bull Div：红色，K 线下方，"↑" 指向 K 线，标签在箭头之下
+ * - Bear Div：绿色，K 线上方，标签在上，"↓" 指向 K 线
+ * 颜色与同侧买卖点一致（买/多红、卖/空绿）。
  *
  * 外层偏移 CZSC_CLEARANCE 为单层买卖点堆叠预留空间，避免与同侧 1B/1S
  * 完全重叠。找不到对应 K 线时回退到契约 meta.price。
  *
  * 本文件是 production 实现，由 SynchronizedChartGroup 消费。
  */
-const BULL_COLOR = "#059669";
-const BEAR_COLOR = "#B91C1C";
-const LABEL_FONT = 11;
+const BULL_COLOR = "#ef4444";
+const BEAR_COLOR = "#22c55e";
+const BUY_ARROW = "↑";
+const SELL_ARROW = "↓";
+const ARROW_FONT = 13;
+const ARROW_GAP = 2;
+const LABEL_FONT = 10;
 const LABEL_GAP = 2;
 /** 为同侧一层 CZSC 买卖点（箭头+标签）预留的像素高度。 */
 const CZSC_CLEARANCE = 28;
+
+function markerMarginPx() {
+  return (
+    CZSC_CLEARANCE +
+    ARROW_GAP +
+    ARROW_FONT +
+    LABEL_GAP +
+    LABEL_FONT
+  );
+}
 
 class DivergenceMarkerRenderer {
   constructor(markers, chart, series, barByTime) {
@@ -37,11 +51,14 @@ class DivergenceMarkerRenderer {
       const ctx = scope.context;
       const hRatio = scope.horizontalPixelRatio;
       const vRatio = scope.verticalPixelRatio;
-      const labelFont = `bold ${LABEL_FONT * vRatio}px sans-serif`;
-      const gap = (CZSC_CLEARANCE + LABEL_GAP) * vRatio;
+      const arrowFont = `bold ${ARROW_FONT * vRatio}px sans-serif`;
+      const arrowAdvance = ARROW_FONT * vRatio;
+      const clearance = CZSC_CLEARANCE * vRatio;
+      const gap = ARROW_GAP * vRatio;
+      const labelGap = LABEL_GAP * vRatio;
+      const labelFont = `${LABEL_FONT * vRatio}px sans-serif`;
 
       ctx.textAlign = "center";
-      ctx.font = labelFont;
 
       for (const marker of this.markers) {
         const barTime = Number(marker.time);
@@ -58,15 +75,29 @@ class DivergenceMarkerRenderer {
         }
         const cx = x * hRatio;
         const cy = y * vRatio;
-        ctx.fillStyle =
-          marker.divergenceType === "bullish" ? BULL_COLOR : BEAR_COLOR;
+        const isBull = marker.divergenceType === "bullish";
+        ctx.fillStyle = isBull ? BULL_COLOR : BEAR_COLOR;
 
         if (marker.side === "buy") {
+          // K 线下方：先越过一层买卖点，再画 "↑" + Bull Div。
+          const arrowTop = cy + clearance + gap;
+          ctx.font = arrowFont;
           ctx.textBaseline = "top";
-          ctx.fillText(marker.label, cx, cy + gap);
+          ctx.fillText(BUY_ARROW, cx, arrowTop);
+          ctx.font = labelFont;
+          ctx.fillText(marker.label, cx, arrowTop + arrowAdvance + labelGap);
         } else {
+          // K 线上方：先越过一层买卖点，再画 Bear Div + "↓"。
+          const arrowBottom = cy - clearance - gap;
+          ctx.font = labelFont;
           ctx.textBaseline = "bottom";
-          ctx.fillText(marker.label, cx, cy - gap);
+          ctx.fillText(
+            marker.label,
+            cx,
+            arrowBottom - arrowAdvance - labelGap,
+          );
+          ctx.font = arrowFont;
+          ctx.fillText(SELL_ARROW, cx, arrowBottom);
         }
       }
     });
@@ -136,7 +167,7 @@ export class DivergenceMarkerPrimitive {
         hasSell = true;
       }
     }
-    const margin = CZSC_CLEARANCE + LABEL_GAP + LABEL_FONT;
+    const margin = markerMarginPx();
     this.autoScaleMargins =
       hasBuy || hasSell
         ? {

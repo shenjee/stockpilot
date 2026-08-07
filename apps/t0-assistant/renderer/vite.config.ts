@@ -9,5 +9,8 @@ export default defineConfig({
   build: {
     outDir: fileURLToPath(new URL("../dist", import.meta.url)),
     emptyOutDir: true,
+    // Electron 本地加载单页：React + lightweight-charts 合计约 500KB，
+    // 拆包几乎无收益，仅抬高阈值避免误报。
+    chunkSizeWarningLimit: 600,
   },
 });

@@ -34,7 +34,7 @@ const PIVOT_STROKE_COLORS = new Set([
   "rgba(148, 163, 184, 0.55)",
 ]);
 const MARKER_COLORS = new Set(["#22c55e", "#ef4444"]);
-const DIVERGENCE_COLORS = new Set(["#059669", "#B91C1C"]);
+const DIVERGENCE_COLORS = new Set(["#ef4444", "#22c55e"]);
 
 const noop = () => {};
 const classList = { add: noop, remove: noop, contains: () => false, toggle: noop };
@@ -331,8 +331,8 @@ function setPriceData(priceSeries, model) {
 
 const BUY_MARKER_COLOR = "#ef4444";
 const SELL_MARKER_COLOR = "#22c55e";
-const BULL_DIV_COLOR = "#059669";
-const BEAR_DIV_COLOR = "#B91C1C";
+const BULL_DIV_COLOR = "#ef4444";
+const BEAR_DIV_COLOR = "#22c55e";
 
 const isPivotFill = (call) => PIVOT_FILL_COLORS.has(call.style);
 const isPivotStroke = (call) => PIVOT_STROKE_COLORS.has(call.style);
@@ -908,11 +908,19 @@ test("real LC + production primitive: divergence draw renders Bull Div and Bear 
     const bearTexts = markerTextsWithStyle(drawCalls, BEAR_DIV_COLOR);
     assert.ok(
       bullTexts.includes("Bull Div"),
-      `DivergenceMarkerPrimitive.draw must render Bull Div; got ${JSON.stringify(bullTexts)}`,
+      `DivergenceMarkerPrimitive.draw must render red Bull Div; got ${JSON.stringify(bullTexts)}`,
+    );
+    assert.ok(
+      bullTexts.includes("↑"),
+      `DivergenceMarkerPrimitive.draw must render red ↑ for Bull Div; got ${JSON.stringify(bullTexts)}`,
     );
     assert.ok(
       bearTexts.includes("Bear Div"),
-      `DivergenceMarkerPrimitive.draw must render Bear Div; got ${JSON.stringify(bearTexts)}`,
+      `DivergenceMarkerPrimitive.draw must render green Bear Div; got ${JSON.stringify(bearTexts)}`,
+    );
+    assert.ok(
+      bearTexts.includes("↓"),
+      `DivergenceMarkerPrimitive.draw must render green ↓ for Bear Div; got ${JSON.stringify(bearTexts)}`,
     );
   } finally {
     restore();

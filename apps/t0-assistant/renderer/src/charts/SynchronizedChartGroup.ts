@@ -246,7 +246,7 @@ export class SynchronizedChartGroup {
       // CZSC 买卖点按 (time, price) 精确定位，不依赖内置 markers 的 bar 相对定位。
       this.czscMarkerPrimitive = new CzscMarkerPrimitive();
       this.priceSeries.attachPrimitive(this.czscMarkerPrimitive);
-      // 背驰文本标注（Bull Div / Bear Div），视觉对齐 chan-viewer。
+      // 背驰标注（Bull Div / Bear Div）：箭头+标签，颜色与同侧买卖点一致。
       this.divergenceMarkerPrimitive = new DivergenceMarkerPrimitive();
       this.priceSeries.attachPrimitive(this.divergenceMarkerPrimitive);
       this.volumeMa5Series = this.volumeChart.addSeries(LineSeries, {
