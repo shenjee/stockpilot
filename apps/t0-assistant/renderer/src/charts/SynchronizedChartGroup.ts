@@ -56,6 +56,16 @@ import {
   type ChartViewportSnapshot,
   type ChartViewportState,
 } from "./chart-viewport.mjs";
+import {
+  MARKET_BAR_TOOLTIP_CLASS,
+  MARKET_BAR_TOOLTIP_MARGIN_PX,
+  buildMarketBarTooltipViewModel,
+  findMarketBarByUtcSeconds,
+  isPointerInPricePlotArea,
+  renderMarketBarTooltipContent,
+  resolveMarketBarTooltipCorner,
+  shouldShowMarketBarTooltip,
+} from "./market-bar-tooltip.mjs";
 
 interface ChartGroupContainers {
   price: HTMLElement;
@@ -66,6 +76,8 @@ interface ChartGroupContainers {
 interface ChartGroupOptions {
   containers: ChartGroupContainers;
   kind: ChartGroupModel["kind"];
+  /** 5 分钟行情 Tooltip 挂载点；不可挂在 LC container 内，否则破坏布局。 */
+  tooltipHost?: HTMLElement | null;
   barSlotWidth?: number;
   initialViewport?: ChartViewportSnapshot | null;
   onViewportChange?: (snapshot: ChartViewportSnapshot | null) => void;
@@ -103,6 +115,7 @@ const INTRADAY_FIXED_MARGINS = { top: 0, bottom: 0 };
 
 export class SynchronizedChartGroup {
   private readonly containers: ChartGroupContainers;
+  private readonly tooltipHost: HTMLElement | null;
   private readonly kind: ChartGroupModel["kind"];
   private readonly priceChart: IChartApi;
   private readonly volumeChart: IChartApi;
@@ -171,9 +184,26 @@ export class SynchronizedChartGroup {
   private priceScaleResyncFrame: number | null = null;
   private priceAxisMinMoveFrame: number | null = null;
   private crosshairClearFrame: number | null = null;
+  // 5 分钟价格主图固定角落行情 Tooltip（issue #144）。仅 FIVE_MINUTE 启用。
+  private marketBarTooltipEl: HTMLElement | null = null;
+  private marketBarTooltipFrame: number | null = null;
+  private marketBarTooltipCrosshairHandler:
+    | ((param: MouseEventParams<Time>) => void)
+    | null = null;
+  private marketBarTooltipPointerHandlers: {
+    move: (event: PointerEvent) => void;
+    leave: () => void;
+    down: () => void;
+    up: (event: PointerEvent) => void;
+  } | null = null;
+  private marketBarTooltipPointerOverPlot = false;
+  private marketBarTooltipDragging = false;
+  private marketBarTooltipActiveTime: number | null = null;
+  private marketBarTooltipCorner: "left" | "right" | null = null;
 
   constructor(options: ChartGroupOptions) {
     this.containers = options.containers;
+    this.tooltipHost = options.tooltipHost ?? null;
     this.kind = options.kind;
     this.barSlotWidth = options.barSlotWidth ?? 8;
     this.initialViewport = options.initialViewport;
@@ -309,6 +339,7 @@ export class SynchronizedChartGroup {
     this.setupRangeSynchronization();
     this.setupCrosshairSynchronization();
     this.setupViewportTracking();
+    this.setupMarketBarTooltip();
     this.resizeObserver = new ResizeObserver(() => this.resize());
     Object.values(this.containers).forEach((container) =>
       this.resizeObserver.observe(container),
@@ -353,6 +384,8 @@ export class SynchronizedChartGroup {
         this.suppressUntilFrame = null;
       });
     });
+    // 实盘动态 K / 回放推进后原地刷新；激活时间不存在则立即隐藏。
+    this.scheduleMarketBarTooltipRefresh();
   }
 
   // 视口状态机：following 右对齐最新；manual 保留逻辑范围；空数据重置。
@@ -564,6 +597,7 @@ export class SynchronizedChartGroup {
       this.suppressUntilFrame = null;
     }
     this.cancelCrosshairClear();
+    this.teardownMarketBarTooltip();
     this.resizeObserver.disconnect();
     for (const [chart, handler] of this.crosshairHandlers) {
       chart.unsubscribeCrosshairMove(handler);
@@ -1218,6 +1252,211 @@ export class SynchronizedChartGroup {
       this.applyVisibleRange();
     }
     this.schedulePriceScaleResync();
+    this.scheduleMarketBarTooltipRefresh();
+  }
+
+  private setupMarketBarTooltip() {
+    if (this.kind !== ChartGroupKind.FIVE_MINUTE) {
+      return;
+    }
+    const host = this.tooltipHost;
+    if (!host) {
+      return;
+    }
+    const container = this.containers.price;
+    const tip = document.createElement("div");
+    tip.className = MARKET_BAR_TOOLTIP_CLASS;
+    tip.setAttribute("role", "status");
+    tip.setAttribute("aria-live", "polite");
+    tip.style.display = "none";
+    tip.style.pointerEvents = "none";
+    host.appendChild(tip);
+    this.marketBarTooltipEl = tip;
+
+    const crosshairHandler = (param: MouseEventParams<Time>) => {
+      if (this.syncingCrosshair) {
+        // 兄弟图同步写入的 crosshair 不是用户在价格主图上的指针，不改变激活时间。
+        return;
+      }
+      if (param.time === undefined) {
+        this.marketBarTooltipActiveTime = null;
+        this.scheduleMarketBarTooltipRefresh();
+        return;
+      }
+      const numericTime = Number(param.time);
+      if (!Number.isFinite(numericTime)) {
+        this.marketBarTooltipActiveTime = null;
+        this.scheduleMarketBarTooltipRefresh();
+        return;
+      }
+      this.marketBarTooltipActiveTime = numericTime;
+      this.scheduleMarketBarTooltipRefresh();
+    };
+    this.priceChart.subscribeCrosshairMove(crosshairHandler);
+    this.marketBarTooltipCrosshairHandler = crosshairHandler;
+
+    const move = (event: PointerEvent) => {
+      this.marketBarTooltipDragging = event.buttons > 0;
+      const plotWidth = this.priceChart.timeScale().width();
+      const pane = this.priceChart.paneSize(0);
+      const plotHeight = pane?.height ?? 0;
+      this.marketBarTooltipPointerOverPlot = isPointerInPricePlotArea({
+        clientX: event.clientX,
+        clientY: event.clientY,
+        containerRect: container.getBoundingClientRect(),
+        plotWidth,
+        plotHeight,
+      });
+      this.scheduleMarketBarTooltipRefresh();
+    };
+    const leave = () => {
+      this.marketBarTooltipPointerOverPlot = false;
+      this.marketBarTooltipDragging = false;
+      this.marketBarTooltipActiveTime = null;
+      this.scheduleMarketBarTooltipRefresh();
+    };
+    const down = () => {
+      this.marketBarTooltipDragging = true;
+      this.scheduleMarketBarTooltipRefresh();
+    };
+    const up = (event: PointerEvent) => {
+      this.marketBarTooltipDragging = event.buttons > 0;
+      this.scheduleMarketBarTooltipRefresh();
+    };
+    container.addEventListener("pointermove", move);
+    container.addEventListener("pointerleave", leave);
+    container.addEventListener("pointerdown", down);
+    container.addEventListener("pointerup", up);
+    this.marketBarTooltipPointerHandlers = { move, leave, down, up };
+  }
+
+  private teardownMarketBarTooltip() {
+    if (this.marketBarTooltipFrame !== null) {
+      cancelAnimationFrame(this.marketBarTooltipFrame);
+      this.marketBarTooltipFrame = null;
+    }
+    if (this.marketBarTooltipCrosshairHandler) {
+      this.priceChart.unsubscribeCrosshairMove(
+        this.marketBarTooltipCrosshairHandler,
+      );
+      this.marketBarTooltipCrosshairHandler = null;
+    }
+    const handlers = this.marketBarTooltipPointerHandlers;
+    if (handlers) {
+      const container = this.containers.price;
+      container.removeEventListener("pointermove", handlers.move);
+      container.removeEventListener("pointerleave", handlers.leave);
+      container.removeEventListener("pointerdown", handlers.down);
+      container.removeEventListener("pointerup", handlers.up);
+      this.marketBarTooltipPointerHandlers = null;
+    }
+    if (this.marketBarTooltipEl?.parentNode) {
+      this.marketBarTooltipEl.parentNode.removeChild(this.marketBarTooltipEl);
+    }
+    this.marketBarTooltipEl = null;
+    this.marketBarTooltipPointerOverPlot = false;
+    this.marketBarTooltipDragging = false;
+    this.marketBarTooltipActiveTime = null;
+    this.marketBarTooltipCorner = null;
+  }
+
+  private scheduleMarketBarTooltipRefresh() {
+    if (!this.marketBarTooltipEl) {
+      return;
+    }
+    if (this.marketBarTooltipFrame !== null) {
+      cancelAnimationFrame(this.marketBarTooltipFrame);
+    }
+    this.marketBarTooltipFrame = requestAnimationFrame(() => {
+      this.marketBarTooltipFrame = null;
+      this.refreshMarketBarTooltip();
+    });
+  }
+
+  private refreshMarketBarTooltip() {
+    const tip = this.marketBarTooltipEl;
+    if (!tip) {
+      return;
+    }
+    if (this.kind !== ChartGroupKind.FIVE_MINUTE || !this.model) {
+      this.hideMarketBarTooltip();
+      return;
+    }
+    const activeTime = this.marketBarTooltipActiveTime;
+    const bar =
+      activeTime === null
+        ? null
+        : findMarketBarByUtcSeconds(
+            this.model.bars,
+            this.model.timeByTimestamp,
+            activeTime,
+          );
+    if (
+      !shouldShowMarketBarTooltip({
+        pointerOverPricePlot: this.marketBarTooltipPointerOverPlot,
+        isDragging: this.marketBarTooltipDragging,
+        bar,
+      })
+    ) {
+      this.hideMarketBarTooltip();
+      return;
+    }
+
+    const plotWidth = this.priceChart.timeScale().width();
+    const barCoordinate =
+      activeTime === null
+        ? null
+        : this.priceChart.timeScale().timeToCoordinate(activeTime as Time);
+    let corner: "left" | "right" | null = null;
+    if (
+      typeof barCoordinate === "number" &&
+      Number.isFinite(barCoordinate) &&
+      plotWidth > 0
+    ) {
+      corner = resolveMarketBarTooltipCorner({
+        barCoordinate: Number(barCoordinate),
+        plotWidth,
+      });
+    } else if (plotWidth <= 0) {
+      // 布局尚未就绪：仍展示内容（实盘 OHLC 原地刷新），角落用上次或默认右上。
+      corner = this.marketBarTooltipCorner ?? "right";
+    } else {
+      // 绘图区已就绪但激活 bar 不在当前可见范围。
+      this.hideMarketBarTooltip();
+      return;
+    }
+    if (!corner) {
+      this.hideMarketBarTooltip();
+      return;
+    }
+    this.marketBarTooltipCorner = corner;
+
+    const viewModel = buildMarketBarTooltipViewModel(bar);
+    if (!viewModel) {
+      this.hideMarketBarTooltip();
+      return;
+    }
+    renderMarketBarTooltipContent(tip, viewModel);
+    tip.style.display = "block";
+    tip.style.top = `${MARKET_BAR_TOOLTIP_MARGIN_PX}px`;
+    if (corner === "left") {
+      tip.style.left = `${MARKET_BAR_TOOLTIP_MARGIN_PX}px`;
+      tip.style.right = "auto";
+    } else {
+      tip.style.left = "auto";
+      tip.style.right = `${
+        this.alignedPriceScaleWidth + MARKET_BAR_TOOLTIP_MARGIN_PX
+      }px`;
+    }
+  }
+
+  private hideMarketBarTooltip() {
+    const tip = this.marketBarTooltipEl;
+    if (!tip) {
+      return;
+    }
+    tip.style.display = "none";
+    renderMarketBarTooltipContent(tip, null);
   }
 
   private visibleCount(plotWidth: number, seriesLength: number) {
