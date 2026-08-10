@@ -121,6 +121,22 @@ test("corner strategy pins tooltip to opposite top corner", () => {
     resolveMarketBarTooltipCorner({ barCoordinate: 200, plotWidth: 0 }),
     null,
   );
+  assert.equal(
+    resolveMarketBarTooltipCorner({ barCoordinate: -1, plotWidth: 400 }),
+    null,
+  );
+  assert.equal(
+    resolveMarketBarTooltipCorner({ barCoordinate: 401, plotWidth: 400 }),
+    null,
+  );
+  assert.equal(
+    resolveMarketBarTooltipCorner({ barCoordinate: 0, plotWidth: 400 }),
+    "right",
+  );
+  assert.equal(
+    resolveMarketBarTooltipCorner({ barCoordinate: 400, plotWidth: 400 }),
+    "left",
+  );
   assert.equal(MARKET_BAR_TOOLTIP_MARGIN_PX, 14);
 });
 

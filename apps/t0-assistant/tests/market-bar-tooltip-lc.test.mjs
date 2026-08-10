@@ -321,6 +321,9 @@ function makeIntradaySnapshot() {
   };
 }
 
+/** 绘图区内的静止指针；布局变化回归测试会挪走 container rect，而不发 pointermove。 */
+const PLOT_POINTER = { x: 120, y: 80 };
+
 async function makeGroup(kind) {
   const { SynchronizedChartGroup } = await import(
     "../renderer/src/charts/SynchronizedChartGroup.ts"
@@ -328,6 +331,23 @@ async function makeGroup(kind) {
   const { createChartGroupModel } = await import(
     "../renderer/src/charts/chart-model.mjs"
   );
+  // 可突变的布局矩形：模拟窗口缩放/面板移位后静止指针不再落在绘图区。
+  const layout = {
+    left: 0,
+    top: 0,
+    width: 800,
+    height: 400,
+  };
+  const layoutRect = () => ({
+    left: layout.left,
+    top: layout.top,
+    width: layout.width,
+    height: layout.height,
+    right: layout.left + layout.width,
+    bottom: layout.top + layout.height,
+    x: layout.left,
+    y: layout.top,
+  });
   // LC container 使用与其它 LC 测试相同的 noop DOM 挂载，避免 chart.remove 依赖真实父节点。
   const price = {
     tagName: "div",
@@ -342,8 +362,8 @@ async function makeGroup(kind) {
     ownerDocument: DOC,
     innerHTML: "",
     textContent: "",
-    getBoundingClientRect: rect,
-    getClientRects: () => [rect()],
+    getBoundingClientRect: layoutRect,
+    getClientRects: () => [layoutRect()],
     setAttribute: noop,
     getAttribute: () => null,
     addEventListener: noop,
@@ -363,7 +383,13 @@ async function makeGroup(kind) {
     kind,
   });
   globalThis.__flushRaf();
-  return { group, createChartGroupModel, host };
+  return { group, createChartGroupModel, host, layout, price };
+}
+
+function armTooltipPointer(group) {
+  group.marketBarTooltipPointerClient = { ...PLOT_POINTER };
+  group.marketBarTooltipPointerOverPlot = true;
+  group.marketBarTooltipDragging = false;
 }
 
 test("5m chart group owns a tooltip DOM node; 1m does not", async () => {
@@ -396,8 +422,7 @@ test("tooltip shows exact bar, updates in place, hides on missing time", async (
     globalThis.__flushRaf();
 
     const active = parseMarketTimestamp(`${DAY} 09:40:00`);
-    group.marketBarTooltipPointerOverPlot = true;
-    group.marketBarTooltipDragging = false;
+    armTooltipPointer(group);
     group.marketBarTooltipActiveTime = active;
     group.scheduleMarketBarTooltipRefresh();
     globalThis.__flushRaf();
@@ -441,7 +466,7 @@ test("drag and leave hide tooltip; destroy clears listeners frame", async () => 
     group.setModel(createChartGroupModel(makeSnapshot(), "five_minute"));
     globalThis.__flushRaf();
 
-    group.marketBarTooltipPointerOverPlot = true;
+    armTooltipPointer(group);
     group.marketBarTooltipActiveTime = parseMarketTimestamp(`${DAY} 09:35:00`);
     group.scheduleMarketBarTooltipRefresh();
     globalThis.__flushRaf();
@@ -453,6 +478,7 @@ test("drag and leave hide tooltip; destroy clears listeners frame", async () => 
     assert.equal(tip.style.display, "none");
 
     group.marketBarTooltipDragging = false;
+    group.marketBarTooltipPointerClient = null;
     group.marketBarTooltipPointerOverPlot = false;
     group.marketBarTooltipActiveTime = null;
     group.scheduleMarketBarTooltipRefresh();
@@ -463,6 +489,37 @@ test("drag and leave hide tooltip; destroy clears listeners frame", async () => 
     assert.equal(group.marketBarTooltipCrosshairHandler, null);
     assert.equal(group.marketBarTooltipPointerHandlers, null);
     assert.equal(group.marketBarTooltipFrame, null);
+  } finally {
+    restore();
+  }
+});
+
+test("resize re-hit-tests cached pointer without pointermove", async () => {
+  const restore = installDom();
+  try {
+    const { group, createChartGroupModel, layout } =
+      await makeGroup("five_minute");
+    const tip = group.marketBarTooltipEl;
+    group.setModel(createChartGroupModel(makeSnapshot(), "five_minute"));
+    globalThis.__flushRaf();
+
+    armTooltipPointer(group);
+    group.marketBarTooltipActiveTime = parseMarketTimestamp(`${DAY} 09:35:00`);
+    group.scheduleMarketBarTooltipRefresh();
+    globalThis.__flushRaf();
+    assert.equal(tip.style.display, "block");
+    assert.equal(group.marketBarTooltipPointerOverPlot, true);
+
+    // 绘图区整体移走；指针仍停在旧 client 坐标，且不发 pointermove。
+    layout.left = 2000;
+    layout.top = 0;
+    group.resize();
+    globalThis.__flushRaf();
+
+    assert.equal(group.marketBarTooltipPointerOverPlot, false);
+    assert.equal(tip.style.display, "none");
+
+    group.teardownMarketBarTooltip();
   } finally {
     restore();
   }

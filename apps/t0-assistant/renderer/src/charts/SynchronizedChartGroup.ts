@@ -197,6 +197,9 @@ export class SynchronizedChartGroup {
     up: (event: PointerEvent) => void;
   } | null = null;
   private marketBarTooltipPointerOverPlot = false;
+  /** 最近一次 pointer 的 client 坐标；resize/refresh 用最新布局重算命中。 */
+  private marketBarTooltipPointerClient: { x: number; y: number } | null =
+    null;
   private marketBarTooltipDragging = false;
   private marketBarTooltipActiveTime: number | null = null;
   private marketBarTooltipCorner: "left" | "right" | null = null;
@@ -1297,19 +1300,15 @@ export class SynchronizedChartGroup {
 
     const move = (event: PointerEvent) => {
       this.marketBarTooltipDragging = event.buttons > 0;
-      const plotWidth = this.priceChart.timeScale().width();
-      const pane = this.priceChart.paneSize(0);
-      const plotHeight = pane?.height ?? 0;
-      this.marketBarTooltipPointerOverPlot = isPointerInPricePlotArea({
-        clientX: event.clientX,
-        clientY: event.clientY,
-        containerRect: container.getBoundingClientRect(),
-        plotWidth,
-        plotHeight,
-      });
+      this.marketBarTooltipPointerClient = {
+        x: event.clientX,
+        y: event.clientY,
+      };
+      this.recomputeMarketBarTooltipPointerHit();
       this.scheduleMarketBarTooltipRefresh();
     };
     const leave = () => {
+      this.marketBarTooltipPointerClient = null;
       this.marketBarTooltipPointerOverPlot = false;
       this.marketBarTooltipDragging = false;
       this.marketBarTooltipActiveTime = null;
@@ -1355,6 +1354,7 @@ export class SynchronizedChartGroup {
     }
     this.marketBarTooltipEl = null;
     this.marketBarTooltipPointerOverPlot = false;
+    this.marketBarTooltipPointerClient = null;
     this.marketBarTooltipDragging = false;
     this.marketBarTooltipActiveTime = null;
     this.marketBarTooltipCorner = null;
@@ -1373,6 +1373,35 @@ export class SynchronizedChartGroup {
     });
   }
 
+  /**
+   * 价格主图隐藏了 timeScale，timeScale().width() 恒为 0。
+   * 命中与角落定位改用 paneSize（实际绘图区）。
+   */
+  private pricePlotSize(): { width: number; height: number } {
+    const pane = this.priceChart.paneSize(0);
+    return {
+      width: pane?.width ?? 0,
+      height: pane?.height ?? 0,
+    };
+  }
+
+  /** 用最近指针 client 坐标与当前 rect/paneSize 重算是否在绘图区内。 */
+  private recomputeMarketBarTooltipPointerHit() {
+    const pointer = this.marketBarTooltipPointerClient;
+    if (!pointer) {
+      this.marketBarTooltipPointerOverPlot = false;
+      return;
+    }
+    const { width: plotWidth, height: plotHeight } = this.pricePlotSize();
+    this.marketBarTooltipPointerOverPlot = isPointerInPricePlotArea({
+      clientX: pointer.x,
+      clientY: pointer.y,
+      containerRect: this.containers.price.getBoundingClientRect(),
+      plotWidth,
+      plotHeight,
+    });
+  }
+
   private refreshMarketBarTooltip() {
     const tip = this.marketBarTooltipEl;
     if (!tip) {
@@ -1382,6 +1411,8 @@ export class SynchronizedChartGroup {
       this.hideMarketBarTooltip();
       return;
     }
+    // 布局变化后可能没有新的 pointermove；用缓存坐标按最新 rect 重测。
+    this.recomputeMarketBarTooltipPointerHit();
     const activeTime = this.marketBarTooltipActiveTime;
     const bar =
       activeTime === null
@@ -1402,7 +1433,7 @@ export class SynchronizedChartGroup {
       return;
     }
 
-    const plotWidth = this.priceChart.timeScale().width();
+    const { width: plotWidth } = this.pricePlotSize();
     const barCoordinate =
       activeTime === null
         ? null
@@ -1426,6 +1457,7 @@ export class SynchronizedChartGroup {
       return;
     }
     if (!corner) {
+      // 含 timeToCoordinate 有限但已越出 [0, plotWidth] 的情况。
       this.hideMarketBarTooltip();
       return;
     }

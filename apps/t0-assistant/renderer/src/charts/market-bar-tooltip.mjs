@@ -124,6 +124,7 @@ export function findMarketBarByUtcSeconds(bars, timeByTimestamp, utcSeconds) {
 
 /**
  * 激活 K 线在左半区 → 右上角；右半区 → 左上角。中点归左半区（显示右上）。
+ * 坐标越出 [0, plotWidth] 时返回 null（可见范围外 / 布局漂移）。
  * @param {{ barCoordinate: number; plotWidth: number }} input
  * @returns {"left" | "right" | null}
  */
@@ -133,7 +134,9 @@ export function resolveMarketBarTooltipCorner({ barCoordinate, plotWidth }) {
     typeof plotWidth !== "number" ||
     !Number.isFinite(barCoordinate) ||
     !Number.isFinite(plotWidth) ||
-    plotWidth <= 0
+    plotWidth <= 0 ||
+    barCoordinate < 0 ||
+    barCoordinate > plotWidth
   ) {
     return null;
   }
