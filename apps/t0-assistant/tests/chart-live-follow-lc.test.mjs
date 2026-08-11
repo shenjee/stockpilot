@@ -260,12 +260,29 @@ async function makeGroup(reports) {
 
 const settle = () => new Promise((r) => setTimeout(r, 150)); // 越过 onViewportChange 的 120ms 防抖
 
-// 模拟真实用户手势：在价格图容器上 dispatch pointerdown 事件。
-// setupUserGestureTracking 监听 pointerdown/wheel/touchstart，递增 gestureGeneration
-// 并设置 200ms 活跃窗口。测试调用此函数后，紧随的范围通知会被来源门控判定为
-// 用户操作，允许 following→manual。
+// 模拟真实用户拖动手势：dispatch 完整 pointer 生命周期 (down→move→up)。
+// setupUserGestureTracking 监听 pointerdown/pointermove/pointerup/pointercancel/wheel。
+// 只有 pointermove 确认有效移动后才设活跃尾窗口，授权范围通知。
+// 这取代了旧的 pointerdown-only + 200ms 时间窗口方案。
 function dispatchGesture(group) {
-  group.containers.price.dispatchEvent({ type: "pointerdown" });
+  const el = group.containers.price;
+  el.dispatchEvent({ type: "pointerdown" });
+  el.dispatchEvent({ type: "pointermove" });
+  el.dispatchEvent({ type: "pointerup" });
+}
+
+// 模拟真实用户滚轮缩放：dispatch wheel 事件。
+// wheel 使用可消费 token：每次事件 +1，每次范围通知消费 1 个。
+function dispatchWheel(group) {
+  group.containers.price.dispatchEvent({ type: "wheel" });
+}
+
+// 模拟真实用户单击（pointerdown→pointerup，无 pointermove）。
+// 单击不拖动不应授权范围变化——这是 200ms 时间窗口方案的误判场景之一。
+function dispatchClick(group) {
+  const el = group.containers.price;
+  el.dispatchEvent({ type: "pointerdown" });
+  el.dispatchEvent({ type: "pointerup" });
 }
 
 test("real controller: 5m live append keeps following and shifts right", async () => {
@@ -672,6 +689,348 @@ test("restore semantics: manual before background preserves range after restore"
     assert.equal(last.followState, "manual", "恢复后应保持 manual，不跳回 following");
     // 原手动范围 from=0 应保留（数据增长不改变旧范围左端）。
     assert.equal(last.range.from, 0, "恢复后原手动范围左端应保留");
+  } finally {
+    restore();
+  }
+});
+
+// ============================================================================
+// 来源门控修正回归（review P1 #1）
+//
+// 旧方案：pointerdown 后固定 200ms 时间窗口内所有范围通知视为用户操作。
+// 两种误判：
+//   1. 长按超过 200ms 后再拖动——真实拖动被当成程序性通知，无法进入 manual。
+//   2. 单击但未拖动时，200ms 内恰好到达的程序性范围通知被误判为用户操作。
+//
+// 新方案：完整 pointer 手势生命周期 + wheel 可消费 token。
+//   - pointerdown 仅标记开始，不授权（单击不拖动不授权）。
+//   - pointermove 确认有效移动后才授权（长按后拖动仍授权）。
+//   - wheel token 可消费，不依赖时间窗口。
+// ============================================================================
+
+test("source gating: long press then drag still flips to manual (no 200ms window cutoff)", async () => {
+  // 旧方案误判 #1：pointerdown 后 200ms 窗口过期，真实拖动被当成程序性通知。
+  // 新方案：pointermove 确认有效移动后才授权，不受时间窗口限制。
+  const restore = installDom();
+  try {
+    const reports = [];
+    const { group, createChartGroupModel } = await makeGroup(reports);
+
+    group.setModel(createChartGroupModel(makeSnapshot(49), "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+
+    // 模拟长按：pointerdown 后等待超过旧方案的 200ms 窗口。
+    const el = group.containers.price;
+    el.dispatchEvent({ type: "pointerdown" });
+    // 等待 250ms（超过旧 200ms 窗口）。
+    await new Promise((r) => setTimeout(r, 250));
+
+    // 然后拖动：pointermove + pointerup。
+    el.dispatchEvent({ type: "pointermove" });
+    el.dispatchEvent({ type: "pointerup" });
+
+    // 紧随的范围通知应被授权为用户操作。
+    group.priceChart.timeScale().setVisibleLogicalRange({ from: 0, to: 30 });
+    globalThis.__flushRaf();
+    await settle();
+
+    const last = reports[reports.length - 1];
+    assert.equal(
+      last.followState,
+      "manual",
+      "长按后拖动应翻 manual（新方案不依赖 pointerdown 后的时间窗口）",
+    );
+  } finally {
+    restore();
+  }
+});
+
+test("source gating: single click without drag does not authorize programmatic notification", async () => {
+  // 旧方案误判 #2：单击（pointerdown→pointerup 无 move）后 200ms 内到达的
+  // 程序性范围通知被误判为用户操作。新方案：单击不设活跃窗口，不授权。
+  const restore = installDom();
+  try {
+    const reports = [];
+    const { group, createChartGroupModel } = await makeGroup(reports);
+
+    group.setModel(createChartGroupModel(makeSnapshot(49), "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+
+    // 单击：pointerdown→pointerup，无 pointermove。
+    dispatchClick(group);
+
+    // 紧随的程序性范围通知（模拟 LC 布局副作用）。
+    // 旧方案：200ms 内会被误判为用户操作 → 翻 manual。
+    // 新方案：单击不设活跃窗口 → 保持 following。
+    group.priceChart.timeScale().setVisibleLogicalRange({ from: 0, to: 47 });
+    globalThis.__flushRaf();
+    await settle();
+
+    const last = reports[reports.length - 1];
+    assert.equal(
+      last.followState,
+      "following",
+      "单击不拖动不应授权程序性通知翻 manual",
+    );
+  } finally {
+    restore();
+  }
+});
+
+test("source gating: wheel zoom uses consumable token (no time window dependency)", async () => {
+  // wheel 使用可消费 token：每次 wheel 事件 +1，每次范围通知消费 1 个。
+  // 不依赖时间窗口——即使等待超过旧 200ms 窗口，token 仍有效。
+  const restore = installDom();
+  try {
+    const reports = [];
+    const { group, createChartGroupModel } = await makeGroup(reports);
+
+    group.setModel(createChartGroupModel(makeSnapshot(49), "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+
+    // wheel 事件。
+    dispatchWheel(group);
+
+    // 等待超过旧 200ms 窗口。
+    await new Promise((r) => setTimeout(r, 250));
+
+    // 范围通知应仍被授权（token 不依赖时间）。
+    group.priceChart.timeScale().setVisibleLogicalRange({ from: 0, to: 30 });
+    globalThis.__flushRaf();
+    await settle();
+
+    const last = reports[reports.length - 1];
+    assert.equal(
+      last.followState,
+      "manual",
+      "wheel token 不依赖时间窗口，应翻 manual",
+    );
+  } finally {
+    restore();
+  }
+});
+
+test("source gating: wheel token consumed by one notification (second notification not authorized)", async () => {
+  // 验证 token 可消费性：一次 wheel 只授权一次范围通知。
+  const restore = installDom();
+  try {
+    const reports = [];
+    const { group, createChartGroupModel } = await makeGroup(reports);
+
+    group.setModel(createChartGroupModel(makeSnapshot(49), "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+
+    // 一次 wheel。
+    dispatchWheel(group);
+
+    // 第一次范围通知：消费 token，翻 manual。
+    group.priceChart.timeScale().setVisibleLogicalRange({ from: 0, to: 30 });
+    globalThis.__flushRaf();
+    await settle();
+    assert.equal(reports[reports.length - 1].followState, "manual");
+
+    // 第二次范围通知：token 已耗尽，不应被授权。
+    // 但当前已是 manual 状态，程序性通知仍走 setManualRange clamp。
+    // 验证 token 耗尽：group.wheelGestureTokens 应为 0。
+    assert.equal(
+      group.wheelGestureTokens,
+      0,
+      "wheel token 应已被第一次通知消费",
+    );
+  } finally {
+    restore();
+  }
+});
+
+// ============================================================================
+// manual 恢复使用保存范围回归（review P1 #2）
+//
+// 旧方案：onForegroundRestore 的 manual 分支使用 this.viewport.visibleStart/End
+// （当前范围），但后台期间程序性通知可能已漂移当前范围。
+// 新方案：使用 fromChartLogicalRange(saved.range, length) 恢复保存的 pre-background 范围。
+// ============================================================================
+
+test("restore semantics: manual range drifts during background, restore uses saved range not current", async () => {
+  // 验证恢复时使用保存的 saved.range 而非当前漂移后的范围。
+  const restore = installDom();
+  try {
+    const reports = [];
+    const { group, createChartGroupModel } = await makeGroup(reports);
+
+    // 初始：80 根 K 线，following 状态。
+    group.setModel(createChartGroupModel(makeSnapshot(80), "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+
+    // 用户主动平移到 manual，范围 [10, 57]（span=48，满足 MANUAL_MIN_VISIBLE_BARS_5M）。
+    dispatchGesture(group);
+    group.priceChart.timeScale().setVisibleLogicalRange({ from: 10, to: 57 });
+    globalThis.__flushRaf();
+    await settle();
+    const beforeBg = reports[reports.length - 1];
+    assert.equal(beforeBg.followState, "manual");
+    assert.equal(beforeBg.range.from, 10, "用户平移后 from=10");
+    assert.equal(beforeBg.range.to, 57, "用户平移后 to=57");
+
+    // 模拟后台：保存快照（manual，range [10, 57]）。
+    group.onBackgroundEnter();
+    const savedRange = group.preBackgroundViewport.range;
+    assert.deepEqual(savedRange, { from: 10, to: 57 }, "快照应保存 [10, 57]");
+
+    // 后台期间追加 5 根新 K 线（80->85）。
+    // applyModel 在 manual 下会 clamp 当前范围到新长度，但 [10, 57] 在 85 长度内
+    // 不会被裁剪，当前范围仍为 [10, 57]。
+    group.setModel(createChartGroupModel(makeSnapshot(85), "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+
+    // 模拟后台期间程序性通知漂移当前范围（manual 状态下程序性通知走 setManualRange）。
+    // 注入一条程序性范围通知，将当前范围漂移到 [20, 67]（span=48，满足最小值）。
+    // 来源门控：不 dispatch 手势 → 程序性通知 → manual 状态下仍走 setManualRange clamp。
+    group.priceChart.timeScale().setVisibleLogicalRange({ from: 20, to: 67 });
+    globalThis.__flushRaf();
+    await settle();
+    const drifted = reports[reports.length - 1];
+    assert.equal(drifted.range.from, 20, "后台期间范围漂移到 from=20");
+
+    // 恢复前台：应使用保存的 [10, 57] 而非漂移后的 [20, 67]。
+    group.onForegroundRestore();
+    globalThis.__flushRaf();
+    await settle();
+
+    const last = reports[reports.length - 1];
+    assert.equal(last.followState, "manual", "恢复后应保持 manual");
+    assert.equal(
+      last.range.from,
+      10,
+      "恢复应使用保存的 from=10，而非漂移后的 from=20",
+    );
+    assert.equal(
+      last.range.to,
+      57,
+      "恢复应使用保存的 to=57，而非漂移后的 to=67",
+    );
+  } finally {
+    restore();
+  }
+});
+
+// ============================================================================
+// 重复 background 事件不覆盖快照回归（review P2 #3）
+//
+// main.mjs 会分别发送 blur 和 minimize 两个 background 事件。
+// 旧方案：每次 onBackgroundEnter 都覆盖 preBackgroundViewport。
+// 新方案：首次进入后台保存一次，直到 onForegroundRestore 消费后才允许再次保存。
+// ============================================================================
+
+test("restore semantics: duplicate background events do not overwrite first snapshot", async () => {
+  // 模拟 blur + minimize 两个 background 事件，验证第二个不覆盖第一个快照。
+  const restore = installDom();
+  try {
+    const reports = [];
+    const { group, createChartGroupModel } = await makeGroup(reports);
+
+    // 初始：48 根 K 线，following 状态。
+    group.setModel(createChartGroupModel(makeSnapshot(48), "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+
+    // 第一个 background 事件（blur）：保存快照。
+    group.onBackgroundEnter();
+    const firstSnapshot = group.preBackgroundViewport;
+    assert.notEqual(firstSnapshot, null, "首次 background 应保存快照");
+    assert.equal(firstSnapshot.followState, "following");
+
+    // 后台期间追加 K 线（48->52）。
+    group.setModel(createChartGroupModel(makeSnapshot(52), "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+
+    // 第二个 background 事件（minimize）：不应覆盖第一个快照。
+    group.onBackgroundEnter();
+    const secondSnapshot = group.preBackgroundViewport;
+    assert.equal(
+      secondSnapshot,
+      firstSnapshot,
+      "重复 background 事件不应覆盖首次快照",
+    );
+    // 快照仍为 following（首次保存时的状态），而非追加后的当前状态。
+    assert.equal(
+      secondSnapshot.followState,
+      "following",
+      "快照应保持首次保存时的状态",
+    );
+
+    // 恢复前台：应基于首次快照恢复。
+    group.onForegroundRestore();
+    globalThis.__flushRaf();
+    await settle();
+
+    const last = reports[reports.length - 1];
+    assert.equal(last.followState, "following", "恢复后应保持 following");
+    assert.equal(last.range.to, 51, "恢复后应右对齐到最新 latest=51");
+    // 恢复后快照应已消费（null），允许下次 background 重新保存。
+    assert.equal(
+      group.preBackgroundViewport,
+      null,
+      "恢复后快照应已消费，允许下次 background 重新保存",
+    );
+  } finally {
+    restore();
+  }
+});
+
+test("restore semantics: background → background → foreground preserves first snapshot", async () => {
+  // 更完整的 background→background→foreground 生命周期回归。
+  const restore = installDom();
+  try {
+    const reports = [];
+    const { group, createChartGroupModel } = await makeGroup(reports);
+
+    // 初始：80 根 K 线，用户手动平移到 [5, 52]（span=48，满足最小值）。
+    group.setModel(createChartGroupModel(makeSnapshot(80), "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+    dispatchGesture(group);
+    group.priceChart.timeScale().setVisibleLogicalRange({ from: 5, to: 52 });
+    globalThis.__flushRaf();
+    await settle();
+    assert.equal(reports[reports.length - 1].followState, "manual");
+
+    // 第一个 background（blur）：保存快照 [5, 52]。
+    group.onBackgroundEnter();
+    assert.deepEqual(
+      group.preBackgroundViewport.range,
+      { from: 5, to: 52 },
+      "首次快照应保存 [5, 52]",
+    );
+
+    // 后台期间追加 K 线（80->86）。
+    group.setModel(createChartGroupModel(makeSnapshot(86), "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+
+    // 第二个 background（minimize）：不覆盖。
+    group.onBackgroundEnter();
+    assert.deepEqual(
+      group.preBackgroundViewport.range,
+      { from: 5, to: 52 },
+      "重复 background 不应覆盖快照",
+    );
+
+    // 恢复前台：应使用保存的 [5, 52]。
+    group.onForegroundRestore();
+    globalThis.__flushRaf();
+    await settle();
+
+    const last = reports[reports.length - 1];
+    assert.equal(last.followState, "manual", "恢复后应保持 manual");
+    assert.equal(last.range.from, 5, "恢复应使用保存的 from=5");
+    assert.equal(last.range.to, 52, "恢复应使用保存的 to=52");
   } finally {
     restore();
   }
