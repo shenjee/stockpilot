@@ -157,6 +157,14 @@ export class SynchronizedChartGroup {
   // 标记保持到数据追加的下一帧结束之后；窗口内 setupViewportTracking 忽略范围
   // 通知。用户真实交互（指针/滚轮）发生在更晚的独立事件循环，不受该窗口影响。
   private suppressUntilFrame: number | null = null;
+  // 用户操作来源门控（Issue #146）：只有真实 pointer/wheel/touch 手势产生的
+  // 范围变化才允许 following→manual。程序性范围通知（setModel 追加、布局、resize、
+  // 跨图同步、resyncPriceScaleAfterLayout、后台恢复）都不得切换状态。
+  // 手势 generation：每次真实手势递增；范围通知到达时若 generation 未变且不在
+  // 手势活跃窗口内，判定为程序性通知，跳过 following→manual。
+  private userGestureGeneration = 0;
+  private gestureActiveUntil = 0; // performance.now() 截止时间，手势后短窗口内允许切换
+  private gestureListeners: Array<() => void> = [];
   private reportTimer: ReturnType<typeof setTimeout> | null = null;
   private viewportRangeHandler:
     | ((range: LogicalRange | null) => void)
@@ -309,6 +317,7 @@ export class SynchronizedChartGroup {
     this.setupRangeSynchronization();
     this.setupCrosshairSynchronization();
     this.setupViewportTracking();
+    this.setupUserGestureTracking();
     this.resizeObserver = new ResizeObserver(() => this.resize());
     Object.values(this.containers).forEach((container) =>
       this.resizeObserver.observe(container),
@@ -493,6 +502,11 @@ export class SynchronizedChartGroup {
   // applyingViewportRange 守卫避免程序化 setVisibleLogicalRange 被误判为用户操作。
   // 缩放/平移判定：LC 连续逻辑范围跨度 (to - from) 在纯平移时不变、缩放时变化。
   // 缩放即便落在最新边缘也强制 manual，避免刷新/布局变化按密度重算 N 丢弃缩放。
+  //
+  // 来源门控（Issue #146）：following 状态下，只有真实 pointer/wheel/touch 手势
+  // 产生的范围通知才允许切换到 manual。程序性通知（setModel 追加、布局、resize、
+  // 跨图同步、resyncPriceScaleAfterLayout、后台恢复）不切换状态，保持 following。
+  // suppressUntilFrame 保留为防御性机制，但不再作为 correctness 的唯一依据。
   private setupViewportTracking() {
     const handler = (range: LogicalRange | null) => {
       if (this.applyingViewportRange || !range || !this.viewport) {
@@ -501,15 +515,20 @@ export class SynchronizedChartGroup {
       // LC 连续逻辑范围 -> 内部排他范围，再交给状态机判定 following/manual。
       const length = this.viewport.logicalToTime.length;
       const internal = fromChartLogicalRange(range, length);
-      // Live 追加竞态（异步变体）：following 下 setModel 已把视图推进到新 latest，
-      // 但 LC 可能在 guard 释放后、于数据追加的下一帧布局时再发出一条“视图尚未跟
-      // 进”的过渡通知，其范围仍停留在追加前的旧位置。它不是用户操作（用户交互由
-      // 指针/滚轮驱动，发生在独立事件循环，远晚于该过渡帧）。若按用户操作走
-      // setManualRange，atLatestEdge=false 会把 following 翻成 manual 并把视图钉在
-      // 旧右边缘，之后的新 K 线全部停在可视窗口之外（Live 不右移）。
-      // setModel 会把 suppressUntilFrame 标记到“下一帧结束之后”；此处若仍处于该
-      // 帧窗口内，判定为 LC 过渡通知并忽略，保持 following。提前返回避免无谓的
-      // span/isZoom 计算（被忽略的通知不应污染缩放判定基线）。
+      // 来源门控：following 状态下，非用户手势的范围通知不切换到 manual。
+      // 这覆盖了 suppressUntilFrame 无法覆盖的跨帧延迟通知（如
+      // resyncPriceScaleAfterLayout 和后台恢复后的 LC 布局通知）。
+      // manual 状态下的程序性通知仍需走 setManualRange 以合法 clamp。
+      const isUserGesture = this.isUserInitiatedRangeChange();
+      if (
+        this.viewport.followState === FollowState.FOLLOWING &&
+        !isUserGesture
+      ) {
+        // 程序性通知：更新跨度基线但不切换状态，保持 following。
+        this.lastTrackedLcRange = range;
+        return;
+      }
+      // suppressUntilFrame 作为防御性二次保护：窗口内的通知一律忽略。
       if (this.suppressUntilFrame !== null) {
         return;
       }
@@ -546,6 +565,36 @@ export class SynchronizedChartGroup {
     this.viewportRangeHandler = handler;
   }
 
+  // 用户操作来源门控（Issue #146）：在价格图容器上监听真实 pointer/wheel/touch
+  // 事件，递增 gestureGeneration 并设置短活跃窗口。setupViewportTracking 的范围
+  // 回调在该窗口内才允许 following→manual；窗口外的范围通知一律视为程序性通知
+  // （setModel 追加、布局、resize、跨图同步、resyncPriceScaleAfterLayout、后台
+  // 恢复），不切换状态。这取代 suppressUntilFrame 成为 correctness 的主要依据。
+  private setupUserGestureTracking() {
+    const markGesture = () => {
+      this.userGestureGeneration++;
+      // 手势后 200ms 内的范围通知视为用户操作产生的（LC 可能延迟一帧才通知）。
+      this.gestureActiveUntil = performance.now() + 200;
+    };
+    const container = this.containers.price;
+    const events: Array<keyof HTMLElementEventMap> = [
+      "pointerdown",
+      "wheel",
+      "touchstart",
+    ];
+    for (const evt of events) {
+      container.addEventListener(evt, markGesture, { passive: true });
+      this.gestureListeners.push(() =>
+        container.removeEventListener(evt, markGesture),
+      );
+    }
+  }
+
+  // 判断当前范围通知是否由真实用户手势产生。只有手势活跃窗口内的通知才返回 true。
+  private isUserInitiatedRangeChange(): boolean {
+    return performance.now() < this.gestureActiveUntil;
+  }
+
   destroy() {
     if (this.reportTimer) {
       clearTimeout(this.reportTimer);
@@ -563,6 +612,8 @@ export class SynchronizedChartGroup {
       cancelAnimationFrame(this.suppressUntilFrame);
       this.suppressUntilFrame = null;
     }
+    for (const cleanup of this.gestureListeners) cleanup();
+    this.gestureListeners = [];
     this.cancelCrosshairClear();
     this.resizeObserver.disconnect();
     for (const [chart, handler] of this.crosshairHandlers) {
