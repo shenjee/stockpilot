@@ -164,7 +164,10 @@ export class SynchronizedChartGroup {
   // 手势活跃窗口内，判定为程序性通知，跳过 following→manual。
   private userGestureGeneration = 0;
   private gestureActiveUntil = 0; // performance.now() 截止时间，手势后短窗口内允许切换
+  private lastGestureTime = 0; // 最近一次真实 pointer/wheel/touch 的 performance.now()
   private gestureListeners: Array<() => void> = [];
+  // 诊断日志（Issue #146 第 1 步）：setModel 序号，用于关联日志条目。
+  private setModelSeq = 0;
   private reportTimer: ReturnType<typeof setTimeout> | null = null;
   private viewportRangeHandler:
     | ((range: LogicalRange | null) => void)
@@ -328,8 +331,13 @@ export class SynchronizedChartGroup {
     if (model.kind !== this.kind) {
       throw new TypeError(
         `Cannot render ${model.kind} data in ${this.kind} chart group`,
-      );
+    );
     }
+    this.setModelSeq++;
+    this.logDiag("setModel", {
+      tsCount: model.timestamps.length,
+      latestIdx: model.timestamps.length - 1,
+    });
     // setData() can synchronously emit a visible-range notification before
     // applyViewport() has advanced the logical viewport to the new model.
     // That notification is a chart-library side effect, not a user pan/zoom.
@@ -520,16 +528,24 @@ export class SynchronizedChartGroup {
       // resyncPriceScaleAfterLayout 和后台恢复后的 LC 布局通知）。
       // manual 状态下的程序性通知仍需走 setManualRange 以合法 clamp。
       const isUserGesture = this.isUserInitiatedRangeChange();
+      const beforeFollowState = this.viewport.followState;
       if (
         this.viewport.followState === FollowState.FOLLOWING &&
         !isUserGesture
       ) {
         // 程序性通知：更新跨度基线但不切换状态，保持 following。
         this.lastTrackedLcRange = range;
+        this.logDiag("range-callback-ignored-programmatic", {
+          range: { from: range.from, to: range.to },
+          source: "programmatic",
+        });
         return;
       }
       // suppressUntilFrame 作为防御性二次保护：窗口内的通知一律忽略。
       if (this.suppressUntilFrame !== null) {
+        this.logDiag("range-callback-suppressed", {
+          range: { from: range.from, to: range.to },
+        });
         return;
       }
       const previousSpan = this.lastTrackedLcRange
@@ -548,6 +564,12 @@ export class SynchronizedChartGroup {
           ...this.viewportBounds(this.viewport.logicalToTime.length),
         },
       );
+      this.logDiag("range-callback-flip", {
+        range: { from: range.from, to: range.to },
+        source: isUserGesture ? "user-gesture" : "unknown",
+        beforeFollowState,
+        isZoom,
+      });
       if (
         this.viewport.visibleStart !== internal.start ||
         this.viewport.visibleEnd !== internal.end
@@ -573,8 +595,10 @@ export class SynchronizedChartGroup {
   private setupUserGestureTracking() {
     const markGesture = () => {
       this.userGestureGeneration++;
+      const now = performance.now();
       // 手势后 200ms 内的范围通知视为用户操作产生的（LC 可能延迟一帧才通知）。
-      this.gestureActiveUntil = performance.now() + 200;
+      this.gestureActiveUntil = now + 200;
+      this.lastGestureTime = now;
     };
     const container = this.containers.price;
     const events: Array<keyof HTMLElementEventMap> = [
@@ -595,6 +619,33 @@ export class SynchronizedChartGroup {
     return performance.now() < this.gestureActiveUntil;
   }
 
+  // 诊断日志（Issue #146 第 1 步）：记录视口状态机关键事件，足以确认是哪条通知
+  // 执行了 following→manual，并验证 rAF/布局回调的真实顺序。
+  // 日志前缀 [t0-chart] 便于在 DevTools console 中过滤。
+  private logDiag(event: string, extra: Record<string, unknown> = {}) {
+    if (!this.viewport) {
+      console.log("[t0-chart]", event, { ...extra, viewport: null });
+      return;
+    }
+    console.log("[t0-chart]", event, {
+      setModelSeq: this.setModelSeq,
+      followState: this.viewport.followState,
+      range: this.viewport.visibleStart != null
+        ? { from: this.viewport.visibleStart, to: this.viewport.visibleEnd - 1 }
+        : null,
+      tsCount: this.viewport.logicalToTime.length,
+      latestIdx: this.viewport.logicalToTime.length - 1,
+      applyingViewportRange: this.applyingViewportRange,
+      suppressUntilFrame: this.suppressUntilFrame !== null,
+      syncingRange: this.syncingRange,
+      gestureGen: this.userGestureGeneration,
+      lastGestureAge: this.lastGestureTime
+        ? Math.round(performance.now() - this.lastGestureTime)
+        : null,
+      ...extra,
+    });
+  }
+
   // 窗口生命周期：进入后台（blur/minimize/hidden）时保存 pre-background 视口快照。
   // 恢复时基于此快照决定是重新右对齐（following）还是保持原范围（manual）。
   // 不能仅复用 resize()/resyncPriceScaleAfterLayout() 中基于"当前 followState"
@@ -609,6 +660,9 @@ export class SynchronizedChartGroup {
         range: toChartLogicalRange(this.viewport),
       };
     }
+    this.logDiag("background-enter", {
+      savedFollowState: this.preBackgroundViewport?.followState ?? null,
+    });
   }
 
   onForegroundRestore() {
@@ -665,6 +719,9 @@ export class SynchronizedChartGroup {
       });
     });
     this.schedulePriceScaleResync();
+    this.logDiag("foreground-restore", {
+      savedFollowState: saved.followState,
+    });
   }
 
   destroy() {
