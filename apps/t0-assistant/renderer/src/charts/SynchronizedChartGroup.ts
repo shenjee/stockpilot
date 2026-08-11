@@ -595,6 +595,78 @@ export class SynchronizedChartGroup {
     return performance.now() < this.gestureActiveUntil;
   }
 
+  // 窗口生命周期：进入后台（blur/minimize/hidden）时保存 pre-background 视口快照。
+  // 恢复时基于此快照决定是重新右对齐（following）还是保持原范围（manual）。
+  // 不能仅复用 resize()/resyncPriceScaleAfterLayout() 中基于"当前 followState"
+  // 的分支，因为故障发生后当前状态可能已误变为 manual（来源门控修复后此场景
+  // 已消除，但恢复语义作为独立保障层仍需基于保存的 pre-background 状态）。
+  private preBackgroundViewport: ChartViewportSnapshot | null = null;
+
+  onBackgroundEnter() {
+    if (this.viewport) {
+      this.preBackgroundViewport = {
+        followState: this.viewport.followState,
+        range: toChartLogicalRange(this.viewport),
+      };
+    }
+  }
+
+  onForegroundRestore() {
+    if (!this.model || this.model.timestamps.length === 0 || !this.viewport) {
+      this.preBackgroundViewport = null;
+      return;
+    }
+    const saved = this.preBackgroundViewport;
+    this.preBackgroundViewport = null;
+    if (!saved) {
+      return;
+    }
+    // 恢复路径：基于保存的 pre-background 状态主动重新右对齐或保持原范围。
+    // 屏蔽该恢复周期的程序性范围通知：设置 suppressUntilFrame + 来源门控
+    // 已确保恢复期间的 LC 布局通知不翻 manual。
+    const wasApplyingViewportRange = this.applyingViewportRange;
+    this.applyingViewportRange = true;
+    try {
+      if (saved.followState === FollowState.FOLLOWING) {
+        // 后台前为 following：恢复后基于最新数据重新右对齐。
+        const plotWidth = this.priceChart.timeScale().width();
+        const visibleCount = this.visibleCount(
+          plotWidth,
+          this.model.timestamps.length,
+        );
+        this.viewport = followLatest(this.viewport, visibleCount);
+        this.applyVisibleRange();
+      } else {
+        // 后台前为 manual：保持原手动范围，按最新数据边界合法 clamp。
+        const viewportBounds = this.viewportBounds(
+          this.model.timestamps.length,
+        );
+        this.viewport = setManualRange(
+          this.viewport,
+          this.viewport.visibleStart,
+          this.viewport.visibleEnd,
+          {
+            allowResumeFollowing: false,
+            ...viewportBounds,
+          },
+        );
+        this.applyVisibleRange();
+      }
+    } finally {
+      this.applyingViewportRange = wasApplyingViewportRange;
+    }
+    // 恢复后设置 suppressUntilFrame 防御性窗口，覆盖恢复期间 LC 布局通知。
+    if (this.suppressUntilFrame !== null) {
+      cancelAnimationFrame(this.suppressUntilFrame);
+    }
+    this.suppressUntilFrame = requestAnimationFrame(() => {
+      this.suppressUntilFrame = requestAnimationFrame(() => {
+        this.suppressUntilFrame = null;
+      });
+    });
+    this.schedulePriceScaleResync();
+  }
+
   destroy() {
     if (this.reportTimer) {
       clearTimeout(this.reportTimer);

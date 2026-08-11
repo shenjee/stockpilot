@@ -594,3 +594,85 @@ test("lifecycle: stale notification after restore with paused rAF does not flip 
     restore();
   }
 });
+
+// ============================================================================
+// 恢复语义回归（Issue #146 第 4 步）
+//
+// onBackgroundEnter() 保存 pre-background 视口快照；onForegroundRestore() 基于
+// 快照决定恢复行为：
+//   - following → 重新右对齐最新 K 线
+//   - manual → 保持原手动范围，按最新数据边界合法 clamp
+// ============================================================================
+
+test("restore semantics: following before background re-aligns to latest after restore", async () => {
+  const restore = installDom();
+  try {
+    const reports = [];
+    const { group, createChartGroupModel } = await makeGroup(reports);
+
+    // 初始：48 根 K 线，following 状态。
+    group.setModel(createChartGroupModel(makeSnapshot(48), "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+    assert.equal(reports[reports.length - 1].followState, "following");
+
+    // 模拟后台：保存快照。
+    group.onBackgroundEnter();
+
+    // 后台期间追加 4 根新 K 线（48->52），模拟跨过 4 根 5 分钟 K 线。
+    group.setModel(createChartGroupModel(makeSnapshot(52), "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+
+    // 恢复前台：应基于保存的 following 状态重新右对齐到最新 K 线。
+    group.onForegroundRestore();
+    globalThis.__flushRaf();
+    await settle();
+
+    const last = reports[reports.length - 1];
+    assert.equal(last.followState, "following", "恢复后应保持 following");
+    assert.equal(last.range.to, 51, "恢复后应右对齐到最新 latest=51");
+  } finally {
+    restore();
+  }
+});
+
+test("restore semantics: manual before background preserves range after restore", async () => {
+  const restore = installDom();
+  try {
+    const reports = [];
+    const { group, createChartGroupModel } = await makeGroup(reports);
+
+    // 初始：49 根 K 线，following 状态。
+    group.setModel(createChartGroupModel(makeSnapshot(49), "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+
+    // 用户主动平移到 manual（dispatch 手势让来源门控允许切换）。
+    dispatchGesture(group);
+    group.priceChart.timeScale().setVisibleLogicalRange({ from: 0, to: 30 });
+    globalThis.__flushRaf();
+    await settle();
+    assert.equal(reports[reports.length - 1].followState, "manual");
+
+    // 模拟后台：保存快照（manual 状态）。
+    group.onBackgroundEnter();
+
+    // 后台期间追加 3 根新 K 线（49->52）。
+    group.setModel(createChartGroupModel(makeSnapshot(52), "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+
+    // 恢复前台：应保持 manual，不强制跳回最新。
+    group.onForegroundRestore();
+    globalThis.__flushRaf();
+    await settle();
+
+    const last = reports[reports.length - 1];
+    assert.equal(last.followState, "manual", "恢复后应保持 manual，不跳回 following");
+    // 原手动范围 from=0 应保留（数据增长不改变旧范围左端）。
+    assert.equal(last.range.from, 0, "恢复后原手动范围左端应保留");
+  } finally {
+    restore();
+  }
+});
