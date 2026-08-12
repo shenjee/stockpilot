@@ -1209,12 +1209,17 @@ test("source gating: wheel from LC child element authorizes via capture (P1)", a
     // 从 LC 子元素派发 wheel：模拟真实事件冒泡顺序。
     // capture 阶段：容器 capture handler 先执行（设 token）。
     // 目标/bubble 阶段：LC 子元素 handler 同步执行并触发范围回调（消费 token）。
-    // deltaX/deltaY=0 让 LC 的 _onMousewheel 早返回（无真实 canvas 渲染），
-    // 因为测试环境中 LC 的内部 handler 可能不实际调用 setVisibleLogicalRange，
-    // 在目标阶段上注册一个模拟的 LC 子元素 wheel handler，使其在事件分发期间
-    // 同步调用 setVisibleLogicalRange，从而验证事件顺序与 token 授权时序。
+    // deltaX/deltaY=0 让 LC 的 _onMousewheel 早返回（无真实 canvas 渲染）。
+    // 测试环境中 LC 内部 handler 不一定在当前事件分发内同步触发范围回调。
+    // 直接在 LC 子元素 wheel handler 中同步调用 viewportRangeHandler，
+    // 模拟目标阶段同步范围通知，验证 capture handler 先于它执行。
+    assert.equal(
+      typeof group.viewportRangeHandler,
+      "function",
+      "应在测试时能访问 LC 的可见范围回调处理器",
+    );
     lcChild.addEventListener("wheel", () => {
-      group.priceChart.timeScale().setVisibleLogicalRange({ from: 0, to: 30 });
+      group.viewportRangeHandler?.({ from: 0, to: 30 });
     });
     lcChild.dispatchEvent({ type: "wheel", deltaX: 0, deltaY: 0 });
     globalThis.__flushRaf();
