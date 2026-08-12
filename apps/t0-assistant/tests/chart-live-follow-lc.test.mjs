@@ -1208,15 +1208,15 @@ test("source gating: wheel from LC child element authorizes via capture (P1)", a
 
     // 从 LC 子元素派发 wheel：模拟真实事件冒泡顺序。
     // capture 阶段：容器 capture handler 先执行（设 token）。
-    // 目标/bubble 阶段：LC 子元素 handler 执行（触发范围回调，消费 token）。
+    // 目标/bubble 阶段：LC 子元素 handler 同步执行并触发范围回调（消费 token）。
     // deltaX/deltaY=0 让 LC 的 _onMousewheel 早返回（无真实 canvas 渲染），
-    // 测试随后手动 setVisibleLogicalRange 模拟 LC zoom 触发的范围回调。
+    // 因为测试环境中 LC 的内部 handler 可能不实际调用 setVisibleLogicalRange，
+    // 在目标阶段上注册一个模拟的 LC 子元素 wheel handler，使其在事件分发期间
+    // 同步调用 setVisibleLogicalRange，从而验证事件顺序与 token 授权时序。
+    lcChild.addEventListener("wheel", () => {
+      group.priceChart.timeScale().setVisibleLogicalRange({ from: 0, to: 30 });
+    });
     lcChild.dispatchEvent({ type: "wheel", deltaX: 0, deltaY: 0 });
-
-    // 范围回调应已被授权（token 在 capture 阶段设置）。
-    // 注意：LC 的 wheel handler 在 stub 中不会真正触发 zoom（无真实 canvas），
-    // 但 setVisibleLogicalRange 会同步触发范围回调。
-    group.priceChart.timeScale().setVisibleLogicalRange({ from: 0, to: 30 });
     globalThis.__flushRaf();
     await settle();
 
