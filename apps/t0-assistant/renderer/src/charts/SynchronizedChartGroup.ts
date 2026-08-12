@@ -93,6 +93,10 @@ const BOLL_COLOR = "#e879f9";
 // 缩放/平移判定阈值（LC 连续逻辑范围跨度差）。纯平移跨度精确不变（浮点误差 ~1e-9），
 // 缩放跨度变化至少数个 K；0.01 仅吸收浮点漂移，可靠区分二者。
 const ZOOM_SPAN_EPSILON = 0.01;
+// 手势确认后的活跃尾窗口（ms）：覆盖 LC 在 pointerup/wheel 后延迟一帧发出的
+// 范围通知。这不是 correctness 的主要依据——主要依据是完整手势生命周期
+// （pointermove 授权、wheel token 消费）。
+const GESTURE_TAIL_MS = 300;
 const MA_COLORS = {
   ma5: "#f6d365",
   ma10: "#7dd3fc",
@@ -170,6 +174,26 @@ export class SynchronizedChartGroup {
   // 标记保持到数据追加的下一帧结束之后；窗口内 setupViewportTracking 忽略范围
   // 通知。用户真实交互（指针/滚轮）发生在更晚的独立事件循环，不受该窗口影响。
   private suppressUntilFrame: number | null = null;
+  // 用户操作来源门控（Issue #146）：只有真实 pointer/wheel/touch 手势产生的
+  // 范围变化才允许 following→manual。程序性范围通知（setModel 追加、布局、resize、
+  // 跨图同步、resyncPriceScaleAfterLayout、后台恢复）都不得切换状态。
+  //
+  // 完整手势生命周期（修正 200ms 时间窗口的两种误判）：
+  // - pointerdown 仅标记手势开始，不授权范围变化（单击不拖动不授权）。
+  // - pointermove 标记有效移动并设活跃尾窗口（长按后拖动仍授权）。
+  // - pointerup/pointercancel 结束手势，保留尾窗口覆盖 LC 延迟通知。
+  // - wheel 使用可消费 token：每次 wheel 事件加一个，每次范围通知消费一个，
+  //   不依赖时间窗口。
+  private userGestureGeneration = 0; // 诊断用：每次真实手势事件递增
+  private pointerGestureActive = false; // pointerdown→pointerup/cancel 进行中
+  private pointerMoved = false; // 当前手势中是否发生了有效移动
+  private gestureActiveUntil = 0; // 确认手势后的尾窗口截止时间（覆盖 LC 延迟通知）
+  private wheelGestureTokens = 0; // 可消费：每次 wheel +1，每次范围通知 -1
+  private wheelTokenCleanupTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastGestureTime = 0; // 诊断用：最近一次真实手势的 performance.now()
+  private gestureListeners: Array<() => void> = [];
+  // 诊断日志（Issue #146 第 1 步）：setModel 序号，用于关联日志条目。
+  private setModelSeq = 0;
   private reportTimer: ReturnType<typeof setTimeout> | null = null;
   private viewportRangeHandler:
     | ((range: LogicalRange | null) => void)
@@ -343,6 +367,7 @@ export class SynchronizedChartGroup {
     this.setupCrosshairSynchronization();
     this.setupViewportTracking();
     this.setupMarketBarTooltip();
+    this.setupUserGestureTracking();
     this.resizeObserver = new ResizeObserver(() => this.resize());
     Object.values(this.containers).forEach((container) =>
       this.resizeObserver.observe(container),
@@ -353,8 +378,13 @@ export class SynchronizedChartGroup {
     if (model.kind !== this.kind) {
       throw new TypeError(
         `Cannot render ${model.kind} data in ${this.kind} chart group`,
-      );
+    );
     }
+    this.setModelSeq++;
+    this.logDiag("setModel", {
+      tsCount: model.timestamps.length,
+      latestIdx: model.timestamps.length - 1,
+    });
     // setData() can synchronously emit a visible-range notification before
     // applyViewport() has advanced the logical viewport to the new model.
     // That notification is a chart-library side effect, not a user pan/zoom.
@@ -529,6 +559,11 @@ export class SynchronizedChartGroup {
   // applyingViewportRange 守卫避免程序化 setVisibleLogicalRange 被误判为用户操作。
   // 缩放/平移判定：LC 连续逻辑范围跨度 (to - from) 在纯平移时不变、缩放时变化。
   // 缩放即便落在最新边缘也强制 manual，避免刷新/布局变化按密度重算 N 丢弃缩放。
+  //
+  // 来源门控（Issue #146）：following 状态下，只有真实 pointer/wheel/touch 手势
+  // 产生的范围通知才允许切换到 manual。程序性通知（setModel 追加、布局、resize、
+  // 跨图同步、resyncPriceScaleAfterLayout、后台恢复）不切换状态，保持 following。
+  // suppressUntilFrame 保留为防御性机制，但不再作为 correctness 的唯一依据。
   private setupViewportTracking() {
     const handler = (range: LogicalRange | null) => {
       if (this.applyingViewportRange || !range || !this.viewport) {
@@ -537,16 +572,29 @@ export class SynchronizedChartGroup {
       // LC 连续逻辑范围 -> 内部排他范围，再交给状态机判定 following/manual。
       const length = this.viewport.logicalToTime.length;
       const internal = fromChartLogicalRange(range, length);
-      // Live 追加竞态（异步变体）：following 下 setModel 已把视图推进到新 latest，
-      // 但 LC 可能在 guard 释放后、于数据追加的下一帧布局时再发出一条“视图尚未跟
-      // 进”的过渡通知，其范围仍停留在追加前的旧位置。它不是用户操作（用户交互由
-      // 指针/滚轮驱动，发生在独立事件循环，远晚于该过渡帧）。若按用户操作走
-      // setManualRange，atLatestEdge=false 会把 following 翻成 manual 并把视图钉在
-      // 旧右边缘，之后的新 K 线全部停在可视窗口之外（Live 不右移）。
-      // setModel 会把 suppressUntilFrame 标记到“下一帧结束之后”；此处若仍处于该
-      // 帧窗口内，判定为 LC 过渡通知并忽略，保持 following。提前返回避免无谓的
-      // span/isZoom 计算（被忽略的通知不应污染缩放判定基线）。
+      // 来源门控：following 状态下，非用户手势的范围通知不切换到 manual。
+      // 这覆盖了 suppressUntilFrame 无法覆盖的跨帧延迟通知（如
+      // resyncPriceScaleAfterLayout 和后台恢复后的 LC 布局通知）。
+      // manual 状态下的程序性通知仍需走 setManualRange 以合法 clamp。
+      const isUserGesture = this.isUserInitiatedRangeChange();
+      const beforeFollowState = this.viewport.followState;
+      if (
+        this.viewport.followState === FollowState.FOLLOWING &&
+        !isUserGesture
+      ) {
+        // 程序性通知：更新跨度基线但不切换状态，保持 following。
+        this.lastTrackedLcRange = range;
+        this.logDiag("range-callback-ignored-programmatic", {
+          range: { from: range.from, to: range.to },
+          source: "programmatic",
+        });
+        return;
+      }
+      // suppressUntilFrame 作为防御性二次保护：窗口内的通知一律忽略。
       if (this.suppressUntilFrame !== null) {
+        this.logDiag("range-callback-suppressed", {
+          range: { from: range.from, to: range.to },
+        });
         return;
       }
       const previousSpan = this.lastTrackedLcRange
@@ -565,6 +613,12 @@ export class SynchronizedChartGroup {
           ...this.viewportBounds(this.viewport.logicalToTime.length),
         },
       );
+      this.logDiag("range-callback-flip", {
+        range: { from: range.from, to: range.to },
+        source: isUserGesture ? "user-gesture" : "unknown",
+        beforeFollowState,
+        isZoom,
+      });
       if (
         this.viewport.visibleStart !== internal.start ||
         this.viewport.visibleEnd !== internal.end
@@ -580,6 +634,237 @@ export class SynchronizedChartGroup {
     };
     this.priceChart.timeScale().subscribeVisibleLogicalRangeChange(handler);
     this.viewportRangeHandler = handler;
+  }
+
+  // 用户操作来源门控（Issue #146）：在价格图容器上监听完整 pointer 手势生命周期
+  // 和 wheel 事件。只有真实用户手势产生的范围变化才允许 following→manual。
+  //
+  // 完整手势生命周期（修正 200ms 时间窗口的两种误判）：
+  // - pointerdown 仅标记手势开始，不设活跃窗口——单击不拖动不会授权范围变化。
+  // - pointermove 标记有效移动并设活跃尾窗口——长按后拖动仍能授权（不再依赖
+  //   pointerdown 后的固定时间窗口）。
+  // - pointerup/pointercancel 结束手势；若发生过有效移动则刷新尾窗口，覆盖
+  //   pointerup 后 LC 可能延迟一帧发出的范围通知。
+  // - wheel 使用可消费 token：每次事件加一个，每次范围通知消费一个，不依赖
+  //   时间窗口。
+  private setupUserGestureTracking() {
+    const container = this.containers.price;
+    // pointerup/pointercancel 监听 document 而非容器：用户拖出图表后在容器外
+    // 释放时容器收不到 pointerup，会导致 pointerGestureActive 永久为 true。
+    const doc = container.ownerDocument ?? document;
+
+    const onPointerDown = () => {
+      this.userGestureGeneration++;
+      this.lastGestureTime = performance.now();
+      this.pointerGestureActive = true;
+      this.pointerMoved = false;
+      // 不设 gestureActiveUntil：单击不拖动不应授权范围变化。
+    };
+    const onPointerMove = (event: Event) => {
+      if (!this.pointerGestureActive) return;
+      // buttons=0 表示无按键按下——拖出容器后释放再返回时 pointermove 仍会触发，
+      // 但此时已无按键，不应重新开启授权窗口。
+      const buttons = (event as PointerEvent).buttons ?? 1;
+      if (buttons === 0) {
+        this.pointerGestureActive = false;
+        return;
+      }
+      this.userGestureGeneration++;
+      const now = performance.now();
+      this.lastGestureTime = now;
+      this.pointerMoved = true;
+      // 确认有效移动：设活跃尾窗口，授权后续范围通知。
+      this.gestureActiveUntil = now + GESTURE_TAIL_MS;
+    };
+    const onPointerUp = () => {
+      if (!this.pointerGestureActive) return;
+      this.userGestureGeneration++;
+      const now = performance.now();
+      this.lastGestureTime = now;
+      this.pointerGestureActive = false;
+      // 若发生过有效移动，刷新尾窗口覆盖 pointerup 后 LC 的延迟通知。
+      if (this.pointerMoved) {
+        this.gestureActiveUntil = now + GESTURE_TAIL_MS;
+      }
+    };
+    const onWheel = () => {
+      this.userGestureGeneration++;
+      this.lastGestureTime = performance.now();
+      // 可消费 token：每次 wheel 事件授权一次范围通知，不依赖时间窗口。
+      this.wheelGestureTokens++;
+      // 清理未消费 token：边界 wheel（无范围变化）不会触发范围回调，token 会
+      // 永久残留。用 setTimeout(0) 在当前事件循环结束后清理，确保同步触发的
+      // 范围回调仍能消费 token，但无回调时不会残留。
+      if (this.wheelTokenCleanupTimer !== null) {
+        clearTimeout(this.wheelTokenCleanupTimer);
+      }
+      this.wheelTokenCleanupTimer = setTimeout(() => {
+        this.wheelGestureTokens = 0;
+        this.wheelTokenCleanupTimer = null;
+      }, 0);
+    };
+
+    // pointerdown/move 在容器上监听（手势开始于容器内）；
+    // pointerup/cancel 在 document 上监听（覆盖容器外释放）。
+    const containerHandlers: Array<[keyof HTMLElementEventMap, (e: Event) => void]> = [
+      ["pointerdown", onPointerDown],
+      ["pointermove", onPointerMove],
+    ];
+    for (const [evt, handler] of containerHandlers) {
+      container.addEventListener(evt, handler as EventListener, { passive: true });
+      this.gestureListeners.push(() =>
+        container.removeEventListener(evt, handler as EventListener),
+      );
+    }
+    const docHandlers: Array<[keyof DocumentEventMap, () => void]> = [
+      ["pointerup", onPointerUp],
+      ["pointercancel", onPointerUp],
+    ];
+    for (const [evt, handler] of docHandlers) {
+      doc.addEventListener(evt, handler, { passive: true });
+      this.gestureListeners.push(() =>
+        doc.removeEventListener(evt, handler),
+      );
+    }
+    // wheel 使用 capture：LC 在子元素（.tv-lightweight-charts）上注册 wheel
+    // 监听器（bubble），其 handler 同步触发范围回调。若我们在外层容器用
+    // bubble 监听，回调先于 token 设置执行，真实滚轮缩放会被判为程序性通知。
+    // capture 确保我们的 handler 在 LC 的 handler 前执行，先建立授权。
+    container.addEventListener("wheel", onWheel, { passive: true, capture: true });
+    this.gestureListeners.push(() =>
+      container.removeEventListener("wheel", onWheel, { capture: true }),
+    );
+  }
+
+  // 判断当前范围通知是否由真实用户手势产生。
+  // - pointer 拖动尾窗口内的通知授权（pointermove 确认有效移动后才设）。
+  // - wheel token 可消费：每次范围通知消费一个 token，耗尽后不再授权。
+  private isUserInitiatedRangeChange(): boolean {
+    const now = performance.now();
+    if (now < this.gestureActiveUntil) {
+      return true;
+    }
+    if (this.wheelGestureTokens > 0) {
+      this.wheelGestureTokens--;
+      return true;
+    }
+    return false;
+  }
+
+  // 诊断日志（Issue #146 第 1 步）：记录视口状态机关键事件，足以确认是哪条通知
+  // 执行了 following→manual，并验证 rAF/布局回调的真实顺序。
+  // 日志前缀 [t0-chart] 便于在 DevTools console 中过滤。
+  private logDiag(event: string, extra: Record<string, unknown> = {}) {
+    if (!this.viewport) {
+      console.log("[t0-chart]", event, { ...extra, viewport: null });
+      return;
+    }
+    console.log("[t0-chart]", event, {
+      setModelSeq: this.setModelSeq,
+      followState: this.viewport.followState,
+      range: this.viewport.visibleStart != null
+        ? { from: this.viewport.visibleStart, to: this.viewport.visibleEnd - 1 }
+        : null,
+      tsCount: this.viewport.logicalToTime.length,
+      latestIdx: this.viewport.logicalToTime.length - 1,
+      applyingViewportRange: this.applyingViewportRange,
+      suppressUntilFrame: this.suppressUntilFrame !== null,
+      syncingRange: this.syncingRange,
+      gestureGen: this.userGestureGeneration,
+      gestureActive: performance.now() < this.gestureActiveUntil,
+      pointerActive: this.pointerGestureActive,
+      pointerMoved: this.pointerMoved,
+      wheelTokens: this.wheelGestureTokens,
+      lastGestureAge: this.lastGestureTime
+        ? Math.round(performance.now() - this.lastGestureTime)
+        : null,
+      ...extra,
+    });
+  }
+
+  // 窗口生命周期：进入后台（blur/minimize/hidden）时保存 pre-background 视口快照。
+  // 恢复时基于此快照决定是重新右对齐（following）还是保持原范围（manual）。
+  // 不能仅复用 resize()/resyncPriceScaleAfterLayout() 中基于"当前 followState"
+  // 的分支，因为故障发生后当前状态可能已误变为 manual（来源门控修复后此场景
+  // 已消除，但恢复语义作为独立保障层仍需基于保存的 pre-background 状态）。
+  private preBackgroundViewport: ChartViewportSnapshot | null = null;
+
+  onBackgroundEnter() {
+    // 首次进入后台时保存一次；重复 background 事件（blur + minimize）不覆盖，
+    // 直到 onForegroundRestore 消费后才允许再次保存。
+    const alreadySaved = this.preBackgroundViewport !== null;
+    if (this.viewport && !alreadySaved) {
+      this.preBackgroundViewport = {
+        followState: this.viewport.followState,
+        range: toChartLogicalRange(this.viewport),
+      };
+    }
+    this.logDiag("background-enter", {
+      savedFollowState: this.preBackgroundViewport?.followState ?? null,
+      skipped: alreadySaved,
+    });
+  }
+
+  onForegroundRestore() {
+    if (!this.model || this.model.timestamps.length === 0 || !this.viewport) {
+      this.preBackgroundViewport = null;
+      return;
+    }
+    const saved = this.preBackgroundViewport;
+    this.preBackgroundViewport = null;
+    if (!saved) {
+      return;
+    }
+    // 恢复路径：基于保存的 pre-background 状态主动重新右对齐或保持原范围。
+    // 屏蔽该恢复周期的程序性范围通知：设置 suppressUntilFrame + 来源门控
+    // 已确保恢复期间的 LC 布局通知不翻 manual。
+    const wasApplyingViewportRange = this.applyingViewportRange;
+    this.applyingViewportRange = true;
+    try {
+      if (saved.followState === FollowState.FOLLOWING) {
+        // 后台前为 following：恢复后基于最新数据重新右对齐。
+        const plotWidth = this.priceChart.timeScale().width();
+        const visibleCount = this.visibleCount(
+          plotWidth,
+          this.model.timestamps.length,
+        );
+        this.viewport = followLatest(this.viewport, visibleCount);
+        this.applyVisibleRange();
+      } else {
+        // 后台前为 manual：恢复保存的 pre-background 范围，按最新数据边界合法 clamp。
+        // 不能使用当前 visibleStart/visibleEnd——后台期间的程序性通知可能已漂移
+        // 当前范围（manual 状态下程序性通知仍走 setManualRange 进行 clamp）。
+        const length = this.model.timestamps.length;
+        const viewportBounds = this.viewportBounds(length);
+        const restored = fromChartLogicalRange(saved.range, length);
+        this.viewport = setManualRange(
+          this.viewport,
+          restored.start,
+          restored.end,
+          {
+            allowResumeFollowing: false,
+            ...viewportBounds,
+          },
+        );
+        this.applyVisibleRange();
+      }
+    } finally {
+      this.applyingViewportRange = wasApplyingViewportRange;
+    }
+    // 恢复后设置 suppressUntilFrame 防御性窗口，覆盖恢复期间 LC 布局通知。
+    if (this.suppressUntilFrame !== null) {
+      cancelAnimationFrame(this.suppressUntilFrame);
+    }
+    this.suppressUntilFrame = requestAnimationFrame(() => {
+      this.suppressUntilFrame = requestAnimationFrame(() => {
+        this.suppressUntilFrame = null;
+      });
+    });
+    this.schedulePriceScaleResync();
+    this.logDiag("foreground-restore", {
+      savedFollowState: saved.followState,
+      savedRange: saved.range,
+    });
   }
 
   destroy() {
@@ -599,6 +884,12 @@ export class SynchronizedChartGroup {
       cancelAnimationFrame(this.suppressUntilFrame);
       this.suppressUntilFrame = null;
     }
+    if (this.wheelTokenCleanupTimer !== null) {
+      clearTimeout(this.wheelTokenCleanupTimer);
+      this.wheelTokenCleanupTimer = null;
+    }
+    for (const cleanup of this.gestureListeners) cleanup();
+    this.gestureListeners = [];
     this.cancelCrosshairClear();
     this.teardownMarketBarTooltip();
     this.resizeObserver.disconnect();

@@ -40,6 +40,7 @@ const SUBSCRIPTIONS = Object.freeze({
   onAppEvent: "bridge:app-event",
   onReplayEvent: "bridge:replay-event",
   onReplaySnapshot: "bridge:replay-snapshot",
+  onWindowLifecycle: "bridge:window-lifecycle",
 });
 
 const bridge = {

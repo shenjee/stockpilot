@@ -48,7 +48,23 @@ export function ChartGroup({
         onViewportChangeRef.current?.(snapshot),
     });
     controllerRef.current = controller;
+
+    // 窗口生命周期订阅（Issue #146 第 4 步）：后台时保存 pre-background 视口快照，
+    // 恢复时基于快照主动重新右对齐（following）或保持原范围（manual）。
+    // 仅 5 分钟图需要恢复语义（分时图始终展示完整交易分钟，无 following/manual 区分）。
+    let stopLifecycle: (() => void) | undefined;
+    if (model.kind === ChartGroupKind.FIVE_MINUTE && window.stockpilot?.onWindowLifecycle) {
+      stopLifecycle = window.stockpilot.onWindowLifecycle(({ phase }) => {
+        if (phase === "background") {
+          controller.onBackgroundEnter();
+        } else {
+          controller.onForegroundRestore();
+        }
+      });
+    }
+
     return () => {
+      stopLifecycle?.();
       controller.destroy();
       controllerRef.current = null;
     };

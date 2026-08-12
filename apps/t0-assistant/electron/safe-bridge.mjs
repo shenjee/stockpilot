@@ -34,6 +34,7 @@ const SUBSCRIPTIONS = Object.freeze({
   onAppEvent: "app_event",
   onReplayEvent: "replay_event",
   onReplaySnapshot: "replay_snapshot",
+  onWindowLifecycle: "window_lifecycle",
 });
 
 export const SAFE_BRIDGE_METHODS = Object.freeze([

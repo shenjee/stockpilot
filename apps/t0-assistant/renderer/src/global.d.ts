@@ -47,6 +47,7 @@ declare global {
     onAppEvent(listener: (event: unknown) => void): () => void;
     onReplayEvent(listener: (event: unknown) => void): () => void;
     onReplaySnapshot(listener: (snapshot: unknown) => void): () => void;
+    onWindowLifecycle(listener: (event: { phase: "background" | "foreground" }) => void): () => void;
   }
 
   interface Window {
