@@ -286,11 +286,69 @@ button { color: inherit; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.chart-canvas {
+.chart-canvas-host {
+  position: relative;
   width: 100%;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.chart-canvas-host > .chart-canvas {
+  flex: 1 1 auto;
+}
+.chart-canvas {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+/* 5 分钟价格主图固定角落行情 Tooltip（issue #144） */
+.market-bar-tooltip {
+  position: absolute;
+  z-index: 5;
+  display: none;
+  min-width: 132px;
+  padding: 6px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.92);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  color: #e2e8f0;
+  font-size: 11px;
+  line-height: 1.5;
+  pointer-events: none;
+  backdrop-filter: blur(8px);
+}
+.market-bar-tooltip__date {
+  margin-bottom: 2px;
+  color: #f8fafc;
+  font-weight: 700;
+}
+.market-bar-tooltip__time {
+  margin-bottom: 3px;
+  color: #94a3b8;
+}
+.market-bar-tooltip__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+}
+.market-bar-tooltip__key {
+  color: #94a3b8;
+}
+.market-bar-tooltip__val {
+  color: #e2e8f0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.market-bar-tooltip__arrow--up {
+  color: #ef5350;
+}
+.market-bar-tooltip__arrow--down {
+  color: #26a69a;
 }
 /* Lightweight Charts 默认署名为 35×19px；保留可见、可点击的 TradingView
    attribution，同时缩到与图表 10px 字体一致的高度，避免遮挡副图数据。 */
