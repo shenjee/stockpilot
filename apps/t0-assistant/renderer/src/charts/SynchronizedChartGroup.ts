@@ -176,6 +176,7 @@ export class SynchronizedChartGroup {
   private pointerMoved = false; // 当前手势中是否发生了有效移动
   private gestureActiveUntil = 0; // 确认手势后的尾窗口截止时间（覆盖 LC 延迟通知）
   private wheelGestureTokens = 0; // 可消费：每次 wheel +1，每次范围通知 -1
+  private wheelTokenCleanupTimer: ReturnType<typeof setTimeout> | null = null;
   private lastGestureTime = 0; // 诊断用：最近一次真实手势的 performance.now()
   private gestureListeners: Array<() => void> = [];
   // 诊断日志（Issue #146 第 1 步）：setModel 序号，用于关联日志条目。
@@ -612,6 +613,9 @@ export class SynchronizedChartGroup {
   //   时间窗口。
   private setupUserGestureTracking() {
     const container = this.containers.price;
+    // pointerup/pointercancel 监听 document 而非容器：用户拖出图表后在容器外
+    // 释放时容器收不到 pointerup，会导致 pointerGestureActive 永久为 true。
+    const doc = container.ownerDocument ?? document;
 
     const onPointerDown = () => {
       this.userGestureGeneration++;
@@ -620,8 +624,15 @@ export class SynchronizedChartGroup {
       this.pointerMoved = false;
       // 不设 gestureActiveUntil：单击不拖动不应授权范围变化。
     };
-    const onPointerMove = () => {
+    const onPointerMove = (event: Event) => {
       if (!this.pointerGestureActive) return;
+      // buttons=0 表示无按键按下——拖出容器后释放再返回时 pointermove 仍会触发，
+      // 但此时已无按键，不应重新开启授权窗口。
+      const buttons = (event as PointerEvent).buttons ?? 1;
+      if (buttons === 0) {
+        this.pointerGestureActive = false;
+        return;
+      }
       this.userGestureGeneration++;
       const now = performance.now();
       this.lastGestureTime = now;
@@ -645,23 +656,47 @@ export class SynchronizedChartGroup {
       this.lastGestureTime = performance.now();
       // 可消费 token：每次 wheel 事件授权一次范围通知，不依赖时间窗口。
       this.wheelGestureTokens++;
+      // 清理未消费 token：边界 wheel（无范围变化）不会触发范围回调，token 会
+      // 永久残留。用 setTimeout(0) 在当前事件循环结束后清理，确保同步触发的
+      // 范围回调仍能消费 token，但无回调时不会残留。
+      if (this.wheelTokenCleanupTimer !== null) {
+        clearTimeout(this.wheelTokenCleanupTimer);
+      }
+      this.wheelTokenCleanupTimer = setTimeout(() => {
+        this.wheelGestureTokens = 0;
+        this.wheelTokenCleanupTimer = null;
+      }, 0);
     };
 
-    const pointerHandlers: Array<[keyof HTMLElementEventMap, () => void]> = [
+    // pointerdown/move 在容器上监听（手势开始于容器内）；
+    // pointerup/cancel 在 document 上监听（覆盖容器外释放）。
+    const containerHandlers: Array<[keyof HTMLElementEventMap, (e: Event) => void]> = [
       ["pointerdown", onPointerDown],
       ["pointermove", onPointerMove],
+    ];
+    for (const [evt, handler] of containerHandlers) {
+      container.addEventListener(evt, handler as EventListener, { passive: true });
+      this.gestureListeners.push(() =>
+        container.removeEventListener(evt, handler as EventListener),
+      );
+    }
+    const docHandlers: Array<[keyof DocumentEventMap, () => void]> = [
       ["pointerup", onPointerUp],
       ["pointercancel", onPointerUp],
     ];
-    for (const [evt, handler] of pointerHandlers) {
-      container.addEventListener(evt, handler, { passive: true });
+    for (const [evt, handler] of docHandlers) {
+      doc.addEventListener(evt, handler, { passive: true });
       this.gestureListeners.push(() =>
-        container.removeEventListener(evt, handler),
+        doc.removeEventListener(evt, handler),
       );
     }
-    container.addEventListener("wheel", onWheel, { passive: true });
+    // wheel 使用 capture：LC 在子元素（.tv-lightweight-charts）上注册 wheel
+    // 监听器（bubble），其 handler 同步触发范围回调。若我们在外层容器用
+    // bubble 监听，回调先于 token 设置执行，真实滚轮缩放会被判为程序性通知。
+    // capture 确保我们的 handler 在 LC 的 handler 前执行，先建立授权。
+    container.addEventListener("wheel", onWheel, { passive: true, capture: true });
     this.gestureListeners.push(() =>
-      container.removeEventListener("wheel", onWheel),
+      container.removeEventListener("wheel", onWheel, { capture: true }),
     );
   }
 
@@ -721,7 +756,8 @@ export class SynchronizedChartGroup {
   onBackgroundEnter() {
     // 首次进入后台时保存一次；重复 background 事件（blur + minimize）不覆盖，
     // 直到 onForegroundRestore 消费后才允许再次保存。
-    if (this.viewport && this.preBackgroundViewport === null) {
+    const alreadySaved = this.preBackgroundViewport !== null;
+    if (this.viewport && !alreadySaved) {
       this.preBackgroundViewport = {
         followState: this.viewport.followState,
         range: toChartLogicalRange(this.viewport),
@@ -729,7 +765,7 @@ export class SynchronizedChartGroup {
     }
     this.logDiag("background-enter", {
       savedFollowState: this.preBackgroundViewport?.followState ?? null,
-      skipped: this.preBackgroundViewport !== null,
+      skipped: alreadySaved,
     });
   }
 
@@ -811,6 +847,10 @@ export class SynchronizedChartGroup {
     if (this.suppressUntilFrame !== null) {
       cancelAnimationFrame(this.suppressUntilFrame);
       this.suppressUntilFrame = null;
+    }
+    if (this.wheelTokenCleanupTimer !== null) {
+      clearTimeout(this.wheelTokenCleanupTimer);
+      this.wheelTokenCleanupTimer = null;
     }
     for (const cleanup of this.gestureListeners) cleanup();
     this.gestureListeners = [];

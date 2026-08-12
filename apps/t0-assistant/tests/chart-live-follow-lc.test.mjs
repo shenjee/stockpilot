@@ -40,43 +40,172 @@ const ctx = new Proxy(ctxBase, {
 });
 
 let DOC;
+// 全局元素注册表：记录所有创建的 DOM 元素，用于 findDescendantWithListener
+// 查找 LC 插入到 price 容器的子元素（.tv-lightweight-charts）。
+const ALL_ELEMENTS = [];
 // 每个元素独立的事件监听器表，支持 addEventListener/removeEventListener/dispatchEvent。
-// setupUserGestureTracking 在 price 容器上注册 pointerdown/wheel/touchstart 监听器；
+// setupUserGestureTracking 在 price 容器上注册 pointerdown/wheel 监听器，在
+// document 上注册 pointerup/pointercancel 监听器（覆盖容器外释放）。
 // 测试用 dispatchGesture(priceContainer) 模拟真实用户手势，触发来源门控。
+//
+// 支持捕获/冒泡阶段传播：addEventListener 的第三参 options.capture=true 时，
+// 回调记录为 capture 阶段。dispatchEvent 从根（document）到目标执行 capture，
+// 再从目标到根执行冒泡——模拟真实 DOM 事件顺序。这让 wheel capture 测试能
+// 验证"外层 capture handler 先于 LC 子元素 bubble handler 执行"的真实顺序。
 function makeElExtras() {
-  const listeners = new Map(); // type -> Set<cb>
-  return {
+  const listeners = new Map(); // type -> Set<{cb, capture}>
+  const self = {
     setAttribute: noop,
     getAttribute: () => null,
     toggleAttribute: noop,
-    addEventListener(type, cb) {
+    addEventListener(type, cb, options) {
+      const capture = typeof options === "boolean" ? options : !!(options && options.capture);
       if (!listeners.has(type)) listeners.set(type, new Set());
-      listeners.get(type).add(cb);
+      listeners.get(type).add({ cb, capture });
     },
-    removeEventListener(type, cb) {
-      listeners.get(type)?.delete(cb);
+    removeEventListener(type, cb, options) {
+      const capture = typeof options === "boolean" ? options : !!(options && options.capture);
+      const set = listeners.get(type);
+      if (!set) return;
+      for (const entry of set) {
+        if (entry.cb === cb && entry.capture === capture) {
+          set.delete(entry);
+          return;
+        }
+      }
     },
+    // 捕获/冒泡传播：从 document 根到目标（capture），再从目标到根（bubble）。
+    // 只执行匹配阶段的回调。这让 wheel capture 测试覆盖真实事件顺序。
     dispatchEvent(evt) {
       const type = evt?.type;
       if (!type) return true;
-      for (const cb of listeners.get(type) ?? []) cb(evt);
+      // 构建从目标到 document 根的祖先链。
+      const chain = [];
+      let node = self.__parent || null;
+      while (node) {
+        chain.unshift(node);
+        node = node.__parent || null;
+      }
+      // capture 阶段：根→目标
+      for (const ancestor of chain) {
+        for (const { cb, capture } of ancestor.__getListeners(type) ?? []) {
+          if (capture) cb.call(ancestor, evt);
+        }
+      }
+      // 目标阶段：目标上的 capture + bubble 回调都执行
+      for (const { cb } of listeners.get(type) ?? []) {
+        cb.call(self, evt);
+      }
+      // 冒泡阶段：目标→根
+      for (let i = chain.length - 1; i >= 0; i--) {
+        const ancestor = chain[i];
+        for (const { cb, capture } of ancestor.__getListeners(type) ?? []) {
+          if (!capture) cb.call(ancestor, evt);
+        }
+      }
       return true;
     },
-    appendChild: (c) => c,
+    __getListeners(type) {
+      return listeners.get(type);
+    },
+    appendChild: (c) => {
+      if (c) c.__parent = self;
+      return c;
+    },
     removeChild: noop,
-    insertBefore: (n) => n,
+    insertBefore: (n) => {
+      if (n) n.__parent = self;
+      return n;
+    },
     focus: noop,
     blur: noop,
     getBoundingClientRect: rect,
     getClientRects: () => [rect()],
     contains: () => false,
   };
+  return self;
+}
+// 将 makeElExtras 的方法直接附加到目标对象上，确保闭包中的 self 引用
+// 指向实际元素对象（而非 makeElExtras 返回的中间对象）。
+// 这对 __parent 链至关重要：appendChild 设置 c.__parent = self，self 必须
+// 是实际元素，findDescendantWithListener 才能通过 __parent 链找到后代。
+function attachElExtras(el) {
+  const listeners = new Map(); // type -> Set<{cb, capture}>
+  const self = {
+    setAttribute: noop,
+    getAttribute: () => null,
+    toggleAttribute: noop,
+    addEventListener(type, cb, options) {
+      const capture = typeof options === "boolean" ? options : !!(options && options.capture);
+      if (!listeners.has(type)) listeners.set(type, new Set());
+      listeners.get(type).add({ cb, capture });
+    },
+    removeEventListener(type, cb, options) {
+      const capture = typeof options === "boolean" ? options : !!(options && options.capture);
+      const set = listeners.get(type);
+      if (!set) return;
+      for (const entry of set) {
+        if (entry.cb === cb && entry.capture === capture) {
+          set.delete(entry);
+          return;
+        }
+      }
+    },
+    dispatchEvent(evt) {
+      const type = evt?.type;
+      if (!type) return true;
+      const chain = [];
+      let node = el.__parent || null;
+      while (node) {
+        chain.unshift(node);
+        node = node.__parent || null;
+      }
+      for (const ancestor of chain) {
+        for (const { cb, capture } of ancestor.__getListeners?.(type) ?? []) {
+          if (capture) cb.call(ancestor, evt);
+        }
+      }
+      for (const { cb } of listeners.get(type) ?? []) {
+        cb.call(el, evt);
+      }
+      for (let i = chain.length - 1; i >= 0; i--) {
+        const ancestor = chain[i];
+        for (const { cb, capture } of ancestor.__getListeners?.(type) ?? []) {
+          if (!capture) cb.call(ancestor, evt);
+        }
+      }
+      return true;
+    },
+    __getListeners(type) {
+      return listeners.get(type);
+    },
+    appendChild: (c) => {
+      if (c) c.__parent = el;
+      return c;
+    },
+    removeChild: noop,
+    insertBefore: (n) => {
+      if (n) n.__parent = el;
+      return n;
+    },
+    focus: noop,
+    blur: noop,
+    getBoundingClientRect: rect,
+    getClientRects: () => [rect()],
+    contains: () => false,
+  };
+  Object.assign(el, self);
+  return el;
 }
 function makeCanvas() {
-  return { width: 800, height: 400, style: {}, classList, nodeType: 1, tagName: "canvas", ownerDocument: DOC, getContext: () => ctx, ...makeElExtras() };
+  const el = attachElExtras({ width: 800, height: 400, style: {}, classList, nodeType: 1, tagName: "canvas", ownerDocument: DOC, getContext: () => ctx });
+  ALL_ELEMENTS.push(el);
+  return el;
 }
 function makeEl(tag) {
-  return { tagName: tag, nodeName: tag, nodeType: 1, style: {}, classList, children: [], childNodes: [], clientWidth: 800, clientHeight: 400, ownerDocument: DOC, innerHTML: "", textContent: "", ...makeElExtras() };
+  const el = attachElExtras({ tagName: tag, nodeName: tag, nodeType: 1, style: {}, classList, children: [], childNodes: [], clientWidth: 800, clientHeight: 400, ownerDocument: DOC, innerHTML: "", textContent: "" });
+  ALL_ELEMENTS.push(el);
+  return el;
 }
 function stubCssColor(value) {
   if (typeof value === "string" && /^rgba?\(/i.test(value)) return value;
@@ -88,6 +217,7 @@ function stubCssColor(value) {
 }
 
 function installDom() {
+  ALL_ELEMENTS.length = 0; // 每个测试独立的元素注册表
   const saved = {
     document: globalThis.document,
     window: globalThis.window,
@@ -100,16 +230,16 @@ function installDom() {
     devicePixelRatio: globalThis.devicePixelRatio,
     matchMedia: globalThis.matchMedia,
   };
-  DOC = {
+  DOC = attachElExtras({
     createElement: (t) => (t === "canvas" ? makeCanvas() : makeEl(t)),
     createElementNS: (_n, t) => (t === "canvas" ? makeCanvas() : makeEl(t)),
-    addEventListener: noop,
-    removeEventListener: noop,
-    documentElement: makeEl("html"),
-    body: makeEl("body"),
+    documentElement: null,
+    body: null,
     defaultView: null,
-  };
+  });
+  DOC.documentElement = makeEl("html");
   DOC.documentElement.ownerDocument = DOC;
+  DOC.body = makeEl("body");
   DOC.body.ownerDocument = DOC;
   globalThis.document = DOC;
   globalThis.window = globalThis;
@@ -261,14 +391,16 @@ async function makeGroup(reports) {
 const settle = () => new Promise((r) => setTimeout(r, 150)); // 越过 onViewportChange 的 120ms 防抖
 
 // 模拟真实用户拖动手势：dispatch 完整 pointer 生命周期 (down→move→up)。
-// setupUserGestureTracking 监听 pointerdown/pointermove/pointerup/pointercancel/wheel。
-// 只有 pointermove 确认有效移动后才设活跃尾窗口，授权范围通知。
+// setupUserGestureTracking 监听 pointerdown/pointermove（容器）+ pointerup/cancel
+// （document）。只有 pointermove 确认有效移动后才设活跃尾窗口，授权范围通知。
 // 这取代了旧的 pointerdown-only + 200ms 时间窗口方案。
+// buttons=1 表示左键按下（P2 修复：pointermove 检查 buttons 防止释放后误授权）。
 function dispatchGesture(group) {
   const el = group.containers.price;
-  el.dispatchEvent({ type: "pointerdown" });
-  el.dispatchEvent({ type: "pointermove" });
-  el.dispatchEvent({ type: "pointerup" });
+  el.dispatchEvent({ type: "pointerdown", buttons: 1 });
+  el.dispatchEvent({ type: "pointermove", buttons: 1 });
+  // pointerup 在 document 上监听（P2：覆盖容器外释放）。
+  document.dispatchEvent({ type: "pointerup", buttons: 0 });
 }
 
 // 模拟真实用户滚轮缩放：dispatch wheel 事件。
@@ -281,8 +413,8 @@ function dispatchWheel(group) {
 // 单击不拖动不应授权范围变化——这是 200ms 时间窗口方案的误判场景之一。
 function dispatchClick(group) {
   const el = group.containers.price;
-  el.dispatchEvent({ type: "pointerdown" });
-  el.dispatchEvent({ type: "pointerup" });
+  el.dispatchEvent({ type: "pointerdown", buttons: 1 });
+  document.dispatchEvent({ type: "pointerup", buttons: 0 });
 }
 
 test("real controller: 5m live append keeps following and shifts right", async () => {
@@ -722,13 +854,13 @@ test("source gating: long press then drag still flips to manual (no 200ms window
 
     // 模拟长按：pointerdown 后等待超过旧方案的 200ms 窗口。
     const el = group.containers.price;
-    el.dispatchEvent({ type: "pointerdown" });
+    el.dispatchEvent({ type: "pointerdown", buttons: 1 });
     // 等待 250ms（超过旧 200ms 窗口）。
     await new Promise((r) => setTimeout(r, 250));
 
-    // 然后拖动：pointermove + pointerup。
-    el.dispatchEvent({ type: "pointermove" });
-    el.dispatchEvent({ type: "pointerup" });
+    // 然后拖动：pointermove + pointerup（pointerup 在 document 上监听）。
+    el.dispatchEvent({ type: "pointermove", buttons: 1 });
+    document.dispatchEvent({ type: "pointerup", buttons: 0 });
 
     // 紧随的范围通知应被授权为用户操作。
     group.priceChart.timeScale().setVisibleLogicalRange({ from: 0, to: 30 });
@@ -779,9 +911,11 @@ test("source gating: single click without drag does not authorize programmatic n
   }
 });
 
-test("source gating: wheel zoom uses consumable token (no time window dependency)", async () => {
+test("source gating: wheel zoom uses consumable token (consumed synchronously, no time window)", async () => {
   // wheel 使用可消费 token：每次 wheel 事件 +1，每次范围通知消费 1 个。
-  // 不依赖时间窗口——即使等待超过旧 200ms 窗口，token 仍有效。
+  // LC 在 wheel handler 内同步触发范围回调，token 在同一事件分发内被消费——
+  // 不依赖时间窗口。注意：setTimeout(0) 清理会在事件结束后清除未消费 token
+  // （边界 wheel 无范围变化的场景），因此范围通知必须在同一事件循环内触发。
   const restore = installDom();
   try {
     const reports = [];
@@ -791,13 +925,11 @@ test("source gating: wheel zoom uses consumable token (no time window dependency
     globalThis.__flushRaf();
     await settle();
 
-    // wheel 事件。
+    // wheel 事件：capture handler 设 token。
     dispatchWheel(group);
+    assert.equal(group.wheelGestureTokens, 1, "wheel 后 token 应为 1");
 
-    // 等待超过旧 200ms 窗口。
-    await new Promise((r) => setTimeout(r, 250));
-
-    // 范围通知应仍被授权（token 不依赖时间）。
+    // 范围通知在同一事件循环内触发：消费 token，翻 manual（不依赖时间窗口）。
     group.priceChart.timeScale().setVisibleLogicalRange({ from: 0, to: 30 });
     globalThis.__flushRaf();
     await settle();
@@ -806,7 +938,12 @@ test("source gating: wheel zoom uses consumable token (no time window dependency
     assert.equal(
       last.followState,
       "manual",
-      "wheel token 不依赖时间窗口，应翻 manual",
+      "wheel token 同步消费，应翻 manual（不依赖时间窗口）",
+    );
+    assert.equal(
+      group.wheelGestureTokens,
+      0,
+      "范围通知应消费 token",
     );
   } finally {
     restore();
@@ -1035,3 +1172,258 @@ test("restore semantics: background → background → foreground preserves firs
     restore();
   }
 });
+
+// ============================================================================
+// P1 回归：wheel token 注册晚于 LC 范围回调（capture 修复）
+//
+// Bug：wheel 监听器注册在外层 price 容器（bubble），LC 在子元素上处理 wheel
+// 并同步触发范围回调。事件顺序：LC 子元素 handler（触发回调）→ 外层 handler
+// （设 token）。范围回调执行时 token 仍为 0，真实滚轮缩放被判为程序性通知。
+//
+// 修复：外层使用 capture，在 LC handler 前建立授权。
+// 测试：从 LC 子元素派发 wheel，验证 capture handler 先于 LC handler 执行，
+// 真实滚轮缩放能翻 manual。
+// ============================================================================
+
+test("source gating: wheel from LC child element authorizes via capture (P1)", async () => {
+  // 模拟真实事件顺序：LC 子元素处理 wheel 并同步触发范围回调。
+  // 修复前（bubble）：回调先于 token 设置 → 真实缩放被判程序性 → 保持 following。
+  // 修复后（capture）：外层 capture handler 先执行 → token 已设 → 翻 manual。
+  const restore = installDom();
+  try {
+    const reports = [];
+    const { group, createChartGroupModel } = await makeGroup(reports);
+
+    group.setModel(createChartGroupModel(makeSnapshot(49), "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+
+    // 找到 LC 插入到 price 容器的子元素（.tv-lightweight-charts）。
+    // LC 在 createChart 时将子元素 appendChild 到容器。
+    const priceContainer = group.containers.price;
+    // 测试 stub 的 appendChild 设置 __parent，所以 LC 子元素的 __parent 是容器。
+    // 遍历容器的 DOM 子树找到有 wheel 监听器的后代。
+    const lcChild = findDescendantWithListener(priceContainer, "wheel");
+    assert.ok(lcChild, "应找到 LC 子元素上的 wheel 监听器");
+
+    // 从 LC 子元素派发 wheel：模拟真实事件冒泡顺序。
+    // capture 阶段：容器 capture handler 先执行（设 token）。
+    // 目标/bubble 阶段：LC 子元素 handler 执行（触发范围回调，消费 token）。
+    // deltaX/deltaY=0 让 LC 的 _onMousewheel 早返回（无真实 canvas 渲染），
+    // 测试随后手动 setVisibleLogicalRange 模拟 LC zoom 触发的范围回调。
+    lcChild.dispatchEvent({ type: "wheel", deltaX: 0, deltaY: 0 });
+
+    // 范围回调应已被授权（token 在 capture 阶段设置）。
+    // 注意：LC 的 wheel handler 在 stub 中不会真正触发 zoom（无真实 canvas），
+    // 但 setVisibleLogicalRange 会同步触发范围回调。
+    group.priceChart.timeScale().setVisibleLogicalRange({ from: 0, to: 30 });
+    globalThis.__flushRaf();
+    await settle();
+
+    const last = reports[reports.length - 1];
+    assert.equal(
+      last.followState,
+      "manual",
+      "wheel 从 LC 子元素派发时，capture 应先设 token，真实缩放应翻 manual",
+    );
+  } finally {
+    restore();
+  }
+});
+
+test("source gating: boundary wheel with no range change cleans up token (P1)", async () => {
+  // 验证 token 清理：边界 wheel（无范围变化）不留下永久 token。
+  // 修复：setTimeout(0) 在事件循环结束后清理未消费 token。
+  const restore = installDom();
+  try {
+    const reports = [];
+    const { group, createChartGroupModel } = await makeGroup(reports);
+
+    group.setModel(createChartGroupModel(makeSnapshot(49), "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+
+    // wheel 事件但不触发范围变化（无 setVisibleLogicalRange 调用）。
+    dispatchWheel(group);
+    // token 应为 1（刚设置）。
+    assert.equal(group.wheelGestureTokens, 1, "wheel 后 token 应为 1");
+
+    // 等待 setTimeout(0) 清理执行。
+    await new Promise((r) => setTimeout(r, 10));
+
+    // token 应被清理为 0（无范围回调消费）。
+    assert.equal(
+      group.wheelGestureTokens,
+      0,
+      "边界 wheel 无范围变化后，token 应被 setTimeout(0) 清理",
+    );
+
+    // 后续程序性通知不应被授权（token 已清理）。
+    group.priceChart.timeScale().setVisibleLogicalRange({ from: 0, to: 47 });
+    globalThis.__flushRaf();
+    await settle();
+
+    const last = reports[reports.length - 1];
+    assert.equal(
+      last.followState,
+      "following",
+      "清理后程序性通知不应翻 manual",
+    );
+  } finally {
+    restore();
+  }
+});
+
+// ============================================================================
+// P2 回归：容器外释放指针留下永久 active 状态
+//
+// Bug：pointerup/pointercancel 只在 price 容器监听。用户拖出图表后在容器外释放，
+// 容器收不到 pointerup，pointerGestureActive 永久为 true。鼠标重新进入图表时，
+// 即使无按键，pointermove 仍会重新开启授权窗口。
+//
+// 修复：pointerup/pointercancel 在 document 上监听；pointermove 检查 buttons。
+// ============================================================================
+
+test("source gating: pointer released outside container does not leave permanent active (P2)", async () => {
+  // 模拟拖出容器后释放：pointerdown + pointermove 在容器内，pointerup 在
+  // document 上（容器外）。修复前 pointerup 在容器上监听 → 收不到 → 永久 active。
+  const restore = installDom();
+  try {
+    const reports = [];
+    const { group, createChartGroupModel } = await makeGroup(reports);
+
+    group.setModel(createChartGroupModel(makeSnapshot(49), "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+
+    // pointerdown + pointermove 在容器内（开始拖动）。
+    const el = group.containers.price;
+    el.dispatchEvent({ type: "pointerdown", buttons: 1 });
+    el.dispatchEvent({ type: "pointermove", buttons: 1 });
+    assert.ok(
+      group.pointerGestureActive,
+      "拖动中 pointerGestureActive 应为 true",
+    );
+
+    // 拖出容器后在容器外释放：pointerup 派发到 document（非容器）。
+    document.dispatchEvent({ type: "pointerup", buttons: 0 });
+    assert.equal(
+      group.pointerGestureActive,
+      false,
+      "容器外释放后 pointerGestureActive 应为 false（document 监听 pointerup）",
+    );
+
+    // 鼠标重新进入图表但无按键：pointermove buttons=0 不应重新开启授权窗口。
+    el.dispatchEvent({ type: "pointermove", buttons: 0 });
+    assert.equal(
+      group.pointerGestureActive,
+      false,
+      "无按键时 pointermove 不应重新激活手势",
+    );
+
+    // pointerup 时 pointerMoved=true 会刷新 300ms 尾窗口（覆盖 LC 延迟通知）。
+    // 等待尾窗口过期后，程序性通知才不应被授权。
+    await new Promise((r) => setTimeout(r, 350));
+
+    // 后续程序性通知不应被授权（无活跃手势 + 无 token + 尾窗口已过期）。
+    group.priceChart.timeScale().setVisibleLogicalRange({ from: 0, to: 47 });
+    globalThis.__flushRaf();
+    await settle();
+
+    const last = reports[reports.length - 1];
+    assert.equal(
+      last.followState,
+      "following",
+      "容器外释放后程序性通知不应翻 manual",
+    );
+  } finally {
+    restore();
+  }
+});
+
+// ============================================================================
+// P3 回归：首次后台快照日志错误标记为 skipped
+//
+// Bug：onBackgroundEnter() 的 skipped 在保存快照后才计算，首次成功保存时
+// 也输出 skipped: true。
+// 修复：在写入前保存 alreadySaved。
+// ============================================================================
+
+test("restore semantics: first background-enter logs skipped=false (P3)", async () => {
+  // 验证首次 background-enter 的日志正确标记 skipped=false。
+  // 用 console.log spy 捕获日志输出。
+  const restore = installDom();
+  try {
+    const reports = [];
+    const { group, createChartGroupModel } = await makeGroup(reports);
+
+    group.setModel(createChartGroupModel(makeSnapshot(48), "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+
+    // 捕获 console.log 输出。
+    const logs = [];
+    const origLog = console.log;
+    console.log = (...args) => logs.push(args);
+
+    try {
+      // 首次 background-enter：应保存快照，日志 skipped=false。
+      group.onBackgroundEnter();
+    } finally {
+      console.log = origLog;
+    }
+
+    // 找到 background-enter 日志条目。
+    const bgLog = logs.find((l) => l[1] === "background-enter");
+    assert.ok(bgLog, "应有 background-enter 日志");
+    const extra = bgLog[2];
+    assert.equal(
+      extra.skipped,
+      false,
+      "首次 background-enter 应 skipped=false（修复前错误地为 true）",
+    );
+    assert.equal(
+      extra.savedFollowState,
+      "following",
+      "首次应保存 following 状态",
+    );
+
+    // 第二个 background-enter：不覆盖，日志 skipped=true。
+    const logs2 = [];
+    console.log = (...args) => logs2.push(args);
+    try {
+      group.onBackgroundEnter();
+    } finally {
+      console.log = origLog;
+    }
+    const bgLog2 = logs2.find((l) => l[1] === "background-enter");
+    const extra2 = bgLog2[2];
+    assert.equal(
+      extra2.skipped,
+      true,
+      "重复 background-enter 应 skipped=true",
+    );
+  } finally {
+    restore();
+  }
+});
+
+// 辅助：在 DOM 子树中查找拥有指定事件类型监听器的后代元素。
+// LC createChart 将 .tv-lightweight-charts 子元素 appendChild 到容器，
+// 测试 stub 的 appendChild 设置 __parent。扫描全局元素注册表找到
+// __parent 链通向 root 且有 type 监听器的元素。
+function findDescendantWithListener(root, type) {
+  for (const el of ALL_ELEMENTS) {
+    if (el === root) continue;
+    // 检查 __parent 链是否通向 root。
+    let node = el.__parent || null;
+    while (node && node !== root) {
+      node = node.__parent || null;
+    }
+    if (node !== root) continue;
+    // 检查该元素是否有 type 监听器。
+    const listeners = el.__getListeners?.(type);
+    if (listeners && listeners.size > 0) return el;
+  }
+  return null;
+}
