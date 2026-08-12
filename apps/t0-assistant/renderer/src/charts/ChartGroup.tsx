@@ -19,6 +19,7 @@ export function ChartGroup({
   initialViewport,
   onViewportChange,
 }: ChartGroupProps) {
+  const priceHostRef = useRef<HTMLDivElement>(null);
   const priceRef = useRef<HTMLDivElement>(null);
   const volumeRef = useRef<HTMLDivElement>(null);
   const macdRef = useRef<HTMLDivElement>(null);
@@ -31,14 +32,16 @@ export function ChartGroup({
   initialViewportRef.current = initialViewport;
 
   useEffect(() => {
+    const priceHost = priceHostRef.current;
     const price = priceRef.current;
     const volume = volumeRef.current;
     const macd = macdRef.current;
-    if (!price || !volume || !macd) {
+    if (!priceHost || !price || !volume || !macd) {
       return;
     }
     const controller = new SynchronizedChartGroup({
       containers: { price, volume, macd },
+      tooltipHost: priceHost,
       kind: model.kind,
       initialViewport: initialViewportRef.current ?? null,
       onViewportChange: (snapshot) =>
@@ -79,13 +82,15 @@ export function ChartGroup({
     <>
       <section className="chart-panel price-panel" data-testid="chart-panel">
         {priceHeader}
-        <div
-          ref={priceRef}
-          className="chart-canvas"
-          aria-label={
-            isIntraday ? "1 分钟价格与 VWAP" : "5 分钟价格图"
-          }
-        />
+        <div ref={priceHostRef} className="chart-canvas-host">
+          <div
+            ref={priceRef}
+            className="chart-canvas"
+            aria-label={
+              isIntraday ? "1 分钟价格与 VWAP" : "5 分钟价格图"
+            }
+          />
+        </div>
         {isIntraday && (
           <div className="chart-legend" aria-label="分时图例">
             <span className="legend-price">价格</span>
