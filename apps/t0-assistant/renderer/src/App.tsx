@@ -1588,6 +1588,36 @@ export function App() {
       };
     });
   };
+  // 同股票 Live Session 替换时丢弃旧手工范围，避免 key 重建后错误恢复（Issue #148）。
+  const liveChartSessionId = replayFacts ? null : projection.sessionId;
+  const liveChartSessionIdRef = useRef(liveChartSessionId);
+  const liveSessionJustReplaced =
+    liveChartSessionIdRef.current != null &&
+    liveChartSessionId != null &&
+    liveChartSessionIdRef.current !== liveChartSessionId;
+  useEffect(() => {
+    const previous = liveChartSessionIdRef.current;
+    liveChartSessionIdRef.current = liveChartSessionId;
+    if (
+      previous == null ||
+      liveChartSessionId == null ||
+      previous === liveChartSessionId
+    ) {
+      return;
+    }
+    setWorkbench((current) => ({
+      ...current,
+      chartViews: { fiveMinute: null, intraday: null },
+    }));
+  }, [liveChartSessionId]);
+  const fiveMinuteInitialViewport =
+    replayFacts || liveSessionJustReplaced
+      ? null
+      : workbench.chartViews.fiveMinute;
+  const intradayInitialViewport =
+    replayFacts || liveSessionJustReplaced
+      ? null
+      : workbench.chartViews.intraday;
   const layoutMode = workbenchLayoutMode(workbench);
   const dailyBars = latestDailyBars(snapshot);
 
@@ -1697,12 +1727,12 @@ export function App() {
         >
           <ChartGroup
             key={`five-${workbench.security?.symbol ?? "fixture"}-${
-              replayFacts?.sessionId ?? "live"
+              replayFacts?.sessionId ?? projection.sessionId ?? "live"
             }`}
             model={fiveMinuteModel}
-            initialViewport={
-              replayFacts ? null : workbench.chartViews.fiveMinute
-            }
+            forceFollowOnLiveAppend={!replayFacts}
+            liveSessionId={liveChartSessionId}
+            initialViewport={fiveMinuteInitialViewport}
             onViewportChange={
               replayFacts
                 ? undefined
@@ -1747,12 +1777,10 @@ export function App() {
           ) : (
             <ChartGroup
               key={`intra-${workbench.security?.symbol ?? "fixture"}-${
-                replayFacts?.sessionId ?? "live"
+                replayFacts?.sessionId ?? projection.sessionId ?? "live"
               }`}
               model={intradayModel}
-              initialViewport={
-                replayFacts ? null : workbench.chartViews.intraday
-              }
+              initialViewport={intradayInitialViewport}
               onViewportChange={
                 replayFacts
                   ? undefined

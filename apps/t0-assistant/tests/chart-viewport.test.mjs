@@ -12,6 +12,7 @@ import {
   followLatest,
   fromChartLogicalRange,
   isAtLatestEdge,
+  isStableForwardAppend,
   restoreViewportFromSnapshot,
   setManualRange,
   toChartLogicalRange,
@@ -208,6 +209,8 @@ test("setManualRange defaults to allowResumeFollowing:true (restore / pan-back c
 });
 
 test("applyModel preserves a zoomed manual range across new data (no density recompute)", () => {
+  // applyModel 默认语义：manual 前滚保留范围。实盘强制贴右由
+  // SynchronizedChartGroup.forceFollowOnLiveAppend 在上层处理（Issue #148）。
   const bars = Array.from({ length: 100 }, (_, i) => `b${i}`);
   // 最新端缩放到 30 根 -> manual {70,100}。
   const zoomed = setManualRange(
@@ -549,4 +552,35 @@ test("P1: restoreViewportFromSnapshot falls back to following when a manual snap
   );
   assert.equal(restored.followState, FollowState.FOLLOWING);
   assert.deepEqual(toChartLogicalRange(restored), { from: 0, to: 49 });
+});
+
+// ============================================================================
+// Issue #148：稳定向前追加判定（实盘强制贴右的前置条件）
+// ============================================================================
+
+test("isStableForwardAppend accepts strict prefix growth with a later last timestamp", () => {
+  const oldTimes = TIMES.slice(0, 4);
+  const newTimes = [...oldTimes, "2026-07-22 09:50:00"];
+  assert.equal(isStableForwardAppend(oldTimes, newTimes), true);
+});
+
+test("isStableForwardAppend rejects same-length live-tick refresh", () => {
+  assert.equal(isStableForwardAppend(TIMES, [...TIMES]), false);
+});
+
+test("isStableForwardAppend rejects left-side history prepend", () => {
+  const oldTimes = TIMES.slice(2);
+  const prepended = ["2026-07-22 09:20:00", "2026-07-22 09:25:00", ...oldTimes];
+  assert.equal(isStableForwardAppend(oldTimes, prepended), false);
+});
+
+test("isStableForwardAppend rejects full series replacement", () => {
+  const replacement = TIMES.map((t) => t.replace("2026-07-22", "2026-07-23"));
+  assert.equal(isStableForwardAppend(TIMES, replacement), false);
+});
+
+test("isStableForwardAppend rejects empty old series and non-arrays", () => {
+  assert.equal(isStableForwardAppend([], TIMES), false);
+  assert.equal(isStableForwardAppend(null, TIMES), false);
+  assert.equal(isStableForwardAppend(TIMES, null), false);
 });

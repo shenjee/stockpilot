@@ -63,6 +63,15 @@ export function setManualRange(
 
 export function isAtLatestEdge(state: ChartViewportState): boolean;
 
+/**
+ * 稳定 Live Session 内的向前追加：旧序列是新序列的严格前缀，且最后时间戳变晚。
+ * 同时间戳 OHLCV 更新、左侧 prepend、换股/整段替换均返回 false。
+ */
+export function isStableForwardAppend(
+  oldTimes: readonly string[],
+  newTimes: readonly string[],
+): boolean;
+
 export function applyModel(
   state: ChartViewportState,
   newTimes: readonly string[],

@@ -374,7 +374,7 @@ function makeSnapshot(n) {
   };
 }
 
-async function makeGroup(reports) {
+async function makeGroup(reports, options = {}) {
   const { SynchronizedChartGroup } = await import(
     "../renderer/src/charts/SynchronizedChartGroup.ts"
   );
@@ -382,6 +382,9 @@ async function makeGroup(reports) {
   const group = new SynchronizedChartGroup({
     containers: { price: makeEl("div"), volume: makeEl("div"), macd: makeEl("div") },
     kind: "five_minute",
+    forceFollowOnLiveAppend: options.forceFollowOnLiveAppend === true,
+    liveSessionId: options.liveSessionId ?? null,
+    initialViewport: options.initialViewport ?? null,
     onViewportChange: (snap) => reports.push(snap),
   });
   globalThis.__flushRaf();
@@ -787,6 +790,8 @@ test("restore semantics: following before background re-aligns to latest after r
 });
 
 test("restore semantics: manual before background preserves range after restore", async () => {
+  // 默认 forceFollowOnLiveAppend=false（回放/关闭路径）：后台期间新增 K 仍保留手工范围。
+  // 实盘开启强制贴右的对应行为见 Issue #148 用例。
   const restore = installDom();
   try {
     const reports = [];
@@ -1408,6 +1413,337 @@ test("restore semantics: first background-enter logs skipped=false (P3)", async 
       true,
       "重复 background-enter 应 skipped=true",
     );
+  } finally {
+    restore();
+  }
+});
+
+// ============================================================================
+// Issue #148：实盘 5 分钟新增真实 K 强制贴右
+//
+// forceFollowOnLiveAppend=true 时：
+//   - 稳定向前追加打断 manual（含最新端缩放与向左翻历史）
+//   - 同根 tick / prepend 不触发
+//   - 同股票 Live Session 替换走首次加载，不继承旧 manual
+//   - 后台期间最后时间戳前进或 Session identity 变化则恢复时忽略旧 manual
+//   - 后台无新 K 且 Session 未变仍保留手工范围
+// ============================================================================
+
+test("issue 148: live append from edge-zoomed manual forces follow and right-aligns", async () => {
+  const restore = installDom();
+  try {
+    const reports = [];
+    const { group, createChartGroupModel } = await makeGroup(reports, {
+      forceFollowOnLiveAppend: true,
+    });
+
+    group.setModel(createChartGroupModel(makeSnapshot(80), "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+
+    // 最新端缩放到约 48 根 → manual（仍贴边）。
+    dispatchWheel(group);
+    group.priceChart.timeScale().setVisibleLogicalRange({ from: 32, to: 79 });
+    globalThis.__flushRaf();
+    await settle();
+    assert.equal(reports[reports.length - 1].followState, "manual");
+
+    group.setModel(createChartGroupModel(makeSnapshot(81), "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+
+    const last = reports[reports.length - 1];
+    assert.equal(last.followState, "following", "新 K 应切回 following");
+    assert.equal(last.range.to, 80, "最新索引应为可见范围 to");
+    const span = last.range.to - last.range.from + 1;
+    assert.ok(
+      span >= 72,
+      `应按 following 密度重算 N（≥72），不保留手工 48 跨度；实际 span=${span}`,
+    );
+    assert.notEqual(last.range.from, 32, "不应保留手工左端");
+  } finally {
+    restore();
+  }
+});
+
+test("issue 148: live append while browsing history forces follow", async () => {
+  const restore = installDom();
+  try {
+    const reports = [];
+    const { group, createChartGroupModel } = await makeGroup(reports, {
+      forceFollowOnLiveAppend: true,
+    });
+
+    group.setModel(createChartGroupModel(makeSnapshot(80), "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+
+    dispatchGesture(group);
+    group.priceChart.timeScale().setVisibleLogicalRange({ from: 0, to: 47 });
+    globalThis.__flushRaf();
+    await settle();
+    assert.equal(reports[reports.length - 1].followState, "manual");
+    assert.equal(reports[reports.length - 1].range.from, 0);
+
+    group.setModel(createChartGroupModel(makeSnapshot(81), "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+
+    const last = reports[reports.length - 1];
+    assert.equal(last.followState, "following");
+    assert.equal(last.range.to, 80);
+    assert.ok(last.range.from > 0, "不应停留在历史左端");
+  } finally {
+    restore();
+  }
+});
+
+test("issue 148: same-length live tick does not force follow from manual", async () => {
+  const restore = installDom();
+  try {
+    const reports = [];
+    const { group, createChartGroupModel } = await makeGroup(reports, {
+      forceFollowOnLiveAppend: true,
+    });
+
+    group.setModel(createChartGroupModel(makeSnapshot(80), "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+
+    dispatchGesture(group);
+    group.priceChart.timeScale().setVisibleLogicalRange({ from: 10, to: 57 });
+    globalThis.__flushRaf();
+    await settle();
+    const before = reports[reports.length - 1];
+    assert.equal(before.followState, "manual");
+
+    // 同长度刷新（动态 K tick）：不触发强制贴右。
+    group.setModel(createChartGroupModel(makeSnapshot(80), "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+
+    const last = reports[reports.length - 1];
+    assert.equal(last.followState, "manual");
+    assert.equal(last.range.from, before.range.from);
+    assert.equal(last.range.to, before.range.to);
+  } finally {
+    restore();
+  }
+});
+
+test("issue 148: history prepend does not force follow from manual", async () => {
+  const restore = installDom();
+  try {
+    const reports = [];
+    const { group, createChartGroupModel } = await makeGroup(reports, {
+      forceFollowOnLiveAppend: true,
+    });
+
+    const base = makeSnapshot(60);
+    group.setModel(createChartGroupModel(base, "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+
+    dispatchGesture(group);
+    group.priceChart.timeScale().setVisibleLogicalRange({ from: 5, to: 52 });
+    globalThis.__flushRaf();
+    await settle();
+    assert.equal(reports[reports.length - 1].followState, "manual");
+
+    // 左侧 prepend：length↑，但旧序列不是新序列前缀（前缀是更早交易日）。
+    const earlyBars = [];
+    const earlyBase = new Date("2026-01-04T09:30:00").getTime();
+    for (let i = 0; i < 10; i += 1) {
+      const t = new Date(earlyBase + i * 5 * 60000);
+      const hh = String(t.getHours()).padStart(2, "0");
+      const mm = String(t.getMinutes()).padStart(2, "0");
+      earlyBars.push({
+        timestamp: `2026-01-04 ${hh}:${mm}:00`,
+        open: 10,
+        high: 11,
+        low: 9,
+        close: 10.5,
+        volume: 1000,
+        closed: true,
+      });
+    }
+    const prependedSnapshot = {
+      ...base,
+      market: {
+        ...base.market,
+        bars_5m: [...earlyBars, ...base.market.bars_5m],
+      },
+    };
+    group.setModel(createChartGroupModel(prependedSnapshot, "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+
+    const last = reports[reports.length - 1];
+    assert.equal(last.followState, "manual", "prepend 不得强制 following");
+    // 手工范围在 prepend 后按 applyModel 夹紧；不应跳到最新端。
+    assert.ok(last.range.to < 69, "不应贴到 prepend 后的最新端");
+  } finally {
+    restore();
+  }
+});
+
+test("issue 148: background manual + new bars restores to latest", async () => {
+  const restore = installDom();
+  try {
+    const reports = [];
+    const { group, createChartGroupModel } = await makeGroup(reports, {
+      forceFollowOnLiveAppend: true,
+    });
+
+    group.setModel(createChartGroupModel(makeSnapshot(80), "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+
+    dispatchGesture(group);
+    group.priceChart.timeScale().setVisibleLogicalRange({ from: 10, to: 57 });
+    globalThis.__flushRaf();
+    await settle();
+    assert.equal(reports[reports.length - 1].followState, "manual");
+
+    group.onBackgroundEnter();
+    group.setModel(createChartGroupModel(makeSnapshot(85), "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+
+    // setModel 已因 forceFollow 贴右；恢复仍不得用旧 manual 覆盖。
+    group.onForegroundRestore();
+    globalThis.__flushRaf();
+    await settle();
+
+    const last = reports[reports.length - 1];
+    assert.equal(last.followState, "following");
+    assert.equal(last.range.to, 84);
+  } finally {
+    restore();
+  }
+});
+
+test("issue 148: background manual without new bars keeps manual range", async () => {
+  const restore = installDom();
+  try {
+    const reports = [];
+    const { group, createChartGroupModel } = await makeGroup(reports, {
+      forceFollowOnLiveAppend: true,
+    });
+
+    group.setModel(createChartGroupModel(makeSnapshot(80), "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+
+    dispatchGesture(group);
+    group.priceChart.timeScale().setVisibleLogicalRange({ from: 10, to: 57 });
+    globalThis.__flushRaf();
+    await settle();
+    const before = reports[reports.length - 1];
+    assert.equal(before.followState, "manual");
+
+    group.onBackgroundEnter();
+    // 同长度 tick：最后时间戳不变。
+    group.setModel(createChartGroupModel(makeSnapshot(80), "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+
+    group.onForegroundRestore();
+    globalThis.__flushRaf();
+    await settle();
+
+    const last = reports[reports.length - 1];
+    assert.equal(last.followState, "manual");
+    assert.equal(last.range.from, before.range.from);
+    assert.equal(last.range.to, before.range.to);
+  } finally {
+    restore();
+  }
+});
+
+test("issue 148: same-stock live session replace does not inherit old manual", async () => {
+  const restore = installDom();
+  try {
+    const reports = [];
+    const { group, createChartGroupModel } = await makeGroup(reports, {
+      forceFollowOnLiveAppend: true,
+      liveSessionId: "live-session-a",
+      // 模拟 React 仍持有上一 Session 的手工快照；Session 替换不得消费它。
+      initialViewport: {
+        followState: "manual",
+        range: { from: 10, to: 57 },
+      },
+    });
+
+    group.setModel(createChartGroupModel(makeSnapshot(80), "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+
+    dispatchGesture(group);
+    group.priceChart.timeScale().setVisibleLogicalRange({ from: 10, to: 57 });
+    globalThis.__flushRaf();
+    await settle();
+    assert.equal(reports[reports.length - 1].followState, "manual");
+
+    // 同股票重建 Live Session：整段序列可相同或不同，但 identity 已变。
+    // 不得走 applyModel 保留旧 manual；应首次加载跟随最新。
+    const replaced = makeSnapshot(80);
+    replaced.market.bars_5m = replaced.market.bars_5m.map((bar, index) => ({
+      ...bar,
+      close: 20 + index * 0.01,
+    }));
+    group.setLiveSessionId("live-session-b");
+    group.setModel(createChartGroupModel(replaced, "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+
+    const last = reports[reports.length - 1];
+    assert.equal(last.followState, "following", "Session 替换应走首次加载");
+    assert.equal(last.range.to, 79, "应贴到最新端");
+    assert.notEqual(last.range.from, 10, "不得继承旧手工左端");
+  } finally {
+    restore();
+  }
+});
+
+test("issue 148: background session replace restores to latest", async () => {
+  const restore = installDom();
+  try {
+    const reports = [];
+    const { group, createChartGroupModel } = await makeGroup(reports, {
+      forceFollowOnLiveAppend: true,
+      liveSessionId: "live-session-a",
+    });
+
+    group.setModel(createChartGroupModel(makeSnapshot(80), "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+
+    dispatchGesture(group);
+    group.priceChart.timeScale().setVisibleLogicalRange({ from: 10, to: 57 });
+    globalThis.__flushRaf();
+    await settle();
+    assert.equal(reports[reports.length - 1].followState, "manual");
+
+    group.onBackgroundEnter();
+    // 后台期间 Session 替换且时间戳未前进（同长度整段替换）。
+    const replaced = makeSnapshot(80);
+    replaced.market.bars_5m = replaced.market.bars_5m.map((bar) => ({
+      ...bar,
+      open: bar.open + 1,
+    }));
+    group.setLiveSessionId("live-session-b");
+    group.setModel(createChartGroupModel(replaced, "five_minute"));
+    globalThis.__flushRaf();
+    await settle();
+
+    group.onForegroundRestore();
+    globalThis.__flushRaf();
+    await settle();
+
+    const last = reports[reports.length - 1];
+    assert.equal(last.followState, "following");
+    assert.equal(last.range.to, 79);
   } finally {
     restore();
   }

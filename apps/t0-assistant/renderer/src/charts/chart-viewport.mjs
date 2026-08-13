@@ -8,6 +8,8 @@
  * - following：右对齐最新一根可见 K；宽度变化重算 N；新数据自然前滚。
  * - manual：保留逻辑可见范围；刷新/动态 K/布局/react 重渲不强制跳回最新；
  *   用户回到最新边缘后恢复 following。
+ *   实盘 5 分钟“新增真实 K 强制贴右”由 SynchronizedChartGroup.forceFollowOnLiveAppend
+ *   在 applyModel 之上处理，不改变本模块默认语义（Issue #148）。
  * - 回放截断：applyModel 在 manual 下将范围夹紧到新序列长度，丢弃对未来时点的引用。
  *
  * 时间戳为字符串（与契约一致），比较按字典序——契约时间戳为定长
@@ -123,6 +125,31 @@ export function setManualRange(state, start, end, options = {}) {
 
 export function isAtLatestEdge(state) {
   return state.visibleEnd >= state.logicalToTime.length;
+}
+
+/**
+ * 稳定 Live Session 内的向前追加：旧序列是新序列的严格前缀，且最后时间戳变晚。
+ * 同时间戳 OHLCV 更新、左侧 prepend、换股/整段替换均返回 false。
+ * 时间戳为契约定长字符串，字典序与时间序一致。
+ */
+export function isStableForwardAppend(oldTimes, newTimes) {
+  if (!Array.isArray(oldTimes) || !Array.isArray(newTimes)) {
+    return false;
+  }
+  if (oldTimes.length === 0 || newTimes.length <= oldTimes.length) {
+    return false;
+  }
+  const oldLast = oldTimes[oldTimes.length - 1];
+  const newLast = newTimes[newTimes.length - 1];
+  if (oldLast == null || newLast == null || !(newLast > oldLast)) {
+    return false;
+  }
+  for (let i = 0; i < oldTimes.length; i += 1) {
+    if (oldTimes[i] !== newTimes[i]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // 应用新模型（新时间戳数组）：
