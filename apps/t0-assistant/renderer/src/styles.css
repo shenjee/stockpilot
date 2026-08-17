@@ -260,32 +260,6 @@ button { color: inherit; }
   letter-spacing: 0.04em;
 }
 .indicator-panel h2 { padding: 6px 10px 0; }
-.live-status-panel {
-  min-width: 0;
-  padding: 10px 12px 0;
-  border-top: 1px solid var(--panel-border);
-}
-.live-status-panel dl {
-  display: grid;
-  gap: 6px;
-  margin: 0;
-}
-.live-status-panel dl div {
-  display: grid;
-  grid-template-columns: 92px minmax(0, 1fr);
-  gap: 8px;
-  align-items: baseline;
-  font-size: 11px;
-}
-.live-status-panel dt { color: #74839a; }
-.live-status-panel dd {
-  margin: 0;
-  color: #cbd5e1;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 .chart-canvas-host {
   position: relative;
   width: 100%;
