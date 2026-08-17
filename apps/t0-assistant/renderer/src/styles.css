@@ -420,6 +420,7 @@ button { color: inherit; }
   grid-template-columns: 1fr 1fr;
   column-gap: 14px;
   margin: 8px 0 0;
+  font-size: 12px;
 }
 .quote-panel dl div {
   display: flex;
