@@ -107,6 +107,8 @@ export interface WorkbenchChartSnapshot {
       high: number;
       low: number;
       active?: boolean;
+      /** chantheory 同时产出 stroke/segment；t0 图层只绘制笔中枢。 */
+      level?: "stroke" | "segment";
     }>;
     candidate_buy_points?: CandidatePoint[];
     candidate_sell_points?: CandidatePoint[];

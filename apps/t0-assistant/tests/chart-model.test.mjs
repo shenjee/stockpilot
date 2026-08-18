@@ -569,6 +569,59 @@ test("divergence markers map Bull Div and Bear Div from chan_analysis", () => {
   ]);
 });
 
+test("pivot zone layer keeps stroke zones and drops segment zones", () => {
+  const layered = structuredClone(fixture);
+  layered.chan_analysis = {
+    pivot_zones: [
+      {
+        start_timestamp: "2026-07-22 09:55:00",
+        end_timestamp: "2026-07-22 10:05:00",
+        high: 10.25,
+        low: 10.15,
+        active: true,
+        level: "stroke",
+      },
+      {
+        start_timestamp: "2026-07-22 09:55:00",
+        end_timestamp: "2026-07-22 10:05:00",
+        high: 10.4,
+        low: 10.05,
+        active: false,
+        level: "segment",
+      },
+      {
+        start_timestamp: "2026-07-22 09:55:00",
+        end_timestamp: "2026-07-22 10:05:00",
+        high: 10.22,
+        low: 10.16,
+        active: false,
+      },
+    ],
+  };
+  const model = createChartGroupModel(
+    layered,
+    ChartGroupKind.FIVE_MINUTE,
+    { pivot_zones: true },
+  );
+  assert.equal(model.pivotZones.length, 2);
+  assert.deepEqual(model.pivotZones, [
+    {
+      start_timestamp: "2026-07-22 09:55:00",
+      end_timestamp: "2026-07-22 10:05:00",
+      high: 10.25,
+      low: 10.15,
+      active: true,
+    },
+    {
+      start_timestamp: "2026-07-22 09:55:00",
+      end_timestamp: "2026-07-22 10:05:00",
+      high: 10.22,
+      low: 10.16,
+      active: false,
+    },
+  ]);
+});
+
 test("pivot zone active flag is preserved through normalization", () => {
   const layered = structuredClone(fixture);
   layered.chan_analysis = {

@@ -416,6 +416,8 @@ export function createChartGroupModel(snapshot, kind, layers = {}, trades = []) 
           timestampSet,
         )
       : [];
+  // PRD：中枢均指笔中枢。chantheory 会同时产出 stroke/segment，
+  // 图层只投影 level=stroke（缺省 level 视为 stroke，兼容旧快照）。
   const pivotZones =
     kind === FIVE_MINUTE && enabled("pivot_zones")
       ? normalizePivotZones(
@@ -612,10 +614,16 @@ function normalizeStrokes(strokes, timestampSet) {
   });
 }
 
+function isStrokePivotZone(zone) {
+  const level = zone?.level;
+  return level == null || level === "" || level === "stroke";
+}
+
 function normalizePivotZones(zones, timestampSet) {
   return (zones ?? [])
     .filter(
       (zone) =>
+        isStrokePivotZone(zone) &&
         timestampSet.has(zone?.start_timestamp) &&
         timestampSet.has(zone?.end_timestamp) &&
         Number.isFinite(zone?.high) &&
