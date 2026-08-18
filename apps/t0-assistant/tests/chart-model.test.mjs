@@ -95,6 +95,8 @@ test("fixture chan_analysis is complete and rendered in 5 minute model", () => {
     { strokes: true, pivot_zones: true },
   );
   assert.equal(model.strokes.length, fixture.chan_analysis.strokes.length);
+  assert.equal(model.strokes[0].dashed, false);
+  assert.equal(model.strokes.at(-1).dashed, true);
   assert.equal(
     model.pivotZones.length,
     fixture.chan_analysis.pivot_zones.length,
@@ -339,6 +341,102 @@ test("5 minute layer preferences control MA, stroke, and pivot model data", () =
   assert.equal(hidden.movingAverages.ma5.length, 0);
   assert.equal(hidden.strokes.length, 0);
   assert.equal(hidden.pivotZones.length, 0);
+});
+
+test("5 minute stroke layer draws pending tail as dashed like chan-viewer", () => {
+  const layered = structuredClone(fixture);
+  layered.chan_analysis = {
+    strokes: [
+      {
+        start_timestamp: "2026-07-22 09:35:00",
+        end_timestamp: "2026-07-22 09:50:00",
+        start_price: 10.16,
+        end_price: 10.18,
+        confirmed: true,
+      },
+    ],
+    meta: {
+      pending_stroke: {
+        id: "stroke_pending_2026-07-22 09:50:00_2026-07-22 10:05:00",
+        direction: "up",
+        start_timestamp: "2026-07-22 09:50:00",
+        end_timestamp: "2026-07-22 10:05:00",
+        start_price: 10.18,
+        end_price: 10.3,
+        confirmed: false,
+        meta: { pending: true, source: "czsc_ubi" },
+      },
+    },
+  };
+
+  const model = createChartGroupModel(
+    layered,
+    ChartGroupKind.FIVE_MINUTE,
+    { strokes: true },
+  );
+  assert.equal(model.strokes.length, 2);
+  assert.deepEqual(model.strokes[0], {
+    start: { timestamp: "2026-07-22 09:35:00", value: 10.16 },
+    end: { timestamp: "2026-07-22 09:50:00", value: 10.18 },
+    color: "#2563eb",
+    dashed: false,
+  });
+  assert.deepEqual(model.strokes[1], {
+    start: { timestamp: "2026-07-22 09:50:00", value: 10.18 },
+    end: { timestamp: "2026-07-22 10:05:00", value: 10.3 },
+    color: "#2563eb",
+    dashed: true,
+  });
+
+  const hidden = createChartGroupModel(
+    layered,
+    ChartGroupKind.FIVE_MINUTE,
+    { strokes: false },
+  );
+  assert.equal(hidden.strokes.length, 0);
+});
+
+test("replay asOf truncation also drops pending stroke past current_time", () => {
+  const replay = structuredClone(fixture);
+  replay.replay = {
+    granularity: "five_minute",
+    current_time: "2026-07-22 10:00:00",
+    next_bar_time: "2026-07-22 10:05:00",
+    start_time: "2026-07-22 09:30:00",
+    end_time: "2026-07-22 15:00:00",
+    playing: false,
+    playback_speed: 1,
+    step_seconds: 300,
+  };
+  replay.chan_analysis = {
+    strokes: [
+      {
+        start_timestamp: "2026-07-22 09:35:00",
+        end_timestamp: "2026-07-22 09:50:00",
+        start_price: 10.16,
+        end_price: 10.18,
+        confirmed: true,
+      },
+    ],
+    meta: {
+      pending_stroke: {
+        start_timestamp: "2026-07-22 09:50:00",
+        end_timestamp: "2026-07-22 10:05:00",
+        start_price: 10.18,
+        end_price: 10.3,
+        confirmed: false,
+        meta: { pending: true },
+      },
+    },
+  };
+
+  const model = createChartGroupModel(replay, ChartGroupKind.FIVE_MINUTE, {
+    strokes: true,
+  });
+  assert.equal(model.timestamps.at(-1), "2026-07-22 10:00:00");
+  assert.equal(model.strokes.length, 1);
+  assert.equal(model.strokes[0].dashed, false);
+  assert.equal(model.strokes[0].end.timestamp, "2026-07-22 09:50:00");
 });
 
 test("intraday model uses backend VWAP/MACD and keeps both sides of lunch", () => {

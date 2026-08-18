@@ -100,6 +100,7 @@ export interface WorkbenchChartSnapshot {
       start_price: number;
       end_price: number;
       confirmed?: boolean;
+      meta?: { pending?: boolean; [key: string]: unknown };
     }>;
     pivot_zones?: Array<{
       start_timestamp: string;
@@ -113,6 +114,19 @@ export interface WorkbenchChartSnapshot {
     candidate_buy_points?: CandidatePoint[];
     candidate_sell_points?: CandidatePoint[];
     divergences?: Divergence[];
+    /** chantheory 未终止尾笔在 meta.pending_stroke，图层用虚线画出。 */
+    meta?: {
+      pending_stroke?: {
+        start_timestamp: string;
+        end_timestamp: string;
+        start_price: number;
+        end_price: number;
+        confirmed?: boolean;
+        direction?: string;
+        meta?: { pending?: boolean; [key: string]: unknown };
+      } | null;
+      [key: string]: unknown;
+    };
   };
 }
 

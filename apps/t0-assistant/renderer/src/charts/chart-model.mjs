@@ -409,10 +409,12 @@ export function createChartGroupModel(snapshot, kind, layers = {}, trades = []) 
           ),
         }
       : { upper: [], middle: [], lower: [] };
+  // chan-viewer / chantheory plotting：confirmed 笔画实线；未终止尾笔在
+  // meta.pending_stroke，单独用虚线画出，不进入 strokes 数组。
   const strokes =
     kind === FIVE_MINUTE && enabled("strokes")
       ? normalizeStrokes(
-          clipChanByEnd(snapshot.chan_analysis?.strokes),
+          clipChanByEnd(collectStrokeRows(snapshot.chan_analysis)),
           timestampSet,
         )
       : [];
@@ -586,6 +588,19 @@ function padIntradayIndicator(points, kind, timestamps) {
     : points;
 }
 
+function collectStrokeRows(chanAnalysis) {
+  const rows = [...(chanAnalysis?.strokes ?? [])];
+  const pending = chanAnalysis?.meta?.pending_stroke;
+  if (pending != null && typeof pending === "object" && !Array.isArray(pending)) {
+    rows.push({ ...pending, confirmed: false });
+  }
+  return rows;
+}
+
+function isUnconfirmedStroke(stroke) {
+  return stroke.confirmed === false || stroke.meta?.pending === true;
+}
+
 function normalizeStrokes(strokes, timestampSet) {
   return (strokes ?? []).flatMap((stroke) => {
     if (
@@ -608,7 +623,7 @@ function normalizeStrokes(strokes, timestampSet) {
         },
         color:
           stroke.end_price >= stroke.start_price ? "#2563eb" : "#f97316",
-        dashed: stroke.confirmed === false,
+        dashed: isUnconfirmedStroke(stroke),
       },
     ];
   });
