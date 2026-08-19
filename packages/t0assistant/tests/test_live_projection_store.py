@@ -744,6 +744,148 @@ class LiveProjectionStoreTests(unittest.TestCase):
         self.assertEqual(timestamps, sorted(timestamps))
         self.assertEqual(timestamps[0], "2026-07-24 09:30:00")
 
+    def test_five_minute_increment_revises_dynamic_bar_and_drops_stale_unclosed(
+        self,
+    ) -> None:
+        self.coordinator.set_accepted("live-1", 1)
+        self.store.accept_candidate(self.fixture.candidate(session_id="live-1", generation=1))
+        revised = _bar(
+            "2026-07-24 09:35:00",
+            10.0,
+            10.4,
+            9.9,
+            10.3,
+            350,
+            3550,
+            closed=False,
+        )
+        next_bucket = _bar(
+            "2026-07-24 09:40:00",
+            11.0,
+            11.0,
+            11.0,
+            11.0,
+            2,
+            22,
+            closed=False,
+        )
+        official = _bar(
+            "2026-07-24 09:35:00",
+            10.0,
+            10.5,
+            9.8,
+            10.4,
+            900,
+            9200,
+        )
+
+        self.store.accept_incremental(
+            LiveIncrementalUpdate(
+                session_id="live-1",
+                generation=1,
+                event_type="market_update",
+                payload={"target": "bars_5m", "bars": [revised], "quote": None},
+            )
+        )
+        after_revise = self.store.get_live_snapshot(session_id="live-1", generation=1)
+        dynamic = [
+            bar
+            for bar in after_revise["market"]["bars_5m"]
+            if bar["timestamp"] == "2026-07-24 09:35:00"
+        ]
+        self.assertEqual(len(dynamic), 1)
+        self.assertEqual(dynamic[0]["close"], 10.3)
+        self.assertFalse(dynamic[0]["closed"])
+
+        self.store.accept_incremental(
+            LiveIncrementalUpdate(
+                session_id="live-1",
+                generation=1,
+                event_type="market_update",
+                payload={"target": "bars_5m", "bars": [next_bucket], "quote": None},
+            )
+        )
+        after_cross = self.store.get_live_snapshot(session_id="live-1", generation=1)
+        by_timestamp = {
+            bar["timestamp"]: bar for bar in after_cross["market"]["bars_5m"]
+        }
+        self.assertNotIn("2026-07-24 09:35:00", by_timestamp)
+        self.assertFalse(by_timestamp["2026-07-24 09:40:00"]["closed"])
+        self.assertEqual(
+            sum(1 for bar in by_timestamp.values() if bar["closed"] is False),
+            1,
+        )
+
+        self.store.accept_incremental(
+            LiveIncrementalUpdate(
+                session_id="live-1",
+                generation=1,
+                event_type="market_update",
+                payload={
+                    "target": "bars_5m",
+                    "bars": [official, next_bucket],
+                    "quote": None,
+                },
+            )
+        )
+        after_official = self.store.get_live_snapshot(session_id="live-1", generation=1)
+        by_timestamp = {
+            bar["timestamp"]: bar for bar in after_official["market"]["bars_5m"]
+        }
+        self.assertTrue(by_timestamp["2026-07-24 09:35:00"]["closed"])
+        self.assertEqual(by_timestamp["2026-07-24 09:35:00"]["close"], 10.4)
+        self.assertFalse(by_timestamp["2026-07-24 09:40:00"]["closed"])
+
+    def test_older_projection_seq_does_not_delete_current_dynamic_bar(self) -> None:
+        self.coordinator.set_accepted("live-1", 1)
+        self.store.accept_candidate(self.fixture.candidate(session_id="live-1", generation=1))
+        next_bucket = _bar(
+            "2026-07-24 09:40:00",
+            11.0,
+            11.0,
+            11.0,
+            11.0,
+            2,
+            22,
+            closed=False,
+        )
+        official = _bar(
+            "2026-07-24 09:35:00",
+            10.0,
+            10.5,
+            9.8,
+            10.4,
+            900,
+            9200,
+        )
+
+        accepted = self.store.accept_incremental(
+            LiveIncrementalUpdate(
+                session_id="live-1",
+                generation=1,
+                event_type="market_update",
+                payload={"target": "bars_5m", "bars": [next_bucket], "quote": None},
+                projection_seq=2,
+            )
+        )
+        self.assertIsNotNone(accepted)
+        rejected = self.store.accept_incremental(
+            LiveIncrementalUpdate(
+                session_id="live-1",
+                generation=1,
+                event_type="market_update",
+                payload={"target": "bars_5m", "bars": [official], "quote": None},
+                projection_seq=1,
+            )
+        )
+        self.assertIsNone(rejected)
+        snapshot = self.store.get_live_snapshot(session_id="live-1", generation=1)
+        by_timestamp = {
+            bar["timestamp"]: bar for bar in snapshot["market"]["bars_5m"]
+        }
+        self.assertFalse(by_timestamp["2026-07-24 09:40:00"]["closed"])
+        self.assertNotIn("2026-07-24 09:35:00", by_timestamp)
+
     def test_accepted_envelope_and_snapshot_pass_frozen_schema(self) -> None:
         from json import loads as json_loads
         from jsonschema import Draft202012Validator

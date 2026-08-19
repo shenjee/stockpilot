@@ -16,7 +16,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
-from threading import RLock
+from threading import Lock, RLock
 from typing import Callable, Mapping, Protocol, Sequence
 
 from .computation_contract import (
@@ -137,11 +137,19 @@ class LiveRefreshResult:
     ``market_epoch`` stamps the Live market epoch active when this branch
     finished.  The scheduler rejects stale epochs at the accept boundary so a
     late result cannot mutate a newer trading-day baseline.
+
+    ``projection_seq`` is the lock-order snapshot generation number assigned
+    when a branch rebuilds the shared projection.  The scheduler publishes
+    sequenced results in that order even when futures complete in kind order,
+    so an older official ``bars_5m`` payload cannot delete a newer dynamic 5m
+    bar.  ``None`` means the result has no ordering constraint (no-op and
+    test doubles).
     """
 
     data_time: datetime | None = None
     updates: Sequence[LiveIncrementalUpdate] = ()
     market_epoch: int | None = None
+    projection_seq: int | None = None
 
     @classmethod
     def no_change(cls, *, market_epoch: int | None = None) -> "LiveRefreshResult":
@@ -205,6 +213,14 @@ class LiveRefreshScheduler:
     deterministic clock without sleeping.  Every due branch is submitted with
     Live priority before results are collected, allowing a multi-worker
     executor to run independent provider/pipeline work concurrently.
+
+    Futures are still waited in kind order, but sequenced results are not
+    published until every earlier ``projection_seq`` has been accepted.  Each
+    result's updates are then emitted as one batch under a dedicated publish
+    lock so a concurrent ``run_due``/``retry`` cannot insert the next sequence
+    between ``bars_5m`` and ``chan_analysis_replaced``.  ``on_update`` runs
+    without the scheduler state lock and must not re-enter publish on the
+    same thread.
     """
 
     _KINDS = (
@@ -253,9 +269,19 @@ class LiveRefreshScheduler:
         self._clock = clock or datetime.now
         self._on_failure = on_failure
         self._lock = RLock()
+        self._publish_lock = Lock()
         self._retired = False
         self._polling_profile: PollingProfile = "active"
         self._scheduler_market_epoch = self._read_input_market_epoch()
+        self._next_projection_seq = _next_projection_seq(
+            self._read_input_projection_seq()
+        )
+        self._pending_by_seq: dict[
+            int, tuple[LiveRefreshKind, datetime, LiveRefreshResult]
+        ] = {}
+        self._pending_unsequenced: list[
+            tuple[LiveRefreshKind, datetime, LiveRefreshResult]
+        ] = []
         self._states = {kind: _MutableBranchState() for kind in self._KINDS}
         self._active_kinds: set[LiveRefreshKind] = set()
         for raw_kind, data_time in (initial_data_times or {}).items():
@@ -300,6 +326,8 @@ class LiveRefreshScheduler:
 
         with self._lock:
             self._retired = True
+            self._pending_by_seq.clear()
+            self._pending_unsequenced.clear()
 
     def set_polling_profile(self, profile: PollingProfile) -> None:
         with self._lock:
@@ -345,6 +373,11 @@ class LiveRefreshScheduler:
         with self._lock:
             if market_epoch is not None:
                 self._scheduler_market_epoch = market_epoch
+            self._pending_by_seq.clear()
+            self._pending_unsequenced.clear()
+            self._next_projection_seq = _next_projection_seq(
+                self._read_input_projection_seq()
+            )
             for kind in self._KINDS:
                 state = self._states[kind]
                 state.latest_data_time = None
@@ -518,22 +551,87 @@ class LiveRefreshScheduler:
             raise LiveRefreshValidationError(
                 "updates require a non-null data_time"
             )
-
-        for update in updates:
-            with self._lock:
-                if self._retired:
-                    return
-            self._on_update(update)
+        seq = result.projection_seq
+        if seq is not None and (
+            isinstance(seq, bool) or not isinstance(seq, int) or seq < 1
+        ):
+            raise LiveRefreshValidationError(
+                "refresh projection_seq must be a positive int"
+            )
 
         with self._lock:
             if self._retired:
                 return
-            state = self._states[kind]
-            if data_time is not None:
-                state.latest_data_time = data_time
-            state.last_success_at = observed_at
-            state.last_failure = None
-            state.consecutive_failures = 0
+            if seq is None:
+                self._pending_unsequenced.append((kind, observed_at, result))
+            elif seq < self._next_projection_seq:
+                # Superseded by a later lock-order snapshot.  Keep the branch
+                # watermark so this feed does not refetch the same rows.
+                self._store_watermark(kind, observed_at, result)
+            else:
+                self._pending_by_seq[seq] = (kind, observed_at, result)
+
+        # Claim-and-publish under one publisher so concurrent acceptors cannot
+        # invert complete projection batches after advancing the seq cursor.
+        self._drain_publish()
+
+    def _drain_publish(self) -> None:
+        """Publish pending results in projection_seq order under one publisher.
+
+        Advancing ``_next_projection_seq`` and emitting that result's full
+        update batch both happen while holding ``_publish_lock``.  Claiming the
+        next seq under the state lock alone (then racing for publish rights)
+        would let seq=2 publish completely before seq=1.  ``on_update`` still
+        runs without the state lock to avoid re-entrant lock hazards.
+        """
+
+        with self._publish_lock:
+            while True:
+                with self._lock:
+                    if self._retired:
+                        return
+                    next_seq = self._next_projection_seq
+                    if next_seq in self._pending_by_seq:
+                        kind, observed_at, result = self._pending_by_seq.pop(next_seq)
+                        self._next_projection_seq = next_seq + 1
+                    elif self._pending_unsequenced:
+                        kind, observed_at, result = self._pending_unsequenced.pop(0)
+                    else:
+                        break
+                if not self._emit_result(kind, observed_at, result):
+                    return
+
+    def _emit_result(
+        self,
+        kind: LiveRefreshKind,
+        observed_at: datetime,
+        result: LiveRefreshResult,
+    ) -> bool:
+        # Caller holds ``_publish_lock``.  Do not take the state lock around
+        # ``on_update`` — callbacks may re-enter scheduler APIs.
+        with self._lock:
+            if self._retired:
+                return False
+        for update in result.updates:
+            self._on_update(update)
+        with self._lock:
+            if self._retired:
+                return False
+            self._store_watermark(kind, observed_at, result)
+        return True
+
+    def _store_watermark(
+        self,
+        kind: LiveRefreshKind,
+        observed_at: datetime,
+        result: LiveRefreshResult,
+    ) -> None:
+        state = self._states[kind]
+        if result.data_time is not None:
+            state.latest_data_time = result.data_time
+        state.last_success_at = observed_at
+        state.last_failure = None
+        state.consecutive_failures = 0
 
     def _validate_update(
         self,
@@ -615,12 +713,10 @@ class LiveRefreshScheduler:
                 return
 
     def _read_input_market_epoch(self) -> int | None:
-        getter = getattr(self._input_port, "market_epoch", None)
-        if getter is None:
-            return None
-        if callable(getter):
-            return getter()
-        return getter
+        return _read_input_int_attr(self._input_port, "market_epoch")
+
+    def _read_input_projection_seq(self) -> int | None:
+        return _read_input_int_attr(self._input_port, "projection_seq")
 
     def _resolve_now(self, observed_at: datetime | None) -> datetime:
         resolved = self._clock() if observed_at is None else observed_at
@@ -652,6 +748,21 @@ def _coerce_kind(kind: LiveRefreshKind | str) -> LiveRefreshKind:
         return kind if isinstance(kind, LiveRefreshKind) else LiveRefreshKind(kind)
     except ValueError as exc:
         raise LiveRefreshValidationError(f"unknown refresh kind: {kind!r}") from exc
+
+
+def _read_input_int_attr(input_port: object, name: str) -> int | None:
+    getter = getattr(input_port, name, None)
+    if getter is None:
+        return None
+    if callable(getter):
+        return getter()
+    return getter
+
+
+def _next_projection_seq(current: int | None) -> int:
+    if current is None or isinstance(current, bool) or not isinstance(current, int):
+        return 1
+    return max(current, 0) + 1
 
 
 __all__ = [

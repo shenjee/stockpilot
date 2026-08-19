@@ -18,7 +18,8 @@ Responsibilities (minimal, transport-free):
 * Reject old Session / retired Session items without mutating authoritative
   state or reviving a retired Session.  Revision gap detection is a consumer
   concern (transport layer); the store never discards a valid domain update to
-  manufacture a gap.
+  manufacture a gap.  A strictly older ``projection_seq`` is not a valid
+  successor of the current snapshot: applying it would rewind ``bars_5m``.
 * Expose ``get_live_snapshot`` so a consumer can re-baseline after a revision
   gap or reconnect by fetching the latest complete authoritative snapshot, with
   ``snapshot.session.revision`` equal to the latest accepted revision.
@@ -119,6 +120,11 @@ class LiveIncrementalUpdate:
     ``market_epoch`` stamps the Live market epoch the increment belongs to.
     The store rejects increments whose epoch does not match the latest
     accepted full snapshot epoch inside its atomic commit boundary.
+
+    ``projection_seq`` is the lock-order snapshot generation number.  The
+    store rejects a strictly older sequence after a newer one has already
+    been applied, so a delayed official ``bars_5m`` payload cannot delete
+    the current dynamic 5m bar.
     """
 
     session_id: str
@@ -126,6 +132,7 @@ class LiveIncrementalUpdate:
     event_type: str
     payload: dict[str, Any]
     market_epoch: int | None = None
+    projection_seq: int | None = None
 
 
 class LiveProjectionStore:
@@ -160,6 +167,7 @@ class LiveProjectionStore:
         self._current_revision: int | None = None
         self._current_payload: dict[str, Any] | None = None
         self._published_market_epoch: int | None = None
+        self._last_projection_seq: int | None = None
 
     @property
     def current_revision(self) -> int | None:
@@ -222,6 +230,7 @@ class LiveProjectionStore:
                 self._current_revision = revision
                 self._current_payload = payload
                 self._published_market_epoch = candidate.market_epoch
+                self._last_projection_seq = None
                 event_box.append(
                     LiveAcceptedEvent(
                         schema_version=SCHEMA_VERSION,
@@ -288,6 +297,14 @@ class LiveProjectionStore:
                     # Reject stale or ahead-of-baseline epochs atomically with
                     # the authoritative snapshot revision.
                     return
+                if (
+                    update.projection_seq is not None
+                    and self._last_projection_seq is not None
+                    and update.projection_seq < self._last_projection_seq
+                ):
+                    # Older lock-order snapshot.  Applying its full bars_5m
+                    # would drop the current dynamic 5m bar.
+                    return
                 # Apply to a deep-copy staging area so a validation failure
                 # leaves the authoritative state untouched.
                 staged = copy.deepcopy(self._current_payload)
@@ -298,6 +315,8 @@ class LiveProjectionStore:
                 staged["session"]["revision"] = revision
                 self._current_payload = staged
                 self._current_revision = revision
+                if update.projection_seq is not None:
+                    self._last_projection_seq = update.projection_seq
                 event_box.append(
                     LiveAcceptedEvent(
                         schema_version=SCHEMA_VERSION,
@@ -484,9 +503,12 @@ def _apply_incremental(
     Bar arrays and indicator series use timestamp-keyed upsert with ascending
     sort, mirroring the Renderer's ``mergeTimestampRows`` so a rebaseline
     snapshot never loses history and stays chronologically ordered (a
-    late-arriving earlier row lands in order, not at the tail).  ``quote`` and
-    ``chan_analysis`` are authoritative full replacements.  Incoming rows are
-    deep-copied so the caller's payload can never alias the authoritative state.
+    late-arriving earlier row lands in order, not at the tail).  Five-minute
+    updates also drop unclosed rows whose timestamps are absent from the
+    increment so a new dynamic bucket can replace the previous one.  ``quote``
+    and ``chan_analysis`` are authoritative full replacements.  Incoming rows
+    are deep-copied so the caller's payload can never alias the authoritative
+    state.
     """
 
     if event_type == "market_update":
@@ -494,6 +516,10 @@ def _apply_incremental(
         target_field = payload["target"]
         if target_field == "quote":
             market["quote"] = copy.deepcopy(payload["quote"])
+        elif target_field == "bars_5m":
+            market[target_field] = _merge_five_minute_bars(
+                market[target_field], payload["bars"]
+            )
         else:
             market[target_field] = _merge_rows_by_timestamp(
                 market[target_field], payload["bars"]
@@ -504,6 +530,30 @@ def _apply_incremental(
         target["live_market_view"] = copy.deepcopy(payload)
     else:  # chan_analysis_replaced
         target["chan_analysis"] = copy.deepcopy(payload)
+
+
+def _merge_five_minute_bars(
+    current: list[dict[str, Any]] | None,
+    incoming: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Upsert 5m bars and drop unclosed rows absent from the increment.
+
+    One-minute refreshes publish only the current dynamic (unclosed) 5m bar.
+    Timestamp merge cannot delete the previous bucket's dynamic bar, so any
+    unclosed row whose timestamp is missing from ``incoming`` is removed.
+    Closed bars are never deleted here; official 5m increments include the
+    current dynamic bar so they cannot wipe it.
+    """
+
+    incoming_timestamps = {
+        row["timestamp"] for row in incoming or () if "timestamp" in row
+    }
+    retained = [
+        row
+        for row in current or ()
+        if row.get("closed") is True or row.get("timestamp") in incoming_timestamps
+    ]
+    return _merge_rows_by_timestamp(retained, incoming)
 
 
 def _merge_rows_by_timestamp(
