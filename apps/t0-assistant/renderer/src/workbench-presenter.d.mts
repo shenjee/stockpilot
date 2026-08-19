@@ -112,6 +112,7 @@ export function applicationErrorFrom(
 export function quoteRows(
   quote: unknown,
 ): Array<[label: string, value: string]>;
+export function quoteDataCutoffText(quote: unknown): string;
 export function latestDailyBars(
   snapshot: WorkbenchChartSnapshot,
   limit?: number,

@@ -237,8 +237,12 @@ export function quoteRows(quote) {
     ["量比", formatNumber(quote?.volume_ratio)],
     ["实时换手率", formatPercent(quote?.turnover_rate)],
     ["委比", formatPercent(quote?.order_imbalance)],
-    ["行情时间", formatTimestamp(quote?.timestamp)],
   ];
+}
+
+/** Quote-panel as-of line; not a quote field row. */
+export function quoteDataCutoffText(quote) {
+  return `数据截止  ${formatTimestamp(quote?.timestamp)}`;
 }
 
 export function latestDailyBars(snapshot, limit = 60) {

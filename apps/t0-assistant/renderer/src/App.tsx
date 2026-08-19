@@ -50,6 +50,7 @@ import {
   liveOperationFailurePresentation,
   operationMatchesEnvelope,
   partialSecurityFromSymbol,
+  quoteDataCutoffText,
   quoteRows,
   restoredSecurityFromResponse,
   securitiesFromSearchResponse,
@@ -2321,7 +2322,7 @@ function MarketSidebar({
         <DailyMiniChart bars={bars} />
       </section>
       <section className="quote-panel">
-        <h2>行情</h2>
+        <h2>行情数据</h2>
         <dl>
           {quoteRows(quote).map(([label, value]) => (
             <div
@@ -2333,6 +2334,7 @@ function MarketSidebar({
             </div>
           ))}
         </dl>
+        <p className="quote-data-cutoff">{quoteDataCutoffText(quote)}</p>
       </section>
       <section className="service-card" aria-label="本地服务状态">
         <span className={`status status-${status.state}`}>{status.state}</span>

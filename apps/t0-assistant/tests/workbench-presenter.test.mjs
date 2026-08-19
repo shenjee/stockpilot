@@ -13,6 +13,7 @@ import {
   liveOperationFailurePresentation,
   operationMatchesEnvelope,
   partialSecurityFromSymbol,
+  quoteDataCutoffText,
   quoteRows,
   restoredSecurityFromResponse,
   securitiesFromSearchResponse,
@@ -240,7 +241,7 @@ test("securityCategoryLabel maps standard fields to market classification labels
 });
 
 test("the quote sidebar keeps every field and renders missing values in place", () => {
-  const rows = quoteRows({
+  const quote = {
     timestamp: "2026-07-22 09:35:03",
     latest_price: 10.08,
     change_percent: 0.8,
@@ -253,7 +254,8 @@ test("the quote sidebar keeps every field and renders missing values in place", 
     volume_ratio: null,
     order_imbalance: null,
     turnover_rate: null,
-  });
+  };
+  const rows = quoteRows(quote);
 
   assert.deepEqual(rows.map(([label]) => label), [
     "最新价",
@@ -267,11 +269,12 @@ test("the quote sidebar keeps every field and renders missing values in place", 
     "量比",
     "实时换手率",
     "委比",
-    "行情时间",
   ]);
   assert.equal(rows.find(([label]) => label === "量比")[1], "--");
   assert.equal(rows.find(([label]) => label === "委比")[1], "--");
   assert.equal(rows.find(([label]) => label === "涨跌幅")[1], "+0.80%");
+  assert.equal(quoteDataCutoffText(quote), "数据截止  07-22 09:35:03");
+  assert.equal(quoteDataCutoffText({}), "数据截止  --");
 });
 
 test("daily chart selection is bounded and application errors share one path", () => {

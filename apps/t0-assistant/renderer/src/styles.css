@@ -438,6 +438,14 @@ button { color: inherit; }
 }
 .quote-panel .secondary-quote dt,
 .quote-panel .secondary-quote dd { color: #65748a; }
+.quote-panel .quote-data-cutoff {
+  margin: 10px 0 0;
+  color: #74839a;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
 .service-card {
   display: flex;
   align-items: center;
