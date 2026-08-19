@@ -234,3 +234,107 @@ test("historical snapshot replaces the current projection without starting a Ses
   assert.equal(projection.revision, 0);
   assert.equal(projection.rebaselineRequired, false);
 });
+
+function fiveMinuteBar(timestamp, extra = {}) {
+  return {
+    timestamp,
+    open: extra.open ?? 10.0,
+    high: extra.high ?? 10.2,
+    low: extra.low ?? 9.9,
+    close: extra.close ?? 10.1,
+    volume: extra.volume ?? 100,
+    amount: extra.amount ?? 1000,
+    closed: extra.closed ?? false,
+  };
+}
+
+function bars5mEvent(revision, bars) {
+  return {
+    ...marketUpdate,
+    revision,
+    event_type: "market_update",
+    payload: { target: "bars_5m", bars, quote: null },
+  };
+}
+
+test("bars_5m increments revise the dynamic bar, drop the previous bucket, and keep it after a late official close", () => {
+  const snapshot = structuredClone(baseline);
+  snapshot.market.bars_5m = [
+    fiveMinuteBar("2026-07-22 09:35:00", {
+      close: 10.1,
+      volume: 100,
+      amount: 1000,
+      closed: false,
+    }),
+  ];
+  let projection = createChartProjection(snapshot, fixture.initial_snapshot_event);
+
+  projection = applyLiveChartEvent(
+    projection,
+    bars5mEvent(2, [
+      fiveMinuteBar("2026-07-22 09:35:00", {
+        high: 10.4,
+        close: 10.3,
+        volume: 350,
+        amount: 3550,
+        closed: false,
+      }),
+    ]),
+  );
+  assert.equal(projection.snapshot.market.bars_5m.length, 1);
+  assert.equal(projection.snapshot.market.bars_5m[0].close, 10.3);
+  assert.equal(projection.snapshot.market.bars_5m[0].closed, false);
+
+  projection = applyLiveChartEvent(
+    projection,
+    bars5mEvent(3, [
+      fiveMinuteBar("2026-07-22 09:40:00", {
+        open: 11,
+        high: 11,
+        low: 11,
+        close: 11,
+        volume: 2,
+        amount: 22,
+        closed: false,
+      }),
+    ]),
+  );
+  assert.deepEqual(
+    projection.snapshot.market.bars_5m.map((bar) => bar.timestamp),
+    ["2026-07-22 09:40:00"],
+  );
+  assert.equal(projection.snapshot.market.bars_5m[0].closed, false);
+
+  projection = applyLiveChartEvent(
+    projection,
+    bars5mEvent(4, [
+      fiveMinuteBar("2026-07-22 09:35:00", {
+        high: 10.5,
+        low: 9.8,
+        close: 10.4,
+        volume: 900,
+        amount: 9200,
+        closed: true,
+      }),
+      fiveMinuteBar("2026-07-22 09:40:00", {
+        open: 11,
+        high: 11,
+        low: 11,
+        close: 11,
+        volume: 2,
+        amount: 22,
+        closed: false,
+      }),
+    ]),
+  );
+  const byTimestamp = Object.fromEntries(
+    projection.snapshot.market.bars_5m.map((bar) => [bar.timestamp, bar]),
+  );
+  assert.equal(byTimestamp["2026-07-22 09:35:00"].closed, true);
+  assert.equal(byTimestamp["2026-07-22 09:35:00"].close, 10.4);
+  assert.equal(byTimestamp["2026-07-22 09:40:00"].closed, false);
+  assert.equal(
+    projection.snapshot.market.bars_5m.filter((bar) => bar.closed === false).length,
+    1,
+  );
+});

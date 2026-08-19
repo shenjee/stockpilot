@@ -132,14 +132,15 @@ function applyMarketUpdate(snapshot, payload) {
     !Array.isArray(payload.bars) ||
     !["bars_1m", "bars_5m", "daily_bars"].includes(payload.target)
   ) return snapshot;
+  const merged =
+    payload.target === "bars_5m"
+      ? mergeFiveMinuteBars(snapshot.market.bars_5m, payload.bars)
+      : mergeTimestampRows(snapshot.market[payload.target], payload.bars);
   return {
     ...snapshot,
     market: {
       ...snapshot.market,
-      [payload.target]: mergeTimestampRows(
-        snapshot.market[payload.target],
-        payload.bars,
-      ),
+      [payload.target]: merged,
     },
   };
 }
@@ -271,6 +272,19 @@ function mergeMacd(current, incoming) {
     dea: mergeTimestampRows(current.dea, incoming.dea),
     histogram: mergeTimestampRows(current.histogram, incoming.histogram),
   };
+}
+
+function mergeFiveMinuteBars(current, incoming) {
+  // Mirror LiveProjectionStore._merge_five_minute_bars: unclosed 5m rows whose
+  // timestamps are absent from the increment are the previous bucket's dynamic
+  // K and must be dropped. Closed history is never deleted by this path.
+  const incomingTimestamps = new Set(
+    (incoming ?? []).map((row) => row.timestamp),
+  );
+  const retained = (current ?? []).filter(
+    (row) => row.closed === true || incomingTimestamps.has(row.timestamp),
+  );
+  return mergeTimestampRows(retained, incoming);
 }
 
 function mergeTimestampRows(current, incoming) {

@@ -25,6 +25,7 @@ def _update(
     *,
     session_id: str = "live-1",
     generation: int = 7,
+    projection_seq: int | None = None,
 ) -> LiveIncrementalUpdate:
     if kind is LiveRefreshKind.QUOTE:
         payload = {
@@ -57,6 +58,24 @@ def _update(
         generation=generation,
         event_type=event_type,
         payload=payload,
+        projection_seq=projection_seq,
+    )
+
+
+def _typed_update(
+    event_type: str,
+    payload: dict,
+    *,
+    projection_seq: int,
+    session_id: str = "live-1",
+    generation: int = 7,
+) -> LiveIncrementalUpdate:
+    return LiveIncrementalUpdate(
+        session_id=session_id,
+        generation=generation,
+        event_type=event_type,
+        payload=payload,
+        projection_seq=projection_seq,
     )
 
 
@@ -302,6 +321,248 @@ class LiveRefreshSchedulerTests(unittest.TestCase):
         release_quote.set()
         thread.join(timeout=1)
         self.assertFalse(thread.is_alive())
+
+    def test_projection_seq_publishes_in_generation_order_not_kind_order(self) -> None:
+        official_generated = Event()
+        official_may_return = Event()
+        one_minute_returned = Event()
+        official_time = self.t0 + timedelta(minutes=5)
+        one_minute_time = self.t0 + timedelta(minutes=6)
+
+        def racing_refresh(
+            kind,
+            spec,
+            *,
+            observed_at,
+            latest_data_time,
+        ):
+            if kind is LiveRefreshKind.QUOTE:
+                return LiveRefreshResult.no_change()
+            if kind is LiveRefreshKind.OFFICIAL_FIVE_MINUTE:
+                result = LiveRefreshResult(
+                    official_time,
+                    (_update(LiveRefreshKind.OFFICIAL_FIVE_MINUTE),),
+                    projection_seq=1,
+                )
+                official_generated.set()
+                self.assertTrue(official_may_return.wait(timeout=2))
+                return result
+            self.assertTrue(official_generated.wait(timeout=2))
+            one_minute_returned.set()
+            return LiveRefreshResult(
+                one_minute_time,
+                (_update(LiveRefreshKind.ONE_MINUTE),),
+                projection_seq=2,
+            )
+
+        self.input.refresh = racing_refresh  # type: ignore[method-assign]
+        thread = Thread(target=lambda: self.scheduler.run_due(self.t0))
+        thread.start()
+        self.assertTrue(one_minute_returned.wait(timeout=2))
+        official_may_return.set()
+        thread.join(timeout=2)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(
+            [update.payload.get("target") for update in self.updates],
+            ["bars_5m", "bars_1m"],
+        )
+
+    def test_projection_seq_batch_is_not_interleaved_by_concurrent_retry(self) -> None:
+        first_update_started = Event()
+        release_first_batch = Event()
+        seq2_enqueued = Event()
+        published: list[LiveIncrementalUpdate] = []
+        seq1_updates = (
+            _update(LiveRefreshKind.OFFICIAL_FIVE_MINUTE, projection_seq=1),
+            _typed_update("indicators_updated", {}, projection_seq=1),
+            _typed_update("chan_analysis_replaced", {}, projection_seq=1),
+            _typed_update("live_market_view_updated", {}, projection_seq=1),
+        )
+        seq2_updates = (
+            _update(LiveRefreshKind.ONE_MINUTE, projection_seq=2),
+            _typed_update("indicators_updated", {}, projection_seq=2),
+            _typed_update("live_market_view_updated", {}, projection_seq=2),
+        )
+
+        def on_update(update: LiveIncrementalUpdate) -> None:
+            published.append(update)
+            if update is seq1_updates[0]:
+                first_update_started.set()
+                self.assertTrue(release_first_batch.wait(timeout=5))
+
+        def refresh(kind, spec, *, observed_at, latest_data_time):
+            if kind is LiveRefreshKind.OFFICIAL_FIVE_MINUTE:
+                return LiveRefreshResult(
+                    self.t0 + timedelta(minutes=5),
+                    seq1_updates,
+                    projection_seq=1,
+                )
+            if kind is LiveRefreshKind.ONE_MINUTE:
+                return LiveRefreshResult(
+                    self.t0 + timedelta(minutes=1),
+                    seq2_updates,
+                    projection_seq=2,
+                )
+            return LiveRefreshResult.no_change()
+
+        class _GateScheduler(LiveRefreshScheduler):
+            def _drain_publish(self) -> None:
+                with self._lock:
+                    if 2 in self._pending_by_seq:
+                        seq2_enqueued.set()
+                super()._drain_publish()
+
+        self.input.refresh = refresh  # type: ignore[method-assign]
+        scheduler = _GateScheduler(
+            self.spec,
+            self.input,
+            self.executor,
+            on_update=on_update,
+            intervals=self.intervals,
+        )
+        self.addCleanup(scheduler.retire)
+
+        official_thread = Thread(
+            target=lambda: scheduler.retry(
+                LiveRefreshKind.OFFICIAL_FIVE_MINUTE,
+                self.t0,
+            )
+        )
+        official_thread.start()
+        self.assertTrue(first_update_started.wait(timeout=5))
+
+        one_minute_thread = Thread(
+            target=lambda: scheduler.retry(
+                LiveRefreshKind.ONE_MINUTE,
+                self.t0,
+            )
+        )
+        one_minute_thread.start()
+        self.assertTrue(seq2_enqueued.wait(timeout=5))
+        release_first_batch.set()
+        official_thread.join(timeout=5)
+        one_minute_thread.join(timeout=5)
+        self.assertFalse(official_thread.is_alive())
+        self.assertFalse(one_minute_thread.is_alive())
+        self.assertEqual(
+            [update.projection_seq for update in published],
+            [1, 1, 1, 1, 2, 2, 2],
+        )
+        self.assertEqual(
+            [update.event_type for update in published],
+            [
+                "market_update",
+                "indicators_updated",
+                "chan_analysis_replaced",
+                "live_market_view_updated",
+                "market_update",
+                "indicators_updated",
+                "live_market_view_updated",
+            ],
+        )
+
+    def test_projection_seq_batches_cannot_publish_out_of_order(self) -> None:
+        """seq=1 must not lose publish rights to seq=2 after only enqueueing.
+
+        Recreates: acceptor A enqueues seq=1 and reaches drain before taking the
+        publish lock; acceptor B enqueues seq=2 and is allowed to enter drain
+        first.  Claiming the next seq is bound to publish ownership, so B must
+        still emit the full seq=1 batch before any seq=2 event.
+        """
+
+        seq1_at_drain = Event()
+        allow_seq1_drain = Event()
+        published: list[LiveIncrementalUpdate] = []
+        seq1_updates = (
+            _update(LiveRefreshKind.OFFICIAL_FIVE_MINUTE, projection_seq=1),
+            _typed_update("indicators_updated", {}, projection_seq=1),
+            _typed_update("chan_analysis_replaced", {}, projection_seq=1),
+            _typed_update("live_market_view_updated", {}, projection_seq=1),
+        )
+        seq2_updates = (
+            _update(LiveRefreshKind.ONE_MINUTE, projection_seq=2),
+            _typed_update("indicators_updated", {}, projection_seq=2),
+            _typed_update("live_market_view_updated", {}, projection_seq=2),
+        )
+
+        def on_update(update: LiveIncrementalUpdate) -> None:
+            published.append(update)
+
+        def refresh(kind, spec, *, observed_at, latest_data_time):
+            if kind is LiveRefreshKind.OFFICIAL_FIVE_MINUTE:
+                return LiveRefreshResult(
+                    self.t0 + timedelta(minutes=5),
+                    seq1_updates,
+                    projection_seq=1,
+                )
+            if kind is LiveRefreshKind.ONE_MINUTE:
+                return LiveRefreshResult(
+                    self.t0 + timedelta(minutes=1),
+                    seq2_updates,
+                    projection_seq=2,
+                )
+            return LiveRefreshResult.no_change()
+
+        class _GateScheduler(LiveRefreshScheduler):
+            def _drain_publish(self) -> None:
+                with self._lock:
+                    only_seq1_pending = (
+                        self._next_projection_seq == 1
+                        and 1 in self._pending_by_seq
+                        and 2 not in self._pending_by_seq
+                    )
+                if only_seq1_pending:
+                    seq1_at_drain.set()
+                    self.assertTrue(allow_seq1_drain.wait(timeout=5))
+                super()._drain_publish()
+
+        self.input.refresh = refresh  # type: ignore[method-assign]
+        scheduler = _GateScheduler(
+            self.spec,
+            self.input,
+            self.executor,
+            on_update=on_update,
+            intervals=self.intervals,
+        )
+        self.addCleanup(scheduler.retire)
+
+        official_thread = Thread(
+            target=lambda: scheduler.retry(
+                LiveRefreshKind.OFFICIAL_FIVE_MINUTE,
+                self.t0,
+            )
+        )
+        official_thread.start()
+        self.assertTrue(seq1_at_drain.wait(timeout=5))
+
+        one_minute_thread = Thread(
+            target=lambda: scheduler.retry(
+                LiveRefreshKind.ONE_MINUTE,
+                self.t0,
+            )
+        )
+        one_minute_thread.start()
+        one_minute_thread.join(timeout=5)
+        self.assertFalse(one_minute_thread.is_alive())
+        allow_seq1_drain.set()
+        official_thread.join(timeout=5)
+        self.assertFalse(official_thread.is_alive())
+        self.assertEqual(
+            [update.projection_seq for update in published],
+            [1, 1, 1, 1, 2, 2, 2],
+        )
+        self.assertEqual(
+            [update.event_type for update in published],
+            [
+                "market_update",
+                "indicators_updated",
+                "chan_analysis_replaced",
+                "live_market_view_updated",
+                "market_update",
+                "indicators_updated",
+                "live_market_view_updated",
+            ],
+        )
 
     def test_idle_profile_skips_provider_reads(self) -> None:
         self.scheduler.run_due(self.t0)

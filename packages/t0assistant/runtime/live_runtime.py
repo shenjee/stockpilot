@@ -80,7 +80,10 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
     Provider reads happen outside the state lock, so one slow or failed branch
     cannot prevent the scheduler's other workers from reading their sources.
     The short locked section only merges normalized rows and rebuilds the
-    shared workbench projection from that coherent prefix.
+    shared workbench projection from that coherent prefix.  Each successful
+    rebuild stamps a monotonic ``projection_seq`` so the refresh scheduler can
+    publish ``bars_5m`` updates in lock generation order even when futures are
+    collected in kind order.
 
     ``market_phase`` advances on a dedicated, lock-serialized path that runs
     before provider I/O and publishes at most one full snapshot per transition.
@@ -112,6 +115,7 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
         self._market_phase = "closed"
         self._market: str | None = None
         self._market_epoch = 0
+        self._projection_seq = 0
         self._day_switch_in_progress = False
         self._close_reconcile_status: CloseReconcileStatus = "not_started"
         self._close_reconcile_attempts = 0
@@ -139,6 +143,11 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             return self._market_epoch
 
     @property
+    def projection_seq(self) -> int:
+        with self._lock:
+            return self._projection_seq
+
+    @property
     def close_reconcile_status(self) -> CloseReconcileStatus:
         with self._lock:
             return self._close_reconcile_status
@@ -164,6 +173,7 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             self._market_phase = prepared.market_phase
             self._market = market
             self._market_epoch = 0
+            self._projection_seq = 0
             self._day_switch_in_progress = False
             self._close_reconcile_status = "not_started"
             self._close_reconcile_attempts = 0
@@ -374,29 +384,40 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             calendar_status = self._calendar_status
             market_phase = self._market_phase
             committed_epoch = self._market_epoch
-
-        candidate = LiveSnapshotCandidate(
-            session_id=spec.session_id,
-            generation=spec.generation,
-            symbol=spec.symbol,
-            pipeline_result=result,
-            calendar_status=calendar_status,
-            market_phase=market_phase,
-            market_epoch=committed_epoch,
-            market_candidate_trade_date=self._market_candidate_trade_date(observed_at),
-            **_live_view_extras(
-                self,
-                observed_at=observed_at,
+            candidate = LiveSnapshotCandidate(
+                session_id=spec.session_id,
+                generation=spec.generation,
+                symbol=spec.symbol,
+                pipeline_result=result,
                 calendar_status=calendar_status,
                 market_phase=market_phase,
-            ),
-        )
-        snapshot = candidate.build_projection(0).to_dict()
-        return LiveRefreshResult(
-            data_time=data_time,
-            updates=_branch_updates(kind, spec, snapshot, market_epoch=epoch_at_start),
-            market_epoch=epoch_at_start,
-        )
+                market_epoch=committed_epoch,
+                market_candidate_trade_date=self._market_candidate_trade_date(
+                    observed_at
+                ),
+                **_live_view_extras(
+                    self,
+                    observed_at=observed_at,
+                    calendar_status=calendar_status,
+                    market_phase=market_phase,
+                ),
+            )
+            snapshot = candidate.build_projection(0).to_dict()
+            seq = self._projection_seq + 1
+            updates = _branch_updates(
+                kind,
+                spec,
+                snapshot,
+                market_epoch=epoch_at_start,
+                projection_seq=seq,
+            )
+            self._projection_seq = seq
+            return LiveRefreshResult(
+                data_time=data_time,
+                updates=updates,
+                market_epoch=epoch_at_start,
+                projection_seq=seq,
+            )
 
     def _publish_phase_if_advanced(
         self,
@@ -1008,6 +1029,10 @@ def _timestamp(value: object) -> datetime | None:
     return parsed if parsed.tzinfo is None else None
 
 
+def _unclosed_bars(rows: Sequence[Mapping[str, object]]) -> list[Mapping[str, object]]:
+    return [row for row in rows if row.get("closed") is False]
+
+
 def _latest_row_time(
     rows: Sequence[Mapping[str, object]],
     *,
@@ -1046,11 +1071,13 @@ def _branch_updates(
     snapshot: dict,
     *,
     market_epoch: int,
+    projection_seq: int,
 ) -> tuple[LiveIncrementalUpdate, ...]:
     identity = {
         "session_id": spec.session_id,
         "generation": spec.generation,
         "market_epoch": market_epoch,
+        "projection_seq": projection_seq,
     }
     live_view_update = LiveIncrementalUpdate(
         **identity,
@@ -1089,6 +1116,18 @@ def _branch_updates(
             ),
             LiveIncrementalUpdate(
                 **identity,
+                event_type="market_update",
+                payload={
+                    "target": "bars_5m",
+                    # Only the current unclosed 5m bar.  Store/Renderer drop
+                    # unclosed rows absent from this payload so a new bucket
+                    # can delete the previous dynamic K without a schema change.
+                    "bars": _unclosed_bars(market["bars_5m"]),
+                    "quote": None,
+                },
+            ),
+            LiveIncrementalUpdate(
+                **identity,
                 event_type="indicators_updated",
                 payload=snapshot["indicators"],
             ),
@@ -1100,9 +1139,9 @@ def _branch_updates(
             event_type="market_update",
             payload={
                 "target": "bars_5m",
-                "bars": [
-                    row for row in market["bars_5m"] if row.get("closed") is True
-                ],
+                # Full display series, including the current dynamic bar.
+                # A closed-only replace would wipe the next-bucket dynamic K.
+                "bars": list(market["bars_5m"]),
                 "quote": None,
             },
         ),
