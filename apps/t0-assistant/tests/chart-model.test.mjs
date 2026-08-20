@@ -32,7 +32,7 @@ const fixture = JSON.parse(
   ),
 );
 
-test("5 minute model consumes contract series and appends only dynamic volume", () => {
+test("5 minute model appends dynamic volume and pads MACD with empty slot", () => {
   const model = createChartGroupModel(
     fixture,
     ChartGroupKind.FIVE_MINUTE,
@@ -48,6 +48,30 @@ test("5 minute model consumes contract series and appends only dynamic volume", 
     model.macd.histogram.slice(0, 2),
     fixture.indicators.five_minute.macd.histogram.slice(0, 2),
   );
+  // 动态 5m 成交量来自 bar；MACD / VOL MA 仍只用正式闭合 K，末槽留空对齐时间轴。
+  assert.deepEqual(
+    model.macd.histogram.at(-2),
+    fixture.indicators.five_minute.macd.histogram.at(-1),
+  );
+  assert.equal(model.macd.dif.length, 12);
+  assert.equal(model.macd.dea.length, 12);
+  assert.equal(model.macd.histogram.length, 12);
+  assert.deepEqual(model.macd.dif.at(-1), {
+    timestamp: "2026-07-22 10:10:00",
+    value: null,
+  });
+  assert.deepEqual(model.macd.dea.at(-1), {
+    timestamp: "2026-07-22 10:10:00",
+    value: null,
+  });
+  assert.deepEqual(model.macd.histogram.at(-1), {
+    timestamp: "2026-07-22 10:10:00",
+    value: null,
+  });
+  assert.equal(model.volumeMa5.length, 12);
+  assert.equal(model.volumeMa10.length, 12);
+  assert.equal(model.volumeMa5.at(-1).value, null);
+  assert.equal(model.volumeMa10.at(-1).value, null);
 });
 
 test("fixture chan_analysis is complete and rendered in 5 minute model", () => {

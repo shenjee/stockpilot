@@ -155,6 +155,10 @@ export class SynchronizedChartGroup {
   private readonly difSeries: ISeriesApi<"Line">;
   private readonly deaSeries: ISeriesApi<"Line">;
   private readonly macdHistogramSeries: ISeriesApi<"Histogram">;
+  // 5 分钟开启 fixRightEdge：LC 把右缘钉在最后一根有值数据上。动态 K 的
+  // MACD 是 null（可见 series 用 whitespace），隐藏 series 用占位值占住同一
+  // 时间槽，保证三图逻辑索引等长、十字线垂直对齐。
+  private readonly macdTimeAnchorSeries: ISeriesApi<"Line"> | null;
   private readonly resizeObserver: ResizeObserver;
   private readonly crosshairHandlers = new Map<
     IChartApi,
@@ -384,6 +388,15 @@ export class SynchronizedChartGroup {
       priceLineVisible: false,
       lastValueVisible: false,
     });
+    this.macdTimeAnchorSeries =
+      this.kind === ChartGroupKind.FIVE_MINUTE
+        ? this.macdChart.addSeries(LineSeries, {
+            visible: false,
+            lastValueVisible: false,
+            priceLineVisible: false,
+            autoscaleInfoProvider: () => ({ priceRange: null }),
+          })
+        : null;
 
     this.setupRangeSynchronization();
     this.setupCrosshairSynchronization();
@@ -1186,17 +1199,21 @@ export class SynchronizedChartGroup {
     this.difSeries.setData(this.toLineData(this.model.macd.dif, time));
     this.deaSeries.setData(this.toLineData(this.model.macd.dea, time));
     this.macdHistogramSeries.setData(
-      this.model.macd.histogram.flatMap((point) =>
+      this.model.macd.histogram.map((point) =>
         point.value === null
-          ? []
-          : [
-              {
-                time: time(point.timestamp),
-                value: point.value,
-                color: `${point.value >= 0 ? RED : GREEN}aa`,
-              },
-            ],
+          ? { time: time(point.timestamp) }
+          : {
+              time: time(point.timestamp),
+              value: point.value,
+              color: `${point.value >= 0 ? RED : GREEN}aa`,
+            },
       ),
+    );
+    this.macdTimeAnchorSeries?.setData(
+      this.model.timestamps.map((timestamp) => ({
+        time: time(timestamp),
+        value: 0,
+      })),
     );
   }
 
