@@ -4,17 +4,24 @@ import {
   type ChartGroupModel,
 } from "./chart-model.mjs";
 import { SynchronizedChartGroup } from "./SynchronizedChartGroup";
-import type { ChartViewportSnapshot } from "./chart-viewport.mjs";
+import {
+  AppendFollowPolicy,
+  type AppendFollowPolicyValue,
+  type ChartViewportSnapshot,
+} from "./chart-viewport.mjs";
 
 interface ChartGroupProps {
   model: ChartGroupModel;
   priceHeader: React.ReactNode;
   initialViewport?: ChartViewportSnapshot | null;
   onViewportChange?: (snapshot: ChartViewportSnapshot | null) => void;
-  /** 实盘 5 分钟：新增真实 K 强制贴右跟随。回放不得传 true。 */
-  forceFollowOnLiveAppend?: boolean;
-  /** 实盘 Live Session identity；变化时重置视口。回放传 null。 */
-  liveSessionId?: string | null;
+  /**
+   * Viewport append-follow policy (#155). Live 5m uses force-follow-latest;
+   * Replay must use preserve. Defaults to preserve.
+   */
+  appendFollowPolicy?: AppendFollowPolicyValue;
+  /** Dataset identity; changes reset viewport as first load. Replay: null. */
+  datasetIdentity?: string | null;
 }
 
 export function ChartGroup({
@@ -22,8 +29,8 @@ export function ChartGroup({
   priceHeader,
   initialViewport,
   onViewportChange,
-  forceFollowOnLiveAppend = false,
-  liveSessionId = null,
+  appendFollowPolicy = AppendFollowPolicy.PRESERVE,
+  datasetIdentity = null,
 }: ChartGroupProps) {
   const priceHostRef = useRef<HTMLDivElement>(null);
   const priceRef = useRef<HTMLDivElement>(null);
@@ -36,10 +43,10 @@ export function ChartGroup({
   // initialViewport 仅在组件（重新）挂载时消费一次，用于从 React 恢复可见范围。
   const initialViewportRef = useRef(initialViewport);
   initialViewportRef.current = initialViewport;
-  const forceFollowOnLiveAppendRef = useRef(forceFollowOnLiveAppend);
-  forceFollowOnLiveAppendRef.current = forceFollowOnLiveAppend;
-  const liveSessionIdRef = useRef(liveSessionId);
-  liveSessionIdRef.current = liveSessionId;
+  const appendFollowPolicyRef = useRef(appendFollowPolicy);
+  appendFollowPolicyRef.current = appendFollowPolicy;
+  const datasetIdentityRef = useRef(datasetIdentity);
+  datasetIdentityRef.current = datasetIdentity;
 
   useEffect(() => {
     const priceHost = priceHostRef.current;
@@ -54,8 +61,8 @@ export function ChartGroup({
       tooltipHost: priceHost,
       kind: model.kind,
       initialViewport: initialViewportRef.current ?? null,
-      forceFollowOnLiveAppend: forceFollowOnLiveAppendRef.current,
-      liveSessionId: liveSessionIdRef.current,
+      appendFollowPolicy: appendFollowPolicyRef.current,
+      datasetIdentity: datasetIdentityRef.current,
       onViewportChange: (snapshot) =>
         onViewportChangeRef.current?.(snapshot),
     });
@@ -89,10 +96,10 @@ export function ChartGroup({
     if (!controller) {
       return;
     }
-    // Session identity 先于 setModel：替换时清空视口，随后按首次加载对齐。
-    controller.setLiveSessionId(liveSessionId);
+    // Dataset identity 先于 setModel：替换时清空视口，随后按首次加载对齐。
+    controller.setDatasetIdentity(datasetIdentity);
     controller.setModel(model);
-  }, [model, liveSessionId]);
+  }, [model, datasetIdentity]);
 
   const isIntraday = model.kind === ChartGroupKind.ONE_MINUTE;
 

@@ -1,3 +1,11 @@
+export const AppendFollowPolicy: Readonly<{
+  PRESERVE: "preserve";
+  FORCE_FOLLOW_LATEST: "force-follow-latest";
+}>;
+
+export type AppendFollowPolicyValue =
+  (typeof AppendFollowPolicy)[keyof typeof AppendFollowPolicy];
+
 export const FollowState: Readonly<{
   FOLLOWING: "following";
   MANUAL: "manual";

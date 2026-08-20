@@ -210,7 +210,7 @@ test("setManualRange defaults to allowResumeFollowing:true (restore / pan-back c
 
 test("applyModel preserves a zoomed manual range across new data (no density recompute)", () => {
   // applyModel 默认语义：manual 前滚保留范围。实盘强制贴右由
-  // SynchronizedChartGroup.forceFollowOnLiveAppend 在上层处理（Issue #148）。
+  // SynchronizedChartGroup.appendFollowPolicy（force-follow-latest）在上层处理（Issue #148）。
   const bars = Array.from({ length: 100 }, (_, i) => `b${i}`);
   // 最新端缩放到 30 根 -> manual {70,100}。
   const zoomed = setManualRange(
