@@ -318,6 +318,57 @@ class KLineDataServiceTests(unittest.TestCase):
             self.assertEqual(len(provider.calls), 1)
             self.assertEqual(provider.calls[0][5], "index")
 
+    def test_instrument_type_mapped_to_provider_security_type(self):
+        """Issue #151: instrument_type (stock|etf|index) is adapted to the
+        provider's security_type (a_share|etf|index) by KLineDataService."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = KLineStore(Path(tmpdir) / "market_data.sqlite")
+            remote_rows = [
+                {"date": "2026-06-10", "open": 10.0, "close": 10.5, "high": 10.6, "low": 9.9, "volume": 100},
+                {"date": "2026-06-11", "open": 10.5, "close": 11.0, "high": 11.1, "low": 10.4, "volume": 120},
+            ]
+            provider = FakeProvider(rows=remote_rows)
+            service = KLineDataService(provider, store)
+
+            # stock → a_share
+            service.get_klines_result(
+                code="600519", end_date="2026-06-11", market="sh",
+                timeframe="day", instrument_type="stock", limit=10,
+            )
+            self.assertEqual(provider.calls[0][5], "a_share")
+
+            # etf → etf
+            service.get_klines_result(
+                code="510300", end_date="2026-06-11", market="sh",
+                timeframe="day", instrument_type="etf", limit=10,
+            )
+            self.assertEqual(provider.calls[1][5], "etf")
+
+            # index → index (no adjustment)
+            service.get_klines_result(
+                code="000001", end_date="2026-06-11", market="sh",
+                timeframe="day", instrument_type="index", limit=10,
+            )
+            self.assertEqual(provider.calls[2][5], "index")
+
+    def test_instrument_type_takes_precedence_over_security_type(self):
+        """When both are supplied, instrument_type wins (authoritative identity)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = KLineStore(Path(tmpdir) / "market_data.sqlite")
+            remote_rows = [
+                {"date": "2026-06-10", "open": 10.0, "close": 10.5, "high": 10.6, "low": 9.9, "volume": 100},
+                {"date": "2026-06-11", "open": 10.5, "close": 11.0, "high": 11.1, "low": 10.4, "volume": 120},
+            ]
+            provider = FakeProvider(rows=remote_rows)
+            service = KLineDataService(provider, store)
+
+            service.get_klines_result(
+                code="000001", end_date="2026-06-11", market="sh",
+                timeframe="day", security_type="a_share",
+                instrument_type="index", limit=10,
+            )
+            self.assertEqual(provider.calls[0][5], "index")
+
     def test_prefers_provider_get_kline_result_when_available(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             store = KLineStore(Path(tmpdir) / "market_data.sqlite")

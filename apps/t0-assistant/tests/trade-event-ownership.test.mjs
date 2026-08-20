@@ -6,7 +6,7 @@ import { TradeOperationController } from "../renderer/src/trading/trade-operatio
 // A trade operation_failed event carrying the frozen application_error shape.
 function tradeOperationFailedEvent(operationId) {
   return {
-    schema_version: "t0_app_v1",
+    schema_version: "t0_app_v2",
     service_generation: 3,
     session_id: null,
     revision: 5,

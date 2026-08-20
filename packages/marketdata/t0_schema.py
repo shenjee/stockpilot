@@ -1,19 +1,33 @@
 """Stable T+0 market-data dictionaries built from existing provider output.
 
 The cross-process shape is owned by
-``apps/t0-assistant/contracts/logical-schema.json``.  This module deliberately
+``apps/t0-assistant/contracts/logical-v2.schema.json``.  This module deliberately
 does not introduce a second hierarchy of bar or quote classes: it validates
 and maps provider dictionaries into that frozen logical shape, with security
 identity and timezone carried by a small series/snapshot envelope. Tencent
 provider rows include market timestamps, reported amounts and closed state;
 KLineStore persists reported amounts while retaining legacy rows with an
 unknown amount as ``NULL`` until a provider refresh replaces them.
+
+Issue #151 separates four independent capability boundaries:
+
+* :class:`InstrumentIdentity` / :class:`InstrumentType` — *what an instrument
+  is* (stock, etf, index).  This is objective securities-master identity and
+  lives here, in the market-data package.  It is deliberately distinct from
+  the trading/fee layer's ``FeeSecurityType`` (a_share | etf), which expresses
+  *can automatic fees be computed*.
+* MarketDataCapability — *can quote/kline/replay be shown* — is implicit:
+  every resolved :class:`InstrumentIdentity` can be viewed.
+* TradeCapability and FeeCapability are owned by the trading package and are
+  enforced at the trade/fee boundary, not in search or market-data code.
 """
 
 from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any
 
 from .market_data import get_market_prefix
@@ -23,6 +37,93 @@ T0_MARKET_SCHEMA_VERSION = "t0_market_v1"
 T0_TIMEZONE = "Asia/Shanghai"
 T0_MARKETS = frozenset({"sh", "sz"})
 T0_TIMEFRAMES = frozenset({"1m", "5m", "day"})
+
+
+class InstrumentType(StrEnum):
+    """Objective securities-master instrument identity.
+
+    This is *what an instrument is*, independent of whether it can be traded
+    or have fees auto-computed.  The trading/fee layer maps these to its own
+    ``FeeSecurityType`` (a_share | etf) at its boundary; ``index`` has no
+    fee-layer counterpart and is rejected there.
+    """
+
+    STOCK = "stock"
+    ETF = "etf"
+    INDEX = "index"
+
+
+# Mapping from SecuritiesStore ``type`` values to :class:`InstrumentType`.
+_INSTRUMENT_TYPE_MAP: dict[str, InstrumentType] = {
+    "stock": InstrumentType.STOCK,
+    "etf": InstrumentType.ETF,
+    "index": InstrumentType.INDEX,
+}
+
+
+@dataclass(frozen=True, slots=True)
+class InstrumentIdentity:
+    """Authoritative, immutable securities-master identity.
+
+    A resolved :class:`InstrumentIdentity` is the single source of truth for
+    *what an instrument is*.  It is resolved once at the App/API orchestration
+    entry (via :class:`SecuritiesSearchService` or an equivalent catalog port)
+    and then passed — as an immutable value — through Session, Live, Replay,
+    and Historical paths.  Downstream code never re-resolves identity from a
+    bare symbol, and never fabricates identity when resolution fails.
+
+    The ``instrument_type`` field carries objective identity (stock | etf |
+    index).  The trading/fee layer's ``FeeSecurityType`` is a *separate*
+    enum owned by ``packages.t0assistant.trading``; the mapping
+    (stock→a_share, etf→etf, index→unsupported) is an explicit trade-strategy
+    decision enforced at the trade/fee boundary, not a property of identity.
+    """
+
+    symbol: str
+    code: str
+    market: str
+    name: str
+    instrument_type: InstrumentType
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "symbol": self.symbol,
+            "code": self.code,
+            "market": self.market,
+            "name": self.name,
+            "instrument_type": self.instrument_type.value,
+        }
+
+    @classmethod
+    def from_mapping(cls, data: Mapping[str, Any]) -> InstrumentIdentity:
+        """Build an :class:`InstrumentIdentity` from a validated mapping.
+
+        Raises :class:`MarketDataSchemaError` if any required field is missing
+        or ``instrument_type`` is not a known :class:`InstrumentType`.
+        """
+
+        try:
+            instrument_type = InstrumentType(str(data["instrument_type"]))
+        except (KeyError, ValueError) as exc:
+            raise MarketDataSchemaError(
+                "instrument_type must be one of: "
+                + ", ".join(t.value for t in InstrumentType)
+            ) from exc
+        symbol = str(data.get("symbol", ""))
+        code = str(data.get("code", ""))
+        market = str(data.get("market", "")).lower()
+        name = str(data.get("name", "")).strip()
+        if not symbol or not code or market not in T0_MARKETS or not name:
+            raise MarketDataSchemaError(
+                "InstrumentIdentity requires non-empty symbol, code, market (sh|sz) and name"
+            )
+        return cls(
+            symbol=symbol,
+            code=code,
+            market=market,
+            name=name,
+            instrument_type=instrument_type,
+        )
 
 
 class MarketDataSchemaError(ValueError):

@@ -12,6 +12,7 @@ from packages.marketdata.calendar_query import FixtureCalendarQuery
 from packages.marketdata.services.market_context_service import MarketContextService
 from packages.t0assistant.runtime.computation_executor import BoundedComputationExecutor
 from packages.t0assistant.runtime.coordinator import SessionSpec, SessionType
+from packages.marketdata.t0_schema import InstrumentIdentity, InstrumentType
 from packages.t0assistant.runtime.live_market_view import (
     resolve_polling_profile,
     should_run_close_reconciliation,
@@ -35,6 +36,15 @@ from packages.t0assistant.runtime.pipeline import (
     PipelineMarketInput,
     PipelineResult,
     WorkbenchPipeline,
+)
+
+
+_STOCK = InstrumentIdentity(
+    symbol="sh.600000",
+    code="600000",
+    market="sh",
+    name="Test Stock",
+    instrument_type=InstrumentType.STOCK,
 )
 
 
@@ -248,6 +258,7 @@ class AtomicDaySwitchTests(unittest.TestCase):
             symbol="sh.600000",
             generation=1,
             trade_date=None,
+            instrument=_STOCK,
         )
 
     def test_before_market_open_does_not_switch(self) -> None:
@@ -626,6 +637,7 @@ class StaleEpochRaceTests(unittest.TestCase):
             symbol="sh.600000",
             generation=1,
             trade_date=None,
+            instrument=_STOCK,
         )
 
     def _accept_switch(self, store: LiveProjectionStore, switched: list[LiveSnapshotCandidate]):
@@ -815,6 +827,7 @@ class DaySwitchFailureAtomicityTests(unittest.TestCase):
             symbol="sh.600000",
             generation=1,
             trade_date=None,
+            instrument=_STOCK,
         )
 
     def test_preview_failure_still_commits_day_switch(self) -> None:
@@ -975,6 +988,7 @@ class CloseReconciliationRetryTests(unittest.TestCase):
             symbol="sh.600000",
             generation=1,
             trade_date=None,
+            instrument=_STOCK,
         )
 
     def _closed_port(self) -> BranchingLiveInput:

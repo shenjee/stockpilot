@@ -15,7 +15,15 @@ from typing import Any, Protocol
 from .models import TradeSide
 
 
-class SecurityType(StrEnum):
+class FeeSecurityType(StrEnum):
+    """Fee-relevant security classification.
+
+    This is intentionally separate from :class:`InstrumentType`
+    (stock|etf|index) in ``packages.marketdata``.  The fee layer only cares
+    about instruments that incur trading fees; indices are rejected with
+    ``automatic_fee_not_supported`` (issue #151 decision #8).
+    """
+
     A_SHARE = "a_share"
     ETF = "etf"
 
@@ -27,6 +35,20 @@ class FeePolicyValidationError(ValueError):
         self.field = field
         self.message = message
         super().__init__(f"{field}: {message}")
+
+
+class AutomaticFeeNotSupportedError(FeePolicyValidationError):
+    """The instrument cannot have fees auto-computed (e.g. indices).
+
+    Carries the stable error code ``automatic_fee_not_supported`` so the API
+    boundary can map it to a distinct response code instead of the generic
+    ``invalid_fee_plan_request`` (issue #151 decision #8).
+    """
+
+    code = "automatic_fee_not_supported"
+
+    def __init__(self, field: str = "security_type", message: str = "index is not tradable") -> None:
+        super().__init__(field, message)
 
 
 class _FeePlanLike(Protocol):
@@ -85,7 +107,7 @@ def _positive_int(value: Any, field: str) -> int:
 
 def calculate_fee(
     *,
-    security_type: SecurityType | str,
+    security_type: FeeSecurityType | str,
     side: TradeSide | str,
     price: Decimal | float | str,
     quantity: int,
@@ -95,17 +117,26 @@ def calculate_fee(
 
     All monetary calculations use ``Decimal`` to avoid binary-float rounding.
     The caller is responsible for any user override of the returned total.
+
+    Indices (``instrument_type == "index"``) are rejected with
+    ``automatic_fee_not_supported`` because they are not tradable and have
+    no fee schedule (issue #151 decision #8).
     """
 
     if isinstance(security_type, str):
+        if security_type == "index":
+            raise AutomaticFeeNotSupportedError(
+                "security_type",
+                "automatic_fee_not_supported: index is not tradable",
+            )
         try:
-            security_type = SecurityType(security_type)
+            security_type = FeeSecurityType(security_type)
         except ValueError as exc:
-            allowed = ", ".join(item.value for item in SecurityType)
+            allowed = ", ".join(item.value for item in FeeSecurityType)
             raise FeePolicyValidationError(
                 "security_type", f"must be one of: {allowed}"
             ) from exc
-    if not isinstance(security_type, SecurityType):
+    if not isinstance(security_type, FeeSecurityType):
         raise FeePolicyValidationError("security_type", "must be 'a_share' or 'etf'")
 
     if isinstance(side, str):
@@ -122,7 +153,7 @@ def calculate_fee(
 
     amount = price_value * Decimal(quantity_value)
 
-    if security_type is SecurityType.ETF:
+    if security_type is FeeSecurityType.ETF:
         commission_rate = plan.etf_commission_rate
         min_commission = plan.etf_min_commission
     else:

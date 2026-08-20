@@ -4,7 +4,10 @@ export function standardSecurityFromResponse(response) {
     /^(sh|sz)\.[0-9]{6}$/.test(security.symbol) &&
     /^[0-9]{6}$/.test(security.code) &&
     typeof security.name === "string" &&
-    security.name.length > 0
+    security.name.length > 0 &&
+    (security.instrument_type === "stock" ||
+      security.instrument_type === "etf" ||
+      security.instrument_type === "index")
     ? security
     : null;
 }
@@ -12,11 +15,7 @@ export function standardSecurityFromResponse(response) {
 export function restoredSecurityFromResponse(response) {
   const data = response?.data ?? response;
   const security = data?.restored_security;
-  return security &&
-    /^(sh|sz)\.[0-9]{6}$/.test(security.symbol) &&
-    /^[0-9]{6}$/.test(security.code) &&
-    typeof security.name === "string" &&
-    security.name.length > 0
+  return standardSecurity(security)
     ? security
     : null;
 }
@@ -40,18 +39,6 @@ export function cancelStartupRestoreTracking(restoreInFlight, activeOperations) 
   activeOperations.delete(startupRestoreOperationId(restoreInFlight.sessionId));
 }
 
-export function partialSecurityFromSymbol(symbol) {
-  const match = /^(sh|sz)\.([0-9]{6})$/.exec(symbol);
-  if (!match) return null;
-  return {
-    symbol,
-    code: match[2],
-    market: match[1],
-    name: "",
-    security_type: "a_share",
-  };
-}
-
 export function securitiesFromSearchResponse(response) {
   const securities = response?.data?.securities;
   return Array.isArray(securities)
@@ -62,15 +49,17 @@ export function securitiesFromSearchResponse(response) {
 /**
  * Map a standard security identity to a market classification label.
  *
- * Uses the authoritative `market` and `security_type` fields rather than
- * code-prefix inference, per issue #131:
- *   - security_type = etf           -> 基金 (covers SH/SZ listed ETFs only)
- *   - a_share + market = sh         -> 沪市
- *   - a_share + market = sz         -> 深市
+ * Uses the authoritative `market` and `instrument_type` fields rather than
+ * code-prefix inference, per issue #151:
+ *   - instrument_type = etf          -> 基金 (covers SH/SZ listed ETFs only)
+ *   - instrument_type = index        -> 指数
+ *   - stock + market = sh           -> 沪市
+ *   - stock + market = sz           -> 深市
  */
 export function securityCategoryLabel(security) {
   if (!security) return "";
-  if (security.security_type === "etf") return "基金";
+  if (security.instrument_type === "etf") return "基金";
+  if (security.instrument_type === "index") return "指数";
   return security.market === "sh" ? "沪市" : "深市";
 }
 
@@ -260,7 +249,10 @@ function standardSecurity(security) {
       /^(sh|sz)\.[0-9]{6}$/.test(security.symbol) &&
       /^[0-9]{6}$/.test(security.code) &&
       typeof security.name === "string" &&
-      security.name.length > 0,
+      security.name.length > 0 &&
+      (security.instrument_type === "stock" ||
+        security.instrument_type === "etf" ||
+        security.instrument_type === "index"),
   );
 }
 

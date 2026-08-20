@@ -42,7 +42,7 @@ from threading import Lock
 from typing import Any, Protocol
 
 from .models import TradeValidationError
-from .service import TradeService
+from .service import TradeEligibilityError, TradeService
 
 
 class TradeEventPublisher(Protocol):
@@ -83,6 +83,40 @@ def _error_def(error_code: str, *, category: str, retryable: bool) -> dict[str, 
         "category": category,
         "retryable": retryable,
     }
+
+
+def _map_eligibility_error(error: TradeEligibilityError) -> dict[str, Any]:
+    """Map a :class:`TradeEligibilityError` to a stable application_error.
+
+    The error message carries the specific stable code set by
+    :class:`TradeService._require_eligible`:
+    ``"security_not_found"``, ``"security_not_tradable"``, or
+    ``"service_unavailable"``.  Each maps to a distinct error_code so the
+    renderer can distinguish "not found" from "not tradable" from
+    "eligibility service down" instead of receiving a generic
+    ``trade_service_unavailable`` for all three.
+    """
+    # TradeValidationError stores (field, message); str() yields "field message".
+    parts = str(error).strip().split(maxsplit=1)
+    code = parts[1].strip() if len(parts) == 2 else ""
+    if code == "security_not_found":
+        return _error_def(
+            "security_not_found", category="validation", retryable=False
+        )
+    if code == "security_not_tradable":
+        return _error_def(
+            "security_not_tradable", category="validation", retryable=False
+        )
+    if code == "service_unavailable":
+        return _error_def(
+            "eligibility_service_unavailable",
+            category="service",
+            retryable=True,
+        )
+    # Unknown eligibility code: surface as a retryable service error.
+    return _error_def(
+        "trade_service_unavailable", category="service", retryable=True
+    )
 
 
 # Repository exceptions are imported lazily to keep this module importable
@@ -298,7 +332,7 @@ class TradeCommandApi:
 
     def _accepted(self, request_id: str) -> dict[str, Any]:
         return {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "request_id": request_id,
             "accepted": True,
             "operation_id": None,
@@ -316,7 +350,7 @@ class TradeCommandApi:
         retryable: bool,
     ) -> dict[str, Any]:
         return {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "request_id": request_id,
             "accepted": False,
             "operation_id": None,
@@ -342,6 +376,13 @@ class TradeCommandApi:
     def _map_error(error: BaseException) -> dict[str, Any]:
         if isinstance(error, _TradeMissing):
             return _error_def("trade_not_found", category="data", retryable=False)
+        # Issue #151: TradeEligibilityError is a TradeValidationError subclass.
+        # Its message carries the specific stable code ("security_not_found",
+        # "security_not_tradable", or "service_unavailable"), so check it
+        # before the generic parent mapping to avoid falling through to
+        # trade_service_unavailable.
+        if isinstance(error, TradeEligibilityError):
+            return _map_eligibility_error(error)
         definition = _ERROR_DEFINITIONS.get(type(error))
         if definition is not None:
             return definition

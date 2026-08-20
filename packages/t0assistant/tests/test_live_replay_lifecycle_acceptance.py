@@ -21,6 +21,16 @@ from packages.t0assistant.runtime import (
     SessionType,
     SimulatedMonotonicClock,
 )
+from packages.marketdata.t0_schema import InstrumentIdentity, InstrumentType
+
+
+_STOCK = InstrumentIdentity(
+    symbol="sh.600000",
+    code="600000",
+    market="sh",
+    name="Test Stock",
+    instrument_type=InstrumentType.STOCK,
+)
 from packages.t0assistant.tests.test_replay_session import (
     _CachingAnalyzer,
     _default_analyze_5m,
@@ -98,7 +108,7 @@ class LiveReplayLifecycleAcceptanceTests(unittest.TestCase):
             self.factory.close()
 
     def test_live_keeps_advancing_and_is_immediately_current_after_replay(self) -> None:
-        selected = self.coordinator.select_symbol("sh.600000")
+        selected = self.coordinator.select_symbol("sh.600000", instrument=_STOCK)
         live_identity = selected.live_session
         assert live_identity is not None
         live = self.factory.live_sessions[0]
@@ -143,7 +153,7 @@ class LiveReplayLifecycleAcceptanceTests(unittest.TestCase):
     def test_leaving_replay_destroys_date_progress_picture_and_simulated_trades(
         self,
     ) -> None:
-        self.coordinator.select_symbol("sh.600000")
+        self.coordinator.select_symbol("sh.600000", instrument=_STOCK)
         self.coordinator.set_mode(AppMode.REPLAY)
         started = self.coordinator.begin_replay("2026-07-24")
         replay_identity = started.replay_session

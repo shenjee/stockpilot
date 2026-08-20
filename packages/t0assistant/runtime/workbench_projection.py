@@ -1,7 +1,7 @@
 """Workbench Projection: atomic assembly of a front-end workbench snapshot.
 
 A :class:`WorkbenchProjection` is a frozen, serializable payload that matches
-``logical-schema.json#/$defs/workbench_snapshot``.  It does **not** produce an
+``logical-v2.schema.json#/$defs/workbench_snapshot``.  It does **not** produce an
 event envelope; callers that publish events must wrap ``to_dict()`` with their
 own ``schema_version``, ``service_generation``, ``session_id``, ``revision`` and
 ``event_type``.
@@ -65,7 +65,7 @@ class SessionProjectionInput:
 class ReplayProjectionInput:
     """Immutable Replay cursor metadata explicitly supplied by the caller.
 
-    The field set and value ranges mirror ``replay-v1.schema.json#/$defs/replay_state``.
+    The field set and value ranges mirror ``replay-v2.schema.json#/$defs/replay_state``.
     Projection validates both the shape and the consistency between the Replay
     cursor, the Session state, and the computed :class:`PipelineResult`.
     """
@@ -495,7 +495,7 @@ def _load_contract(name: str) -> dict[str, Any]:
 
 
 def _build_logical_validator() -> Draft202012Validator:
-    schema_doc = _load_contract("logical-schema.json")
+    schema_doc = _load_contract("logical-v2.schema.json")
     registry = Registry().with_resource(
         schema_doc["$id"], Resource.from_contents(schema_doc)
     )
@@ -504,8 +504,8 @@ def _build_logical_validator() -> Draft202012Validator:
 
 
 def _build_replay_validator() -> Draft202012Validator:
-    logical = _load_contract("logical-schema.json")
-    replay = _load_contract("replay-v1.schema.json")
+    logical = _load_contract("logical-v2.schema.json")
+    replay = _load_contract("replay-v2.schema.json")
     registry = Registry().with_resources(
         [
             (logical["$id"], Resource.from_contents(logical)),

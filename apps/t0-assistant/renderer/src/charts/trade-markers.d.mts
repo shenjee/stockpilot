@@ -1,7 +1,7 @@
 export type TradeScope = "real" | "simulated";
 export type TradeSide = "buy" | "sell";
 
-/** Mirrors the frozen trade_record shape in app-v1.schema.json. */
+/** Mirrors the frozen trade_record shape in app-v2.schema.json. */
 export interface TradeRecord {
   trade_id: string;
   bucket_start: string;

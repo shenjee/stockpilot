@@ -8,10 +8,10 @@ import { createFakeSafeBridge } from "./fake-safe-bridge.mjs";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const fixture = JSON.parse(
-  await readFile(resolve(testDir, "../contracts/fixtures/workbench-flow-v1.json"), "utf8"),
+  await readFile(resolve(testDir, "../contracts/fixtures/workbench-flow-v2.json"), "utf8"),
 );
 const replayFixture = JSON.parse(
-  await readFile(resolve(testDir, "../contracts/fixtures/replay-speed-v1.json"), "utf8"),
+  await readFile(resolve(testDir, "../contracts/fixtures/replay-speed-v2.json"), "utf8"),
 );
 
 test("Fake Safe Bridge exposes only the domain allowlist", () => {
@@ -27,7 +27,7 @@ test("Fake Safe Bridge exposes only the domain allowlist", () => {
 test("Fake Safe Bridge serves the shared full snapshot and records snake_case commands", async () => {
   const { bridge, controller } = createFakeSafeBridge(fixture);
   const response = await bridge.getLiveSnapshot({
-    schema_version: "t0_app_v1",
+    schema_version: "t0_app_v2",
     request_id: "node-snapshot-1",
     command: "get_live_snapshot",
     session_id: fixture.session_id,
@@ -38,7 +38,7 @@ test("Fake Safe Bridge serves the shared full snapshot and records snake_case co
   assert.deepEqual(controller.calls[0], {
     command: "get_live_snapshot",
     request: {
-      schema_version: "t0_app_v1",
+      schema_version: "t0_app_v2",
       request_id: "node-snapshot-1",
       command: "get_live_snapshot",
       session_id: fixture.session_id,
@@ -59,7 +59,7 @@ test("Safe Bridge exposes a lifecycle-only manual service retry", async () => {
 test("Safe Bridge returns multiple standard securities for fuzzy search", async () => {
   const { bridge, controller } = createFakeSafeBridge(fixture);
   const response = await bridge.searchSecurities({
-    schema_version: "t0_app_v1",
+    schema_version: "t0_app_v2",
     request_id: "search-1",
     command: "search_securities",
     session_id: null,
@@ -95,7 +95,7 @@ test("Fake Safe Bridge subscriptions are isolated and removable", () => {
   bridge.onReplayEvent((event) => replayEvents.push(event));
 
   controller.emitInitialSnapshot();
-  controller.emitReplayEvent({ schema_version: "t0_replay_v1", revision: 1 });
+  controller.emitReplayEvent({ schema_version: "t0_replay_v2", revision: 1 });
   stopApp();
   controller.emitInitialSnapshot();
 
@@ -132,7 +132,7 @@ test("Fake Safe Bridge returns a historical snapshot via getHistoricalSnapshot",
   };
   const { bridge, controller } = createFakeSafeBridge(fixture, { historicalSnapshot });
   const response = await bridge.getHistoricalSnapshot({
-    schema_version: "t0_app_v1",
+    schema_version: "t0_app_v2",
     request_id: "node-historical-1",
     command: "get_historical_snapshot",
     session_id: null,
@@ -143,7 +143,7 @@ test("Fake Safe Bridge returns a historical snapshot via getHistoricalSnapshot",
   assert.deepEqual(controller.calls[0], {
     command: "get_historical_snapshot",
     request: {
-      schema_version: "t0_app_v1",
+      schema_version: "t0_app_v2",
       request_id: "node-historical-1",
       command: "get_historical_snapshot",
       session_id: null,
@@ -155,7 +155,7 @@ test("Fake Safe Bridge returns a historical snapshot via getHistoricalSnapshot",
 test("Fake Safe Bridge returns Replay v1 identities and a complete Replay snapshot", async () => {
   const { bridge } = createFakeSafeBridge(fixture, { replayFixture });
   const request = {
-    schema_version: "t0_replay_v1",
+    schema_version: "t0_replay_v2",
     request_id: "replay-command-1",
     session_id: "replay-1",
   };
@@ -170,7 +170,7 @@ test("Fake Safe Bridge returns Replay v1 identities and a complete Replay snapsh
   ]);
   const snapshot = await bridge.getReplaySnapshot(request);
 
-  assert.ok(results.every((result) => result.schema_version === "t0_replay_v1"));
+  assert.ok(results.every((result) => result.schema_version === "t0_replay_v2"));
   assert.equal(results[0].security.symbol, "sh.600000");
   assert.equal(results[1].operation_id, "operation-begin_replay");
   assert.equal(results[4].operation_id, "operation-step_replay");

@@ -6,6 +6,7 @@ import unittest
 from typing import Any
 
 from packages.marketdata.services.market_context_service import MarketContextService
+from packages.marketdata.t0_schema import InstrumentIdentity, InstrumentType
 from packages.t0assistant.runtime.live_session import PreparedLiveWarmup
 from packages.t0assistant.runtime import (
     LiveSession,
@@ -13,6 +14,15 @@ from packages.t0assistant.runtime import (
     PipelineMarketInput,
     SessionSpec,
     SessionType,
+)
+
+
+_STOCK = InstrumentIdentity(
+    symbol="sh.600000",
+    code="600000",
+    market="sh",
+    name="Test Stock",
+    instrument_type=InstrumentType.STOCK,
 )
 
 
@@ -155,6 +165,7 @@ class LiveSessionTests(unittest.TestCase):
             symbol="sh.600000",
             generation=1,
             trade_date=None,
+            instrument=_STOCK,
         )
 
     def test_initial_load_requests_500_preheat_bars_and_emits_only_ready_candidate(self) -> None:
@@ -390,6 +401,7 @@ class LiveSessionTests(unittest.TestCase):
             symbol="sh.600000",
             generation=1,
             trade_date="2026-07-24",
+            instrument=_STOCK,
         )
 
         with self.assertRaises(LiveSessionValidationError):

@@ -56,7 +56,7 @@ class _FakePort:
                         "code": "600000",
                         "market": "sh",
                         "name": "浦发银行",
-                        "security_type": "a_share",
+                        "instrument_type": "stock",
                     }
                 }
             ),
@@ -81,7 +81,7 @@ class _FakePort:
 
 
 def _requests() -> dict[str, dict[str, object]]:
-    common = {"schema_version": "t0_replay_v1", "request_id": "request-1"}
+    common = {"schema_version": "t0_replay_v2", "request_id": "request-1"}
     session = {**common, "session_id": "replay-1"}
     return {
         "select_symbol": {**common, "symbol": "sh.600000"},

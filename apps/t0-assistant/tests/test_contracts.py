@@ -28,13 +28,19 @@ def load_json(name: str):
 class ContractTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.logical = load_json("logical-schema.json")
-        cls.app = load_json("app-v1.schema.json")
-        cls.replay = load_json("replay-v1.schema.json")
-        cls.fixture = load_json("fixtures/replay-speed-v1.json")
-        cls.workbench_flow = load_json("fixtures/workbench-flow-v1.json")
-        cls.list_trades_flow = load_json("fixtures/list-trades-flow-v1.json")
+        cls.logical = load_json("logical-v2.schema.json")
+        cls.app = load_json("app-v2.schema.json")
+        cls.replay = load_json("replay-v2.schema.json")
+        cls.fixture = load_json("fixtures/replay-speed-v2.json")
+        cls.fixture_v1 = load_json("fixtures/replay-speed-v1.json")
+        cls.workbench_flow = load_json("fixtures/workbench-flow-v2.json")
+        cls.workbench_flow_v1 = load_json("fixtures/workbench-flow-v1.json")
+        cls.list_trades_flow = load_json("fixtures/list-trades-flow-v2.json")
+        cls.list_trades_flow_v1 = load_json("fixtures/list-trades-flow-v1.json")
         cls.historical_snapshot_flow = load_json(
+            "fixtures/historical-snapshot-flow-v2.json"
+        )
+        cls.historical_snapshot_flow_v1 = load_json(
             "fixtures/historical-snapshot-flow-v1.json"
         )
         cls.registry = Registry().with_resources(
@@ -72,6 +78,14 @@ class ContractTest(unittest.TestCase):
         for request in self.fixture["set_speed_requests"]:
             validator.validate(request)
 
+    def test_v1_fixtures_remain_v1_compatibility_payloads(self) -> None:
+        self.assertEqual(self.fixture_v1["schema_version"], "t0_replay_v1")
+        self.assertEqual(self.workbench_flow_v1["schema_version"], "t0_app_v1")
+        self.assertEqual(self.list_trades_flow_v1["schema_version"], "t0_app_v1")
+        self.assertEqual(
+            self.historical_snapshot_flow_v1["schema_version"], "t0_app_v1"
+        )
+
     def test_invalid_speed_is_rejected(self) -> None:
         invalid = dict(self.fixture["set_speed_requests"][0], playback_speed=3)
         errors = list(self.validator("set_replay_speed_request").iter_errors(invalid))
@@ -83,33 +97,33 @@ class ContractTest(unittest.TestCase):
         self.assertNotIn("operation_id", self.fixture["changed_event"])
         self.assertEqual(self.fixture["changed_event"]["revision"], self.fixture["snapshot"]["session"]["revision"])
 
-    def test_app_contract_references_replay_v1_without_redefining_commands(self) -> None:
+    def test_app_contract_references_replay_v2_without_redefining_commands(self) -> None:
         refs = {
             self.app["$defs"][name]["$ref"]
             for name in ("replay_set_speed_request", "replay_event_envelope", "replay_workbench_snapshot")
         }
-        self.assertTrue(all("t0-replay-v1.schema.json" in ref for ref in refs))
+        self.assertTrue(all("t0-replay-v2.schema.json" in ref for ref in refs))
         commands = self.app["$defs"]["command_request"]["properties"]["command"]["enum"]
         self.assertNotIn("set_replay_speed", commands)
 
     def test_live_trade_and_preference_commands_validate(self) -> None:
         requests = [
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "request_id": "req-search",
                 "command": "search_securities",
                 "session_id": None,
                 "payload": {"query": "gzmt", "limit": 20},
             },
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "request_id": "req-select",
                 "command": "select_security",
                 "session_id": None,
                 "payload": {"symbol": "sh.600519"},
             },
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "request_id": "req-trade",
                 "command": "create_trade",
                 "session_id": "live-1",
@@ -128,7 +142,7 @@ class ContractTest(unittest.TestCase):
                 },
             },
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "request_id": "req-prefs",
                 "command": "save_preferences",
                 "session_id": None,
@@ -149,7 +163,7 @@ class ContractTest(unittest.TestCase):
                 },
             },
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "request_id": "req-hist",
                 "command": "get_historical_snapshot",
                 "session_id": None,
@@ -239,7 +253,7 @@ class ContractTest(unittest.TestCase):
         )
         snapshot = build_workbench_projection(result, session).to_dict()
         response = {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "request_id": "req-hist-resp",
             "accepted": True,
             "operation_id": None,
@@ -254,7 +268,7 @@ class ContractTest(unittest.TestCase):
 
     def test_app_events_enforce_generation_session_and_revision(self) -> None:
         event = {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "service_generation": 2,
             "session_id": "live-1",
             "revision": 4,
@@ -285,7 +299,7 @@ class ContractTest(unittest.TestCase):
 
     def test_live_market_view_updated_event_matches_contract(self) -> None:
         event = {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "service_generation": 2,
             "session_id": "live-1",
             "revision": 5,
@@ -310,7 +324,7 @@ class ContractTest(unittest.TestCase):
 
     def test_synchronous_rejection_cannot_claim_an_operation(self) -> None:
         response = {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "request_id": "req-bad",
             "accepted": False,
             "operation_id": "must-not-exist",
@@ -332,7 +346,7 @@ class ContractTest(unittest.TestCase):
         validator = self.app_validator("command_response")
         validator.validate(
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "request_id": "req-sync",
                 "accepted": True,
                 "operation_id": None,
@@ -342,7 +356,7 @@ class ContractTest(unittest.TestCase):
         )
         validator.validate(
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "request_id": "req-async",
                 "accepted": True,
                 "operation_id": "operation-1",
@@ -353,7 +367,7 @@ class ContractTest(unittest.TestCase):
 
     def test_trade_event_uses_shared_record_shape_and_explicit_scope(self) -> None:
         event = {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "service_generation": 2,
             "session_id": None,
             "revision": 5,

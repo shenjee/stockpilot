@@ -42,7 +42,7 @@ export function createSimulatedTradeClient(bridge, sessionId) {
 
   function commandRequest(command, payload) {
     return {
-      schema_version: "t0_app_v1",
+      schema_version: "t0_app_v2",
       request_id: requestId(`replay-${command}`),
       command,
       session_id: sessionId,

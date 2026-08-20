@@ -88,7 +88,8 @@ export function selectWorkbenchSecurity(state, security) {
     !/^(sh|sz)\.[0-9]{6}$/.test(security.symbol) ||
     !/^[0-9]{6}$/.test(security.code) ||
     typeof security.name !== "string" ||
-    security.name.length === 0
+    security.name.length === 0 ||
+    !["stock", "etf", "index"].includes(security.instrument_type)
   ) {
     throw new TypeError("Invalid standard security identity");
   }

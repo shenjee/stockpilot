@@ -1,5 +1,6 @@
 const APP_COMMANDS = Object.freeze({
   searchSecurities: "search_securities",
+  resolveSecurityIdentity: "resolve_security_identity",
   selectSecurity: "select_security",
   saveLastSymbol: "save_last_symbol",
   getLiveSnapshot: "get_live_snapshot",
@@ -43,6 +44,10 @@ export const SAFE_BRIDGE_METHODS = Object.freeze([
   ...Object.keys(APP_COMMANDS),
   ...Object.keys(REPLAY_COMMANDS),
   ...Object.keys(SUBSCRIPTIONS),
+]);
+
+export const SAFE_BRIDGE_COMMANDS = Object.freeze([
+  ...new Set(Object.values({ ...APP_COMMANDS, ...REPLAY_COMMANDS })),
 ]);
 
 export function buildSafeBridge({ invoke, subscribe }) {

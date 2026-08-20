@@ -40,6 +40,7 @@ def build_historical_snapshot(
     *,
     analyzer: CzscAnalyzerPort | None = None,
     deadline_seconds: float = 8.0,
+    instrument_type: str | None = None,
 ) -> dict[str, Any]:
     """Build a complete, static ``workbench_snapshot`` for a historical day.
 
@@ -52,6 +53,10 @@ def build_historical_snapshot(
         analyzer: optional CZSC analyzer; when ``None`` the pipeline default
             (closed-5m ``packages.chantheory.analyze`` wrapper) is used.
         deadline_seconds: absolute monotonic deadline for data preparation.
+        instrument_type: authoritative identity enum (stock|etf|index)
+            resolved once at the App/API entry from the securities master.
+            When ``None``, the provider falls back to its default
+            security-type handling.
 
     Returns:
         A validated ``workbench_snapshot`` dictionary with
@@ -77,6 +82,7 @@ def build_historical_snapshot(
             symbol,
             trade_date,
             config=config,
+            instrument_type=instrument_type,
         )
     except ReplayDataUnavailableError as exc:
         raise HistoricalDataUnavailableError(str(exc)) from exc

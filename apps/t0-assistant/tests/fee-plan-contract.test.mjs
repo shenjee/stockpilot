@@ -7,7 +7,7 @@ import { buildSafeBridge } from "../electron/safe-bridge.mjs";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const schema = JSON.parse(
-  await readFile(resolve(testDir, "../contracts/app-v1.schema.json"), "utf8"),
+  await readFile(resolve(testDir, "../contracts/app-v2.schema.json"), "utf8"),
 );
 
 const FEE_COMMANDS = [
@@ -18,7 +18,7 @@ const FEE_COMMANDS = [
   "calculate_trade_fee",
 ];
 
-test("App v1 owns the complete persistent fee-plan command surface", () => {
+test("App v2 owns the complete persistent fee-plan command surface", () => {
   const commands = schema.$defs.command_request.properties.command.enum;
   for (const command of FEE_COMMANDS) {
     assert.equal(commands.includes(command), true, `${command} must be frozen`);
@@ -30,7 +30,7 @@ test("App v1 owns the complete persistent fee-plan command surface", () => {
   );
   assert.deepEqual(
     schema.$defs.calculate_trade_fee_payload.properties.security_type.enum,
-    ["a_share", "etf"],
+    ["a_share", "etf", "index"],
   );
 });
 
@@ -46,7 +46,7 @@ test("Safe Bridge exposes fee-plan persistence and calculation without transport
     },
   });
   const request = {
-    schema_version: "t0_app_v1",
+    schema_version: "t0_app_v2",
     request_id: "fee-contract-1",
     command: "list_fee_plans",
     session_id: null,

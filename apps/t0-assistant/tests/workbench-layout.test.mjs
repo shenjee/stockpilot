@@ -59,7 +59,7 @@ test("selecting a new security clears chart view state to avoid inheriting the p
     code: "600519",
     market: "sh",
     name: "贵州茅台",
-    security_type: "a_share",
+    instrument_type: "stock",
   };
   const withViews = {
     ...createWorkbenchState(),
@@ -78,7 +78,7 @@ test("mode and layout changes preserve layers, security, and chart view state", 
     code: "600519",
     market: "sh",
     name: "贵州茅台",
-    security_type: "a_share",
+    instrument_type: "stock",
   };
   const snapshot = { range: { from: 10, to: 80 }, followState: "manual" };
   let state = {

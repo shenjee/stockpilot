@@ -6,6 +6,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 // preload-safe-bridge.test.mjs locks its public method set to safe-bridge.mjs.
 const APP_COMMANDS = Object.freeze({
   searchSecurities: "search_securities",
+  resolveSecurityIdentity: "resolve_security_identity",
   selectSecurity: "select_security",
   saveLastSymbol: "save_last_symbol",
   getLiveSnapshot: "get_live_snapshot",

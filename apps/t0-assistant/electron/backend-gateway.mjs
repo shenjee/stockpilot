@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 
 const ALLOWED_COMMANDS = new Set([
   "search_securities",
+  "resolve_security_identity",
   "select_security",
   "save_last_symbol",
   "get_live_snapshot",
@@ -55,7 +56,7 @@ function serviceUnavailable(requestId = "service-unavailable") {
 function synchronousFailure(command, request, error = serviceUnavailable(request?.request_id)) {
   if (REPLAY_COMMANDS.has(command)) return error;
   return {
-    schema_version: "t0_app_v1",
+    schema_version: "t0_app_v2",
     request_id: request?.request_id ?? error.request_id,
     accepted: false,
     operation_id: null,
@@ -259,7 +260,7 @@ export class BackendGateway extends EventEmitter {
         }
         this.baselines.set(key, envelope.revision);
         if (envelope.session_id) this.lastEnvelopeByKey.set(key, envelope);
-        const replay = envelope.schema_version === "t0_replay_v1";
+        const replay = envelope.schema_version === "t0_replay_v2";
         this.emit(replay ? "replay-event" : "app-event", envelope);
         if (replay && envelope.event_type === "workbench_snapshot") {
           this.emit("replay-snapshot", envelope.payload);
@@ -272,7 +273,7 @@ export class BackendGateway extends EventEmitter {
 
   async #rebaseline(envelope) {
     if (!envelope.session_id) return;
-    const replay = envelope.schema_version === "t0_replay_v1";
+    const replay = envelope.schema_version === "t0_replay_v2";
     const key = `${envelope.schema_version}:${envelope.session_id}`;
     if (this.rebaselining.has(key)) return;
     this.rebaselining.add(key);
@@ -296,7 +297,7 @@ export class BackendGateway extends EventEmitter {
       }
       this.baselines.set(key, revision);
       const baselineEnvelope = {
-        schema_version: replay ? "t0_replay_v1" : "t0_app_v1",
+        schema_version: replay ? "t0_replay_v2" : "t0_app_v2",
         service_generation: envelope.service_generation,
         session_id: envelope.session_id,
         revision,

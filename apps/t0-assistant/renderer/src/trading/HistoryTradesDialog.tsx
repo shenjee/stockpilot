@@ -70,6 +70,7 @@ export function HistoryTradesDialog({
   feeAdvisor,
   onEnterDayChart,
   tradeOpController,
+  resolveSecurity,
 }: {
   open: boolean;
   onClose: () => void;
@@ -82,6 +83,7 @@ export function HistoryTradesDialog({
   feeAdvisor: FeeAdvisor;
   onEnterDayChart: (symbol: string, tradeDate: string) => void;
   tradeOpController: TradeOperationController;
+  resolveSecurity: (symbol: string) => Promise<SecurityIdentity | null>;
 }) {
   const [history, setHistory] = useState<HistoryListState>(EMPTY_HISTORY);
   const [listError, setListError] = useState<string | null>(null);
@@ -90,6 +92,9 @@ export function HistoryTradesDialog({
   const [formOpen, setFormOpen] = useState<
     { mode: "edit"; trade: TradeRecord } | null
   >(null);
+  const [resolvedIdentity, setResolvedIdentity] =
+    useState<SecurityIdentity | null>(null);
+  const [identityLoading, setIdentityLoading] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<TradeRecord | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
@@ -213,20 +218,30 @@ export function HistoryTradesDialog({
     onClose();
   }
 
-  function identityFor(trade: TradeRecord): SecurityIdentity {
+  // Issue #151: resolve the authoritative identity via select_security
+  // instead of fabricating instrument_type. When the trade's symbol matches
+  // the currently selected security, use it directly; otherwise ask the
+  // backend to resolve the identity once.
+  async function handleEditTrade(trade: TradeRecord) {
     if (selectedSecurity && selectedSecurity.symbol === trade.symbol) {
-      return selectedSecurity;
+      setResolvedIdentity(selectedSecurity);
+      setFormOpen({ mode: "edit", trade });
+      return;
     }
-    // No extra request is made for unknown symbols; the name is left blank and
-    // the security type defaults to a_share so the fee advisor can still offer
-    // a suggestion the user may override.
-    return {
-      symbol: trade.symbol,
-      code: trade.symbol.slice(3),
-      market: (trade.symbol.slice(0, 2) === "sz" ? "sz" : "sh") as "sh" | "sz",
-      name: "",
-      security_type: "a_share",
-    };
+    setIdentityLoading(true);
+    try {
+      const identity = await resolveSecurity(trade.symbol);
+      if (!identity) {
+        setListError(`无法解析证券 ${trade.symbol} 的身份信息`);
+        return;
+      }
+      setResolvedIdentity(identity);
+      setFormOpen({ mode: "edit", trade });
+    } catch (error) {
+      setListError(errorMessage(error, "证券身份解析失败"));
+    } finally {
+      setIdentityLoading(false);
+    }
   }
 
   function nameFor(trade: TradeRecord): string | null {
@@ -298,9 +313,10 @@ export function HistoryTradesDialog({
                     <span className="history-item-actions">
                       <button
                         type="button"
-                        onClick={() => setFormOpen({ mode: "edit", trade })}
+                        disabled={identityLoading}
+                        onClick={() => void handleEditTrade(trade)}
                       >
-                        编辑
+                        {identityLoading ? "解析中…" : "编辑"}
                       </button>
                       <button
                         type="button"
@@ -327,16 +343,19 @@ export function HistoryTradesDialog({
         </div>
       </section>
 
-      {formOpen && (
+      {formOpen && resolvedIdentity && (
         <TradeFormDialog
           open
           mode="edit"
           initial={formOpen.trade}
-          security={identityFor(formOpen.trade)}
+          security={resolvedIdentity}
           feePlans={feePlans}
           feeAdvisor={feeAdvisor}
           onSubmit={handleSubmit}
-          onClose={() => setFormOpen(null)}
+          onClose={() => {
+            setFormOpen(null);
+            setResolvedIdentity(null);
+          }}
         />
       )}
 

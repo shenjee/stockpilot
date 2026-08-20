@@ -126,7 +126,7 @@ class LayerPreference:
 
 @dataclass(frozen=True, slots=True)
 class PreferenceValues:
-    """The persisted copy described by the frozen ``t0_app_v1`` contract."""
+    """The persisted copy described by the frozen ``t0_app_v2`` contract."""
 
     last_symbol: str | None = None
     layout: LayoutPreference = field(default_factory=LayoutPreference)

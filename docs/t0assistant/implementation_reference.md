@@ -131,9 +131,12 @@ UI 布局与图表组职责见 [`ui_layout_spec.md`](./ui_layout_spec.md)。
 
 | 文件 | 内容 |
 | --- | --- |
-| `logical-schema.json` | 证券、K 线、指标、CZSC、工作台快照结构 |
-| `app-v1.schema.json` | Live、历史快照、成交、偏好、事件信封 |
-| `replay-v1.schema.json` | Replay v1.0 命令/状态/倍速 |
+| `logical-v2.schema.json` | 证券、K 线、指标、CZSC、工作台快照结构（v2: instrument_type） |
+| `app-v2.schema.json` | Live、历史快照、成交、偏好、事件信封（v2: t0_app_v2） |
+| `replay-v2.schema.json` | Replay v2.0 命令/状态/倍速（v2: t0_replay_v2） |
+| `logical-schema.json` | v1 保留：security_type (a_share|etf) |
+| `app-v1.schema.json` | v1 保留：t0_app_v1 |
+| `replay-v1.schema.json` | v1 保留：t0_replay_v1 |
 | `fixtures/` | Python 与 TypeScript 共用的确定性测试数据 |
 
 规则摘要：

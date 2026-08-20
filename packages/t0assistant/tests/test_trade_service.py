@@ -17,6 +17,7 @@ from packages.t0assistant.repositories import (
     open_app_database,
 )
 from packages.t0assistant.trading import (
+    AllowAllEligibility,
     TradeDraft,
     TradeMarker,
     TradeMarkerProjection,
@@ -84,7 +85,9 @@ class TradeServiceCrudTests(unittest.TestCase):
     def _service(self, *, id_factory=None):
         with open_app_database(self.db_path) as database:
             yield TradeService(
-                SqliteTradeRepository(database), id_factory=id_factory
+                SqliteTradeRepository(database),
+                id_factory=id_factory,
+                eligibility=AllowAllEligibility(),
             )
 
     # -- create --------------------------------------------------------
@@ -132,7 +135,7 @@ class TradeServiceCrudTests(unittest.TestCase):
 
     def test_failed_create_leaves_no_memory_success(self) -> None:
         fake = _FailingCreateRepository()
-        service = TradeService(fake)
+        service = TradeService(fake, eligibility=AllowAllEligibility())
         with self.assertRaises(RepositoryPersistenceError):
             service.create_trade(_draft())
 
@@ -232,10 +235,16 @@ class TradeServiceCrudTests(unittest.TestCase):
 
     def test_read_only_repository_rejects_mutations_but_allows_reads(self) -> None:
         with open_app_database(self.db_path) as database:
-            TradeService(SqliteTradeRepository(database)).create_trade(_draft())
+            TradeService(
+                SqliteTradeRepository(database),
+                eligibility=AllowAllEligibility(),
+            ).create_trade(_draft())
 
         with open_app_database(self.db_path, force_read_only=True) as database:
-            service = TradeService(SqliteTradeRepository(database))
+            service = TradeService(
+                SqliteTradeRepository(database),
+                eligibility=AllowAllEligibility(),
+            )
             self.assertFalse(service.capability.writable)
             with self.assertRaises(RepositoryReadOnlyError):
                 service.create_trade(_draft())
@@ -257,7 +266,10 @@ class TradeServiceMarkerProjectionTests(unittest.TestCase):
 
     def test_markers_for_symbol_and_date_projects_persisted_trades(self) -> None:
         with open_app_database(self.db_path) as database:
-            service = TradeService(SqliteTradeRepository(database))
+            service = TradeService(
+                SqliteTradeRepository(database),
+                eligibility=AllowAllEligibility(),
+            )
             service.create_trade(
                 _draft(side="buy", quantity=200, executed_at="2026-07-24 10:03:00")
             )
@@ -276,7 +288,10 @@ class TradeServiceMarkerProjectionTests(unittest.TestCase):
 
     def test_project_markers_accepts_records_mappings_and_sequence(self) -> None:
         with open_app_database(self.db_path) as database:
-            service = TradeService(SqliteTradeRepository(database))
+            service = TradeService(
+                SqliteTradeRepository(database),
+                eligibility=AllowAllEligibility(),
+            )
             record = service.create_trade(_draft(quantity=200))
 
             from_record = service.project_markers(record)
@@ -301,7 +316,9 @@ class TradeServiceMarkerProjectionTests(unittest.TestCase):
         counting: TradeMarkerProjection = _CountingProjector()  # type: ignore[assignment]
         with open_app_database(self.db_path) as database:
             service = TradeService(
-                SqliteTradeRepository(database), marker_projection=counting
+                SqliteTradeRepository(database),
+                marker_projection=counting,
+                eligibility=AllowAllEligibility(),
             )
             service.create_trade(_draft())
             service.markers_for("sh.600584", date(2026, 7, 24))
@@ -310,7 +327,10 @@ class TradeServiceMarkerProjectionTests(unittest.TestCase):
 
     def test_project_markers_rejects_non_trade_input(self) -> None:
         with open_app_database(self.db_path) as database:
-            service = TradeService(SqliteTradeRepository(database))
+            service = TradeService(
+                SqliteTradeRepository(database),
+                eligibility=AllowAllEligibility(),
+            )
             with self.assertRaises(TradeValidationError):
                 service.project_markers([object()])  # type: ignore[list-item]
 

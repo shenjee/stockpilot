@@ -3,21 +3,31 @@
 This directory is the integration-owned boundary shared by Python, Electron,
 preload, and the React renderer.
 
-- `logical-schema.json` freezes project-owned security, bar, quote, indicator,
-  session, warning, CZSC, and workbench snapshot structures for T0-002.
-- `app-v1.schema.json` freezes Live, **historical snapshot**, real/simulated
+- `logical-v2.schema.json` freezes project-owned security, bar, quote,
+  indicator, session, warning, CZSC, and workbench snapshot structures for
+  T0-002. Issue #151: the `security` def uses `instrument_type`
+  (stock|etf|index). The v1 file (`logical-schema.json`) is preserved
+  unchanged with `security_type` (a_share|etf) for consumers that have not
+  migrated.
+- `app-v2.schema.json` freezes Live, **historical snapshot**, real/simulated
   trade, preference, service status, synchronous response, and ordered event
-  structures for T0-003.
-- `replay-v1.schema.json` adds the Replay v1.0 command/event state required by
-  T0-056.
+  structures for T0-003. Uses `schema_version: "t0_app_v2"` (issue #151).
+  The v1 file (`app-v1.schema.json`) is preserved unchanged with
+  `schema_version: "t0_app_v1"`.
+- `replay-v2.schema.json` adds the Replay command/event state required by
+  T0-056. Uses `schema_version: "t0_replay_v2"` (issue #151). The v1 file
+  (`replay-v1.schema.json`) is preserved unchanged with
+  `schema_version: "t0_replay_v1"`.
 - `fixtures/` contains transport-neutral deterministic payloads intended for
   both Python and TypeScript compatibility tests.
 
-`fixtures/workbench-flow-v1.json` is the canonical T0-004 compatibility flow.
-It contains a complete Live workbench snapshot, typed incremental updates, a
-deterministic out-of-order delivery sequence, an asynchronous operation error,
-and a synchronous rejection. `tests/fake-safe-bridge.mjs` feeds the same file
-to Renderer tests without Electron, Python, or network access.
+The `*-v1.json` fixtures are preserved compatibility payloads. The matching
+`*-v2.json` fixtures carry the v2 schema versions and are used by current v2
+contract and Renderer tests. The workbench fixtures contain a complete Live
+snapshot, typed incremental updates, a deterministic out-of-order delivery
+sequence, an asynchronous operation error, and a synchronous rejection.
+`tests/fake-safe-bridge.mjs` feeds the v2 files to Renderer tests without
+Electron, Python, or network access.
 
 These files describe logical JSON messages. They are **not SQLite schemas**,
 HTTP route definitions, WebSocket framing, Electron IPC names, or generated
@@ -27,12 +37,12 @@ All public fields use `snake_case`. Incompatible evolution requires a new
 schema identifier; providers, raw `czsc` objects, credentials, ports, file
 paths, and SQLite implementation fields may not cross this boundary.
 
-## App v1 behavior
+## App v2 behavior
 
-- `t0_app_v1` owns Live, **historical snapshot**, trade and preference
-  commands/events. Replay command names and payloads remain in `t0_replay_v1`;
-  the app schema uses JSON Schema references to Replay v1.0 instead of copying
-  its fields.
+- `t0_app_v2` owns Live, **historical snapshot**, trade and preference
+  commands/events. Replay command names and payloads remain in `t0_replay_v2`;
+  the app schema uses JSON Schema references to the Replay schema instead of
+  copying its fields.
 - Every command has an opaque `request_id`. A command either fails
   synchronously once in `command_response.error`, or is accepted and may later
   fail once through `operation_failed`; the same failure is not delivered on
@@ -95,10 +105,14 @@ paths, and SQLite implementation fields may not cross this boundary.
 
 ## Contract evolution
 
-App v1 uses additive, backward-compatible evolution within the `t0_app_v1`
-identifier. Adding `get_historical_snapshot`, the `historical_chart`
-capability, and the `"historical"` logical `session_type` does not change
-existing command or event semantics, so the schema identifier remains
-`t0_app_v1`. Incompatible changes (removing commands, changing payload
+App v2 uses additive, backward-compatible evolution within the `t0_app_v2`
+identifier. Issue #151 introduced `t0_app_v2` (from `t0_app_v1`) and
+`t0_replay_v2` (from `t0_replay_v1`) because the `security` identity shape
+changed incompatibly: `security_type: "a_share" | "etf"` was replaced by
+`instrument_type: "stock" | "etf" | "index"` (objective securities-master
+identity, separate from the fee layer's `FeeSecurityType`). Adding
+`get_historical_snapshot`, the `historical_chart` capability, and the
+`"historical"` logical `session_type` does not change existing command or
+event semantics. Incompatible changes (removing commands, changing payload
 shapes, or altering event delivery guarantees) still require a new schema
 identifier.

@@ -53,7 +53,7 @@ test("sandbox-compatible preload exposes exactly the frozen Safe Bridge surface"
 
 test("sandbox-compatible preload keeps transport details inside IPC", async () => {
   const { exposed, invocations, subscriptions } = await loadPreloadBridge();
-  const request = { schema_version: "t0_app_v1", request_id: "preload-test" };
+  const request = { schema_version: "t0_app_v2", request_id: "preload-test" };
 
   await exposed.bridge.selectSecurity(request);
   assert.deepEqual(invocations, [

@@ -56,6 +56,7 @@ export function TradeDrawer({
   serviceGeneration,
   tradeOpController,
   onEnterDayChart,
+  resolveSecurity,
 }: {
   security: SecurityIdentity | null;
   tradeClient: TradeClient | null;
@@ -76,6 +77,14 @@ export function TradeDrawer({
    * (T0-043 "进入当天图形"). Does not start Replay playback.
    */
   onEnterDayChart: (symbol: string, tradeDate: string) => void;
+  /**
+   * Issue #151: resolve the authoritative SecurityIdentity for a symbol via
+   * select_security. Used by HistoryTradesDialog when editing a historical
+   * trade whose symbol differs from the currently selected security, so the
+   * fee advisor receives the correct instrument_type instead of a fabricated
+   * default.
+   */
+  resolveSecurity: (symbol: string) => Promise<SecurityIdentity | null>;
 }) {
   const [trades, setTrades] = useState<TradeRecord[]>([]);
   const [expanded, setExpanded] = useState(false);
@@ -349,7 +358,11 @@ export function TradeDrawer({
           <button
             type="button"
             className="primary-button"
-            disabled={!security || !tradeClient}
+            disabled={
+              !security ||
+              !tradeClient ||
+              security.instrument_type === "index"
+            }
             onClick={() => setFormOpen({ mode: "create" })}
           >
             录入成交
@@ -473,6 +486,7 @@ export function TradeDrawer({
         feeAdvisor={feeAdvisor}
         onEnterDayChart={onEnterDayChart}
         tradeOpController={tradeOpController}
+        resolveSecurity={resolveSecurity}
       />
 
       {pendingDelete && (

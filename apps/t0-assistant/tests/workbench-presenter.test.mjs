@@ -12,7 +12,6 @@ import {
   latestDailyBars,
   liveOperationFailurePresentation,
   operationMatchesEnvelope,
-  partialSecurityFromSymbol,
   quoteDataCutoffText,
   quoteRows,
   restoredSecurityFromResponse,
@@ -31,12 +30,25 @@ test("security responses must contain a frozen standard identity", () => {
     code: "510300",
     market: "sh",
     name: "沪深300ETF",
-    security_type: "etf",
+    instrument_type: "etf",
   };
   assert.deepEqual(standardSecurityFromResponse({ security }), security);
   assert.equal(
     standardSecurityFromResponse({
       security: { ...security, symbol: "510300" },
+    }),
+    null,
+  );
+  // Issue #151: instrument_type is required and must be a known value.
+  assert.equal(
+    standardSecurityFromResponse({
+      security: { ...security, instrument_type: undefined },
+    }),
+    null,
+  );
+  assert.equal(
+    standardSecurityFromResponse({
+      security: { ...security, instrument_type: "bond" },
     }),
     null,
   );
@@ -166,14 +178,14 @@ test("fuzzy search responses retain all valid standard identities", () => {
       code: "600000",
       market: "sh",
       name: "浦发银行",
-      security_type: "a_share",
+      instrument_type: "stock",
     },
     {
       symbol: "sz.000001",
       code: "000001",
       market: "sz",
       name: "平安银行",
-      security_type: "a_share",
+      instrument_type: "stock",
     },
   ];
   assert.deepEqual(
@@ -190,7 +202,7 @@ test("securityCategoryLabel maps standard fields to market classification labels
       code: "600000",
       market: "sh",
       name: "浦发银行",
-      security_type: "a_share",
+      instrument_type: "stock",
     }),
     "沪市",
   );
@@ -201,7 +213,7 @@ test("securityCategoryLabel maps standard fields to market classification labels
       code: "300113",
       market: "sz",
       name: "顺网科技",
-      security_type: "a_share",
+      instrument_type: "stock",
     }),
     "深市",
   );
@@ -212,7 +224,7 @@ test("securityCategoryLabel maps standard fields to market classification labels
       code: "510300",
       market: "sh",
       name: "沪深300ETF",
-      security_type: "etf",
+      instrument_type: "etf",
     }),
     "基金",
   );
@@ -223,9 +235,20 @@ test("securityCategoryLabel maps standard fields to market classification labels
       code: "159915",
       market: "sz",
       name: "创业板ETF",
-      security_type: "etf",
+      instrument_type: "etf",
     }),
     "基金",
+  );
+  // 沪市指数 -> 指数
+  assert.equal(
+    securityCategoryLabel({
+      symbol: "sh.000300",
+      code: "000300",
+      market: "sh",
+      name: "沪深300",
+      instrument_type: "index",
+    }),
+    "指数",
   );
   // 000001 深市 -> 深市
   assert.equal(
@@ -234,9 +257,26 @@ test("securityCategoryLabel maps standard fields to market classification labels
       code: "000001",
       market: "sz",
       name: "平安银行",
-      security_type: "a_share",
+      instrument_type: "stock",
     }),
     "深市",
+  );
+});
+
+test("identity conversion rejects missing instrument_type", () => {
+  const incomplete = {
+    symbol: "sh.600000",
+    code: "600000",
+    market: "sh",
+    name: "浦发银行",
+  };
+  assert.deepEqual(
+    securitiesFromSearchResponse({ data: { securities: [incomplete] } }),
+    [],
+  );
+  assert.equal(
+    restoredSecurityFromResponse({ data: { restored_security: incomplete } }),
+    null,
   );
 });
 
@@ -305,7 +345,7 @@ test("startup preference payload exposes exact restored security without search"
     code: "300113",
     market: "sz",
     name: "顺网科技",
-    security_type: "a_share",
+    instrument_type: "stock",
   };
   const response = {
     data: {
@@ -323,14 +363,6 @@ test("startup preference payload exposes exact restored security without search"
     symbol: "sz.300113",
     session_id: "live-1",
   });
-  assert.deepEqual(partialSecurityFromSymbol("sz.300113"), {
-    symbol: "sz.300113",
-    code: "300113",
-    market: "sz",
-    name: "",
-    security_type: "a_share",
-  });
-  assert.equal(partialSecurityFromSymbol("invalid"), null);
 });
 
 test("workbench baseline clears only Live-scoped background errors", () => {
@@ -361,7 +393,7 @@ test("user selection cancels tracked startup restore before stale failure arrive
       code: "600000",
       market: "sh",
       name: "浦发银行",
-      security_type: "a_share",
+      instrument_type: "stock",
     },
     sessionId: "live-old",
     serviceGeneration: 4,
@@ -500,7 +532,7 @@ test("select action closes the dropdown immediately even when onSelect is slow",
     code: "600000",
     market: "sh",
     name: "浦发银行",
-    security_type: "a_share",
+    instrument_type: "stock",
   };
 
   // Step 1: dispatch "select" — this is what selectSuggestion does first

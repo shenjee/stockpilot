@@ -74,7 +74,7 @@ class SimulatedTradeCommandApi:
         except (TradeValidationError, TypeError, ValueError) as error:
             return self._reject(request_id, "invalid_trade_request", str(error))
         return {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "request_id": request_id,
             "accepted": True,
             "operation_id": None,
@@ -85,7 +85,7 @@ class SimulatedTradeCommandApi:
     @staticmethod
     def _reject(request_id: str, error_code: str, message: str) -> dict[str, Any]:
         return {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "request_id": request_id,
             "accepted": False,
             "operation_id": None,

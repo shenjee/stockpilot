@@ -11,6 +11,22 @@ import type { TradeRecord } from "./trade-client.mjs";
 
 const NO_PLAN = "";
 
+/**
+ * Map the objective `instrument_type` to the fee layer's `securityType`.
+ *
+ * The fee layer (issue #151 #2) owns `FeeSecurityType = a_share | etf`;
+ * `index` has no fee-layer counterpart.  Returns `null` for index so callers
+ * can skip fee suggestion entirely.  The mapping is an explicit
+ * trade-strategy decision at the boundary, not a property of identity.
+ */
+function feeSecurityType(
+  instrumentType: SecurityIdentity["instrument_type"],
+): "a_share" | "etf" | null {
+  if (instrumentType === "etf") return "etf";
+  if (instrumentType === "stock") return "a_share";
+  return null; // index — not tradable, no fee calculation
+}
+
 function localNowInput() {
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -102,9 +118,11 @@ export function TradeFormDialog({
   // fee is authoritative and never recomputed after save.
   useEffect(() => {
     if (!selectedPlan || feeTouched) return;
+    const securityType = feeSecurityType(security.instrument_type);
+    if (securityType === null) return; // index — no fee calculation
     let cancelled = false;
     Promise.resolve(feeAdvisor.suggestFee(selectedPlan, {
-      securityType: security.security_type,
+      securityType,
       side,
       price,
       quantity,
@@ -125,7 +143,7 @@ export function TradeFormDialog({
     side,
     price,
     quantity,
-    security.security_type,
+    security.instrument_type,
   ]);
 
   if (!open) return null;

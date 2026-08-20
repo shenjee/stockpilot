@@ -9,7 +9,7 @@
  * `retryService` - the wrong action for a trade command.
  *
  * `affected_capability` is a frozen `application_error` enum value
- * (`app-v1.schema.json`), so routing on `"trades"` is contract-safe and mirrors
+ * (`app-v2.schema.json`), so routing on `"trades"` is contract-safe and mirrors
  * the existing `"preferences"` filtering in `retryLiveOrService`.
  */
 

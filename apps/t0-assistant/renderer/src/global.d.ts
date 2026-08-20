@@ -19,6 +19,7 @@ declare global {
     getServiceStatus(): Promise<ServiceStatus>;
     retryService(): Promise<ServiceStatus>;
     searchSecurities(request: unknown): Promise<unknown>;
+    resolveSecurityIdentity(request: unknown): Promise<unknown>;
     onServiceStatus(listener: (status: ServiceStatus) => void): () => void;
     selectSecurity(request: unknown): Promise<unknown>;
     saveLastSymbol(request: unknown): Promise<unknown>;

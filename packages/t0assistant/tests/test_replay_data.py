@@ -66,6 +66,7 @@ class FakeMarketDataPort:
         timeframe: str,
         start_date: str | None = None,
         limit: int = 120,
+        instrument_type: str | None = None,
         request_priority: ProviderRequestPriority = ProviderRequestPriority.LIVE,
         session_validator=None,
         request_timeout: float | None = None,
@@ -557,13 +558,15 @@ class FailureTests(_PreparatorTestBase):
         original_get = port.get_klines_result
 
         def slow_daily_get(code, end_date, *, market=None, timeframe, start_date=None,
-                           limit=120, request_priority=ProviderRequestPriority.LIVE,
+                           limit=120, instrument_type=None,
+                           request_priority=ProviderRequestPriority.LIVE,
                            session_validator=None, request_timeout=None):
             if timeframe == "day":
                 # Simulate the daily call blocking past the deadline.
                 clock_state["value"] = 100.0
             return original_get(code, end_date, market=market, timeframe=timeframe,
                                 start_date=start_date, limit=limit,
+                                instrument_type=instrument_type,
                                 request_priority=request_priority,
                                 session_validator=session_validator,
                                 request_timeout=request_timeout)
@@ -600,6 +603,7 @@ class FailureTests(_PreparatorTestBase):
             timeframe,
             start_date=None,
             limit=120,
+            instrument_type=None,
             request_priority=ProviderRequestPriority.LIVE,
             session_validator=None,
             request_timeout=None,
@@ -787,7 +791,8 @@ class BackfillTests(_PreparatorTestBase):
         original_get = port.get_klines_result
 
         def dynamic_get(code, end_date, *, market=None, timeframe, start_date=None,
-                        limit=120, request_priority=ProviderRequestPriority.LIVE,
+                        limit=120, instrument_type=None,
+                        request_priority=ProviderRequestPriority.LIVE,
                         session_validator=None, request_timeout=None):
             if timeframe == "1m" and end_date == TRADE_DATE.isoformat():
                 if not port.store.get(("1m", end_date)):
@@ -797,6 +802,7 @@ class BackfillTests(_PreparatorTestBase):
                     state["missing"] = []
             return original_get(code, end_date, market=market, timeframe=timeframe,
                                 start_date=start_date, limit=limit,
+                                instrument_type=instrument_type,
                                 request_priority=request_priority,
                                 session_validator=session_validator,
                                 request_timeout=request_timeout)

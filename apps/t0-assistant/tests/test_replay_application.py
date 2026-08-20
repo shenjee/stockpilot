@@ -11,17 +11,18 @@ APP_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(APP_ROOT))
 
 from backend.replay_application import ReplayApplication  # noqa: E402
+from packages.marketdata.t0_schema import InstrumentIdentity, InstrumentType  # noqa: E402
 from packages.t0assistant.replay import ReplayCommandApi  # noqa: E402
 from packages.t0assistant.tests.test_replay_session import _prepare  # noqa: E402
 
 
-SECURITY = {
-    "symbol": "sh.600000",
-    "code": "600000",
-    "market": "sh",
-    "name": "浦发银行",
-    "security_type": "a_share",
-}
+SECURITY = InstrumentIdentity(
+    symbol="sh.600000",
+    code="600000",
+    market="sh",
+    name="浦发银行",
+    instrument_type=InstrumentType.STOCK,
+)
 
 
 class ReplayApplicationTests(unittest.TestCase):
@@ -29,9 +30,9 @@ class ReplayApplicationTests(unittest.TestCase):
         self.events: list[dict] = []
         self.application = ReplayApplication(
             service_generation=3,
-            prepare=lambda _symbol, _trade_date: _prepare("1m"),
+            prepare=lambda _symbol, _trade_date, _instrument_type: _prepare("1m"),
             resolve_security=lambda symbol: (
-                SECURITY if symbol == SECURITY["symbol"] else None
+                SECURITY if symbol == SECURITY.symbol else None
             ),
             publish_event=self.events.append,
         )
@@ -49,7 +50,7 @@ class ReplayApplicationTests(unittest.TestCase):
         result = self.api.dispatch(
             "begin_replay",
             {
-                "schema_version": "t0_replay_v1",
+                "schema_version": "t0_replay_v2",
                 "request_id": "begin-1",
                 "symbol": "sh.600000",
                 "trade_date": "2026-07-24",
@@ -66,7 +67,7 @@ class ReplayApplicationTests(unittest.TestCase):
         snapshot = self.api.dispatch(
             "get_replay_snapshot",
             {
-                "schema_version": "t0_replay_v1",
+                "schema_version": "t0_replay_v2",
                 "request_id": "snapshot-1",
                 "session_id": result.payload["session_id"],
             },
@@ -78,7 +79,7 @@ class ReplayApplicationTests(unittest.TestCase):
         result = self.api.dispatch(
             "begin_replay",
             {
-                "schema_version": "t0_replay_v1",
+                "schema_version": "t0_replay_v2",
                 "request_id": "begin-missing",
                 "symbol": "sh.699999",
                 "trade_date": "2026-07-24",
@@ -100,7 +101,7 @@ class ReplayApplicationTests(unittest.TestCase):
         )
         application = ReplayApplication(
             service_generation=3,
-            prepare=lambda _symbol, _trade_date: prepared,
+            prepare=lambda _symbol, _trade_date, _instrument_type: prepared,
             resolve_security=lambda _symbol: SECURITY,
             publish_event=lambda _event: None,
         )
@@ -110,7 +111,7 @@ class ReplayApplicationTests(unittest.TestCase):
             result = api.dispatch(
                 "begin_replay",
                 {
-                    "schema_version": "t0_replay_v1",
+                    "schema_version": "t0_replay_v2",
                     "request_id": "begin-auction",
                     "symbol": "sh.600000",
                     "trade_date": "2026-07-24",
@@ -130,7 +131,7 @@ class ReplayApplicationTests(unittest.TestCase):
         begin = self.api.dispatch(
             "begin_replay",
             {
-                "schema_version": "t0_replay_v1",
+                "schema_version": "t0_replay_v2",
                 "request_id": "begin-play-step",
                 "symbol": "sh.600000",
                 "trade_date": "2026-07-24",
@@ -146,7 +147,7 @@ class ReplayApplicationTests(unittest.TestCase):
         play = self.api.dispatch(
             "set_replay_playback",
             {
-                "schema_version": "t0_replay_v1",
+                "schema_version": "t0_replay_v2",
                 "request_id": "play-1",
                 "session_id": session_id,
                 "playing": True,
@@ -159,7 +160,7 @@ class ReplayApplicationTests(unittest.TestCase):
         step = self.api.dispatch(
             "step_replay",
             {
-                "schema_version": "t0_replay_v1",
+                "schema_version": "t0_replay_v2",
                 "request_id": "step-while-playing",
                 "session_id": session_id,
             },
@@ -180,7 +181,7 @@ class ReplayApplicationTests(unittest.TestCase):
         begin = self.api.dispatch(
             "begin_replay",
             {
-                "schema_version": "t0_replay_v1",
+                "schema_version": "t0_replay_v2",
                 "request_id": "begin-failed-step",
                 "symbol": "sh.600000",
                 "trade_date": "2026-07-24",
@@ -196,7 +197,7 @@ class ReplayApplicationTests(unittest.TestCase):
         result = self.api.dispatch(
             "step_replay",
             {
-                "schema_version": "t0_replay_v1",
+                "schema_version": "t0_replay_v2",
                 "request_id": "step-failed-state",
                 "session_id": session_id,
             },

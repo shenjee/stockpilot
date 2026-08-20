@@ -8,12 +8,12 @@ import { applyTradesChanged } from "../renderer/src/trading/trade-state.mjs";
 const testDir = dirname(fileURLToPath(import.meta.url));
 const fixturePath = resolve(
   testDir,
-  "../contracts/fixtures/list-trades-flow-v1.json",
+  "../contracts/fixtures/list-trades-flow-v2.json",
 );
 
 test("list_trades is a fact-via-changed-event command (contract flow)", async () => {
   const fixture = JSON.parse(await readFile(fixturePath, "utf8"));
-  assert.equal(fixture.schema_version, "t0_app_v1");
+  assert.equal(fixture.schema_version, "t0_app_v2");
 
   for (const scenarioName of ["existing_trades", "empty_repository"]) {
     const scenario = fixture[scenarioName];

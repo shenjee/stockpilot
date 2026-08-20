@@ -50,7 +50,7 @@ class FeePlanServiceWiringTest(unittest.TestCase):
 
     def post(self, command: str, payload: dict) -> dict:
         envelope = {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "request_id": f"wire-{command}",
             "command": command,
             "session_id": None,
@@ -107,11 +107,36 @@ class FeePlanServiceWiringTest(unittest.TestCase):
         self.assertEqual(fee["data"]["commission"], 5.0)
         self.assertEqual(fee["data"]["stamp_duty"], 0.0)
 
+    def test_index_security_type_returns_automatic_fee_not_supported(self) -> None:
+        status, response = self.post_envelope(
+            "calculate_trade_fee",
+            {
+                "schema_version": "t0_app_v2",
+                "request_id": "wire-index-fee",
+                "command": "calculate_trade_fee",
+                "session_id": None,
+                "payload": {
+                    "fee_plan_id": "shenwan-hongyuan",
+                    "security_type": "index",
+                    "side": "buy",
+                    "price": "4.25",
+                    "quantity": 1000,
+                },
+            },
+        )
+        self.assertEqual(status, 400)
+        self.assertFalse(response["accepted"])
+        self.assertEqual(
+            response["error"]["error_code"], "automatic_fee_not_supported"
+        )
+        self.assertEqual(response["error"]["category"], "validation")
+        self.assertFalse(response["error"]["retryable"])
+
     def test_transport_uses_fee_plan_validation_identity(self) -> None:
         status, response = self.post_envelope(
             "list_fee_plans",
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "command": "list_fee_plans",
                 "session_id": None,
                 "payload": {},

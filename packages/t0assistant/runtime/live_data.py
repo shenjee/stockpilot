@@ -55,7 +55,13 @@ class LiveCalendarUnavailableError(LiveDataError):
 
 
 class LiveMarketDataPort(Protocol):
-    """Narrow market-data surface needed by Live startup."""
+    """Narrow market-data surface needed by Live startup.
+
+    ``instrument_type`` (stock|etf|index) is the authoritative identity enum
+    (issue #151).  Concrete implementations like :class:`KLineDataService`
+    adapt it to the provider's ``security_type``; indices load daily K-lines
+    with no adjustment.
+    """
 
     def get_klines_result(
         self,
@@ -66,6 +72,7 @@ class LiveMarketDataPort(Protocol):
         timeframe: str,
         start_date: str | None = None,
         limit: int = 120,
+        instrument_type: str | None = None,
         request_priority: ProviderRequestPriority = ...,
         session_validator: Callable[[], bool] | None = None,
         request_timeout: float | None = None,
@@ -129,6 +136,7 @@ class LiveDataPreparator(LiveInitialInputPort):
             raise LiveDataError("minimum_preheat_5m must be positive")
 
         resolved_symbol, code, market = _parse_symbol(spec.symbol)
+        instrument_type = _instrument_type_from_spec(spec)
         session_validator = self._session_validator(spec)
         observed_now = self._resolve_observed_now()
         resolved = self._resolve_market_context(observed_now=observed_now, market=market)
@@ -149,6 +157,7 @@ class LiveDataPreparator(LiveInitialInputPort):
             ) = self._prepare_forced_target_day(
                 code=code,
                 market=market,
+                instrument_type=instrument_type,
                 target_trade_date=target_trade_date,
                 observed_now=observed_now,
                 quote_snapshots=quote_snapshots,
@@ -164,6 +173,7 @@ class LiveDataPreparator(LiveInitialInputPort):
             ) = self._resolve_effective_security_day(
                 code=code,
                 market=market,
+                instrument_type=instrument_type,
                 start_date=market_candidate_date,
                 start_session=market_candidate_session,
                 observed_now=observed_now,
@@ -180,6 +190,7 @@ class LiveDataPreparator(LiveInitialInputPort):
             preheat_bars = self._load_preheat_5m_best_effort(
                 code=code,
                 market=market,
+                instrument_type=instrument_type,
                 session=effective_session,
                 minimum_preheat_5m=minimum_preheat_5m,
                 session_validator=session_validator,
@@ -188,6 +199,7 @@ class LiveDataPreparator(LiveInitialInputPort):
             preheat_bars = self._load_preheat_5m(
                 code=code,
                 market=market,
+                instrument_type=instrument_type,
                 session=effective_session,
                 minimum_preheat_5m=minimum_preheat_5m,
                 session_validator=session_validator,
@@ -241,6 +253,7 @@ class LiveDataPreparator(LiveInitialInputPort):
         if timeframe not in {"1m", "5m"}:
             raise LiveDataError("refresh timeframe must be '1m' or '5m'")
         _, code, market = self._refresh_identity(spec)
+        instrument_type = _instrument_type_from_spec(spec)
         observed_now = self._resolve_observed_now()
         pinned_trade_date = _as_trade_date(trade_date)
         return self._load_target_day_bars(
@@ -248,6 +261,7 @@ class LiveDataPreparator(LiveInitialInputPort):
             market=market,
             trade_date=pinned_trade_date.isoformat(),
             timeframe=timeframe,
+            instrument_type=instrument_type,
             session_validator=self._session_validator(spec),
             observed_at=_bar_filter_observed_at(observed_now, pinned_trade_date),
         )
@@ -316,6 +330,7 @@ class LiveDataPreparator(LiveInitialInputPort):
         *,
         code: str,
         market: str,
+        instrument_type: str | None,
         start_date: date,
         start_session,
         observed_now: datetime,
@@ -345,6 +360,7 @@ class LiveDataPreparator(LiveInitialInputPort):
         discovery_1m = self._load_intraday_discovery_range(
             code=code,
             market=market,
+            instrument_type=instrument_type,
             start_date=earliest_date,
             end_date=start_date,
             timeframe="1m",
@@ -353,6 +369,7 @@ class LiveDataPreparator(LiveInitialInputPort):
         discovery_5m = self._load_intraday_discovery_range(
             code=code,
             market=market,
+            instrument_type=instrument_type,
             start_date=earliest_date,
             end_date=start_date,
             timeframe="5m",
@@ -377,6 +394,7 @@ class LiveDataPreparator(LiveInitialInputPort):
                 market=market,
                 trade_date=trade_date_str,
                 timeframe="1m",
+                instrument_type=instrument_type,
                 session_validator=session_validator,
                 observed_at=bar_observed_at,
             )
@@ -385,6 +403,7 @@ class LiveDataPreparator(LiveInitialInputPort):
                 market=market,
                 trade_date=trade_date_str,
                 timeframe="5m",
+                instrument_type=instrument_type,
                 session_validator=session_validator,
                 observed_at=bar_observed_at,
             )
@@ -402,6 +421,7 @@ class LiveDataPreparator(LiveInitialInputPort):
                 code=code,
                 market=market,
                 trade_date=trade_date_str,
+                instrument_type=instrument_type,
                 session_trade_date=effective_date,
                 session_validator=session_validator,
             )
@@ -419,6 +439,7 @@ class LiveDataPreparator(LiveInitialInputPort):
         *,
         code: str,
         market: str,
+        instrument_type: str | None,
         target_trade_date: date,
         observed_now: datetime,
         quote_snapshots: tuple[Mapping[str, Any], ...],
@@ -448,6 +469,7 @@ class LiveDataPreparator(LiveInitialInputPort):
             market=market,
             trade_date=trade_date_str,
             timeframe="1m",
+            instrument_type=instrument_type,
             session_validator=session_validator,
             observed_at=bar_observed_at,
         )
@@ -456,6 +478,7 @@ class LiveDataPreparator(LiveInitialInputPort):
             market=market,
             trade_date=trade_date_str,
             timeframe="5m",
+            instrument_type=instrument_type,
             session_validator=session_validator,
             observed_at=bar_observed_at,
         )
@@ -476,6 +499,7 @@ class LiveDataPreparator(LiveInitialInputPort):
             code=code,
             market=market,
             trade_date=trade_date_str,
+            instrument_type=instrument_type,
             session_trade_date=target_trade_date,
             session_validator=session_validator,
         )
@@ -486,6 +510,7 @@ class LiveDataPreparator(LiveInitialInputPort):
         *,
         code: str,
         market: str,
+        instrument_type: str | None,
         session: Any,
         minimum_preheat_5m: int,
         session_validator: Callable[[], bool] | None,
@@ -501,6 +526,7 @@ class LiveDataPreparator(LiveInitialInputPort):
             return self._load_preheat_5m(
                 code=code,
                 market=market,
+                instrument_type=instrument_type,
                 session=session,
                 minimum_preheat_5m=minimum_preheat_5m,
                 session_validator=session_validator,
@@ -513,6 +539,7 @@ class LiveDataPreparator(LiveInitialInputPort):
         *,
         code: str,
         market: str,
+        instrument_type: str | None,
         start_date: date,
         end_date: date,
         timeframe: str,
@@ -536,6 +563,7 @@ class LiveDataPreparator(LiveInitialInputPort):
             timeframe=timeframe,
             start_date=start_date.isoformat(),
             limit=limit,
+            instrument_type=instrument_type,
             request_priority=self._config.request_priority,
             session_validator=session_validator,
             request_timeout=self._config.request_timeout,
@@ -551,6 +579,7 @@ class LiveDataPreparator(LiveInitialInputPort):
         *,
         code: str,
         market: str,
+        instrument_type: str | None,
         session,
         minimum_preheat_5m: int,
         session_validator: Callable[[], bool] | None,
@@ -584,6 +613,7 @@ class LiveDataPreparator(LiveInitialInputPort):
                 timeframe="5m",
                 start_date=batch_start.isoformat(),
                 limit=minimum_preheat_5m,
+                instrument_type=instrument_type,
                 request_priority=self._config.request_priority,
                 session_validator=session_validator,
                 request_timeout=self._config.request_timeout,
@@ -614,6 +644,7 @@ class LiveDataPreparator(LiveInitialInputPort):
         market: str,
         trade_date: str,
         timeframe: str,
+        instrument_type: str | None,
         session_validator: Callable[[], bool] | None,
         observed_at: datetime,
     ) -> tuple[Mapping[str, Any], ...]:
@@ -624,6 +655,7 @@ class LiveDataPreparator(LiveInitialInputPort):
             timeframe=timeframe,
             start_date=trade_date,
             limit=self._config.intraday_limit,
+            instrument_type=instrument_type,
             request_priority=self._config.request_priority,
             session_validator=session_validator,
             request_timeout=self._config.request_timeout,
@@ -645,6 +677,7 @@ class LiveDataPreparator(LiveInitialInputPort):
         code: str,
         market: str,
         trade_date: str,
+        instrument_type: str | None,
         session_trade_date,
         session_validator: Callable[[], bool] | None,
     ) -> tuple[Mapping[str, Any], ...]:
@@ -655,6 +688,7 @@ class LiveDataPreparator(LiveInitialInputPort):
             timeframe="day",
             start_date=None,
             limit=self._config.daily_history_days,
+            instrument_type=instrument_type,
             request_priority=self._config.request_priority,
             session_validator=session_validator,
             request_timeout=self._config.request_timeout,
@@ -800,6 +834,26 @@ def _bar_filter_observed_at(observed_now: datetime, trade_date: date) -> datetim
     if observed_now.date() == trade_date:
         return observed_now
     return datetime.combine(trade_date, time(23, 59, 59))
+
+
+def _instrument_type_from_spec(spec: SessionSpec) -> str | None:
+    """Extract the authoritative ``instrument_type`` from a SessionSpec.
+
+    The App layer resolves the full :class:`InstrumentIdentity` once at entry
+    and attaches it to ``spec.instrument``.  When absent (e.g. legacy callers
+    or tests that have not been migrated), ``None`` lets the downstream
+    provider fall back to its default security-type handling.
+    """
+
+    instrument = getattr(spec, "instrument", None)
+    if instrument is None:
+        return None
+    # InstrumentIdentity is a frozen dataclass with an ``instrument_type``
+    # field whose value is an ``InstrumentType`` StrEnum member (or plain str).
+    raw = getattr(instrument, "instrument_type", None)
+    if raw is None:
+        return None
+    return str(raw)
 
 
 def _as_trade_date(value: date | str) -> date:

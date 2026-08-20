@@ -1,13 +1,13 @@
 """Server-side event broadcast bus for the T+0 desktop service.
 
-The formal Python service pushes authoritative ``t0_app_v1`` event envelopes
+The formal Python service pushes authoritative ``t0_app_v2`` event envelopes
 to connected renderers over the ``/events`` WebSocket. ``EventPublisher`` owns
 two distinct concerns:
 
 * **Delivery revision** (the envelope ``revision``): a single monotonic counter
   for every ``session_id: null`` envelope published within one
   ``service_generation``. The renderer's :class:`BackendGateway` gates
-  ``session_id: null`` envelopes by ``revision`` on the ``t0_app_v1:service``
+  ``session_id: null`` envelopes by ``revision`` on the ``t0_app_v2:service``
   key and *drops* an event whose revision is ``<=`` the last seen or has a gap
   (``> last + 1``); service-scoped events cannot be re-baselined. The publisher
   therefore claims revisions in strict ``+1`` order, starting at ``0`` for the
@@ -33,7 +33,7 @@ from typing import Any
 
 
 class EventPublisher:
-    """Broadcast ``t0_app_v1`` envelopes to WebSocket subscribers."""
+    """Broadcast ``t0_app_v2`` envelopes to WebSocket subscribers."""
 
     def __init__(self, *, service_generation: int) -> None:
         if (
@@ -90,7 +90,7 @@ class EventPublisher:
         """
         revision = self.claim()
         envelope: dict[str, Any] = {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "service_generation": self._service_generation,
             "session_id": session_id,
             "revision": revision,
@@ -113,7 +113,7 @@ class EventPublisher:
         or rewrite the envelope.
         """
 
-        if envelope.get("schema_version") not in {"t0_app_v1", "t0_replay_v1"}:
+        if envelope.get("schema_version") not in {"t0_app_v2", "t0_replay_v2"}:
             raise ValueError("event envelope must use a supported schema")
         if envelope.get("service_generation") != self._service_generation:
             raise ValueError("event service_generation must match the publisher")

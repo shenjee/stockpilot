@@ -14,7 +14,7 @@ import {
 const testDir = dirname(fileURLToPath(import.meta.url));
 const fixture = JSON.parse(
   await readFile(
-    resolve(testDir, "../contracts/fixtures/workbench-flow-v1.json"),
+    resolve(testDir, "../contracts/fixtures/workbench-flow-v2.json"),
     "utf8",
   ),
 );

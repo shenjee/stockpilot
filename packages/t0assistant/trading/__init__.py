@@ -2,9 +2,10 @@
 
 from .api import TradeCommandApi, TradeEventPublisher
 from .fee_policy import (
+    AutomaticFeeNotSupportedError,
     FeeCalculation,
     FeePolicyValidationError,
-    SecurityType,
+    FeeSecurityType,
     calculate_fee,
 )
 from .markers import (
@@ -27,11 +28,17 @@ from .models import (
     bucket_start_for,
     normalize_executed_at,
 )
-from .service import TradeService
+from .service import (
+    AllowAllEligibility,
+    InstrumentEligibilityPort,
+    TradeEligibilityError,
+    TradeService,
+)
 from .simulated_api import SimulatedTradeCommandApi, SimulatedTradeSessionPort
 
 __all__ = [
     "SHARES_PER_LOT",
+    "AutomaticFeeNotSupportedError",
     "calculate_fee",
     "bucket_start_for",
     "FeeCalculation",
@@ -41,9 +48,12 @@ __all__ = [
     "normalize_executed_at",
     "project_trade_marker",
     "project_trade_markers",
-    "SecurityType",
+    "FeeSecurityType",
+    "InstrumentEligibilityPort",
+    "AllowAllEligibility",
     "TradeCommandApi",
     "TradeDraft",
+    "TradeEligibilityError",
     "TradeEventPublisher",
     "TradeMarker",
     "TradeMarkerProjection",

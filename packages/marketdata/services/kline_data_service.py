@@ -28,6 +28,38 @@ _RELIABILITY_INCOMPLETE = "incomplete"
 _RELIABILITY_UNKNOWN = "unknown"
 _REPLAY_RELIABILITY_EVIDENCE_REASON = "replay_reliability_evidence"
 
+# Issue #151: the new T+0 ports carry ``instrument_type`` (stock|etf|index),
+# the objective securities-master identity.  The underlying Tencent provider
+# still uses ``security_type`` (a_share|etf|index) as its infrastructure-level
+# adjustment-mode selector.  This adapter maps the identity enum to the
+# provider's expected value so the provider gets ``index`` (no-adjustment)
+# for indices and ``a_share``/``etf`` for stocks/ETFs.  When both parameters
+# are supplied, ``instrument_type`` wins (it is the authoritative identity).
+_INSTRUMENT_TO_SECURITY_TYPE: dict[str, str] = {
+    "stock": "a_share",
+    "etf": "etf",
+    "index": "index",
+}
+
+
+def _resolve_security_type(
+    security_type: str | None,
+    instrument_type: str | None,
+) -> str | None:
+    """Adapt authoritative ``instrument_type`` to the provider's ``security_type``.
+
+    ``instrument_type`` is the identity-layer enum (stock|etf|index); the
+    provider's ``security_type`` is an infrastructure adjustment-mode selector
+    (a_share|etf|index).  When the caller passes ``instrument_type`` it is
+    mapped here so the provider receives the value it understands.  An
+    explicit ``security_type`` is preserved as a legacy escape hatch but
+    ``instrument_type`` takes precedence when both are supplied.
+    """
+
+    if instrument_type is not None:
+        return _INSTRUMENT_TO_SECURITY_TYPE.get(instrument_type, instrument_type)
+    return security_type
+
 
 class KLineDataService:
     """统一的 K 线读取与同步流程。"""
@@ -211,6 +243,7 @@ class KLineDataService:
         limit: int = 120,
         min_local_count: int | None = None,
         security_type: str | None = None,
+        instrument_type: str | None = None,
         request_priority: ProviderRequestPriority = ProviderRequestPriority.LIVE,
         session_validator: Callable[[], bool] | None = None,
         provider_max_attempts: int = 1,
@@ -224,7 +257,7 @@ class KLineDataService:
             timeframe=timeframe,
             start_date=start_date,
             min_local_count=min_local_count,
-            security_type=security_type,
+            security_type=_resolve_security_type(security_type, instrument_type),
             request_priority=request_priority,
             session_validator=session_validator,
             provider_max_attempts=provider_max_attempts,
@@ -249,6 +282,7 @@ class KLineDataService:
         limit: int = 120,
         min_local_count: int | None = None,
         security_type: str | None = None,
+        instrument_type: str | None = None,
         request_priority: ProviderRequestPriority = ProviderRequestPriority.LIVE,
         session_validator: Callable[[], bool] | None = None,
         provider_max_attempts: int = 1,
@@ -262,7 +296,7 @@ class KLineDataService:
             timeframe=timeframe,
             start_date=start_date,
             min_local_count=min_local_count,
-            security_type=security_type,
+            security_type=_resolve_security_type(security_type, instrument_type),
             request_priority=request_priority,
             session_validator=session_validator,
             provider_max_attempts=provider_max_attempts,

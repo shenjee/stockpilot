@@ -14,11 +14,13 @@ from packages.t0assistant.repositories import (
     open_app_database,
 )
 from packages.t0assistant.trading import (
+    AllowAllEligibility,
     TradeCommandApi,
     TradeRecord,
     TradeService,
 )
 from packages.t0assistant.trading.api import TradeEventPublisher
+from packages.t0assistant.trading.service import InstrumentEligibilityPort
 
 
 def _draft(**overrides) -> dict:
@@ -99,7 +101,7 @@ class _ScriptedRepository:
 
 def _request(command: str, payload: dict, rid: str = "req"):
     return {
-        "schema_version": "t0_app_v1",
+        "schema_version": "t0_app_v2",
         "request_id": rid,
         "command": command,
         "session_id": None,
@@ -122,7 +124,7 @@ class TradeCommandApiTests(unittest.TestCase):
         if repository is None:
             database = open_app_database(self.db_path)
             repository = SqliteTradeRepository(database)
-        service = TradeService(repository)
+        service = TradeService(repository, eligibility=AllowAllEligibility())
         api = TradeCommandApi(
             service,
             service_generation=service_generation,
@@ -305,8 +307,11 @@ class TradeCommandApiTests(unittest.TestCase):
 
     def test_service_generation_must_be_positive(self) -> None:
         with self.assertRaises(ValueError):
-            TradeCommandApi(TradeService(_ScriptedRepository()),
-                            service_generation=0, publisher=self.publisher)
+            TradeCommandApi(
+                TradeService(
+                    _ScriptedRepository(), eligibility=AllowAllEligibility()
+                ),
+                service_generation=0, publisher=self.publisher)
 
     def test_no_publisher_does_not_raise(self) -> None:
         # A command API without a publisher (transport not wired) still accepts
@@ -315,6 +320,84 @@ class TradeCommandApiTests(unittest.TestCase):
             api._publisher = None  # noqa: SLF001 - simulate unwired transport
             result = api.dispatch("create_trade", _request("create_trade",
                 {"trade": _draft()}))
+        self.assertTrue(result["accepted"])
+
+
+class _ScriptedEligibility(InstrumentEligibilityPort):
+    """Fake eligibility port returning a scripted status or raising."""
+
+    def __init__(self, status: str | None, *, raises: bool = False) -> None:
+        self._status = status
+        self._raises = raises
+
+    def check_eligibility(self, symbol: str) -> str | None:
+        if self._raises:
+            raise RuntimeError("securities store unreachable")
+        return self._status
+
+
+class TradeEligibilityErrorMappingTests(unittest.TestCase):
+    """Issue #151 P1 #4: TradeEligibilityError must map to stable codes."""
+
+    def setUp(self) -> None:
+        self._tempdir = tempfile.TemporaryDirectory()
+        self.db_path = Path(self._tempdir.name) / "trades.sqlite3"
+        self.publisher = _CapturingPublisher()
+
+    def tearDown(self) -> None:
+        self._tempdir.cleanup()
+
+    @contextmanager
+    def _api(self, eligibility: InstrumentEligibilityPort):
+        database = open_app_database(self.db_path)
+        repository = SqliteTradeRepository(database)
+        service = TradeService(repository, eligibility=eligibility)
+        api = TradeCommandApi(
+            service,
+            service_generation=5,
+            publisher=self.publisher,
+        )
+        yield api
+
+    def test_index_security_maps_to_security_not_tradable(self) -> None:
+        eligibility = _ScriptedEligibility("index")
+        with self._api(eligibility) as api:
+            result = api.dispatch("create_trade", _request("create_trade",
+                {"trade": _draft(symbol="sh.000001")}))
+        self.assertFalse(result["accepted"])
+        self.assertEqual(
+            result["error"]["error_code"], "security_not_tradable"
+        )
+        self.assertFalse(result["error"]["retryable"])
+        self.assertEqual(self.publisher.events, [])
+
+    def test_unknown_security_maps_to_security_not_found(self) -> None:
+        eligibility = _ScriptedEligibility(None)
+        with self._api(eligibility) as api:
+            result = api.dispatch("create_trade", _request("create_trade",
+                {"trade": _draft(symbol="sh.999999")}))
+        self.assertFalse(result["accepted"])
+        self.assertEqual(
+            result["error"]["error_code"], "security_not_found"
+        )
+        self.assertFalse(result["error"]["retryable"])
+
+    def test_eligibility_service_failure_maps_to_service_unavailable(self) -> None:
+        eligibility = _ScriptedEligibility(None, raises=True)
+        with self._api(eligibility) as api:
+            result = api.dispatch("create_trade", _request("create_trade",
+                {"trade": _draft(symbol="sh.600584")}))
+        self.assertFalse(result["accepted"])
+        self.assertEqual(
+            result["error"]["error_code"], "eligibility_service_unavailable"
+        )
+        self.assertTrue(result["error"]["retryable"])
+
+    def test_tradable_security_is_accepted(self) -> None:
+        eligibility = _ScriptedEligibility("tradable")
+        with self._api(eligibility) as api:
+            result = api.dispatch("create_trade", _request("create_trade",
+                {"trade": _draft(symbol="sh.600584")}))
         self.assertTrue(result["accepted"])
 
 

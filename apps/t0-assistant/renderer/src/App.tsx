@@ -49,13 +49,13 @@ import {
   latestDailyBars,
   liveOperationFailurePresentation,
   operationMatchesEnvelope,
-  partialSecurityFromSymbol,
   quoteDataCutoffText,
   quoteRows,
   restoredSecurityFromResponse,
   securitiesFromSearchResponse,
   securityCategoryLabel,
   securitySearchReducer,
+  standardSecurityFromResponse,
   startupRestoreFromResponse,
   type ApplicationError,
 } from "./workbench-presenter.mjs";
@@ -383,9 +383,7 @@ export function App() {
           if (preferences.last_symbol) {
             const startup = startupRestoreFromResponse(response);
             const resolvedSecurity = restoredSecurityFromResponse(response);
-            const displaySecurity =
-              resolvedSecurity ??
-              partialSecurityFromSymbol(preferences.last_symbol);
+            const displaySecurity = resolvedSecurity;
             if (
               displaySecurity &&
               !cancelled &&
@@ -962,6 +960,27 @@ export function App() {
     }
   }
 
+  // Issue #151: resolve the authoritative SecurityIdentity for a symbol via
+  // select_security without switching the workbench. Used by HistoryTradesDialog
+  // when editing a historical trade whose symbol differs from the current
+  // workbench security, so the fee advisor receives the correct
+  // instrument_type instead of a fabricated default.
+  async function resolveSecurity(
+    symbol: string,
+  ): Promise<SecurityIdentity | null> {
+    if (!window.stockpilot) return null;
+    try {
+      const response = await window.stockpilot.resolveSecurityIdentity(
+        appRequest("resolve_security_identity", null, { symbol }),
+      );
+      const error = applicationErrorFrom(response);
+      if (error) return null;
+      return standardSecurityFromResponse(response);
+    } catch {
+      return null;
+    }
+  }
+
   async function performSecuritySelection(
     security: SecurityIdentity,
     restoring = false,
@@ -1031,6 +1050,11 @@ export function App() {
       if (preferenceWarning) {
         setBackgroundError(preferenceWarning);
       }
+      // Issue #151: the backend resolves the authoritative identity once;
+      // the renderer must adopt it rather than continuing to use the pre-call
+      // object, which may have a wrong or missing instrument_type.
+      const authoritative = standardSecurityFromResponse(response);
+      const resolvedSecurity = authoritative ?? security;
       activeOperations.current.clear();
       rebaselineRequest.current = null;
       if (modeRef.current === WorkbenchMode.REPLAY) {
@@ -1038,7 +1062,7 @@ export function App() {
         if (
           current.serviceGeneration !== status.service_generation ||
           current.sessionId !== sessionId ||
-          current.snapshot.session?.symbol !== security.symbol ||
+          current.snapshot.session?.symbol !== resolvedSecurity.symbol ||
           current.snapshot.session?.state !== "ready"
         ) {
           liveProjection.current = beginChartSession(
@@ -1055,7 +1079,7 @@ export function App() {
           if (
             current.serviceGeneration === status.service_generation &&
             current.sessionId === sessionId &&
-            current.snapshot.session?.symbol === security.symbol &&
+            current.snapshot.session?.symbol === resolvedSecurity.symbol &&
             current.snapshot.session?.state === "ready"
           ) {
             liveProjection.current = current;
@@ -1074,15 +1098,15 @@ export function App() {
       if (operationId) {
         activeOperations.current.set(operationId, {
           retry: "security",
-          security,
+          security: resolvedSecurity,
           serviceGeneration: status.service_generation,
           sessionId,
         });
       }
       setWorkbench((current) =>
-        selectWorkbenchSecurity(current, security),
+        selectWorkbenchSecurity(current, resolvedSecurity),
       );
-      setQuery(security.code);
+      setQuery(resolvedSecurity.code);
       setSuggestions([]);
       setSearchMessage("");
       // Recover the authoritative baseline when it raced ahead of the command
@@ -1158,18 +1182,15 @@ export function App() {
   async function handleEnterDayChart(symbol: string, tradeDate: string) {
     const requestSequence = navigationRequests.current.begin();
     const today = localToday();
-    const identity: SecurityIdentity =
-      workbench.security && workbench.security.symbol === symbol
-        ? workbench.security
-        : {
-            symbol,
-            code: symbol.slice(3),
-            market: (symbol.slice(0, 2) === "sz" ? "sz" : "sh") as "sh" | "sz",
-            name: symbol.slice(3),
-            security_type: "a_share",
-          };
+    // Resolve identity before entering today's Live chart or loading a
+    // historical snapshot. Identity lookup itself never changes Live state.
     if (tradeDate === today) {
       setDayChartNotice(null);
+      const identity = await resolveSecurity(symbol);
+      if (!identity || !navigationRequests.current.isCurrent(requestSequence)) {
+        setDayChartNotice("证券身份解析失败，无法进入当天图形。");
+        return;
+      }
       void performSecuritySelection(identity);
       return;
     }
@@ -1186,6 +1207,22 @@ export function App() {
     setLoading(true);
     setDayChartNotice(null);
     try {
+      // Resolve the authoritative identity before loading the historical
+      // snapshot so the workbench carries the correct instrument_type.
+      let identity: SecurityIdentity;
+      if (workbench.security && workbench.security.symbol === symbol) {
+        identity = workbench.security;
+      } else {
+        const authoritative = await resolveSecurity(symbol);
+        if (!authoritative) {
+          setLoading(false);
+          setDayChartNotice(
+            `该交易日（${tradeDate}）的证券信息不完整，已保留当前图形。`,
+          );
+          return;
+        }
+        identity = authoritative;
+      }
       const response = await window.stockpilot.getHistoricalSnapshot(
         appRequest("get_historical_snapshot", null, {
           symbol,
@@ -1339,7 +1376,7 @@ export function App() {
     setBackgroundError(null);
     try {
       const response = await window.stockpilot.beginReplay({
-        schema_version: "t0_replay_v1",
+        schema_version: "t0_replay_v2",
         request_id: requestId("begin-replay"),
         symbol: workbench.security.symbol,
         trade_date: replayDate,
@@ -1364,7 +1401,7 @@ export function App() {
     setReplayPlaybackPending(true);
     try {
       const response = await window.stockpilot.setReplayPlayback({
-        schema_version: "t0_replay_v1",
+        schema_version: "t0_replay_v2",
         request_id: requestId(playing ? "play-replay" : "pause-replay"),
         session_id: replayFacts.sessionId,
         playing,
@@ -1388,7 +1425,7 @@ export function App() {
     }
     try {
       const response = await window.stockpilot.setReplaySpeed({
-        schema_version: "t0_replay_v1",
+        schema_version: "t0_replay_v2",
         request_id: requestId("set-replay-speed"),
         session_id: replayFacts.sessionId,
         playback_speed: playbackSpeed,
@@ -1426,7 +1463,7 @@ export function App() {
     setReplayBusy(true);
     try {
       const response = await window.stockpilot.stepReplay({
-        schema_version: "t0_replay_v1",
+        schema_version: "t0_replay_v2",
         request_id: requestId("step-replay"),
         session_id: replayFacts.sessionId,
       });
@@ -1445,7 +1482,7 @@ export function App() {
     setReplayBusy(true);
     try {
       const response = await window.stockpilot.seekReplay({
-        schema_version: "t0_replay_v1",
+        schema_version: "t0_replay_v2",
         request_id: requestId("seek-replay"),
         session_id: replayFacts.sessionId,
         target_time: targetTime,
@@ -1498,7 +1535,7 @@ export function App() {
     if (window.stockpilot && sessionId) {
       void window.stockpilot
         .endReplay({
-          schema_version: "t0_replay_v1",
+          schema_version: "t0_replay_v2",
           request_id: requestId("end-replay"),
           session_id: sessionId,
         })
@@ -1839,6 +1876,7 @@ export function App() {
           serviceGeneration={status.service_generation}
           tradeOpController={tradeOpController.current as TradeOperationController}
           onEnterDayChart={handleEnterDayChart}
+          resolveSecurity={resolveSecurity}
         />
       )}
 
@@ -2387,7 +2425,7 @@ function DailyMiniChart({ bars }: { bars: MarketBar[] }) {
 
 function appRequest(command: string, sessionId: string | null, payload: object) {
   return {
-    schema_version: "t0_app_v1",
+    schema_version: "t0_app_v2",
     request_id: requestId(command),
     command,
     session_id: sessionId,
@@ -2493,7 +2531,7 @@ function requestReplayPlayback(
   if (!window.stockpilot || !sessionId) return;
   void window.stockpilot
     .setReplayPlayback({
-      schema_version: "t0_replay_v1",
+      schema_version: "t0_replay_v2",
       request_id: requestId(playing ? "play-replay" : "pause-replay"),
       session_id: sessionId,
       playing,
@@ -2545,7 +2583,7 @@ function replayEventEnvelope(event: unknown) {
     payload?: unknown;
   };
   if (
-    envelope.schema_version !== "t0_replay_v1" ||
+    envelope.schema_version !== "t0_replay_v2" ||
     typeof envelope.event_type !== "string" ||
     typeof envelope.session_id !== "string"
   ) {

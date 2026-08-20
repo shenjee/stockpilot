@@ -11,7 +11,7 @@
 /** @typedef {"buy" | "sell"} TradeSide */
 
 /**
- * Frozen trade_record shape from app-v1.schema.json. This file is the single
+ * Frozen trade_record shape from app-v2.schema.json. This file is the single
  * source of truth for the renderer-side trade type.
  *
  * @typedef {Object} TradeRecord

@@ -1,7 +1,7 @@
 /**
  * Pure helpers for the real-trade entry/edit form.
  *
- * Builds a `trade_draft` (matching `app-v1.schema.json`) from form fields,
+ * Builds a `trade_draft` (matching `app-v2.schema.json`) from form fields,
  * validates each field with stable field-level errors, and normalizes a
  * minute-only execution time to seconds. Validation mirrors
  * `TradeDraft.from_mapping` in `packages/t0assistant/trading/models.py`; the

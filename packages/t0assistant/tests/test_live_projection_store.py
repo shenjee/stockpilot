@@ -508,7 +508,7 @@ class LiveProjectionStoreTests(unittest.TestCase):
 
         assert event is not None
         envelope = event.to_envelope()
-        self.assertEqual(envelope["schema_version"], "t0_app_v1")
+        self.assertEqual(envelope["schema_version"], "t0_app_v2")
         self.assertEqual(envelope["service_generation"], 7)
         self.assertEqual(envelope["session_id"], "live-1")
         self.assertEqual(envelope["revision"], envelope["payload"]["session"]["revision"])
@@ -894,12 +894,12 @@ class LiveProjectionStoreTests(unittest.TestCase):
         from pathlib import Path
 
         logical = json_loads(
-            (resources.files("packages.t0assistant") / "contracts" / "logical-schema.json")
+            (resources.files("packages.t0assistant") / "contracts" / "logical-v2.schema.json")
             .read_text(encoding="utf-8")
         )
         app_path = (
             Path(__file__).resolve().parents[3]
-            / "apps" / "t0-assistant" / "contracts" / "app-v1.schema.json"
+            / "apps" / "t0-assistant" / "contracts" / "app-v2.schema.json"
         )
         app = json_loads(app_path.read_text(encoding="utf-8"))
         registry = Registry().with_resources(

@@ -21,9 +21,9 @@ import { createFakeSafeBridge } from "./fake-safe-bridge.mjs";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const [workbenchFixture, replayFixture, chartGroups] = await Promise.all([
-  readFile(resolve(testDir, "../contracts/fixtures/workbench-flow-v1.json"), "utf8")
+  readFile(resolve(testDir, "../contracts/fixtures/workbench-flow-v2.json"), "utf8")
     .then(JSON.parse),
-  readFile(resolve(testDir, "../contracts/fixtures/replay-speed-v1.json"), "utf8")
+  readFile(resolve(testDir, "../contracts/fixtures/replay-speed-v2.json"), "utf8")
     .then(JSON.parse),
   readFile(resolve(testDir, "../contracts/fixtures/chart-groups-v1.json"), "utf8")
     .then(JSON.parse),
@@ -153,7 +153,7 @@ test("Live snapshot chan_analysis flows through bridge into pivot zones and CZSC
   });
 
   const response = await bridge.getLiveSnapshot({
-    schema_version: "t0_app_v1",
+    schema_version: "t0_app_v2",
     request_id: "smoke-live-1",
     command: "get_live_snapshot",
     session_id: workbenchFixture.session_id,
@@ -203,7 +203,7 @@ test("Replay snapshot chan_analysis respects current_time truncation while keepi
   });
 
   const snapshot = await bridge.getReplaySnapshot({
-    schema_version: "t0_replay_v1",
+    schema_version: "t0_replay_v2",
     request_id: "smoke-replay-1",
     session_id: "replay-1",
   });

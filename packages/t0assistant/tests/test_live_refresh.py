@@ -18,6 +18,16 @@ from packages.t0assistant.runtime import (
     SessionSpec,
     SessionType,
 )
+from packages.marketdata.t0_schema import InstrumentIdentity, InstrumentType
+
+
+_STOCK = InstrumentIdentity(
+    symbol="sh.600000",
+    code="600000",
+    market="sh",
+    name="Test Stock",
+    instrument_type=InstrumentType.STOCK,
+)
 
 
 def _update(
@@ -119,6 +129,7 @@ class LiveRefreshSchedulerTests(unittest.TestCase):
             symbol="sh.600000",
             generation=7,
             trade_date=None,
+            instrument=_STOCK,
         )
         self.intervals = LiveRefreshIntervals(
             quote=timedelta(seconds=2),
@@ -874,6 +885,7 @@ class LiveRefreshValidationTests(unittest.TestCase):
                     symbol="sh.600000",
                     generation=1,
                     trade_date="2026-07-24",
+                    instrument=_STOCK,
                 ),
                 _FakeInput(),
                 executor,
@@ -894,6 +906,7 @@ class LiveRefreshValidationTests(unittest.TestCase):
                 symbol="sh.600000",
                 generation=1,
                 trade_date=None,
+                instrument=_STOCK,
             ),
             input_port,
             executor,
@@ -953,6 +966,7 @@ class StaleEpochRefreshFailureTests(unittest.TestCase):
             symbol="sh.600000",
             generation=7,
             trade_date=None,
+            instrument=_STOCK,
         )
         self.t0 = datetime(2026, 7, 24, 9, 35)
 
@@ -1040,6 +1054,7 @@ class StaleEpochFailureToctouTests(unittest.TestCase):
             symbol="sh.600000",
             generation=7,
             trade_date=None,
+            instrument=_STOCK,
         )
         self.t0 = datetime(2026, 7, 24, 9, 35)
 

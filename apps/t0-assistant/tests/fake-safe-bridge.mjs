@@ -34,7 +34,7 @@ export function createFakeSafeBridge(fixture, { replayFixture = null, historical
       if (command === "get_service_status") return clone(serviceStatus);
       if (command === "get_live_snapshot") {
         return {
-          schema_version: "t0_app_v1",
+          schema_version: "t0_app_v2",
           request_id: request.request_id,
           accepted: true,
           operation_id: null,
@@ -44,7 +44,7 @@ export function createFakeSafeBridge(fixture, { replayFixture = null, historical
       }
       if (command === "search_securities") {
         return {
-          schema_version: "t0_app_v1",
+          schema_version: "t0_app_v2",
           request_id: request.request_id,
           accepted: true,
           operation_id: null,
@@ -55,23 +55,41 @@ export function createFakeSafeBridge(fixture, { replayFixture = null, historical
                 code: "600000",
                 market: "sh",
                 name: "浦发银行",
-                security_type: "a_share",
+                instrument_type: "stock",
               },
               {
                 symbol: "sh.600001",
                 code: "600001",
                 market: "sh",
                 name: "示例银行",
-                security_type: "a_share",
+                instrument_type: "stock",
               },
             ],
           },
           error: null,
         };
       }
+      if (command === "resolve_security_identity") {
+        return {
+          schema_version: "t0_app_v2",
+          request_id: request.request_id,
+          accepted: true,
+          operation_id: null,
+          data: {
+            security: {
+              symbol: "sh.600000",
+              code: "600000",
+              market: "sh",
+              name: "浦发银行",
+              instrument_type: "stock",
+            },
+          },
+          error: null,
+        };
+      }
       if (command === "select_symbol") {
         return {
-          schema_version: "t0_replay_v1",
+          schema_version: "t0_replay_v2",
           request_id: request.request_id,
           service_generation: fixture.service_generation,
           security: {
@@ -79,7 +97,7 @@ export function createFakeSafeBridge(fixture, { replayFixture = null, historical
             code: "600000",
             market: "sh",
             name: "浦发银行",
-            security_type: "a_share",
+            instrument_type: "stock",
           },
         };
       }
@@ -90,7 +108,7 @@ export function createFakeSafeBridge(fixture, { replayFixture = null, historical
       if (command === "get_historical_snapshot") {
         if (!historicalSnapshot) throw new Error("Historical snapshot fixture is required");
         return {
-          schema_version: "t0_app_v1",
+          schema_version: "t0_app_v2",
           request_id: request.request_id,
           accepted: true,
           operation_id: null,
@@ -105,7 +123,7 @@ export function createFakeSafeBridge(fixture, { replayFixture = null, historical
           "seek_replay",
         ]).has(command);
         return {
-          schema_version: "t0_replay_v1",
+          schema_version: "t0_replay_v2",
           request_id: request.request_id,
           service_generation: fixture.service_generation,
           session_id: request.session_id ?? "replay-fixture-1",
@@ -113,7 +131,7 @@ export function createFakeSafeBridge(fixture, { replayFixture = null, historical
         };
       }
       return {
-        schema_version: "t0_app_v1",
+        schema_version: "t0_app_v2",
         request_id: request?.request_id ?? "fake-request",
         accepted: true,
         operation_id: null,

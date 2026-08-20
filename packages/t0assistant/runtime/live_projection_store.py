@@ -24,7 +24,7 @@ Responsibilities (minimal, transport-free):
   gap or reconnect by fetching the latest complete authoritative snapshot, with
   ``snapshot.session.revision`` equal to the latest accepted revision.
 
-The store emits ``t0_app_v1`` event envelopes but does not touch the backend
+The store emits ``t0_app_v2`` event envelopes but does not touch the backend
 HTTP/WebSocket transport, the Electron gateway, or any public schema.
 """
 
@@ -43,7 +43,7 @@ from .coordinator import SessionType
 from .live_session import LiveSnapshotCandidate
 
 
-SCHEMA_VERSION = "t0_app_v1"
+SCHEMA_VERSION = "t0_app_v2"
 
 _INCREMENTAL_EVENT_TYPES = frozenset(
     {
@@ -83,7 +83,7 @@ class _CoordinatorAcceptancePort(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class LiveAcceptedEvent:
-    """A published ``t0_app_v1`` event envelope produced by the authority."""
+    """A published ``t0_app_v2`` event envelope produced by the authority."""
 
     schema_version: str
     service_generation: int
@@ -668,12 +668,12 @@ def _load_contract(package: str, name: str) -> dict[str, Any]:
 
 
 def _build_incremental_validators() -> dict[str, Draft202012Validator]:
-    logical = _load_contract("packages.t0assistant", "logical-schema.json")
+    logical = _load_contract("packages.t0assistant", "logical-v2.schema.json")
     registry = Registry().with_resource(
         logical["$id"], Resource.from_contents(logical)
     )
     logic_id = logical["$id"]
-    # market_update_payload mirrors app-v1.schema.json#$defs/market_update_payload
+    # market_update_payload mirrors app-v2.schema.json#$defs/market_update_payload
     # without taking a runtime dependency on the app contracts directory.
     market_update_schema = {
         "type": "object",
@@ -721,7 +721,7 @@ def _build_incremental_validators() -> dict[str, Draft202012Validator]:
 
 
 def _build_logical_snapshot_validator() -> Draft202012Validator:
-    logical = _load_contract("packages.t0assistant", "logical-schema.json")
+    logical = _load_contract("packages.t0assistant", "logical-v2.schema.json")
     registry = Registry().with_resource(
         logical["$id"], Resource.from_contents(logical)
     )

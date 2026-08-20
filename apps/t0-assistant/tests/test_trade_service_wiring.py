@@ -44,7 +44,11 @@ from packages.t0assistant.repositories import (  # noqa: E402
     SqliteTradeRepository,
     open_app_database,
 )
-from packages.t0assistant.trading import TradeCommandApi, TradeService  # noqa: E402
+from packages.t0assistant.trading import (  # noqa: E402
+    AllowAllEligibility,
+    TradeCommandApi,
+    TradeService,
+)
 from backend.event_publisher import EventPublisher  # noqa: E402
 
 
@@ -67,7 +71,7 @@ def _draft(**overrides) -> dict:
 def _envelope(command: str, payload: dict, rid: str) -> bytes:
     return json.dumps(
         {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "request_id": rid,
             "command": command,
             "session_id": None,
@@ -155,7 +159,7 @@ class _RecordingTradeApi:
     def dispatch(self, command: str, request: dict) -> dict:
         self.calls.append((command, request))
         return {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "request_id": request["request_id"],
             "accepted": True,
             "operation_id": None,
@@ -170,7 +174,7 @@ class TradeServiceWiringTest(unittest.TestCase):
         self.db_path = Path(self._tempdir.name) / "t0_assistant.sqlite"
         self._database = open_app_database(self.db_path)
         repository = SqliteTradeRepository(self._database)
-        service = TradeService(repository)
+        service = TradeService(repository, eligibility=AllowAllEligibility())
         self.publisher = EventPublisher(service_generation=7)
         self.trade_api = TradeCommandApi(
             service, service_generation=7, publisher=self.publisher
@@ -417,7 +421,7 @@ class TradeServiceWiringTest(unittest.TestCase):
             f"{self.base_url}/api/commands/create_trade",
             data=json.dumps(
                 {
-                    "schema_version": "t0_app_v1",
+                    "schema_version": "t0_app_v2",
                     "request_id": "r-simulated-unwired",
                     "command": "create_trade",
                     "session_id": "replay-not-registered",
@@ -454,7 +458,7 @@ class TradeServiceWiringTest(unittest.TestCase):
                 f"{self.base_url}/api/commands/create_trade",
                 data=json.dumps(
                     {
-                        "schema_version": "t0_app_v1",
+                        "schema_version": "t0_app_v2",
                         "request_id": request_id,
                         "command": "create_trade",
                         "session_id": session_id,
