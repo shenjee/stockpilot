@@ -56,6 +56,13 @@ export function applyLiveChartEvent(projection, event) {
     return projection;
   }
 
+  // Full snapshots must replace via applyWorkbenchSnapshot / applySnapshot.
+  // Treating them as increments would advance revision while keeping the old
+  // snapshot body (#155 review P1).
+  if (event.event_type === "workbench_snapshot") {
+    return projection;
+  }
+
   const eventGeneration = integerOrNull(event.service_generation);
   const eventSessionId = stringOrNull(event.session_id);
   const eventRevision = integerOrNull(event.revision);

@@ -18,6 +18,7 @@ import {
 } from "./charts/chart-model.mjs";
 import {
   chartContractApplicationError,
+  chartEnvelopeApplicationError,
   inspectWorkbenchSnapshotCandidate,
 } from "./charts/workbench-snapshot-guard.mjs";
 import { selectActiveWorkbenchProjection } from "./charts/active-workbench-projection.mjs";
@@ -644,6 +645,9 @@ export function App() {
         setBackgroundError((current) => clearLiveScopedBackgroundError(current));
         return;
       }
+      // Invalid or incomplete workbench_snapshot must never enter the incremental
+      // reducer: that would advance revision while keeping the old snapshot body
+      // (#155 review P1). Always surface an error and request rebaseline.
       if (
         event &&
         typeof event === "object" &&
@@ -654,9 +658,11 @@ export function App() {
         );
         if (!inspected.ok && inspected.reason === "contract") {
           setBackgroundError(chartContractApplicationError(inspected.error));
-          liveProjectionController.current?.requestRebaseline();
-          return;
+        } else {
+          setBackgroundError(chartEnvelopeApplicationError());
         }
+        liveProjectionController.current?.requestRebaseline();
+        return;
       }
       applyLiveEvent();
     });
@@ -664,13 +670,18 @@ export function App() {
 
   useEffect(() => {
     if (!window.stockpilot) return;
+    // Backup accept path when a snapshot is delivered without a matching event
+    // envelope. Loading/cursor settle stays on the replay-event path which owns
+    // operation_id (#155 review P2).
     const stopSnapshot = window.stockpilot.onReplaySnapshot((candidate) => {
       if (modeRef.current !== WorkbenchMode.REPLAY) return;
       const inspected = inspectWorkbenchSnapshotCandidate(candidate);
       if (!inspected.ok) {
-        if (inspected.reason === "contract") {
-          setBackgroundError(chartContractApplicationError(inspected.error));
-        }
+        setBackgroundError(
+          inspected.reason === "contract"
+            ? chartContractApplicationError(inspected.error)
+            : asReplayOwnedError(chartEnvelopeApplicationError()),
+        );
         return;
       }
       const facts = replayFactsFromSnapshot(inspected.snapshot);
@@ -712,15 +723,45 @@ export function App() {
         return;
       }
       if (envelope.event_type === "workbench_snapshot") {
-        if (replay.matchesLoadOperation(envelope.operation_id)) {
-          replay.clearLoadOperation();
-        }
-        const cursorNote = replay.noteCursorOutcome(
+        const operationId =
           typeof envelope.operation_id === "string"
             ? envelope.operation_id
-            : null,
-          "completed",
-        );
+            : null;
+        const inspected = inspectWorkbenchSnapshotCandidate(envelope.payload);
+        if (!inspected.ok) {
+          setBackgroundError(
+            asReplayOwnedError(
+              inspected.reason === "contract"
+                ? chartContractApplicationError(inspected.error)
+                : chartEnvelopeApplicationError(),
+            ),
+          );
+          if (replay.matchesLoadOperation(operationId)) {
+            replay.failLoadOperation();
+          } else {
+            const cursorNote = replay.noteCursorOutcome(operationId, "failed");
+            if (cursorNote === "settled") {
+              replay.setResumeAfterSeek(false);
+            }
+          }
+          return;
+        }
+        const accepted = replay.acceptSnapshot(inspected.snapshot, {
+          service_generation: envelope.service_generation ?? undefined,
+          session_id: envelope.session_id,
+          revision:
+            envelope.revision ?? inspected.snapshot.session?.revision,
+        });
+        if (!accepted) {
+          // Identity/operation mismatch: keep loading/fallback; do not settle.
+          return;
+        }
+        // Only after a matching valid snapshot is accepted may loading clear
+        // and cursor ops settle (#155 review P2).
+        if (replay.matchesLoadOperation(operationId)) {
+          replay.clearLoadOperation();
+        }
+        const cursorNote = replay.noteCursorOutcome(operationId, "completed");
         if (cursorNote === "settled") {
           if (replay.takeResumeAfterSeek()) {
             requestReplayPlayback(
@@ -750,7 +791,9 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!window.stockpilot || workbench.mode !== WorkbenchMode.LIVE) return;
+    // Live rebaseline belongs to the Live controller lifecycle and must keep
+    // running while Replay is foreground (#155 review P2).
+    if (!window.stockpilot) return;
     const live = liveProjectionController.current;
     if (!live) return;
     const liveProjection = live.projection;
@@ -795,7 +838,7 @@ export function App() {
       .catch(() => {
         // The gateway also owns the bounded rebaseline path.
       });
-  }, [liveCtrl.projection, workbench.mode]);
+  }, [liveCtrl.projection]);
 
   useEffect(() => {
     if (!window.stockpilot || !preferencesHydrated) return;
@@ -1557,7 +1600,10 @@ export function App() {
         intraday: intradayModelResult.model,
       };
       setBackgroundError((current) =>
-        current?.error_code === "chart_contract_failed" ? null : current,
+        current?.error_code === "chart_contract_failed" ||
+        current?.error_code === "chart_envelope_failed"
+          ? null
+          : current,
       );
       return;
     }

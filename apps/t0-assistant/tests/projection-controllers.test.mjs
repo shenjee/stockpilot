@@ -221,3 +221,66 @@ test("applySessionStatus patches authoritative Replay facts in place", () => {
   assert.equal(facts?.playbackSpeed, 10);
   assert.equal(replay.projection.revision, 9);
 });
+
+test("applySessionStatus rejects stale or equal revision", () => {
+  const live = new LiveProjectionController(liveBaseline());
+  const replay = new ReplaySessionController();
+  replay.setServiceGeneration(live.projection.serviceGeneration);
+  replay.enterMode(live.projection);
+  replay.beginSession("replay-1");
+  const snapshot = cloneReplaySnapshot();
+  replay.acceptSnapshot(snapshot, {
+    service_generation: live.projection.serviceGeneration,
+    session_id: "replay-1",
+    revision: 8,
+  });
+  assert.equal(
+    replay.applySessionStatus({
+      state: "paused",
+      playback_speed: 1,
+      revision: 7,
+    }),
+    false,
+  );
+  assert.equal(replay.projection.revision, 8);
+  assert.equal(replay.projection.snapshot.session.revision, 8);
+  assert.equal(
+    replay.applySessionStatus({
+      state: "paused",
+      playback_speed: 1,
+      revision: 8,
+    }),
+    false,
+  );
+  assert.equal(replay.projection.revision, 8);
+});
+
+test("Replay load settles only after acceptSnapshot succeeds", () => {
+  const live = new LiveProjectionController(liveBaseline());
+  const replay = new ReplaySessionController();
+  replay.setServiceGeneration(live.projection.serviceGeneration);
+  replay.enterMode(live.projection);
+  replay.beginSession("replay-1", "load-op-1");
+  assert.equal(replay.loading, true);
+  assert.equal(replay.projection, null);
+  // Mimic the App event-path policy: invalid payload must not clear loading.
+  assert.equal(replay.matchesLoadOperation("load-op-1"), true);
+  // Do not call clearLoadOperation until accept succeeds.
+  assert.equal(replay.loading, true);
+  const snapshot = cloneReplaySnapshot();
+  assert.equal(
+    replay.acceptSnapshot(snapshot, {
+      service_generation: live.projection.serviceGeneration,
+      session_id: "replay-1",
+      revision: 8,
+    }),
+    true,
+  );
+  replay.clearLoadOperation();
+  assert.equal(replay.loading, false);
+  assert.ok(replay.projection);
+  assert.equal(
+    activeFrom(WorkbenchMode.REPLAY, live, replay),
+    replay.projection,
+  );
+});

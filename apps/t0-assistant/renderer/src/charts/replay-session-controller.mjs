@@ -254,6 +254,18 @@ export class ReplaySessionController {
     if (!current?.snapshot?.session || !current.snapshot.replay) {
       return false;
     }
+    const nextRevision = Number.isInteger(payload.revision)
+      ? payload.revision
+      : null;
+    // Same-session revision must strictly advance; stale/equal status must not
+    // roll back projection identity (#155 review P2).
+    if (
+      nextRevision !== null &&
+      current.revision !== null &&
+      nextRevision <= current.revision
+    ) {
+      return false;
+    }
     const nextState =
       typeof payload.state === "string"
         ? payload.state
@@ -263,18 +275,17 @@ export class ReplaySessionController {
     )
       ? /** @type {1 | 2 | 5 | 10} */ (payload.playback_speed)
       : current.snapshot.replay.playback_speed;
-    const nextRevision = Number.isInteger(payload.revision)
-      ? payload.revision
-      : current.snapshot.session.revision;
+    const revision =
+      nextRevision !== null ? nextRevision : current.snapshot.session.revision;
     this._projection = {
       ...current,
-      revision: nextRevision,
+      revision,
       snapshot: {
         ...current.snapshot,
         session: {
           ...current.snapshot.session,
           state: nextState,
-          revision: nextRevision,
+          revision,
         },
         replay: {
           ...current.snapshot.replay,

@@ -58,3 +58,17 @@ export function chartContractApplicationError(error) {
     affected_capability: "live",
   };
 }
+
+/**
+ * Envelope-shape failure at Renderer ingress (missing required top-level fields).
+ * Same retention semantics as {@link chartContractApplicationError}.
+ */
+export function chartEnvelopeApplicationError() {
+  return {
+    error_code: "chart_envelope_failed",
+    message:
+      "图表快照结构不完整，已保留上一幅有效图形，并请求重新对齐。",
+    retryable: true,
+    affected_capability: "live",
+  };
+}

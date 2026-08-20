@@ -10,3 +10,5 @@ export function inspectWorkbenchSnapshotCandidate(
 export function chartContractApplicationError(
   error: unknown,
 ): ApplicationError;
+
+export function chartEnvelopeApplicationError(): ApplicationError;
