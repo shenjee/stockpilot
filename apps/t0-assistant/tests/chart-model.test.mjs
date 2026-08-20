@@ -420,7 +420,9 @@ test("5 minute stroke layer draws pending tail as dashed like chan-viewer", () =
   assert.equal(hidden.strokes.length, 0);
 });
 
-test("replay asOf truncation also drops pending stroke past current_time", () => {
+test("replay metadata does not drop pending stroke that lands on bars", () => {
+  // Issue #154：展示层不读 replay.current_time；pending stroke 只要落在 bars
+  // 时间戳集合内就投影（虚线），与有无 replay 包装无关。
   const replay = structuredClone(fixture);
   replay.replay = {
     granularity: "five_minute",
@@ -457,10 +459,12 @@ test("replay asOf truncation also drops pending stroke past current_time", () =>
   const model = createChartGroupModel(replay, ChartGroupKind.FIVE_MINUTE, {
     strokes: true,
   });
-  assert.equal(model.timestamps.at(-1), "2026-07-22 10:00:00");
-  assert.equal(model.strokes.length, 1);
+  assert.equal(model.timestamps.at(-1), "2026-07-22 10:10:00");
+  assert.equal(model.strokes.length, 2);
   assert.equal(model.strokes[0].dashed, false);
   assert.equal(model.strokes[0].end.timestamp, "2026-07-22 09:50:00");
+  assert.equal(model.strokes[1].dashed, true);
+  assert.equal(model.strokes[1].end.timestamp, "2026-07-22 10:05:00");
 });
 
 test("intraday model uses backend VWAP/MACD and keeps both sides of lunch", () => {
@@ -505,6 +509,19 @@ test("model rejects out-of-order bars and indicator points without a bar", () =>
   assert.throws(
     () => createChartGroupModel(unaligned, ChartGroupKind.ONE_MINUTE),
     /without a matching bar/,
+  );
+
+  // Issue #154：去掉 asOf 后，5 分钟错包（有指标无 bar）仍必须抛错，不得静默丢弃。
+  const fiveMinuteUnaligned = structuredClone(fixture);
+  fiveMinuteUnaligned.indicators.five_minute.macd.dif = [
+    ...fiveMinuteUnaligned.indicators.five_minute.macd.dif,
+    { timestamp: "2026-07-22 10:15:00", value: 0.01 },
+  ];
+  assert.throws(
+    () => createChartGroupModel(fiveMinuteUnaligned, ChartGroupKind.FIVE_MINUTE),
+    (error) =>
+      error instanceof RangeError &&
+      /macd dif contains timestamp without a matching bar/.test(error.message),
   );
 });
 
@@ -774,7 +791,8 @@ test("pivot zone active flag is preserved through normalization", () => {
   assert.equal(model.pivotZones[1].active, false);
 });
 
-test("replay asOf truncation drops bars, indicators, and CZSC layers after current_time", () => {
+test("replay metadata does not truncate bars, indicators, or CZSC layers", () => {
+  // Issue #154：有 replay 包装时仍忠实投影快照数据；不再按 current_time 裁剪。
   const replay = structuredClone(fixture);
   replay.replay = {
     granularity: "five_minute",
@@ -806,8 +824,17 @@ test("replay asOf truncation drops bars, indicators, and CZSC layers after curre
       },
     ],
     candidate_buy_points: [
-      { id: "bp-001", point_type: "first_buy", timestamp: "2026-07-22 10:05:00", price: 10.3, reference_id: "s1", confirmed: true, reason: "test" },
+      {
+        id: "bp-001",
+        point_type: "first_buy",
+        timestamp: "2026-07-22 10:05:00",
+        price: 10.3,
+        reference_id: "s1",
+        confirmed: true,
+        reason: "test",
+      },
     ],
+    candidate_sell_points: [],
     divergences: [
       {
         id: "div-future",
@@ -823,18 +850,247 @@ test("replay asOf truncation drops bars, indicators, and CZSC layers after curre
     ],
   };
 
-  const model = createChartGroupModel(replay, ChartGroupKind.FIVE_MINUTE);
-  // 10:05 / 10:10 bars dropped；10:00 保留为右边界。
-  assert.equal(model.timestamps.at(-1), "2026-07-22 10:00:00");
-  // 笔/中枢/买卖点/背驰 end 或 timestamp 越过 current_time -> 丢弃。
-  assert.equal(model.strokes.length, 0);
-  assert.equal(model.pivotZones.length, 0);
-  assert.equal(model.czscMarkers.length, 0);
-  assert.equal(model.divergenceMarkers.length, 0);
-  // MACD/Volume 指标在 10:05 的点也被截断，不抛错。
-  assert.equal(
-    model.macd.histogram.at(-1)?.timestamp ?? null,
-    "2026-07-22 10:00:00",
+  const model = createChartGroupModel(replay, ChartGroupKind.FIVE_MINUTE, {
+    strokes: true,
+    pivot_zones: true,
+  });
+  assert.equal(model.timestamps.at(-1), "2026-07-22 10:10:00");
+  assert.equal(model.bars.at(-1).closed, false);
+  assert.equal(model.strokes.length, 1);
+  assert.equal(model.strokes[0].end.timestamp, "2026-07-22 10:05:00");
+  assert.equal(model.pivotZones.length, 1);
+  assert.equal(model.czscMarkers.length, 1);
+  assert.equal(model.divergenceMarkers.length, 1);
+  // 验收 D（#154）：游标 10:00 之后、且与 bars 对齐的正式指标点仍须保留。
+  assert.deepEqual(
+    model.macd.histogram.find((point) => point.timestamp === "2026-07-22 10:05:00"),
+    { timestamp: "2026-07-22 10:05:00", value: 0.0476 },
+  );
+  // 动态末槽仍由 padPointsToTimeline 留 null，MACD 长度与 bars 对齐。
+  assert.equal(model.macd.histogram.at(-1)?.timestamp, "2026-07-22 10:10:00");
+  assert.equal(model.macd.histogram.at(-1)?.value, null);
+});
+
+function buildReplayFormingFiveMinuteSnapshot({
+  currentTime,
+  nextBarTime,
+  tailBar,
+}) {
+  // 无状态帧构造：只保留开盘前预热闭合 K + 当前尾部 5m（动态或正式），
+  // 指标裁到闭合前缀，避免无匹配 bar 抛错干扰动态 K 断言。
+  const snapshot = structuredClone(fixture);
+  snapshot.replay = {
+    granularity: "one_minute",
+    current_time: currentTime,
+    next_bar_time: nextBarTime,
+    start_time: "2026-07-22 09:30:00",
+    end_time: "2026-07-22 15:00:00",
+    playing: false,
+    playback_speed: 1,
+    step_seconds: 60,
+  };
+  const closedPrefix = fixture.market.bars_5m.filter(
+    (bar) => bar.timestamp <= "2026-07-22 09:30:00",
+  );
+  snapshot.market = {
+    ...snapshot.market,
+    bars_5m: [...closedPrefix, tailBar],
+  };
+  const trimPoints = (points) =>
+    (points ?? []).filter((point) =>
+      closedPrefix.some((bar) => bar.timestamp === point.timestamp),
+    );
+  const five = snapshot.indicators.five_minute;
+  snapshot.indicators = {
+    ...snapshot.indicators,
+    five_minute: {
+      ...five,
+      ma: Object.fromEntries(
+        Object.entries(five.ma ?? {}).map(([key, points]) => [
+          key,
+          trimPoints(points),
+        ]),
+      ),
+      boll: {
+        upper: trimPoints(five.boll?.upper),
+        middle: trimPoints(five.boll?.middle),
+        lower: trimPoints(five.boll?.lower),
+      },
+      volume: {
+        values: trimPoints(five.volume?.values),
+        ma5: trimPoints(five.volume?.ma5),
+        ma10: trimPoints(five.volume?.ma10),
+      },
+      macd: {
+        dif: trimPoints(five.macd?.dif),
+        dea: trimPoints(five.macd?.dea),
+        histogram: trimPoints(five.macd?.histogram),
+      },
+    },
+  };
+  snapshot.chan_analysis = {
+    ...snapshot.chan_analysis,
+    strokes: [],
+    pivot_zones: [],
+    candidate_buy_points: [],
+    candidate_sell_points: [],
+    divergences: [],
+    meta: {},
+  };
+  return snapshot;
+}
+
+test("replay projects forming 5m frames T1/T2/T3 without current_time clipping", () => {
+  // 场景 A（#154）：三帧独立投影——桶内累计修订，再被正式闭合 K 替换。
+  // 开盘价始终来自桶内第一根 1 分钟；Chart Model 不读 replay 游标。
+  const t1Bar = {
+    timestamp: "2026-07-22 09:35:00",
+    open: 10.2,
+    high: 10.22,
+    low: 10.18,
+    close: 10.21,
+    volume: 8000,
+    amount: 81600,
+    closed: false,
+  };
+  const t2Bar = {
+    timestamp: "2026-07-22 09:35:00",
+    open: 10.2,
+    high: 10.28,
+    low: 10.17,
+    close: 10.26,
+    volume: 15000,
+    amount: 153900,
+    closed: false,
+  };
+  const t3Bar = {
+    timestamp: "2026-07-22 09:35:00",
+    open: 10.2,
+    high: 10.3,
+    low: 10.16,
+    close: 10.27,
+    volume: 24000,
+    amount: 246480,
+    closed: true,
+  };
+
+  const t1 = createChartGroupModel(
+    buildReplayFormingFiveMinuteSnapshot({
+      currentTime: "2026-07-22 09:32:00",
+      nextBarTime: "2026-07-22 09:33:00",
+      tailBar: t1Bar,
+    }),
+    ChartGroupKind.FIVE_MINUTE,
+  );
+  assert.equal(t1.bars.at(-1).timestamp, "2026-07-22 09:35:00");
+  assert.equal(t1.bars.at(-1).closed, false);
+  assert.deepEqual(t1.price.at(-1), {
+    timestamp: "2026-07-22 09:35:00",
+    open: 10.2,
+    high: 10.22,
+    low: 10.18,
+    close: 10.21,
+    closed: false,
+  });
+  assert.deepEqual(t1.volume.at(-1), {
+    timestamp: "2026-07-22 09:35:00",
+    value: 8000,
+  });
+  assert.equal(t1.macd.histogram.at(-1).value, null);
+
+  const t2 = createChartGroupModel(
+    buildReplayFormingFiveMinuteSnapshot({
+      currentTime: "2026-07-22 09:33:00",
+      nextBarTime: "2026-07-22 09:34:00",
+      tailBar: t2Bar,
+    }),
+    ChartGroupKind.FIVE_MINUTE,
+  );
+  assert.equal(t2.bars.at(-1).timestamp, "2026-07-22 09:35:00");
+  assert.equal(t2.bars.at(-1).closed, false);
+  assert.equal(t2.price.at(-1).open, 10.2);
+  assert.deepEqual(t2.price.at(-1), {
+    timestamp: "2026-07-22 09:35:00",
+    open: 10.2,
+    high: 10.28,
+    low: 10.17,
+    close: 10.26,
+    closed: false,
+  });
+  assert.deepEqual(t2.volume.at(-1), {
+    timestamp: "2026-07-22 09:35:00",
+    value: 15000,
+  });
+  assert.equal(t2.macd.histogram.at(-1).value, null);
+
+  // T3：正式闭合后快照应同时带上匹配的正式指标点（不再靠 bar 补动态量）。
+  const t3Snapshot = buildReplayFormingFiveMinuteSnapshot({
+    currentTime: "2026-07-22 09:35:00",
+    nextBarTime: "2026-07-22 09:36:00",
+    tailBar: t3Bar,
+  });
+  const closedStamp = "2026-07-22 09:35:00";
+  t3Snapshot.indicators.five_minute.volume.values = [
+    ...t3Snapshot.indicators.five_minute.volume.values,
+    { timestamp: closedStamp, value: 24000 },
+  ];
+  t3Snapshot.indicators.five_minute.macd.dif = [
+    ...t3Snapshot.indicators.five_minute.macd.dif,
+    { timestamp: closedStamp, value: 0.01 },
+  ];
+  t3Snapshot.indicators.five_minute.macd.dea = [
+    ...t3Snapshot.indicators.five_minute.macd.dea,
+    { timestamp: closedStamp, value: 0.005 },
+  ];
+  t3Snapshot.indicators.five_minute.macd.histogram = [
+    ...t3Snapshot.indicators.five_minute.macd.histogram,
+    { timestamp: closedStamp, value: 0.005 },
+  ];
+  const t3 = createChartGroupModel(t3Snapshot, ChartGroupKind.FIVE_MINUTE);
+  assert.equal(t3.bars.at(-1).timestamp, closedStamp);
+  assert.equal(t3.bars.at(-1).closed, true);
+  assert.deepEqual(t3.price.at(-1), {
+    timestamp: closedStamp,
+    open: 10.2,
+    high: 10.3,
+    low: 10.16,
+    close: 10.27,
+    closed: true,
+  });
+  assert.deepEqual(t3.volume.at(-1), {
+    timestamp: closedStamp,
+    value: 24000,
+  });
+  assert.deepEqual(t3.macd.histogram.at(-1), {
+    timestamp: closedStamp,
+    value: 0.005,
+  });
+});
+
+test("live and replay project identical chart models for the same market payload", () => {
+  // 场景 B（#154）：去掉 / 保留 replay 包装时，5 分钟与 1 分钟投影均一致。
+  const live = structuredClone(fixture);
+  live.replay = null;
+  const replay = structuredClone(fixture);
+  replay.replay = {
+    granularity: "one_minute",
+    current_time: "2026-07-22 10:08:00",
+    next_bar_time: "2026-07-22 10:09:00",
+    start_time: "2026-07-22 09:30:00",
+    end_time: "2026-07-22 15:00:00",
+    playing: false,
+    playback_speed: 1,
+    step_seconds: 60,
+  };
+
+  const layers = { strokes: true, pivot_zones: true, ma5: true };
+  assert.deepEqual(
+    createChartGroupModel(replay, ChartGroupKind.FIVE_MINUTE, layers),
+    createChartGroupModel(live, ChartGroupKind.FIVE_MINUTE, layers),
+  );
+  assert.deepEqual(
+    createChartGroupModel(replay, ChartGroupKind.ONE_MINUTE),
+    createChartGroupModel(live, ChartGroupKind.ONE_MINUTE),
   );
 });
 

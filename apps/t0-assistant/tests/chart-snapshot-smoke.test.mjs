@@ -5,8 +5,8 @@
 // bars_5m + indicators + 4 个 chan 数组的单一来源，合并进 workbench / replay fixture
 // 的完整快照契约（保留 chan_analysis 所有必需字段，只替换 strokes / pivot_zones /
 // candidate_buy_points / candidate_sell_points）。Live 与 Replay 的时间戳均与各自
-// bars_5m 对齐；Replay 的 current_time 取 session 范围内的合法时点，验证未来结构被
-// current_time 正确过滤（Issue #134 / PR #135 review）。
+// bars_5m 对齐。Issue #154：createChartGroupModel 不再按 replay.current_time 截断，
+// Live / Replay 对同一载荷投影一致。
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
@@ -141,7 +141,7 @@ test("Live snapshot chan_analysis flows through bridge into pivot zones and CZSC
       workbenchFixture.initial_snapshot_event.payload,
     ),
   );
-  // Live 不带 replay，createChartGroupModel 不做 current_time 截断。
+  // Live / Replay 均不按 replay.current_time 截断；本用例验证无 replay 载荷路径。
   assert.equal(liveSnapshot.replay, null);
 
   const { bridge } = createFakeSafeBridge({
@@ -177,10 +177,8 @@ test("Live snapshot chan_analysis flows through bridge into pivot zones and CZSC
   assertModelStructureLayer(model, snapshot, "Live");
 });
 
-test("Replay snapshot chan_analysis respects current_time truncation while keeping visible structure", async () => {
-  // Replay session 范围与对齐的 bars_5m (2026-07-22) 一致；current_time 取 session
-  // 范围内的合法时点 10:00:00，使 pivot zone (end 09:55) / 买点 (09:55) / 卖点 (10:00)
-  // 保留，而 end_timestamp 越过 current_time 的笔（10:05）被过滤，验证未来结构截断。
+test("Replay snapshot chan_analysis projects full aligned structure without current_time clipping", async () => {
+  // Issue #154：Replay 元数据只给控件/进度；Chart Model 忠实投影对齐载荷。
   const replayBlock = {
     granularity: "five_minute",
     current_time: "2026-07-22 10:00:00",
@@ -222,22 +220,16 @@ test("Replay snapshot chan_analysis respects current_time truncation while keepi
     pivot_zones: true,
   });
 
-  // current_time 截断：bars_5m 中 10:00 之后的 bar 被丢弃，最后一根为 10:00。
   assert.equal(
     model.timestamps.at(-1),
-    "2026-07-22 10:00:00",
-    "Replay bars must be truncated at current_time",
+    snapshot.market.bars_5m.at(-1).timestamp,
+    "Replay bars must match snapshot without current_time clipping",
   );
-  // 未来结构被过滤：第二笔 end_timestamp 10:05 > current_time 10:00 -> 丢弃，
-  // 仅保留第一笔（end 09:50）。这验证 Replay 不会泄漏 current_time 之后的结构。
   assert.equal(
     model.strokes.length,
-    snapshot.chan_analysis.strokes.filter(
-      (s) => s.end_timestamp <= replayBlock.current_time,
-    ).length,
-    "Replay strokes must be truncated by current_time",
+    snapshot.chan_analysis.strokes.length,
+    "Replay strokes must match snapshot without current_time clipping",
   );
   assert.ok(model.strokes.length > 0, "Replay must keep at least one stroke");
-  // 可见结构：pivot zone / 买点 / 卖点 end/timestamp 均 <= current_time，保留。
   assertModelStructureLayer(model, snapshot, "Replay");
 });
