@@ -21,6 +21,8 @@ from .runtime_paths import LOCAL_CONFIG_NAMES, RuntimePaths
 from .t0_schema import (
     T0_MARKET_SCHEMA_VERSION,
     T0_TIMEZONE,
+    InstrumentIdentity,
+    InstrumentType,
     MarketDataSchemaError,
     standardize_bar,
     standardize_kline_series,
@@ -33,6 +35,8 @@ from .trading_calendar import CalendarUnavailableError, TradingCalendar
 __all__ = [
     "INDICES",
     "LOCAL_CONFIG_NAMES",
+    "InstrumentIdentity",
+    "InstrumentType",
     "MarketDataProvider",
     "MarketDataResult",
     "MarketDataSchemaError",

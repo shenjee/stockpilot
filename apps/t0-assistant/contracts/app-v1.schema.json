@@ -230,7 +230,7 @@
       "additionalProperties": false,
       "required": ["schema_version", "request_id", "command", "session_id", "payload"],
       "properties": {
-        "schema_version": {"const": "t0_app_v1"},
+        "schema_version": {"const": "t0_app_v2"},
         "request_id": {"type": "string", "minLength": 1},
         "command": {
           "enum": [
@@ -295,7 +295,7 @@
       "additionalProperties": false,
       "required": ["schema_version", "request_id", "accepted", "operation_id", "data", "error"],
       "properties": {
-        "schema_version": {"const": "t0_app_v1"},
+        "schema_version": {"const": "t0_app_v2"},
         "request_id": {"type": "string", "minLength": 1},
         "accepted": {"type": "boolean"},
         "operation_id": {"type": ["string", "null"], "minLength": 1},
@@ -314,7 +314,7 @@
     },
     "historical_workbench_snapshot": {
       "allOf": [
-        {"$ref": "https://stockpilot.local/contracts/t0-logic-v1.schema.json#/$defs/workbench_snapshot"},
+        {"$ref": "https://stockpilot.local/contracts/t0-logic-v2.schema.json#/$defs/workbench_snapshot"},
         {
           "required": ["session", "replay"],
           "properties": {
@@ -407,16 +407,16 @@
       "required": ["target", "bars", "quote"],
       "properties": {
         "target": {"enum": ["quote", "bars_1m", "bars_5m", "daily_bars"]},
-        "bars": {"type": "array", "items": {"$ref": "https://stockpilot.local/contracts/t0-logic-v1.schema.json#/$defs/bar"}},
+        "bars": {"type": "array", "items": {"$ref": "https://stockpilot.local/contracts/t0-logic-v2.schema.json#/$defs/bar"}},
         "quote": {
           "oneOf": [
-            {"$ref": "https://stockpilot.local/contracts/t0-logic-v1.schema.json#/$defs/quote"},
+            {"$ref": "https://stockpilot.local/contracts/t0-logic-v2.schema.json#/$defs/quote"},
             {"type": "null"}
           ]
         }
       },
       "allOf": [
-        {"if": {"properties": {"target": {"const": "quote"}}}, "then": {"properties": {"bars": {"maxItems": 0}, "quote": {"$ref": "https://stockpilot.local/contracts/t0-logic-v1.schema.json#/$defs/quote"}}}},
+        {"if": {"properties": {"target": {"const": "quote"}}}, "then": {"properties": {"bars": {"maxItems": 0}, "quote": {"$ref": "https://stockpilot.local/contracts/t0-logic-v2.schema.json#/$defs/quote"}}}},
         {"if": {"properties": {"target": {"enum": ["bars_1m", "bars_5m", "daily_bars"]}}}, "then": {"properties": {"quote": {"type": "null"}}}}
       ]
     },
@@ -461,7 +461,7 @@
       "additionalProperties": false,
       "required": ["schema_version", "service_generation", "session_id", "revision", "event_type", "payload"],
       "properties": {
-        "schema_version": {"const": "t0_app_v1"},
+        "schema_version": {"const": "t0_app_v2"},
         "service_generation": {"type": "integer", "minimum": 1},
         "session_id": {"type": ["string", "null"], "minLength": 1},
         "revision": {"type": "integer", "minimum": 0},
@@ -471,11 +471,11 @@
       },
       "allOf": [
         {"if": {"properties": {"event_type": {"const": "live_session_status"}}}, "then": {"properties": {"session_id": {"type": "string"}, "payload": {"$ref": "#/$defs/live_session_status_payload"}}}},
-        {"if": {"properties": {"event_type": {"const": "workbench_snapshot"}}}, "then": {"properties": {"session_id": {"type": "string"}, "payload": {"$ref": "https://stockpilot.local/contracts/t0-logic-v1.schema.json#/$defs/workbench_snapshot"}}}},
+        {"if": {"properties": {"event_type": {"const": "workbench_snapshot"}}}, "then": {"properties": {"session_id": {"type": "string"}, "payload": {"$ref": "https://stockpilot.local/contracts/t0-logic-v2.schema.json#/$defs/workbench_snapshot"}}}},
         {"if": {"properties": {"event_type": {"const": "market_update"}}}, "then": {"properties": {"session_id": {"type": "string"}, "payload": {"$ref": "#/$defs/market_update_payload"}}}},
-        {"if": {"properties": {"event_type": {"const": "indicators_updated"}}}, "then": {"properties": {"session_id": {"type": "string"}, "payload": {"$ref": "https://stockpilot.local/contracts/t0-logic-v1.schema.json#/$defs/indicators"}}}},
-        {"if": {"properties": {"event_type": {"const": "chan_analysis_replaced"}}}, "then": {"properties": {"session_id": {"type": "string"}, "payload": {"$ref": "https://stockpilot.local/contracts/t0-logic-v1.schema.json#/$defs/chan_analysis"}}}},
-        {"if": {"properties": {"event_type": {"const": "live_market_view_updated"}}}, "then": {"properties": {"session_id": {"type": "string"}, "payload": {"$ref": "https://stockpilot.local/contracts/t0-logic-v1.schema.json#/$defs/live_market_view"}}}},
+        {"if": {"properties": {"event_type": {"const": "indicators_updated"}}}, "then": {"properties": {"session_id": {"type": "string"}, "payload": {"$ref": "https://stockpilot.local/contracts/t0-logic-v2.schema.json#/$defs/indicators"}}}},
+        {"if": {"properties": {"event_type": {"const": "chan_analysis_replaced"}}}, "then": {"properties": {"session_id": {"type": "string"}, "payload": {"$ref": "https://stockpilot.local/contracts/t0-logic-v2.schema.json#/$defs/chan_analysis"}}}},
+        {"if": {"properties": {"event_type": {"const": "live_market_view_updated"}}}, "then": {"properties": {"session_id": {"type": "string"}, "payload": {"$ref": "https://stockpilot.local/contracts/t0-logic-v2.schema.json#/$defs/live_market_view"}}}},
         {
           "if": {"properties": {"event_type": {"const": "trades_changed"}}},
           "then": {

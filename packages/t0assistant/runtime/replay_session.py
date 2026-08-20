@@ -79,7 +79,7 @@ from .workbench_projection import (
 )
 
 
-REPLAY_SCHEMA_VERSION = "t0_replay_v1"
+REPLAY_SCHEMA_VERSION = "t0_replay_v2"
 
 #: Frozen Replay v1.0 playback speeds.
 _ALLOWED_PLAYBACK_SPEEDS = frozenset({1, 2, 5, 10})
@@ -1434,7 +1434,7 @@ class ReplaySession:
         ]
         self._on_trade_event(
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "service_generation": self._service_generation,
                 "session_id": self._session_id,
                 "revision": self._trade_revision,

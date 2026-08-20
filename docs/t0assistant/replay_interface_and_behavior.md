@@ -36,7 +36,7 @@ main/preload 和 React 可以独立实现并用同一组确定性 fixture 验收
 ## 3. 通用约定
 
 - 所有公开字段使用 `snake_case`。
-- `schema_version` 固定为 `t0_replay_v1`；不兼容变更必须提升版本。
+- `schema_version` 固定为 `t0_replay_v2`；不兼容变更必须提升版本。
 - `request_id` 和 `session_id` 是非空、不透明字符串，调用方不得解析。
 - `operation_id` 存在时必须是非空、不透明字符串；与具体操作无关的状态或
   快照重新基线事件省略该字段。
@@ -61,7 +61,7 @@ main/preload 和 React 可以独立实现并用同一组确定性 fixture 验收
 
 | 字段 | 类型 | 谁生成 | 含义 |
 | --- | --- | --- | --- |
-| `schema_version` | string | Python | 当前消息遵循的数据结构版本；固定为 `t0_replay_v1`，不是软件版本号。 |
+| `schema_version` | string | Python | 当前消息遵循的数据结构版本；固定为 `t0_replay_v2`，不是软件版本号。 |
 | `request_id` | string | React | 一次方法调用的唯一请求编号。每调用一次都生成新值，用于把同步结果或错误对应到原请求。 |
 | `service_generation` | integer | Electron main | Python 服务启动代次。首次启动为 1，每次重启递增；用于识别并丢弃旧服务的消息。 |
 | `session_id` | string | Python | 一整场历史行情回放的唯一编号。从开始回放到结束保持不变；重新开始回放会获得新编号。 |
@@ -183,7 +183,7 @@ main/preload 和 React 可以独立实现并用同一组确定性 fixture 验收
 
 ```json
 {
-  "schema_version": "t0_replay_v1",
+  "schema_version": "t0_replay_v2",
   "service_generation": 1,
   "session_id": "opaque-session-id",
   "revision": 7,
@@ -197,7 +197,7 @@ main/preload 和 React 可以独立实现并用同一组确定性 fixture 验收
 
 | 字段 | 类型 | 是否必填 | 含义 |
 | --- | --- | --- | --- |
-| `schema_version` | string | 是 | 事件数据结构版本，当前固定为 `t0_replay_v1`。 |
+| `schema_version` | string | 是 | 事件数据结构版本，当前固定为 `t0_replay_v2`。 |
 | `service_generation` | integer | 是 | 发布事件的 Python 服务启动代次。与当前代次不一致的事件必须丢弃。 |
 | `session_id` | string | 是 | 事件所属的回放编号。 |
 | `revision` | integer | 是 | 事件在本场回放中的修订序号，用于保证处理顺序。 |

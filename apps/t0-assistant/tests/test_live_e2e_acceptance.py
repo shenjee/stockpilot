@@ -20,6 +20,7 @@ from backend.live_application import LiveApplicationApi, LiveSessionFactory  # n
 from backend.service import create_server  # noqa: E402
 from packages.marketdata.calendar_query import FixtureCalendarQuery  # noqa: E402
 from packages.marketdata.services.market_context_service import MarketSession  # noqa: E402
+from packages.marketdata.t0_schema import InstrumentIdentity, InstrumentType  # noqa: E402
 from packages.t0assistant.preferences import PreferenceService  # noqa: E402
 from packages.t0assistant.repositories import (  # noqa: E402
     SqlitePreferenceRepository,
@@ -234,6 +235,13 @@ class _LiveHttpHarness:
                 SqlitePreferenceRepository(self.database)
             ),
             event_publisher=self.publisher,
+            resolve_security=lambda symbol: InstrumentIdentity(
+                symbol=symbol,
+                code=symbol[3:],
+                market=symbol[:2],
+                name="测试证券",
+                instrument_type=InstrumentType.STOCK,
+            ),
             restore_on_startup=False,
         )
         self.server = create_server(
@@ -262,7 +270,7 @@ class _LiveHttpHarness:
     def command(self, name: str, session_id, payload: dict) -> dict:
         body = json.dumps(
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "request_id": f"request-{name}",
                 "command": name,
                 "session_id": session_id,

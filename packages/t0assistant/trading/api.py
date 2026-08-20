@@ -298,7 +298,7 @@ class TradeCommandApi:
 
     def _accepted(self, request_id: str) -> dict[str, Any]:
         return {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "request_id": request_id,
             "accepted": True,
             "operation_id": None,
@@ -316,7 +316,7 @@ class TradeCommandApi:
         retryable: bool,
     ) -> dict[str, Any]:
         return {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "request_id": request_id,
             "accepted": False,
             "operation_id": None,

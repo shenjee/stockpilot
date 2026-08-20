@@ -28,7 +28,7 @@ from packages.t0assistant.runtime.replay_data import (
 from .validation import validate_replay_snapshot
 
 
-REPLAY_SCHEMA_VERSION = "t0_replay_v1"
+REPLAY_SCHEMA_VERSION = "t0_replay_v2"
 REPLAY_COMMANDS = frozenset(
     {
         "select_symbol",
@@ -619,15 +619,15 @@ def _parse_exact_datetime(value: object, pattern: str) -> None:
 def _validate_security(value: object) -> None:
     if not isinstance(value, Mapping):
         raise TypeError("security must be a mapping")
-    expected = {"symbol", "code", "market", "name", "security_type"}
+    expected = {"symbol", "code", "market", "name", "instrument_type"}
     if set(value) != expected:
         raise TypeError("security has an invalid shape")
     if not all(_nonempty(value.get(key)) for key in expected):
         raise TypeError("security fields must be non-empty strings")
     if value["market"] not in {"sh", "sz"}:
         raise TypeError("security market is invalid")
-    if value["security_type"] not in {"a_share", "etf"}:
-        raise TypeError("security type is invalid")
+    if value["instrument_type"] not in {"stock", "etf", "index"}:
+        raise TypeError("security instrument_type is invalid")
 
 
 def _nonempty(value: object) -> bool:

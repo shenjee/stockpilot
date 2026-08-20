@@ -23,6 +23,7 @@ from packages.marketdata.repositories.securities_store import SecuritiesStore
 from packages.marketdata.runtime_paths import RuntimePaths
 from packages.marketdata.services.kline_data_service import KLineDataService
 from packages.marketdata.services.securities_search_service import SecuritiesSearchService
+from packages.marketdata.t0_schema import InstrumentIdentity
 from packages.t0assistant.preferences import (
     PreferencePersistenceError,
     PreferenceService,
@@ -144,7 +145,7 @@ class LiveApplicationApi:
         session_factory: LiveSessionFactory,
         preference_service: PreferenceService,
         event_publisher: Any,
-        resolve_security: Callable[[str], dict[str, str] | None] | None = None,
+        resolve_security: Callable[[str], InstrumentIdentity | None] | None = None,
         restore_on_startup: bool = True,
     ) -> None:
         self._service_generation = service_generation
@@ -185,7 +186,7 @@ class LiveApplicationApi:
     def restore_startup(self) -> dict[str, Any]:
         restored = self._preference_service.restore_for_startup()
         symbol = restored.snapshot.preferences.last_symbol
-        restored_security: dict[str, str] | None = None
+        restored_security: InstrumentIdentity | None = None
         startup_restore: dict[str, Any] = {"status": "none"}
         if symbol is not None:
             if self._resolve_security is not None:
@@ -193,7 +194,10 @@ class LiveApplicationApi:
             if restored_security is None:
                 startup_restore = {"status": "invalid_symbol", "symbol": symbol}
             elif self._coordinator.snapshot.current_symbol is None:
-                self._coordinator.select_symbol(symbol)
+                self._coordinator.select_symbol(
+                    symbol,
+                    instrument=restored_security,
+                )
                 live = self._coordinator.snapshot.live_session
                 startup_restore = {
                     "status": "restored",
@@ -214,7 +218,11 @@ class LiveApplicationApi:
                 "writable": restored.capability.writable,
                 "reason": restored.capability.reason,
             },
-            "restored_security": restored_security,
+            "restored_security": (
+                restored_security.to_dict()
+                if restored_security is not None
+                else None
+            ),
             "startup_restore": startup_restore,
         }
 
@@ -264,9 +272,24 @@ class LiveApplicationApi:
         request_id: str,
         symbol: str,
     ) -> dict[str, Any]:
+        identity: InstrumentIdentity | None = None
+        if self._resolve_security is not None:
+            identity = self._resolve_security(symbol)
+        if identity is None:
+            return self._rejected(
+                request_id,
+                "security_not_found",
+                f"证券 {symbol} 未在证券主数据中找到",
+                category="validation",
+                affected_capability="symbol_selection",
+                retryable=False,
+            )
         try:
             before = self._coordinator.snapshot
-            snapshot = self._coordinator.select_symbol(symbol)
+            snapshot = self._coordinator.select_symbol(
+                symbol,
+                instrument=identity,
+            )
         except (TypeError, ValueError) as exc:
             return self._rejected(
                 request_id,
@@ -296,7 +319,10 @@ class LiveApplicationApi:
                 affected_capability="live",
                 retryable=True,
             )
-        data: dict[str, Any] = {"session_id": live.session_id}
+        data: dict[str, Any] = {
+            "session_id": live.session_id,
+            "security": identity.to_dict(),
+        }
         warning = self._save_last_symbol(symbol)
         if (
             before.live_session is not None
@@ -584,7 +610,7 @@ class LiveApplicationApi:
             return
         self._event_publisher.publish_envelope(
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "service_generation": self._service_generation,
                 "session_id": session_id,
                 "revision": snapshot["session"]["revision"],
@@ -605,7 +631,7 @@ class LiveApplicationApi:
         operation_id: str | None = None,
     ) -> dict[str, Any]:
         return {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "request_id": request_id,
             "accepted": True,
             "operation_id": operation_id,
@@ -624,7 +650,7 @@ class LiveApplicationApi:
         retryable: bool,
     ) -> dict[str, Any]:
         return {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "request_id": request_id,
             "accepted": False,
             "operation_id": None,
@@ -715,7 +741,7 @@ def create_live_application_api(
         ),
         preference_service=preferences,
         event_publisher=event_publisher,
-        resolve_security=search_service.get,
+        resolve_security=search_service.resolve,
         restore_on_startup=True,
     )
     # Explicit ownership: the API keeps the shared connection alive until the

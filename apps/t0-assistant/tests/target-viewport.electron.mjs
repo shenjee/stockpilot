@@ -29,7 +29,7 @@ const defaultPreferences = Object.freeze({
 
 function appResponse(request, data) {
   return {
-    schema_version: "t0_app_v1",
+    schema_version: "t0_app_v2",
     request_id: request?.request_id ?? "target-viewport",
     accepted: true,
     operation_id: null,

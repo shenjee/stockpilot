@@ -84,7 +84,7 @@ export function createTradeClient(bridge, options = {}) {
 
   function appRequest(command, payload) {
     return {
-      schema_version: "t0_app_v1",
+      schema_version: "t0_app_v2",
       request_id: makeRequestId(command),
       command,
       session_id: null,

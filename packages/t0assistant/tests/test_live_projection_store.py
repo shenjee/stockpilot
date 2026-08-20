@@ -508,7 +508,7 @@ class LiveProjectionStoreTests(unittest.TestCase):
 
         assert event is not None
         envelope = event.to_envelope()
-        self.assertEqual(envelope["schema_version"], "t0_app_v1")
+        self.assertEqual(envelope["schema_version"], "t0_app_v2")
         self.assertEqual(envelope["service_generation"], 7)
         self.assertEqual(envelope["session_id"], "live-1")
         self.assertEqual(envelope["revision"], envelope["payload"]["session"]["revision"])

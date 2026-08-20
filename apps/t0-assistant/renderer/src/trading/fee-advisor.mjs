@@ -51,7 +51,7 @@ export function createFeeAdvisor(bridge, options = {}) {
       if (!plan) return null;
       const quantity = Number(input.quantity);
       const response = await bridge.calculateTradeFee({
-        schema_version: "t0_app_v1",
+        schema_version: "t0_app_v2",
         request_id: makeRequestId(),
         command: "calculate_trade_fee",
         session_id: null,

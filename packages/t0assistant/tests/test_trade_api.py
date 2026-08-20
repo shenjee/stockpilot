@@ -99,7 +99,7 @@ class _ScriptedRepository:
 
 def _request(command: str, payload: dict, rid: str = "req"):
     return {
-        "schema_version": "t0_app_v1",
+        "schema_version": "t0_app_v2",
         "request_id": rid,
         "command": command,
         "session_id": None,

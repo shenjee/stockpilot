@@ -230,7 +230,7 @@ export function createFeePlanClient(bridge, options = {}) {
     ((command) =>
       `${command}-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`}`);
   const request = (command, payload) => ({
-    schema_version: "t0_app_v1",
+    schema_version: "t0_app_v2",
     request_id: makeRequestId(command),
     command,
     session_id: null,

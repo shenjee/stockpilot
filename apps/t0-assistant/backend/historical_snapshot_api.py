@@ -16,7 +16,9 @@ from typing import Any, Callable, Protocol
 from packages.marketdata.calendar_query import build_market_context_from_trading_calendar
 from packages.marketdata.market_data import TencentStockDataProvider
 from packages.marketdata.repositories.kline_store import KLineStore
+from packages.marketdata.repositories.securities_store import SecuritiesStore
 from packages.marketdata.runtime_paths import RuntimePaths
+from packages.marketdata.services import SecuritiesSearchService
 from packages.marketdata.services.kline_data_service import KLineDataService
 from packages.marketdata.services.market_context_service import MarketContextService
 from packages.marketdata.trading_calendar import CalendarUnavailableError, TradingCalendar
@@ -122,6 +124,7 @@ class HistoricalSnapshotApi:
         store: KLineStore,
         provider: TencentStockDataProvider,
         market_context: MarketContextService,
+        resolve_security: Callable[[str], Any] | None = None,
     ) -> None:
         if (
             isinstance(service_generation, bool)
@@ -135,6 +138,7 @@ class HistoricalSnapshotApi:
         self._store = store
         self._provider = provider
         self._market_context = market_context
+        self._resolve_security = resolve_security
 
     @property
     def service_generation(self) -> int:
@@ -188,11 +192,17 @@ class HistoricalSnapshotApi:
                 self._market_context,
                 resolved_trade_date,
             )
+            instrument_type: str | None = None
+            if self._resolve_security is not None:
+                identity = self._resolve_security(symbol)
+                if identity is not None:
+                    instrument_type = str(identity.instrument_type)
             snapshot = build_historical_snapshot(
                 symbol=symbol,
                 trade_date=trade_date,
                 market_data=self._market_data(effective_context),
                 market_context=effective_context,
+                instrument_type=instrument_type,
             )
         except CalendarUnavailableError as exc:
             return self._reject(
@@ -224,7 +234,7 @@ class HistoricalSnapshotApi:
             )
 
         return {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "request_id": request_id,
             "accepted": True,
             "operation_id": None,
@@ -241,7 +251,7 @@ class HistoricalSnapshotApi:
         retryable: bool = False,
     ) -> dict[str, Any]:
         return {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "request_id": request_id,
             "accepted": False,
             "operation_id": None,
@@ -270,15 +280,18 @@ def create_historical_snapshot_api(
 
     paths = RuntimePaths()
     paths.ensure_dirs()
-    store = KLineStore(db_path or paths.db_dir / "market_data.sqlite")
+    db_path = db_path or paths.db_dir / "market_data.sqlite"
+    store = KLineStore(db_path)
     resolved_provider = provider or TencentStockDataProvider()
     today = (clock or date.today)()
     market_context = _build_market_context(resolved_provider, store, today)
+    securities = SecuritiesSearchService(SecuritiesStore(db_path))
     return HistoricalSnapshotApi(
         service_generation=service_generation,
         store=store,
         provider=resolved_provider,
         market_context=market_context,
+        resolve_security=securities.resolve,
     )
 
 

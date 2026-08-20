@@ -113,7 +113,7 @@ class _FakePreparator:
     def __init__(self, prepared: Any) -> None:
         self._prepared = prepared
 
-    def prepare(self, symbol: str, trade_date: Any, *, config: Any) -> Any:
+    def prepare(self, symbol: str, trade_date: Any, *, config: Any, instrument_type: str | None = None) -> Any:
         return self._prepared
 
 

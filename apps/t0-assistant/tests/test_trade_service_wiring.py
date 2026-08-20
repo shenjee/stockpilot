@@ -67,7 +67,7 @@ def _draft(**overrides) -> dict:
 def _envelope(command: str, payload: dict, rid: str) -> bytes:
     return json.dumps(
         {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "request_id": rid,
             "command": command,
             "session_id": None,
@@ -155,7 +155,7 @@ class _RecordingTradeApi:
     def dispatch(self, command: str, request: dict) -> dict:
         self.calls.append((command, request))
         return {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "request_id": request["request_id"],
             "accepted": True,
             "operation_id": None,
@@ -417,7 +417,7 @@ class TradeServiceWiringTest(unittest.TestCase):
             f"{self.base_url}/api/commands/create_trade",
             data=json.dumps(
                 {
-                    "schema_version": "t0_app_v1",
+                    "schema_version": "t0_app_v2",
                     "request_id": "r-simulated-unwired",
                     "command": "create_trade",
                     "session_id": "replay-not-registered",
@@ -454,7 +454,7 @@ class TradeServiceWiringTest(unittest.TestCase):
                 f"{self.base_url}/api/commands/create_trade",
                 data=json.dumps(
                     {
-                        "schema_version": "t0_app_v1",
+                        "schema_version": "t0_app_v2",
                         "request_id": request_id,
                         "command": "create_trade",
                         "session_id": session_id,

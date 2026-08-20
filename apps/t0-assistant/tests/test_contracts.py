@@ -95,21 +95,21 @@ class ContractTest(unittest.TestCase):
     def test_live_trade_and_preference_commands_validate(self) -> None:
         requests = [
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "request_id": "req-search",
                 "command": "search_securities",
                 "session_id": None,
                 "payload": {"query": "gzmt", "limit": 20},
             },
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "request_id": "req-select",
                 "command": "select_security",
                 "session_id": None,
                 "payload": {"symbol": "sh.600519"},
             },
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "request_id": "req-trade",
                 "command": "create_trade",
                 "session_id": "live-1",
@@ -128,7 +128,7 @@ class ContractTest(unittest.TestCase):
                 },
             },
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "request_id": "req-prefs",
                 "command": "save_preferences",
                 "session_id": None,
@@ -149,7 +149,7 @@ class ContractTest(unittest.TestCase):
                 },
             },
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "request_id": "req-hist",
                 "command": "get_historical_snapshot",
                 "session_id": None,
@@ -239,7 +239,7 @@ class ContractTest(unittest.TestCase):
         )
         snapshot = build_workbench_projection(result, session).to_dict()
         response = {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "request_id": "req-hist-resp",
             "accepted": True,
             "operation_id": None,
@@ -254,7 +254,7 @@ class ContractTest(unittest.TestCase):
 
     def test_app_events_enforce_generation_session_and_revision(self) -> None:
         event = {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "service_generation": 2,
             "session_id": "live-1",
             "revision": 4,
@@ -285,7 +285,7 @@ class ContractTest(unittest.TestCase):
 
     def test_live_market_view_updated_event_matches_contract(self) -> None:
         event = {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "service_generation": 2,
             "session_id": "live-1",
             "revision": 5,
@@ -310,7 +310,7 @@ class ContractTest(unittest.TestCase):
 
     def test_synchronous_rejection_cannot_claim_an_operation(self) -> None:
         response = {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "request_id": "req-bad",
             "accepted": False,
             "operation_id": "must-not-exist",
@@ -332,7 +332,7 @@ class ContractTest(unittest.TestCase):
         validator = self.app_validator("command_response")
         validator.validate(
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "request_id": "req-sync",
                 "accepted": True,
                 "operation_id": None,
@@ -342,7 +342,7 @@ class ContractTest(unittest.TestCase):
         )
         validator.validate(
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "request_id": "req-async",
                 "accepted": True,
                 "operation_id": "operation-1",
@@ -353,7 +353,7 @@ class ContractTest(unittest.TestCase):
 
     def test_trade_event_uses_shared_record_shape_and_explicit_scope(self) -> None:
         event = {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "service_generation": 2,
             "session_id": None,
             "revision": 5,

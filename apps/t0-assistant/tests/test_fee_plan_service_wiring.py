@@ -50,7 +50,7 @@ class FeePlanServiceWiringTest(unittest.TestCase):
 
     def post(self, command: str, payload: dict) -> dict:
         envelope = {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "request_id": f"wire-{command}",
             "command": command,
             "session_id": None,
@@ -111,7 +111,7 @@ class FeePlanServiceWiringTest(unittest.TestCase):
         status, response = self.post_envelope(
             "list_fee_plans",
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "command": "list_fee_plans",
                 "session_id": None,
                 "payload": {},

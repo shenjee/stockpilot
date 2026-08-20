@@ -29,6 +29,7 @@ from packages.t0assistant.runtime import (  # noqa: E402
     LiveRefreshKind,
     PipelineMarketInput,
 )
+from packages.marketdata.t0_schema import InstrumentIdentity, InstrumentType  # noqa: E402
 from packages.t0assistant.runtime.live_session import PreparedLiveWarmup  # noqa: E402
 
 
@@ -176,13 +177,13 @@ class LiveApplicationTests(unittest.TestCase):
         )
         self.factory = factory
         if resolve_security is None:
-            resolve_security = lambda symbol: {
-                "symbol": symbol,
-                "code": symbol[3:],
-                "market": symbol[:2],
-                "name": "测试证券",
-                "security_type": "a_share",
-            }
+            resolve_security = lambda symbol: InstrumentIdentity(
+                symbol=symbol,
+                code=symbol[3:],
+                market=symbol[:2],
+                name="测试证券",
+                instrument_type=InstrumentType.STOCK,
+            )
         return LiveApplicationApi(
             service_generation=7,
             session_factory=factory,
@@ -217,7 +218,7 @@ class LiveApplicationTests(unittest.TestCase):
         app = self._app(_DeterministicLiveInput())
         app._coordinator = SimpleNamespace(
             snapshot=SimpleNamespace(live_session=None),
-            select_symbol=lambda symbol: SimpleNamespace(live_session=None),
+            select_symbol=lambda symbol, instrument=None: SimpleNamespace(live_session=None),
         )
 
         selected = app.select_security(
@@ -269,13 +270,13 @@ class LiveApplicationTests(unittest.TestCase):
 
         def resolve(symbol: str):
             lookups.append(symbol)
-            return {
-                "symbol": symbol,
-                "code": "300113",
-                "market": "sz",
-                "name": "顺网科技",
-                "security_type": "a_share",
-            }
+            return InstrumentIdentity(
+                symbol=symbol,
+                code="300113",
+                market="sz",
+                name="顺网科技",
+                instrument_type=InstrumentType.STOCK,
+            )
 
         app = self._app(
             _DeterministicLiveInput(),
@@ -399,6 +400,13 @@ class LiveApplicationTests(unittest.TestCase):
                 ),
                 preference_service=read_only_prefs,
                 event_publisher=self.publisher,
+                resolve_security=lambda symbol: InstrumentIdentity(
+                    symbol=symbol,
+                    code=symbol[3:],
+                    market=symbol[:2],
+                    name="测试证券",
+                    instrument_type=InstrumentType.STOCK,
+                ),
                 restore_on_startup=False,
             )
             response = app.select_security(
@@ -467,13 +475,13 @@ class LiveApplicationTests(unittest.TestCase):
         first = self._app(
             _DeterministicLiveInput(),
             restore_on_startup=True,
-            resolve_security=lambda symbol: {
-                "symbol": symbol,
-                "code": "510300",
-                "market": "sh",
-                "name": "沪深300ETF",
-                "security_type": "etf",
-            },
+            resolve_security=lambda symbol: InstrumentIdentity(
+                symbol=symbol,
+                code="510300",
+                market="sh",
+                name="沪深300ETF",
+                instrument_type=InstrumentType.ETF,
+            ),
         )
         first_event = self.events.get(timeout=1)
         first_session = first.coordinator.snapshot.live_session
@@ -490,13 +498,13 @@ class LiveApplicationTests(unittest.TestCase):
         second = self._app(
             _DeterministicLiveInput(),
             restore_on_startup=True,
-            resolve_security=lambda symbol: {
-                "symbol": symbol,
-                "code": "510300",
-                "market": "sh",
-                "name": "沪深300ETF",
-                "security_type": "etf",
-            },
+            resolve_security=lambda symbol: InstrumentIdentity(
+                symbol=symbol,
+                code="510300",
+                market="sh",
+                name="沪深300ETF",
+                instrument_type=InstrumentType.ETF,
+            ),
         )
         second_event = self.events.get(timeout=1)
         self.assertEqual(second_event["event_type"], "workbench_snapshot")

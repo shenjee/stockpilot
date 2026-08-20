@@ -75,7 +75,7 @@ test("gateway authenticates inside main and never adds transport fields to domai
       return {
         ok: true,
         json: async () => ({
-          schema_version: "t0_app_v1",
+          schema_version: "t0_app_v2",
           request_id: "req-1",
           accepted: true,
           operation_id: null,
@@ -87,7 +87,7 @@ test("gateway authenticates inside main and never adds transport fields to domai
   });
   gateway.start(connection);
   const request = {
-    schema_version: "t0_app_v1",
+    schema_version: "t0_app_v2",
     request_id: "req-1",
     command: "get_preferences",
     session_id: null,
@@ -113,7 +113,7 @@ test("gateway drops stale revisions and requests a full snapshot on a gap", asyn
       return {
         ok: true,
         json: async () => ({
-          schema_version: "t0_app_v1",
+          schema_version: "t0_app_v2",
           request_id: request.request_id,
           accepted: true,
           operation_id: null,
@@ -131,7 +131,7 @@ test("gateway drops stale revisions and requests a full snapshot on a gap", asyn
   const socket = FakeWebSocket.instances.at(-1);
   socket.open();
   const event = (revision) => ({
-    schema_version: "t0_app_v1",
+    schema_version: "t0_app_v2",
     service_generation: 4,
     session_id: "live-1",
     revision,
@@ -160,7 +160,7 @@ test("gateway rejects old generations and non-allowlisted commands", async () =>
   gateway.start(connection);
   const socket = FakeWebSocket.instances.at(-1);
   socket.message({
-    schema_version: "t0_app_v1",
+    schema_version: "t0_app_v2",
     service_generation: 3,
     session_id: "old",
     revision: 1,
@@ -178,14 +178,14 @@ test("gateway rejects old generations and non-allowlisted commands", async () =>
 test("gateway resolves structured service errors across the IPC boundary", async () => {
   const offlineGateway = new BackendGateway({ WebSocketImpl: FakeWebSocket });
   const appFailure = await offlineGateway.invoke("get_preferences", {
-    schema_version: "t0_app_v1",
+    schema_version: "t0_app_v2",
     request_id: "offline-app",
     command: "get_preferences",
     session_id: null,
     payload: {},
   });
   const replayFailure = await offlineGateway.invoke("step_replay", {
-    schema_version: "t0_replay_v1",
+    schema_version: "t0_replay_v2",
     request_id: "offline-replay",
     session_id: "replay-1",
   });
@@ -201,7 +201,7 @@ test("gateway resolves structured service errors across the IPC boundary", async
   });
   networkGateway.start(connection);
   const networkFailure = await networkGateway.invoke("get_preferences", {
-    schema_version: "t0_app_v1",
+    schema_version: "t0_app_v2",
     request_id: "network-app",
     command: "get_preferences",
     session_id: null,
@@ -225,7 +225,7 @@ test("gateway normalizes non-contract HTTP error objects before returning to Ren
   gateway.start(connection);
 
   const failure = await gateway.invoke("get_preferences", {
-    schema_version: "t0_app_v1",
+    schema_version: "t0_app_v2",
     request_id: "unauthorized-app",
     command: "get_preferences",
     session_id: null,
@@ -249,7 +249,7 @@ test("bounded event overflow discards the partial tail and re-baselines from a s
       return {
         ok: true,
         json: async () => ({
-          schema_version: "t0_app_v1",
+          schema_version: "t0_app_v2",
           request_id: request.request_id,
           accepted: true,
           operation_id: null,
@@ -263,7 +263,7 @@ test("bounded event overflow discards the partial tail and re-baselines from a s
   const socket = FakeWebSocket.instances.at(-1);
   for (const revision of [1, 2, 3]) {
     socket.message({
-      schema_version: "t0_app_v1",
+      schema_version: "t0_app_v2",
       service_generation: 4,
       session_id: "live-overflow",
       revision,
@@ -290,7 +290,7 @@ test("reconnect re-baselines every active Session from a full snapshot", async (
       return {
         ok: true,
         json: async () => ({
-          schema_version: "t0_app_v1",
+          schema_version: "t0_app_v2",
           request_id: request.request_id,
           accepted: true,
           operation_id: null,
@@ -304,7 +304,7 @@ test("reconnect re-baselines every active Session from a full snapshot", async (
   const firstSocket = FakeWebSocket.instances.at(-1);
   firstSocket.open();
   firstSocket.message({
-    schema_version: "t0_app_v1",
+    schema_version: "t0_app_v2",
     service_generation: 4,
     session_id: "live-reconnect",
     revision: 1,
@@ -376,7 +376,7 @@ test("Replay gap rebaseline emits both the revisioned event and snapshot project
   gateway.start(connection);
   const socket = FakeWebSocket.instances.at(-1);
   const event = (revision) => ({
-    schema_version: "t0_replay_v1",
+    schema_version: "t0_replay_v2",
     service_generation: 4,
     session_id: "replay-gap",
     revision,
@@ -388,7 +388,7 @@ test("Replay gap rebaseline emits both the revisioned event and snapshot project
   socket.message(event(3));
   await tick();
 
-  assert.equal(requests[0].schema_version, "t0_replay_v1");
+  assert.equal(requests[0].schema_version, "t0_replay_v2");
   assert.equal(requests[0].session_id, "replay-gap");
   assert.deepEqual(events.map((item) => item.revision), [1, 4]);
   assert.equal(events[1].event_type, "workbench_snapshot");
@@ -404,7 +404,7 @@ test("rebaseline diagnostics preserve the concrete snapshot rejection reason", a
     fetchImpl: async () => ({
       ok: true,
       json: async () => ({
-        schema_version: "t0_app_v1",
+        schema_version: "t0_app_v2",
         request_id: "rejected-snapshot",
         accepted: false,
         operation_id: null,
@@ -426,7 +426,7 @@ test("rebaseline diagnostics preserve the concrete snapshot rejection reason", a
   gateway.start(connection);
   const socket = FakeWebSocket.instances.at(-1);
   const event = (revision) => ({
-    schema_version: "t0_app_v1",
+    schema_version: "t0_app_v2",
     service_generation: 4,
     session_id: "diagnostic-live",
     revision,
@@ -455,7 +455,7 @@ test("buffer overflow re-baselines every Session whose queued event was discarde
       return {
         ok: true,
         json: async () => ({
-          schema_version: "t0_app_v1",
+          schema_version: "t0_app_v2",
           request_id: request.request_id,
           accepted: true,
           operation_id: null,
@@ -468,7 +468,7 @@ test("buffer overflow re-baselines every Session whose queued event was discarde
   gateway.start(connection);
   const socket = FakeWebSocket.instances.at(-1);
   const event = (sessionId, revision) => ({
-    schema_version: "t0_app_v1",
+    schema_version: "t0_app_v2",
     service_generation: 4,
     session_id: sessionId,
     revision,
@@ -509,7 +509,7 @@ test("gateway allows and forwards get_historical_snapshot", async () => {
       return {
         ok: true,
         json: async () => ({
-          schema_version: "t0_app_v1",
+          schema_version: "t0_app_v2",
           request_id: "historical-req",
           accepted: true,
           operation_id: null,
@@ -521,7 +521,7 @@ test("gateway allows and forwards get_historical_snapshot", async () => {
   });
   gateway.start(connection);
   const request = {
-    schema_version: "t0_app_v1",
+    schema_version: "t0_app_v2",
     request_id: "historical-req",
     command: "get_historical_snapshot",
     session_id: null,
@@ -549,7 +549,7 @@ test("gateway uses per-command timeout for get_historical_snapshot", async () =>
       return {
         ok: true,
         json: async () => ({
-          schema_version: "t0_app_v1",
+          schema_version: "t0_app_v2",
           request_id: "hist-timeout",
           accepted: true,
           operation_id: null,
@@ -561,7 +561,7 @@ test("gateway uses per-command timeout for get_historical_snapshot", async () =>
   });
   gateway.start(connection);
   const request = {
-    schema_version: "t0_app_v1",
+    schema_version: "t0_app_v2",
     request_id: "hist-timeout",
     command: "get_historical_snapshot",
     session_id: null,
@@ -585,7 +585,7 @@ test("gateway falls back to default timeout for commands without per-command ove
   });
   gateway.start(connection);
   const response = await gateway.invoke("get_preferences", {
-    schema_version: "t0_app_v1",
+    schema_version: "t0_app_v2",
     request_id: "pref-timeout",
     command: "get_preferences",
     session_id: null,
@@ -621,7 +621,7 @@ test("managed Python service authenticates transport and rejects an unknown Live
     gateway.start(host.connectionInfo());
     const [status, event] = await Promise.all([connected, firstEvent]);
     const rejection = await gateway.invoke("get_live_snapshot", {
-      schema_version: "t0_app_v1",
+      schema_version: "t0_app_v2",
       request_id: "integration-snapshot",
       command: "get_live_snapshot",
       session_id: "live-fixture-1",

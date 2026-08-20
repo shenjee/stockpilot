@@ -52,13 +52,23 @@ class SessionType(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class SessionSpec:
-    """Immutable identity passed to a concrete Session implementation."""
+    """Immutable identity passed to a concrete Session implementation.
+
+    ``instrument`` carries the authoritative :class:`InstrumentIdentity`
+    resolved once at the App/API orchestration entry (issue #151).  It is a
+    domain value (what the instrument *is*), not a provider implementation
+    detail; the coordinator only stores and forwards it and never interprets
+    ``instrument_type``.  It is optional so legacy callers that still pass a
+    bare ``symbol`` continue to work during migration, but new code should
+    resolve identity upstream and pass the full ``instrument``.
+    """
 
     session_id: str
     session_type: SessionType
     symbol: str
     generation: int
     trade_date: str | None = None
+    instrument: Any = None
 
 
 class SessionPort(Protocol):
@@ -85,6 +95,7 @@ class SessionIdentity:
     symbol: str
     generation: int
     trade_date: str | None
+    instrument: Any = None
 
     @classmethod
     def from_spec(cls, spec: SessionSpec) -> SessionIdentity:
@@ -94,6 +105,7 @@ class SessionIdentity:
             symbol=spec.symbol,
             generation=spec.generation,
             trade_date=spec.trade_date,
+            instrument=spec.instrument,
         )
 
     def to_dict(self) -> dict[str, str | int | None]:
@@ -180,6 +192,7 @@ class AppCoordinator:
         self._lock = RLock()
         self._transition_lock = Lock()
         self._current_symbol: str | None = None
+        self._current_instrument: Any = None
         self._mode = AppMode.LIVE
         self._generation = 0
         self._revision = 0
@@ -192,8 +205,20 @@ class AppCoordinator:
         with self._lock:
             return self._snapshot_unlocked()
 
-    def select_symbol(self, symbol: str) -> CoordinatorSnapshot:
-        """Select the App stock and create its background Live Session."""
+    def select_symbol(
+        self,
+        symbol: str,
+        *,
+        instrument: Any = None,
+    ) -> CoordinatorSnapshot:
+        """Select the App stock and create its background Live Session.
+
+        ``instrument`` is the authoritative :class:`InstrumentIdentity`
+        resolved once at the App/API entry (issue #151).  It is stored on the
+        coordinator so ``begin_replay`` and ``retry_live`` can reuse the same
+        identity without re-resolving, and forwarded to the concrete Session
+        via :class:`SessionSpec`.
+        """
 
         resolved_symbol = _validate_symbol(symbol)
         with self._transition_lock:
@@ -208,6 +233,7 @@ class AppCoordinator:
             resolved_symbol,
             generation=generation,
             trade_date=None,
+            instrument=instrument,
         )
         with self._transition_lock:
             retired: tuple[_ManagedSession | None, ...] = ()
@@ -220,10 +246,12 @@ class AppCoordinator:
                 else:
                     conflict = False
                     prior_symbol = self._current_symbol
+                    prior_instrument = self._current_instrument
                     prior_live = self._live
                     prior_replay = self._replay
                     retired = (self._detach_replay(), self._detach_live())
                     self._current_symbol = resolved_symbol
+                    self._current_instrument = instrument
                     self._live = replacement
                     self._revision += 1
                     snapshot = self._snapshot_unlocked()
@@ -238,16 +266,19 @@ class AppCoordinator:
                 self._activate_session(replacement)
             except Exception as exc:
                 cleanup: tuple[_ManagedSession | None, ...] = ()
+                removed_replay: _ManagedSession | None = None
                 with self._lock:
                     if self._live is replacement:
                         self._live = prior_live
                         if self._current_symbol == resolved_symbol:
                             self._current_symbol = prior_symbol
-
-                        removed_replay: _ManagedSession | None = None
-                        if self._replay is not None:
-                            replay_symbol = self._replay.spec.symbol
+                            self._current_instrument = prior_instrument
                             current_symbol = self._current_symbol
+                            replay_symbol = (
+                                prior_replay.spec.symbol
+                                if prior_replay is not None
+                                else None
+                            )
                             replay_matches_symbol = (
                                 current_symbol is not None
                                 and replay_symbol == current_symbol
@@ -310,6 +341,7 @@ class AppCoordinator:
                     "begin_replay requires a current symbol"
                 )
             symbol = self._current_symbol
+            instrument = self._current_instrument
             expected_revision = self._revision
             generation = self._reserve_generation_unlocked()
 
@@ -318,6 +350,7 @@ class AppCoordinator:
             symbol,
             generation=generation,
             trade_date=resolved_date,
+            instrument=instrument,
         )
         with self._transition_lock:
             retired: tuple[_ManagedSession | None, ...] = ()
@@ -365,6 +398,7 @@ class AppCoordinator:
                     "retry_live requires a current symbol"
                 )
             symbol = self._current_symbol
+            instrument = self._current_instrument
             expected_revision = self._revision
             generation = self._reserve_generation_unlocked()
 
@@ -373,6 +407,7 @@ class AppCoordinator:
             symbol,
             generation=generation,
             trade_date=None,
+            instrument=instrument,
         )
         with self._transition_lock:
             retired: tuple[_ManagedSession | None, ...] = ()
@@ -525,6 +560,7 @@ class AppCoordinator:
         *,
         generation: int,
         trade_date: str | None,
+        instrument: Any = None,
     ) -> _ManagedSession:
         session_id = self._session_id_factory(session_type, generation)
         if not isinstance(session_id, str) or not session_id:
@@ -537,6 +573,7 @@ class AppCoordinator:
             symbol=symbol,
             generation=generation,
             trade_date=trade_date,
+            instrument=instrument,
         )
         port = (
             self._session_factory.create_live(spec)

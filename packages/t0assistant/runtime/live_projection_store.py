@@ -23,7 +23,7 @@ Responsibilities (minimal, transport-free):
   gap or reconnect by fetching the latest complete authoritative snapshot, with
   ``snapshot.session.revision`` equal to the latest accepted revision.
 
-The store emits ``t0_app_v1`` event envelopes but does not touch the backend
+The store emits ``t0_app_v2`` event envelopes but does not touch the backend
 HTTP/WebSocket transport, the Electron gateway, or any public schema.
 """
 
@@ -42,7 +42,7 @@ from .coordinator import SessionType
 from .live_session import LiveSnapshotCandidate
 
 
-SCHEMA_VERSION = "t0_app_v1"
+SCHEMA_VERSION = "t0_app_v2"
 
 _INCREMENTAL_EVENT_TYPES = frozenset(
     {
@@ -82,7 +82,7 @@ class _CoordinatorAcceptancePort(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class LiveAcceptedEvent:
-    """A published ``t0_app_v1`` event envelope produced by the authority."""
+    """A published ``t0_app_v2`` event envelope produced by the authority."""
 
     schema_version: str
     service_generation: int

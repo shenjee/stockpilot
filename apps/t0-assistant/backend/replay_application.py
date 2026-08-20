@@ -13,6 +13,7 @@ from packages.marketdata.repositories.kline_store import KLineStore
 from packages.marketdata.repositories.securities_store import SecuritiesStore
 from packages.marketdata.runtime_paths import RuntimePaths
 from packages.marketdata.services import KLineDataService, SecuritiesSearchService
+from packages.marketdata.t0_schema import InstrumentIdentity
 from packages.t0assistant.replay import (
     ReplayAccepted,
     ReplayApiError,
@@ -46,7 +47,7 @@ class ReplayApplication:
         *,
         service_generation: int,
         prepare: Callable[[str, str], Any],
-        resolve_security: Callable[[str], dict[str, str] | None],
+        resolve_security: Callable[[str], InstrumentIdentity | None],
         publish_event: Callable[[dict[str, Any]], None],
     ) -> None:
         self.service_generation = service_generation
@@ -71,7 +72,7 @@ class ReplayApplication:
     ) -> ReplayAccepted:
         if command == "select_symbol":
             security = self._security(request["symbol"])
-            return ReplayAccepted(data={"security": security})
+            return ReplayAccepted(data={"security": security.to_dict()})
         if command == "begin_replay":
             security = self._security(request["symbol"])
             session_id = f"replay-{uuid4().hex}"
@@ -82,8 +83,9 @@ class ReplayApplication:
                 start_operation=lambda: self._begin(
                     session_id,
                     operation_id,
-                    security["symbol"],
+                    security.symbol,
                     request["trade_date"],
+                    str(security.instrument_type),
                 ),
             )
 
@@ -133,9 +135,9 @@ class ReplayApplication:
             start_operation=lambda: self._cursor(session, operation_id, action),
         )
 
-    def _security(self, symbol: str) -> dict[str, str]:
+    def _security(self, symbol: str) -> InstrumentIdentity:
         security = self._resolve_security(symbol)
-        if security is None or security["symbol"] != symbol:
+        if security is None or security.symbol != symbol:
             raise ReplayApiError("symbol_not_found")
         return security
 
@@ -145,9 +147,10 @@ class ReplayApplication:
         operation_id: str,
         symbol: str,
         trade_date: str,
+        instrument_type: str,
     ) -> None:
         try:
-            prepared = self._prepare(symbol, trade_date)
+            prepared = self._prepare(symbol, trade_date, instrument_type)
             session = ReplaySession(
                 session_id,
                 self.service_generation,
@@ -257,7 +260,7 @@ def create_replay_application(
     )
     securities = SecuritiesSearchService(SecuritiesStore(market_db))
 
-    def prepare(symbol: str, trade_date: str) -> Any:
+    def prepare(symbol: str, trade_date: str, instrument_type: str) -> Any:
         effective_context = _ensure_context_covers(
             context,
             date.fromisoformat(trade_date),
@@ -276,16 +279,13 @@ def create_replay_application(
             config=ReplayPreparationConfig(
                 deadline_monotonic=time.monotonic() + 8,
             ),
+            instrument_type=instrument_type,
         )
 
     application = ReplayApplication(
         service_generation=service_generation,
         prepare=prepare,
-        resolve_security=lambda symbol: (
-            securities.get(symbol[3:], symbol[:2])
-            if len(symbol) == 9 and symbol[2] == "."
-            else None
-        ),
+        resolve_security=securities.resolve,
         publish_event=publish_event,
     )
     api = ReplayCommandApi(

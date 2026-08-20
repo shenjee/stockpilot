@@ -253,7 +253,7 @@ class ReplaySimulatedTradeTests(ReplaySeekTests):
             lambda session_id: session if session_id == session.session_id else None
         )
         base = {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "request_id": "trade-request",
             "session_id": session.session_id,
         }

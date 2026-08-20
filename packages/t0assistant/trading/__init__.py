@@ -4,7 +4,7 @@ from .api import TradeCommandApi, TradeEventPublisher
 from .fee_policy import (
     FeeCalculation,
     FeePolicyValidationError,
-    SecurityType,
+    FeeSecurityType,
     calculate_fee,
 )
 from .markers import (
@@ -27,7 +27,7 @@ from .models import (
     bucket_start_for,
     normalize_executed_at,
 )
-from .service import TradeService
+from .service import InstrumentEligibilityPort, TradeEligibilityError, TradeService
 from .simulated_api import SimulatedTradeCommandApi, SimulatedTradeSessionPort
 
 __all__ = [
@@ -41,9 +41,11 @@ __all__ = [
     "normalize_executed_at",
     "project_trade_marker",
     "project_trade_markers",
-    "SecurityType",
+    "FeeSecurityType",
+    "InstrumentEligibilityPort",
     "TradeCommandApi",
     "TradeDraft",
+    "TradeEligibilityError",
     "TradeEventPublisher",
     "TradeMarker",
     "TradeMarkerProjection",

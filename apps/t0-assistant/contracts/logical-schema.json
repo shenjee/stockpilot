@@ -1,20 +1,20 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://stockpilot.local/contracts/t0-logic-v1.schema.json",
+  "$id": "https://stockpilot.local/contracts/t0-logic-v2.schema.json",
   "title": "StockPilot T+0 cross-process logical schema",
-  "description": "Stable process-boundary data contract. This is not a SQLite schema and must not expose provider, transport, or storage fields.",
+  "description": "Stable process-boundary data contract. This is not a SQLite schema and must not expose provider, transport, or storage fields. Issue #151: security identity uses instrument_type (stock|etf|index), the objective securities-master classification; the fee layer's security_type (a_share|etf) is a separate trade-strategy enum owned by the trading package.",
   "type": "object",
   "$defs": {
     "security": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["symbol", "code", "market", "name", "security_type"],
+      "required": ["symbol", "code", "market", "name", "instrument_type"],
       "properties": {
         "symbol": {"type": "string", "pattern": "^(sh|sz)\\.[0-9]{6}$"},
         "code": {"type": "string", "pattern": "^[0-9]{6}$"},
         "market": {"enum": ["sh", "sz"]},
         "name": {"type": "string", "minLength": 1},
-        "security_type": {"enum": ["a_share", "etf"]}
+        "instrument_type": {"enum": ["stock", "etf", "index"]}
       }
     },
     "bar": {

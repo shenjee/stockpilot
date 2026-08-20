@@ -66,7 +66,7 @@ class FeePlanCommandApi:
         except Exception as error:
             return self._rejected(request_id, error)
         return {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "request_id": request_id,
             "accepted": True,
             "operation_id": None,
@@ -114,7 +114,7 @@ class FeePlanCommandApi:
         else:
             code, category, retryable = "fee_plan_service_unavailable", "service", True
         return {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "request_id": request_id,
             "accepted": False,
             "operation_id": None,

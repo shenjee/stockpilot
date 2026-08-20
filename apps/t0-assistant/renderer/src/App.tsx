@@ -49,7 +49,6 @@ import {
   latestDailyBars,
   liveOperationFailurePresentation,
   operationMatchesEnvelope,
-  partialSecurityFromSymbol,
   quoteDataCutoffText,
   quoteRows,
   restoredSecurityFromResponse,
@@ -383,9 +382,7 @@ export function App() {
           if (preferences.last_symbol) {
             const startup = startupRestoreFromResponse(response);
             const resolvedSecurity = restoredSecurityFromResponse(response);
-            const displaySecurity =
-              resolvedSecurity ??
-              partialSecurityFromSymbol(preferences.last_symbol);
+            const displaySecurity = resolvedSecurity;
             if (
               displaySecurity &&
               !cancelled &&
@@ -1166,7 +1163,7 @@ export function App() {
             code: symbol.slice(3),
             market: (symbol.slice(0, 2) === "sz" ? "sz" : "sh") as "sh" | "sz",
             name: symbol.slice(3),
-            security_type: "a_share",
+            instrument_type: "stock",
           };
     if (tradeDate === today) {
       setDayChartNotice(null);
@@ -1339,7 +1336,7 @@ export function App() {
     setBackgroundError(null);
     try {
       const response = await window.stockpilot.beginReplay({
-        schema_version: "t0_replay_v1",
+        schema_version: "t0_replay_v2",
         request_id: requestId("begin-replay"),
         symbol: workbench.security.symbol,
         trade_date: replayDate,
@@ -1364,7 +1361,7 @@ export function App() {
     setReplayPlaybackPending(true);
     try {
       const response = await window.stockpilot.setReplayPlayback({
-        schema_version: "t0_replay_v1",
+        schema_version: "t0_replay_v2",
         request_id: requestId(playing ? "play-replay" : "pause-replay"),
         session_id: replayFacts.sessionId,
         playing,
@@ -1388,7 +1385,7 @@ export function App() {
     }
     try {
       const response = await window.stockpilot.setReplaySpeed({
-        schema_version: "t0_replay_v1",
+        schema_version: "t0_replay_v2",
         request_id: requestId("set-replay-speed"),
         session_id: replayFacts.sessionId,
         playback_speed: playbackSpeed,
@@ -1426,7 +1423,7 @@ export function App() {
     setReplayBusy(true);
     try {
       const response = await window.stockpilot.stepReplay({
-        schema_version: "t0_replay_v1",
+        schema_version: "t0_replay_v2",
         request_id: requestId("step-replay"),
         session_id: replayFacts.sessionId,
       });
@@ -1445,7 +1442,7 @@ export function App() {
     setReplayBusy(true);
     try {
       const response = await window.stockpilot.seekReplay({
-        schema_version: "t0_replay_v1",
+        schema_version: "t0_replay_v2",
         request_id: requestId("seek-replay"),
         session_id: replayFacts.sessionId,
         target_time: targetTime,
@@ -1498,7 +1495,7 @@ export function App() {
     if (window.stockpilot && sessionId) {
       void window.stockpilot
         .endReplay({
-          schema_version: "t0_replay_v1",
+          schema_version: "t0_replay_v2",
           request_id: requestId("end-replay"),
           session_id: sessionId,
         })
@@ -2387,7 +2384,7 @@ function DailyMiniChart({ bars }: { bars: MarketBar[] }) {
 
 function appRequest(command: string, sessionId: string | null, payload: object) {
   return {
-    schema_version: "t0_app_v1",
+    schema_version: "t0_app_v2",
     request_id: requestId(command),
     command,
     session_id: sessionId,
@@ -2493,7 +2490,7 @@ function requestReplayPlayback(
   if (!window.stockpilot || !sessionId) return;
   void window.stockpilot
     .setReplayPlayback({
-      schema_version: "t0_replay_v1",
+      schema_version: "t0_replay_v2",
       request_id: requestId(playing ? "play-replay" : "pause-replay"),
       session_id: sessionId,
       playing,
@@ -2545,7 +2542,7 @@ function replayEventEnvelope(event: unknown) {
     payload?: unknown;
   };
   if (
-    envelope.schema_version !== "t0_replay_v1" ||
+    envelope.schema_version !== "t0_replay_v2" ||
     typeof envelope.event_type !== "string" ||
     typeof envelope.session_id !== "string"
   ) {

@@ -19,7 +19,7 @@ from packages.t0assistant.trading import TradeCommandApi, TradeService
 
 def _request(command: str, payload: dict, request_id: str) -> dict:
     return {
-        "schema_version": "t0_app_v1",
+        "schema_version": "t0_app_v2",
         "request_id": request_id,
         "command": command,
         "session_id": None,

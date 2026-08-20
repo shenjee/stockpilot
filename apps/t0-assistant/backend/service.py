@@ -39,6 +39,7 @@ APP_CONTRACTS_DIR = Path(__file__).resolve().parents[1] / "contracts"
 from packages.marketdata.repositories.securities_store import SecuritiesStore
 from packages.marketdata.runtime_paths import RuntimePaths
 from packages.marketdata.services import SecuritiesSearchService
+from packages.marketdata.t0_schema import InstrumentType
 from packages.t0assistant.replay import REPLAY_COMMANDS, ReplayCommandApi
 from packages.t0assistant.repositories import (
     open_app_database,
@@ -51,6 +52,7 @@ from packages.t0assistant.runtime.live_projection_store import (
     LiveProjectionSnapshotUnavailable as _LiveSnapshotUnavailable,
 )
 from packages.t0assistant.trading import (
+    InstrumentEligibilityPort,
     SimulatedTradeCommandApi,
     TradeCommandApi,
     TradeService,
@@ -236,7 +238,7 @@ class LiveSnapshotApi:
                 retryable=True,
             )
         return {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "request_id": request_id,
             "accepted": True,
             "operation_id": None,
@@ -253,7 +255,7 @@ class LiveSnapshotApi:
         retryable: bool,
     ) -> dict[str, Any]:
         return {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "request_id": request_id,
             "accepted": False,
             "operation_id": None,
@@ -483,7 +485,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(
                 HTTPStatus.BAD_REQUEST,
                 {
-                    "schema_version": "t0_app_v1",
+                    "schema_version": "t0_app_v2",
                     "request_id": request.get("request_id", "missing-request-id"),
                     "accepted": False,
                     "operation_id": None,
@@ -523,7 +525,7 @@ class _Handler(BaseHTTPRequestHandler):
         if error is not None:
             request_id = request.get("request_id", "missing-request-id")
             payload = {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "request_id": request_id,
                 "accepted": False,
                 "operation_id": None,
@@ -557,7 +559,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(
                 HTTPStatus.SERVICE_UNAVAILABLE,
                 {
-                    "schema_version": "t0_app_v1",
+                    "schema_version": "t0_app_v2",
                     "request_id": request_id,
                     "accepted": False,
                     "operation_id": None,
@@ -595,7 +597,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(
                 HTTPStatus.BAD_REQUEST,
                 {
-                    "schema_version": "t0_app_v1",
+                    "schema_version": "t0_app_v2",
                     "request_id": request_id,
                     "accepted": False,
                     "operation_id": None,
@@ -632,7 +634,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(
                 HTTPStatus.BAD_REQUEST,
                 {
-                    "schema_version": "t0_app_v1",
+                    "schema_version": "t0_app_v2",
                     "request_id": request.get("request_id", "missing-request-id"),
                     "accepted": False,
                     "operation_id": None,
@@ -663,7 +665,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(
                 HTTPStatus.BAD_REQUEST,
                 {
-                    "schema_version": "t0_app_v1",
+                    "schema_version": "t0_app_v2",
                     "request_id": request_id,
                     "accepted": False,
                     "operation_id": None,
@@ -698,7 +700,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(
                 HTTPStatus.SERVICE_UNAVAILABLE,
                 {
-                    "schema_version": "t0_app_v1",
+                    "schema_version": "t0_app_v2",
                     "request_id": request_id,
                     "accepted": False,
                     "operation_id": None,
@@ -745,7 +747,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(
                 HTTPStatus.BAD_REQUEST,
                 {
-                    "schema_version": "t0_app_v1",
+                    "schema_version": "t0_app_v2",
                     "request_id": request_id,
                     "accepted": False,
                     "operation_id": None,
@@ -785,7 +787,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(
                 HTTPStatus.SERVICE_UNAVAILABLE,
                 {
-                    "schema_version": "t0_app_v1",
+                    "schema_version": "t0_app_v2",
                     "request_id": request_id,
                     "accepted": False,
                     "operation_id": None,
@@ -797,11 +799,16 @@ class _Handler(BaseHTTPRequestHandler):
         self._json(
             HTTPStatus.OK,
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "request_id": request_id,
                 "accepted": True,
                 "operation_id": None,
-                "data": {"securities": securities},
+                "data": {
+                    "securities": [
+                        s.to_dict() if hasattr(s, "to_dict") else s
+                        for s in securities
+                    ]
+                },
                 "error": None,
             },
         )
@@ -833,7 +840,7 @@ class _Handler(BaseHTTPRequestHandler):
         }
         if command in APP_COMMANDS:
             payload = {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "request_id": request_id,
                 "accepted": False,
                 "operation_id": None,
@@ -883,7 +890,7 @@ class _Handler(BaseHTTPRequestHandler):
         self._send_websocket_text(
             json.dumps(
                 {
-                    "schema_version": "t0_app_v1",
+                    "schema_version": "t0_app_v2",
                     "service_generation": getattr(
                         self.server, "service_generation", 1
                     ),
@@ -1315,6 +1322,32 @@ def create_server(
     )
 
 
+class _SecuritiesEligibilityAdapter:
+    """Adapt :class:`SecuritiesSearchService` to :class:`InstrumentEligibilityPort`.
+
+    Resolves a symbol once via the securities master and maps the objective
+    :class:`InstrumentType` to a trade-eligibility status (issue #151 #5):
+
+    * stock / etf → ``"tradable"``
+    * index → ``"index"`` (not tradable)
+    * not found → ``None``
+
+    The adapter never imports the trading package; it only returns the plain
+    strings the :class:`InstrumentEligibilityPort` contract expects.
+    """
+
+    def __init__(self, securities: SecuritiesSearchService) -> None:
+        self._securities = securities
+
+    def check_eligibility(self, symbol: str) -> str | None:
+        identity = self._securities.resolve(symbol)
+        if identity is None:
+            return None
+        if identity.instrument_type is InstrumentType.INDEX:
+            return "index"
+        return "tradable"
+
+
 def _build_trade_api(
     service_generation: int,
 ) -> tuple[
@@ -1329,6 +1362,12 @@ def _build_trade_api(
     binds :class:`TradeCommandApi` to an :class:`EventPublisher` so accepted
     trade commands publish authoritative ``trades_changed`` events. Returns
     ``(None, None, None)`` if the App database cannot be opened at all.
+
+    The :class:`TradeService` is wired with a :class:`InstrumentEligibilityPort`
+    adapter backed by the securities master (issue #151 decision #5) so that
+    trade eligibility is enforced via the securities catalog rather than a
+    direct search dependency.  Indices resolve to ``security_not_tradable``;
+    unknown symbols resolve to ``security_not_found``.
     """
 
     paths = RuntimePaths()
@@ -1342,7 +1381,13 @@ def _build_trade_api(
             extra={"component": "trade_api"},
         )
         return None, None, None
-    service = TradeService(SqliteTradeRepository(database))
+    securities = SecuritiesSearchService(
+        SecuritiesStore(paths.db_dir / "market_data.sqlite")
+    )
+    service = TradeService(
+        SqliteTradeRepository(database),
+        eligibility=_SecuritiesEligibilityAdapter(securities),
+    )
     fee_plan_api = FeePlanCommandApi(
         FeePlanService(SqliteFeePlanRepository(database)),
         service_generation=service_generation,

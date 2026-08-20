@@ -24,7 +24,7 @@ function trade(overrides = {}) {
 
 function tradesChangedEvent(trades, tradeRevision, serviceGeneration = 3) {
   return {
-    schema_version: "t0_app_v1",
+    schema_version: "t0_app_v2",
     service_generation: serviceGeneration,
     session_id: null,
     revision: tradeRevision,

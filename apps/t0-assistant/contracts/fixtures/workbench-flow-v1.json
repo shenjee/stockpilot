@@ -1,9 +1,9 @@
 {
-  "schema_version": "t0_app_v1",
+  "schema_version": "t0_app_v2",
   "service_generation": 3,
   "session_id": "live-fixture-1",
   "initial_snapshot_event": {
-    "schema_version": "t0_app_v1",
+    "schema_version": "t0_app_v2",
     "service_generation": 3,
     "session_id": "live-fixture-1",
     "revision": 1,
@@ -145,7 +145,7 @@
   },
   "incremental_events": [
     {
-      "schema_version": "t0_app_v1",
+      "schema_version": "t0_app_v2",
       "service_generation": 3,
       "session_id": "live-fixture-1",
       "revision": 2,
@@ -168,7 +168,7 @@
       }
     },
     {
-      "schema_version": "t0_app_v1",
+      "schema_version": "t0_app_v2",
       "service_generation": 3,
       "session_id": "live-fixture-1",
       "revision": 3,
@@ -188,7 +188,7 @@
       }
     },
     {
-      "schema_version": "t0_app_v1",
+      "schema_version": "t0_app_v2",
       "service_generation": 3,
       "session_id": "live-fixture-1",
       "revision": 4,
@@ -221,7 +221,7 @@
   ],
   "out_of_order_delivery": [0, 2, 1],
   "operation_failed_event": {
-    "schema_version": "t0_app_v1",
+    "schema_version": "t0_app_v2",
     "service_generation": 3,
     "session_id": "live-fixture-1",
     "revision": 5,
@@ -240,7 +240,7 @@
     }
   },
   "synchronous_error_response": {
-    "schema_version": "t0_app_v1",
+    "schema_version": "t0_app_v2",
     "request_id": "request-invalid-1",
     "accepted": false,
     "operation_id": null,

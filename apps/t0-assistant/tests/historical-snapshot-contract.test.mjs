@@ -16,8 +16,8 @@ test("renderer-side tooling consumes the canonical historical snapshot fixture",
   const response = fixture.historical_snapshot_response;
   const snapshot = response.data;
 
-  assert.equal(fixture.schema_version, "t0_app_v1");
-  assert.equal(request.schema_version, "t0_app_v1");
+  assert.equal(fixture.schema_version, "t0_app_v2");
+  assert.equal(request.schema_version, "t0_app_v2");
   assert.equal(request.command, "get_historical_snapshot");
   assert.equal(request.session_id, null);
 

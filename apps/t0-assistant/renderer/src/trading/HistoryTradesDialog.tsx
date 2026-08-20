@@ -218,14 +218,14 @@ export function HistoryTradesDialog({
       return selectedSecurity;
     }
     // No extra request is made for unknown symbols; the name is left blank and
-    // the security type defaults to a_share so the fee advisor can still offer
+    // the instrument type defaults to stock so the fee advisor can still offer
     // a suggestion the user may override.
     return {
       symbol: trade.symbol,
       code: trade.symbol.slice(3),
       market: (trade.symbol.slice(0, 2) === "sz" ? "sz" : "sh") as "sh" | "sz",
       name: "",
-      security_type: "a_share",
+      instrument_type: "stock",
     };
   }
 

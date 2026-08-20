@@ -9,7 +9,7 @@ function fakeBridge(handlers = {}) {
   const calls = [];
   const defaults = {
     list_trades: (request) => ({
-      schema_version: "t0_app_v1",
+      schema_version: "t0_app_v2",
       request_id: request.request_id,
       accepted: true,
       operation_id: null,
@@ -34,7 +34,7 @@ function fakeBridge(handlers = {}) {
       error: null,
     }),
     create_trade: (request) => ({
-      schema_version: "t0_app_v1",
+      schema_version: "t0_app_v2",
       request_id: request.request_id,
       accepted: true,
       operation_id: "op-create-1",
@@ -42,7 +42,7 @@ function fakeBridge(handlers = {}) {
       error: null,
     }),
     update_trade: (request) => ({
-      schema_version: "t0_app_v1",
+      schema_version: "t0_app_v2",
       request_id: request.request_id,
       accepted: true,
       operation_id: "op-update-1",
@@ -50,7 +50,7 @@ function fakeBridge(handlers = {}) {
       error: null,
     }),
     delete_trade: (request) => ({
-      schema_version: "t0_app_v1",
+      schema_version: "t0_app_v2",
       request_id: request.request_id,
       accepted: true,
       operation_id: null,
@@ -74,7 +74,7 @@ function fakeBridge(handlers = {}) {
 
 function serviceUnavailable(request) {
   return {
-    schema_version: "t0_app_v1",
+    schema_version: "t0_app_v2",
     request_id: request.request_id,
     accepted: false,
     operation_id: null,
@@ -126,7 +126,7 @@ test("listTrades sends the list_trades payload and returns an acceptance signal"
 
   const [command, request] = bridge.calls[0];
   assert.equal(command, "list_trades");
-  assert.equal(request.schema_version, "t0_app_v1");
+  assert.equal(request.schema_version, "t0_app_v2");
   assert.equal(request.command, "list_trades");
   assert.equal(request.session_id, null);
   assert.deepEqual(request.payload, {
@@ -171,7 +171,7 @@ test("an accepted list_trades with data: null still returns a clean acceptance s
   // does not read data, so it must not break or fabricate an empty list.
   const bridge = fakeBridge({
     list_trades: (request) => ({
-      schema_version: "t0_app_v1",
+      schema_version: "t0_app_v2",
       request_id: request.request_id,
       accepted: true,
       operation_id: null,
@@ -215,7 +215,7 @@ test("service_unavailable response throws a retryable TradeClientError", async (
 test("an accepted:false response without a structured error still throws", async () => {
   const bridge = fakeBridge({
     delete_trade: (request) => ({
-      schema_version: "t0_app_v1",
+      schema_version: "t0_app_v2",
       request_id: request.request_id,
       accepted: false,
       operation_id: null,

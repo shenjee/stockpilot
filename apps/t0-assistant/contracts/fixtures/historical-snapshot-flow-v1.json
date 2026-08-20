@@ -1,9 +1,9 @@
 {
-  "schema_version": "t0_app_v1",
+  "schema_version": "t0_app_v2",
   "description": "Canonical get_historical_snapshot command/response flow. The command is synchronous, session-scoped to null, and returns a complete static workbench_snapshot with session_type 'historical' and replay null. There are no incremental events because a historical session has no lifecycle.",
   "service_generation": 3,
   "historical_snapshot_request": {
-    "schema_version": "t0_app_v1",
+    "schema_version": "t0_app_v2",
     "request_id": "req-hist-1",
     "command": "get_historical_snapshot",
     "session_id": null,
@@ -13,7 +13,7 @@
     }
   },
   "historical_snapshot_response": {
-    "schema_version": "t0_app_v1",
+    "schema_version": "t0_app_v2",
     "request_id": "req-hist-1",
     "accepted": true,
     "operation_id": null,
@@ -154,7 +154,7 @@
     "error": null
   },
   "historical_data_unavailable_response": {
-    "schema_version": "t0_app_v1",
+    "schema_version": "t0_app_v2",
     "request_id": "req-hist-2",
     "accepted": false,
     "operation_id": null,
@@ -171,7 +171,7 @@
     }
   },
   "service_unavailable_response": {
-    "schema_version": "t0_app_v1",
+    "schema_version": "t0_app_v2",
     "request_id": "req-hist-3",
     "accepted": false,
     "operation_id": null,

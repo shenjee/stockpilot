@@ -6,7 +6,7 @@ import unittest
 from packages.t0assistant.repositories import FeePlanRecord, TransferFeeSide
 from packages.t0assistant.trading import (
     FeePolicyValidationError,
-    SecurityType,
+    FeeSecurityType,
     TradeSide,
     calculate_fee,
 )
@@ -43,7 +43,7 @@ class FeePolicyCalculationTests(unittest.TestCase):
     def test_a_share_small_buy_hits_minimum_commission_and_no_stamp_duty(self) -> None:
         plan = _plan()
         result = calculate_fee(
-            security_type=SecurityType.A_SHARE,
+            security_type=FeeSecurityType.A_SHARE,
             side=TradeSide.BUY,
             price=Decimal("10.00"),
             quantity=100,
@@ -59,7 +59,7 @@ class FeePolicyCalculationTests(unittest.TestCase):
     def test_a_share_sell_includes_stamp_duty_and_transfer_fee(self) -> None:
         plan = _plan()
         result = calculate_fee(
-            security_type=SecurityType.A_SHARE,
+            security_type=FeeSecurityType.A_SHARE,
             side=TradeSide.SELL,
             price=Decimal("10.00"),
             quantity=1000,
@@ -75,7 +75,7 @@ class FeePolicyCalculationTests(unittest.TestCase):
     def test_etf_buy_and_sell_use_etf_commission_config(self) -> None:
         plan = _plan()
         buy = calculate_fee(
-            security_type=SecurityType.ETF,
+            security_type=FeeSecurityType.ETF,
             side=TradeSide.BUY,
             price=Decimal("2.50"),
             quantity=1000,
@@ -87,7 +87,7 @@ class FeePolicyCalculationTests(unittest.TestCase):
         self.assertEqual(buy.transfer_fee, Decimal("0.025"))
 
         sell = calculate_fee(
-            security_type=SecurityType.ETF,
+            security_type=FeeSecurityType.ETF,
             side=TradeSide.SELL,
             price=Decimal("2.50"),
             quantity=1000,
@@ -101,7 +101,7 @@ class FeePolicyCalculationTests(unittest.TestCase):
     def test_transfer_fee_disabled_is_zero(self) -> None:
         plan = _plan(transfer_fee_enabled=False)
         result = calculate_fee(
-            security_type=SecurityType.A_SHARE,
+            security_type=FeeSecurityType.A_SHARE,
             side=TradeSide.BUY,
             price=Decimal("10000.00"),
             quantity=1,
@@ -112,14 +112,14 @@ class FeePolicyCalculationTests(unittest.TestCase):
     def test_transfer_fee_buy_only_charges_buy(self) -> None:
         plan = _plan(transfer_fee_side=TransferFeeSide.BUY)
         buy = calculate_fee(
-            security_type=SecurityType.A_SHARE,
+            security_type=FeeSecurityType.A_SHARE,
             side=TradeSide.BUY,
             price=Decimal("10000.00"),
             quantity=1,
             plan=plan,
         )
         sell = calculate_fee(
-            security_type=SecurityType.A_SHARE,
+            security_type=FeeSecurityType.A_SHARE,
             side=TradeSide.SELL,
             price=Decimal("10000.00"),
             quantity=1,
@@ -131,14 +131,14 @@ class FeePolicyCalculationTests(unittest.TestCase):
     def test_transfer_fee_sell_only_charges_sell(self) -> None:
         plan = _plan(transfer_fee_side=TransferFeeSide.SELL)
         buy = calculate_fee(
-            security_type=SecurityType.A_SHARE,
+            security_type=FeeSecurityType.A_SHARE,
             side=TradeSide.BUY,
             price=Decimal("10000.00"),
             quantity=1,
             plan=plan,
         )
         sell = calculate_fee(
-            security_type=SecurityType.A_SHARE,
+            security_type=FeeSecurityType.A_SHARE,
             side=TradeSide.SELL,
             price=Decimal("10000.00"),
             quantity=1,
@@ -151,7 +151,7 @@ class FeePolicyCalculationTests(unittest.TestCase):
         plan = _plan(transfer_fee_side=TransferFeeSide.BOTH)
         for side in (TradeSide.BUY, TradeSide.SELL):
             result = calculate_fee(
-                security_type=SecurityType.A_SHARE,
+                security_type=FeeSecurityType.A_SHARE,
                 side=side,
                 price=Decimal("10000.00"),
                 quantity=1,
@@ -162,7 +162,7 @@ class FeePolicyCalculationTests(unittest.TestCase):
     def test_zero_minimum_commission_plan(self) -> None:
         plan = _plan(a_share_min_commission=Decimal("0"))
         result = calculate_fee(
-            security_type=SecurityType.A_SHARE,
+            security_type=FeeSecurityType.A_SHARE,
             side=TradeSide.BUY,
             price=Decimal("10.00"),
             quantity=100,
@@ -173,7 +173,7 @@ class FeePolicyCalculationTests(unittest.TestCase):
     def test_stamp_duty_bidirectional_when_sell_only_is_false(self) -> None:
         plan = _plan(stamp_duty_sell_only=False)
         buy = calculate_fee(
-            security_type=SecurityType.A_SHARE,
+            security_type=FeeSecurityType.A_SHARE,
             side=TradeSide.BUY,
             price=Decimal("10000.00"),
             quantity=1,
@@ -197,7 +197,7 @@ class FeePolicyValidationTests(unittest.TestCase):
     def test_invalid_side_is_rejected(self) -> None:
         with self.assertRaises(FeePolicyValidationError) as ctx:
             calculate_fee(
-                security_type=SecurityType.A_SHARE,
+                security_type=FeeSecurityType.A_SHARE,
                 side="hold",
                 price=Decimal("10.00"),
                 quantity=100,
@@ -210,7 +210,7 @@ class FeePolicyValidationTests(unittest.TestCase):
             with self.subTest(price=price):
                 with self.assertRaises(FeePolicyValidationError) as ctx:
                     calculate_fee(
-                        security_type=SecurityType.A_SHARE,
+                        security_type=FeeSecurityType.A_SHARE,
                         side=TradeSide.BUY,
                         price=price,
                         quantity=100,
@@ -223,7 +223,7 @@ class FeePolicyValidationTests(unittest.TestCase):
             with self.subTest(quantity=quantity):
                 with self.assertRaises(FeePolicyValidationError) as ctx:
                     calculate_fee(
-                        security_type=SecurityType.A_SHARE,
+                        security_type=FeeSecurityType.A_SHARE,
                         side=TradeSide.BUY,
                         price=Decimal("10.00"),
                         quantity=quantity,

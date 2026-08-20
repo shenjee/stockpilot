@@ -91,6 +91,10 @@ class ReplayMarketDataPort(Protocol):
     The port keeps the preparator independent of SQLite and the Tencent
     provider.  Implementations may wrap a real ``KLineDataService`` or a
     deterministic fake.
+
+    ``instrument_type`` (stock|etf|index) is the authoritative identity enum
+    (issue #151).  Concrete implementations adapt it to the provider's
+    ``security_type``; indices load daily K-lines with no adjustment.
     """
 
     def get_klines_result(
@@ -102,6 +106,7 @@ class ReplayMarketDataPort(Protocol):
         timeframe: str,
         start_date: str | None = None,
         limit: int = 120,
+        instrument_type: str | None = None,
         request_priority: ProviderRequestPriority = ...,
         session_validator: Callable[[], bool] | None = None,
         request_timeout: float | None = None,
@@ -172,8 +177,15 @@ class ReplayDataPreparator:
         *,
         config: ReplayPreparationConfig,
         session_validator: Callable[[], bool] | None = None,
+        instrument_type: str | None = None,
     ) -> PreparedReplayData:
         """Prepare and validate the complete Replay input.
+
+        Args:
+            instrument_type: authoritative identity enum (stock|etf|index)
+                resolved once at the App/API entry from the securities master.
+                When ``None``, the provider falls back to its default
+                security-type handling.
 
         Raises:
             ReplayDataUnavailableError: when neither 1m nor official 5m can
@@ -191,6 +203,7 @@ class ReplayDataPreparator:
         preheat_bars = self._load_preheat_5m(
             code=code,
             market=market,
+            instrument_type=instrument_type,
             session=session,
             config=config,
             session_validator=session_validator,
@@ -200,6 +213,7 @@ class ReplayDataPreparator:
         assessment_1m = self._assess_granularity(
             code=code,
             market=market,
+            instrument_type=instrument_type,
             session=session,
             timeframe="1m",
             config=config,
@@ -208,6 +222,7 @@ class ReplayDataPreparator:
         assessment_5m = self._assess_granularity(
             code=code,
             market=market,
+            instrument_type=instrument_type,
             session=session,
             timeframe="5m",
             config=config,
@@ -219,6 +234,7 @@ class ReplayDataPreparator:
             bars_1m = self._load_target_day_bars(
                 code=code,
                 market=market,
+                instrument_type=instrument_type,
                 session=session,
                 timeframe="1m",
                 config=config,
@@ -231,6 +247,7 @@ class ReplayDataPreparator:
         official_5m = self._load_target_day_bars(
             code=code,
             market=market,
+            instrument_type=instrument_type,
             session=session,
             timeframe="5m",
             config=config,
@@ -259,6 +276,7 @@ class ReplayDataPreparator:
         daily_history = self._load_daily_history(
             code=code,
             market=market,
+            instrument_type=instrument_type,
             session=session,
             config=config,
             session_validator=session_validator,
@@ -355,6 +373,7 @@ class ReplayDataPreparator:
         timeframe: str,
         start_date: str | None,
         limit: int,
+        instrument_type: str | None,
         config: ReplayPreparationConfig,
         session_validator: Callable[[], bool] | None,
     ) -> Any:
@@ -366,6 +385,7 @@ class ReplayDataPreparator:
                 timeframe=timeframe,
                 start_date=start_date,
                 limit=limit,
+                instrument_type=instrument_type,
                 request_priority=config.request_priority,
                 session_validator=session_validator,
                 request_timeout=self._remaining_timeout(config),
@@ -385,6 +405,7 @@ class ReplayDataPreparator:
         *,
         code: str,
         market: str,
+        instrument_type: str | None,
         session: MarketSession,
         config: ReplayPreparationConfig,
         session_validator: Callable[[], bool] | None,
@@ -418,6 +439,7 @@ class ReplayDataPreparator:
                 # rejects; the final result is still trimmed to the requested
                 # number of valid bars.
                 limit=config.preheat_5m_count + 15 * 48,
+                instrument_type=instrument_type,
                 config=config,
                 session_validator=session_validator,
             )
@@ -448,6 +470,7 @@ class ReplayDataPreparator:
         *,
         code: str,
         market: str,
+        instrument_type: str | None,
         session: MarketSession,
         timeframe: str,
         config: ReplayPreparationConfig,
@@ -475,6 +498,7 @@ class ReplayDataPreparator:
                 timeframe=timeframe,
                 start_date=trade_date_str,
                 limit=300,
+                instrument_type=instrument_type,
                 config=config,
                 session_validator=session_validator,
             )
@@ -511,6 +535,7 @@ class ReplayDataPreparator:
             timeframe=timeframe,
             start_date=trade_date_str,
             limit=300,
+            instrument_type=instrument_type,
             config=config,
             session_validator=session_validator,
         )
@@ -530,6 +555,7 @@ class ReplayDataPreparator:
             timeframe=timeframe,
             start_date=trade_date_str,
             limit=300,
+            instrument_type=instrument_type,
             config=config,
             session_validator=session_validator,
         )
@@ -560,8 +586,9 @@ class ReplayDataPreparator:
     def _load_target_day_bars(
         self,
         *,
-        code: str,
+ code: str,
         market: str,
+        instrument_type: str | None,
         session: MarketSession,
         timeframe: str,
         config: ReplayPreparationConfig,
@@ -576,6 +603,7 @@ class ReplayDataPreparator:
             timeframe=timeframe,
             start_date=trade_date_str,
             limit=300,
+            instrument_type=instrument_type,
             config=config,
             session_validator=session_validator,
         )
@@ -591,6 +619,7 @@ class ReplayDataPreparator:
         *,
         code: str,
         market: str,
+        instrument_type: str | None,
         session: MarketSession,
         config: ReplayPreparationConfig,
         session_validator: Callable[[], bool] | None,
@@ -604,6 +633,7 @@ class ReplayDataPreparator:
             timeframe="day",
             start_date=None,
             limit=config.daily_history_days,
+            instrument_type=instrument_type,
             config=config,
             session_validator=session_validator,
         )

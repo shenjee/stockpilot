@@ -48,6 +48,36 @@ class _TradeRepository(Protocol):
     def delete(self, trade_id: str) -> bool: ...
 
 
+class InstrumentEligibilityPort(Protocol):
+    """Check whether a symbol is eligible for real trading.
+
+    Decouples :class:`TradeService` from the securities-search service
+    (issue #151 decision #5).  The App layer injects an adapter that wraps
+    :class:`SecuritiesSearchService`; the service itself never imports the
+    search service.
+
+    Implementations return one of:
+
+    * ``"tradable"`` – the symbol resolves to a stock or ETF and may be traded.
+    * ``"index"`` – the symbol resolves to an index, which is not tradable.
+    * ``None`` – the symbol was not found in the securities master.
+
+    A ``service_unavailable`` result indicates the eligibility check itself
+    failed (e.g. the securities store is unreachable); callers may treat this
+    as a soft failure depending on context.
+    """
+
+    def check_eligibility(self, symbol: str) -> str | None: ...
+    """Return ``"tradable"``, ``"index"`` or ``None`` for *symbol*."""
+
+
+class TradeEligibilityError(TradeValidationError):
+    """Raised when a trade fails instrument-eligibility validation."""
+
+    def __init__(self, field: str, message: str) -> None:
+        super().__init__(field, message)
+
+
 def _default_trade_id() -> str:
     return uuid.uuid4().hex
 
@@ -68,10 +98,12 @@ class TradeService:
         *,
         id_factory: Callable[[], str] | None = None,
         marker_projection: TradeMarkerProjection | None = None,
+        eligibility: InstrumentEligibilityPort | None = None,
     ) -> None:
         self._repository = repository
         self._id_factory = id_factory or _default_trade_id
         self._markers = marker_projection or TradeMarkerProjector()
+        self._eligibility = eligibility
 
     @property
     def capability(self) -> PreferenceCapability:
@@ -89,6 +121,7 @@ class TradeService:
 
         validated = self._coerce_draft(draft)
         self._require_real(validated)
+        self._require_eligible(validated)
         record = TradeRecord(self._id_factory(), validated)
         return self._repository.create(record)
 
@@ -105,6 +138,7 @@ class TradeService:
         normalized_id = self._require_trade_id(trade_id)
         validated = self._coerce_draft(draft)
         self._require_real(validated)
+        self._require_eligible(validated)
         record = TradeRecord(normalized_id, validated)
         return self._repository.update(record)
 
@@ -175,6 +209,29 @@ class TradeService:
             raise TradeValidationError(
                 "trade_scope", "only real trades can be persisted"
             )
+
+    def _require_eligible(self, draft: TradeDraft) -> None:
+        """Enforce instrument eligibility before persisting a real trade.
+
+        When no :class:`InstrumentEligibilityPort` is injected the check is
+        skipped (backward-compatible with tests and Replay-simulated flows
+        that never touch the real-trade repository).
+        """
+
+        if self._eligibility is None:
+            return
+        try:
+            status = self._eligibility.check_eligibility(draft.symbol)
+        except Exception as exc:  # noqa: BLE001 - surface as stable error
+            raise TradeEligibilityError(
+                "symbol", "service_unavailable"
+            ) from exc
+        if status is None:
+            raise TradeEligibilityError("symbol", "security_not_found")
+        if status == "index":
+            raise TradeEligibilityError("symbol", "security_not_tradable")
+        if status != "tradable":
+            raise TradeEligibilityError("symbol", "security_not_tradable")
 
     @staticmethod
     def _require_trade_id(trade_id: str) -> str:

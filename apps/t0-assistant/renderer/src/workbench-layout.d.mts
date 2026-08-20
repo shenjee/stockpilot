@@ -34,7 +34,7 @@ export interface SecurityIdentity {
   code: string;
   market: "sh" | "sz";
   name: string;
-  security_type: "a_share" | "etf";
+  instrument_type: "stock" | "etf" | "index";
 }
 
 export interface WorkbenchState {

@@ -10,7 +10,7 @@ const appSchemaPath = resolve(testDir, "../contracts/app-v1.schema.json");
 
 test("TypeScript-side tooling consumes the Replay v1.0 speed fixture", async () => {
   const fixture = JSON.parse(await readFile(fixturePath, "utf8"));
-  assert.equal(fixture.schema_version, "t0_replay_v1");
+  assert.equal(fixture.schema_version, "t0_replay_v2");
   assert.deepEqual(fixture.valid_speeds, [1, 2, 5, 10]);
   assert.equal(fixture.default_speed, 1);
   assert.equal(fixture.changed_event.payload.reason, "playback_speed_changed");

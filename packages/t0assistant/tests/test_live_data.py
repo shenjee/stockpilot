@@ -52,6 +52,7 @@ class _FakeMarketData:
         timeframe: str,
         start_date: str | None = None,
         limit: int = 120,
+        instrument_type: str | None = None,
         request_priority=None,
         session_validator=None,
         request_timeout: float | None = None,

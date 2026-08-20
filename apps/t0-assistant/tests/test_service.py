@@ -32,14 +32,16 @@ from packages.t0assistant.runtime.live_projection_store import (  # noqa: E402
 
 class _FakeSearchService:
     def search(self, query: str, limit: int):
+        from packages.marketdata.t0_schema import InstrumentIdentity, InstrumentType
+
         return [
-            {
-                "symbol": "sh.600519",
-                "code": "600519",
-                "market": "sh",
-                "name": "贵州茅台",
-                "security_type": "a_share",
-            }
+            InstrumentIdentity(
+                symbol="sh.600519",
+                code="600519",
+                market="sh",
+                name="贵州茅台",
+                instrument_type=InstrumentType.STOCK,
+            )
         ][:limit]
 
 
@@ -94,7 +96,7 @@ class DesktopServiceTest(unittest.TestCase):
     def test_unimplemented_app_command_returns_structured_service_error(self) -> None:
         body = json.dumps(
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "request_id": "formal-command-1",
                 "command": "get_live_snapshot",
                 "session_id": "live-1",
@@ -122,7 +124,7 @@ class DesktopServiceTest(unittest.TestCase):
     def test_security_search_returns_multiple_result_contract(self) -> None:
         body = json.dumps(
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "request_id": "search-1",
                 "command": "search_securities",
                 "session_id": None,
@@ -177,7 +179,7 @@ class DesktopServiceTest(unittest.TestCase):
         self.base_url = f"http://127.0.0.1:{self.server.server_port}"
         body = json.dumps(
             {
-                "schema_version": "t0_replay_v1",
+                "schema_version": "t0_replay_v2",
                 "request_id": "pause-1",
                 "session_id": "replay-1",
                 "playing": False,
@@ -202,7 +204,7 @@ class DesktopServiceTest(unittest.TestCase):
 
         step_body = json.dumps(
             {
-                "schema_version": "t0_replay_v1",
+                "schema_version": "t0_replay_v2",
                 "request_id": "step-1",
                 "session_id": "replay-1",
             }
@@ -425,7 +427,7 @@ class LiveSnapshotServiceTest(unittest.TestCase, _LiveSnapshotMixin):
         status, payload = self._post(
             "get_live_snapshot",
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "request_id": "snap-1",
                 "command": "get_live_snapshot",
                 "session_id": "live-1",
@@ -461,7 +463,7 @@ class LiveSnapshotServiceTest(unittest.TestCase, _LiveSnapshotMixin):
         status, payload = self._post(
             "get_live_snapshot",
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "request_id": "snap-env-2",
                 "command": "retry_live",
                 "session_id": "live-1",
@@ -494,7 +496,7 @@ class LiveSnapshotServiceTest(unittest.TestCase, _LiveSnapshotMixin):
         status, payload = self._post(
             "get_live_snapshot",
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "request_id": "snap-env-3",
                 "command": "get_live_snapshot",
                 "session_id": "live-1",
@@ -513,7 +515,7 @@ class LiveSnapshotServiceTest(unittest.TestCase, _LiveSnapshotMixin):
         status, payload = self._post(
             "get_live_snapshot",
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "request_id": "snap-env-4",
                 "command": "get_live_snapshot",
                 "session_id": "live-1",
@@ -530,7 +532,7 @@ class LiveSnapshotServiceTest(unittest.TestCase, _LiveSnapshotMixin):
         status, payload = self._post(
             "get_live_snapshot",
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "request_id": "snap-2",
                 "command": "get_live_snapshot",
                 "session_id": "live-other",
@@ -546,7 +548,7 @@ class LiveSnapshotServiceTest(unittest.TestCase, _LiveSnapshotMixin):
         status, payload = self._post(
             "get_live_snapshot",
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "request_id": "snap-3",
                 "command": "get_live_snapshot",
                 "session_id": "live-1",
@@ -576,7 +578,7 @@ class LiveSnapshotServiceTest(unittest.TestCase, _LiveSnapshotMixin):
         status, payload = self._post(
             "get_live_snapshot",
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "request_id": "snap-4",
                 "command": "get_live_snapshot",
                 "session_id": "live-1",
@@ -613,7 +615,7 @@ class _FakeHistoricalSnapshotApi:
         trade_date: str,
     ) -> dict:
         return {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "request_id": request_id,
             "accepted": True,
             "operation_id": None,
@@ -723,7 +725,7 @@ class HistoricalSnapshotServiceTest(unittest.TestCase):
         status, payload = self._post(
             "get_historical_snapshot",
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "request_id": "hist-1",
                 "command": "get_historical_snapshot",
                 "session_id": None,
@@ -742,7 +744,7 @@ class HistoricalSnapshotServiceTest(unittest.TestCase):
         status, payload = self._post(
             "get_historical_snapshot",
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "request_id": "hist-bad",
                 "command": "get_historical_snapshot",
                 "session_id": None,
@@ -781,7 +783,7 @@ class HistoricalSnapshotServiceTest(unittest.TestCase):
                 base_url,
                 "get_historical_snapshot",
                 {
-                    "schema_version": "t0_app_v1",
+                    "schema_version": "t0_app_v2",
                     "request_id": "hist-non-calendar",
                     "command": "get_historical_snapshot",
                     "session_id": None,
@@ -803,7 +805,7 @@ class HistoricalSnapshotServiceTest(unittest.TestCase):
         status, payload = self._post(
             "get_historical_snapshot",
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "request_id": "hist-session",
                 "command": "get_historical_snapshot",
                 "session_id": "live-1",
@@ -824,7 +826,7 @@ class HistoricalSnapshotServiceTest(unittest.TestCase):
                 f"{base_url}/api/commands/get_historical_snapshot",
                 data=json.dumps(
                     {
-                        "schema_version": "t0_app_v1",
+                        "schema_version": "t0_app_v2",
                         "request_id": "hist-noapi",
                         "command": "get_historical_snapshot",
                         "session_id": None,
@@ -866,7 +868,7 @@ class _HandlerRouteTest(unittest.TestCase):
 
         api = MagicMock()
         api.dispatch.return_value = {
-            "schema_version": "t0_app_v1",
+            "schema_version": "t0_app_v2",
             "request_id": "save-last-1",
             "accepted": True,
             "operation_id": None,
@@ -879,7 +881,7 @@ class _HandlerRouteTest(unittest.TestCase):
         server.live_application_api = api
         body = json.dumps(
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "request_id": "save-last-1",
                 "command": "save_last_symbol",
                 "session_id": None,
@@ -924,7 +926,7 @@ class _HandlerRouteTest(unittest.TestCase):
         server.live_application_api = MagicMock()
         body = json.dumps(
             {
-                "schema_version": "t0_app_v1",
+                "schema_version": "t0_app_v2",
                 "request_id": "save-last-bad",
                 "command": "save_last_symbol",
                 "session_id": None,

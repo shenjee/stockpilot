@@ -46,7 +46,7 @@ test("Safe Bridge exposes fee-plan persistence and calculation without transport
     },
   });
   const request = {
-    schema_version: "t0_app_v1",
+    schema_version: "t0_app_v2",
     request_id: "fee-contract-1",
     command: "list_fee_plans",
     session_id: null,

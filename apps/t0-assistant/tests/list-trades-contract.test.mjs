@@ -13,7 +13,7 @@ const fixturePath = resolve(
 
 test("list_trades is a fact-via-changed-event command (contract flow)", async () => {
   const fixture = JSON.parse(await readFile(fixturePath, "utf8"));
-  assert.equal(fixture.schema_version, "t0_app_v1");
+  assert.equal(fixture.schema_version, "t0_app_v2");
 
   for (const scenarioName of ["existing_trades", "empty_repository"]) {
     const scenario = fixture[scenarioName];
