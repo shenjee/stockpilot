@@ -5,6 +5,7 @@ import unittest
 
 from packages.t0assistant.repositories import FeePlanRecord, TransferFeeSide
 from packages.t0assistant.trading import (
+    AutomaticFeeNotSupportedError,
     FeePolicyValidationError,
     FeeSecurityType,
     TradeSide,
@@ -183,6 +184,19 @@ class FeePolicyCalculationTests(unittest.TestCase):
 
 
 class FeePolicyValidationTests(unittest.TestCase):
+    def test_index_raises_automatic_fee_not_supported(self) -> None:
+        with self.assertRaises(AutomaticFeeNotSupportedError) as ctx:
+            calculate_fee(
+                security_type="index",
+                side=TradeSide.BUY,
+                price=Decimal("10.00"),
+                quantity=100,
+                plan=_plan(),
+            )
+        self.assertEqual(ctx.exception.field, "security_type")
+        self.assertEqual(ctx.exception.code, "automatic_fee_not_supported")
+        self.assertIsInstance(ctx.exception, FeePolicyValidationError)
+
     def test_invalid_security_type_is_rejected(self) -> None:
         with self.assertRaises(FeePolicyValidationError) as ctx:
             calculate_fee(

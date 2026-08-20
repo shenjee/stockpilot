@@ -6,7 +6,7 @@ import { dirname, resolve } from "node:path";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const fixturePath = resolve(testDir, "../contracts/fixtures/replay-speed-v1.json");
-const appSchemaPath = resolve(testDir, "../contracts/app-v1.schema.json");
+const appSchemaPath = resolve(testDir, "../contracts/app-v2.schema.json");
 
 test("TypeScript-side tooling consumes the Replay v1.0 speed fixture", async () => {
   const fixture = JSON.parse(await readFile(fixturePath, "utf8"));
@@ -18,10 +18,10 @@ test("TypeScript-side tooling consumes the Replay v1.0 speed fixture", async () 
   assert.equal(fixture.snapshot.replay.playback_speed, fixture.changed_event.payload.playback_speed);
 });
 
-test("app v1 imports Replay v1 and keeps Replay commands out of its enum", async () => {
+test("app v2 imports Replay v2 and keeps Replay commands out of its enum", async () => {
   const schema = JSON.parse(await readFile(appSchemaPath, "utf8"));
   const commands = schema.$defs.command_request.properties.command.enum;
-  assert.equal(schema.$defs.replay_event_envelope.$ref.includes("t0-replay-v1.schema.json"), true);
+  assert.equal(schema.$defs.replay_event_envelope.$ref.includes("t0-replay-v2.schema.json"), true);
   assert.equal(commands.includes("set_replay_speed"), false);
   assert.equal(commands.includes("select_security"), true);
   assert.equal(commands.includes("search_securities"), true);

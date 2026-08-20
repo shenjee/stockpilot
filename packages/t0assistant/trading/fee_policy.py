@@ -37,6 +37,20 @@ class FeePolicyValidationError(ValueError):
         super().__init__(f"{field}: {message}")
 
 
+class AutomaticFeeNotSupportedError(FeePolicyValidationError):
+    """The instrument cannot have fees auto-computed (e.g. indices).
+
+    Carries the stable error code ``automatic_fee_not_supported`` so the API
+    boundary can map it to a distinct response code instead of the generic
+    ``invalid_fee_plan_request`` (issue #151 decision #8).
+    """
+
+    code = "automatic_fee_not_supported"
+
+    def __init__(self, field: str = "security_type", message: str = "index is not tradable") -> None:
+        super().__init__(field, message)
+
+
 class _FeePlanLike(Protocol):
     """Minimal shape of a structured fee plan accepted by the policy."""
 
@@ -111,7 +125,7 @@ def calculate_fee(
 
     if isinstance(security_type, str):
         if security_type == "index":
-            raise FeePolicyValidationError(
+            raise AutomaticFeeNotSupportedError(
                 "security_type",
                 "automatic_fee_not_supported: index is not tradable",
             )

@@ -146,7 +146,7 @@ timestamp, open, high, low, close, volume, amount, closed
 
 因此本需求：
 
-- 不修改 `logical-schema.json` 或 `app-v1.schema.json`；
+- 不修改 `logical-v2.schema.json` 或 `app-v2.schema.json`；
 - 不修改 Python Backend、行情 Provider、Repository 或 SQLite；
 - 不在 Renderer 重算行情或指标；
 - 改动应集中在 `ChartGroup` / `SynchronizedChartGroup` 附近的 5 分钟图表展示层，并优先把格式化和 Tooltip 状态映射拆成可单测的纯函数；

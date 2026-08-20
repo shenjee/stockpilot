@@ -4,7 +4,10 @@ export function standardSecurityFromResponse(response) {
     /^(sh|sz)\.[0-9]{6}$/.test(security.symbol) &&
     /^[0-9]{6}$/.test(security.code) &&
     typeof security.name === "string" &&
-    security.name.length > 0
+    security.name.length > 0 &&
+    (security.instrument_type === "stock" ||
+      security.instrument_type === "etf" ||
+      security.instrument_type === "index")
     ? security
     : null;
 }

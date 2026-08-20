@@ -15,12 +15,16 @@ const NO_PLAN = "";
  * Map the objective `instrument_type` to the fee layer's `securityType`.
  *
  * The fee layer (issue #151 #2) owns `FeeSecurityType = a_share | etf`;
- * `index` has no fee-layer counterpart and is rejected by `TradeService`
- * eligibility before reaching this dialog.  The mapping is an explicit
+ * `index` has no fee-layer counterpart.  Returns `null` for index so callers
+ * can skip fee suggestion entirely.  The mapping is an explicit
  * trade-strategy decision at the boundary, not a property of identity.
  */
-function feeSecurityType(instrumentType: SecurityIdentity["instrument_type"]): "a_share" | "etf" {
-  return instrumentType === "etf" ? "etf" : "a_share";
+function feeSecurityType(
+  instrumentType: SecurityIdentity["instrument_type"],
+): "a_share" | "etf" | null {
+  if (instrumentType === "etf") return "etf";
+  if (instrumentType === "stock") return "a_share";
+  return null; // index — not tradable, no fee calculation
 }
 
 function localNowInput() {
@@ -114,9 +118,11 @@ export function TradeFormDialog({
   // fee is authoritative and never recomputed after save.
   useEffect(() => {
     if (!selectedPlan || feeTouched) return;
+    const securityType = feeSecurityType(security.instrument_type);
+    if (securityType === null) return; // index — no fee calculation
     let cancelled = false;
     Promise.resolve(feeAdvisor.suggestFee(selectedPlan, {
-      securityType: feeSecurityType(security.instrument_type),
+      securityType,
       side,
       price,
       quantity,

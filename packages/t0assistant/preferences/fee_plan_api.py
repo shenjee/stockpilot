@@ -9,6 +9,7 @@ from typing import Any
 
 from packages.t0assistant.repositories import FeePlanRecord
 from packages.t0assistant.trading import calculate_fee
+from packages.t0assistant.trading.fee_policy import AutomaticFeeNotSupportedError
 
 from .fee_plan_service import FeePlanNotFoundError, FeePlanService
 
@@ -105,6 +106,12 @@ class FeePlanCommandApi:
             code, category, retryable = "repository_read_only", "persistence", False
         elif isinstance(error, RepositoryPersistenceError):
             code, category, retryable = "fee_plan_persist_failed", "persistence", True
+        elif isinstance(error, AutomaticFeeNotSupportedError):
+            code, category, retryable = (
+                "automatic_fee_not_supported",
+                "validation",
+                False,
+            )
         elif isinstance(error, (ValueError, TypeError)):
             code, category, retryable = (
                 "invalid_fee_plan_request",

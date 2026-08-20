@@ -55,6 +55,7 @@ import {
   securitiesFromSearchResponse,
   securityCategoryLabel,
   securitySearchReducer,
+  standardSecurityFromResponse,
   startupRestoreFromResponse,
   type ApplicationError,
 } from "./workbench-presenter.mjs";
@@ -959,6 +960,27 @@ export function App() {
     }
   }
 
+  // Issue #151: resolve the authoritative SecurityIdentity for a symbol via
+  // select_security without switching the workbench. Used by HistoryTradesDialog
+  // when editing a historical trade whose symbol differs from the current
+  // workbench security, so the fee advisor receives the correct
+  // instrument_type instead of a fabricated default.
+  async function resolveSecurity(
+    symbol: string,
+  ): Promise<SecurityIdentity | null> {
+    if (!window.stockpilot) return null;
+    try {
+      const response = await window.stockpilot.selectSecurity(
+        appRequest("select_security", null, { symbol }),
+      );
+      const error = applicationErrorFrom(response);
+      if (error) return null;
+      return standardSecurityFromResponse(response);
+    } catch {
+      return null;
+    }
+  }
+
   async function performSecuritySelection(
     security: SecurityIdentity,
     restoring = false,
@@ -1028,6 +1050,11 @@ export function App() {
       if (preferenceWarning) {
         setBackgroundError(preferenceWarning);
       }
+      // Issue #151: the backend resolves the authoritative identity once;
+      // the renderer must adopt it rather than continuing to use the pre-call
+      // object, which may have a wrong or missing instrument_type.
+      const authoritative = standardSecurityFromResponse(response);
+      const resolvedSecurity = authoritative ?? security;
       activeOperations.current.clear();
       rebaselineRequest.current = null;
       if (modeRef.current === WorkbenchMode.REPLAY) {
@@ -1035,7 +1062,7 @@ export function App() {
         if (
           current.serviceGeneration !== status.service_generation ||
           current.sessionId !== sessionId ||
-          current.snapshot.session?.symbol !== security.symbol ||
+          current.snapshot.session?.symbol !== resolvedSecurity.symbol ||
           current.snapshot.session?.state !== "ready"
         ) {
           liveProjection.current = beginChartSession(
@@ -1052,7 +1079,7 @@ export function App() {
           if (
             current.serviceGeneration === status.service_generation &&
             current.sessionId === sessionId &&
-            current.snapshot.session?.symbol === security.symbol &&
+            current.snapshot.session?.symbol === resolvedSecurity.symbol &&
             current.snapshot.session?.state === "ready"
           ) {
             liveProjection.current = current;
@@ -1071,15 +1098,15 @@ export function App() {
       if (operationId) {
         activeOperations.current.set(operationId, {
           retry: "security",
-          security,
+          security: resolvedSecurity,
           serviceGeneration: status.service_generation,
           sessionId,
         });
       }
       setWorkbench((current) =>
-        selectWorkbenchSecurity(current, security),
+        selectWorkbenchSecurity(current, resolvedSecurity),
       );
-      setQuery(security.code);
+      setQuery(resolvedSecurity.code);
       setSuggestions([]);
       setSearchMessage("");
       // Recover the authoritative baseline when it raced ahead of the command
@@ -1155,19 +1182,22 @@ export function App() {
   async function handleEnterDayChart(symbol: string, tradeDate: string) {
     const requestSequence = navigationRequests.current.begin();
     const today = localToday();
-    const identity: SecurityIdentity =
-      workbench.security && workbench.security.symbol === symbol
-        ? workbench.security
-        : {
-            symbol,
-            code: symbol.slice(3),
-            market: (symbol.slice(0, 2) === "sz" ? "sz" : "sh") as "sh" | "sz",
-            name: symbol.slice(3),
-            instrument_type: "stock",
-          };
+    // Issue #151: do not fabricate instrument_type. For today, the Live
+    // select_security path resolves the authoritative identity. For a
+    // historical date, resolve identity via select_security first, then load
+    // the historical snapshot with the authoritative instrument_type.
     if (tradeDate === today) {
       setDayChartNotice(null);
-      void performSecuritySelection(identity);
+      // performSecuritySelection resolves the authoritative identity from
+      // the select_security response; the pre-call object is a placeholder.
+      const placeholder: SecurityIdentity = {
+        symbol,
+        code: symbol.slice(3),
+        market: (symbol.slice(0, 2) === "sz" ? "sz" : "sh") as "sh" | "sz",
+        name: symbol.slice(3),
+        instrument_type: "stock",
+      };
+      void performSecuritySelection(placeholder);
       return;
     }
 
@@ -1183,6 +1213,34 @@ export function App() {
     setLoading(true);
     setDayChartNotice(null);
     try {
+      // Resolve the authoritative identity before loading the historical
+      // snapshot so the workbench carries the correct instrument_type.
+      let identity: SecurityIdentity;
+      if (workbench.security && workbench.security.symbol === symbol) {
+        identity = workbench.security;
+      } else {
+        const selectResponse = await window.stockpilot.selectSecurity(
+          appRequest("select_security", null, { symbol }),
+        );
+        if (!navigationRequests.current.isCurrent(requestSequence)) return;
+        const selectError = applicationErrorFrom(selectResponse);
+        if (selectError) {
+          setLoading(false);
+          setDayChartNotice(
+            `该交易日（${tradeDate}）的证券信息加载失败：${selectError.message}`,
+          );
+          return;
+        }
+        const authoritative = standardSecurityFromResponse(selectResponse);
+        if (!authoritative) {
+          setLoading(false);
+          setDayChartNotice(
+            `该交易日（${tradeDate}）的证券信息不完整，已保留当前图形。`,
+          );
+          return;
+        }
+        identity = authoritative;
+      }
       const response = await window.stockpilot.getHistoricalSnapshot(
         appRequest("get_historical_snapshot", null, {
           symbol,
@@ -1836,6 +1894,7 @@ export function App() {
           serviceGeneration={status.service_generation}
           tradeOpController={tradeOpController.current as TradeOperationController}
           onEnterDayChart={handleEnterDayChart}
+          resolveSecurity={resolveSecurity}
         />
       )}
 

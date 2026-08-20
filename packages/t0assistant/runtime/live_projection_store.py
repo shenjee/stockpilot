@@ -618,12 +618,12 @@ def _load_contract(package: str, name: str) -> dict[str, Any]:
 
 
 def _build_incremental_validators() -> dict[str, Draft202012Validator]:
-    logical = _load_contract("packages.t0assistant", "logical-schema.json")
+    logical = _load_contract("packages.t0assistant", "logical-v2.schema.json")
     registry = Registry().with_resource(
         logical["$id"], Resource.from_contents(logical)
     )
     logic_id = logical["$id"]
-    # market_update_payload mirrors app-v1.schema.json#$defs/market_update_payload
+    # market_update_payload mirrors app-v2.schema.json#$defs/market_update_payload
     # without taking a runtime dependency on the app contracts directory.
     market_update_schema = {
         "type": "object",
@@ -671,7 +671,7 @@ def _build_incremental_validators() -> dict[str, Draft202012Validator]:
 
 
 def _build_logical_snapshot_validator() -> Draft202012Validator:
-    logical = _load_contract("packages.t0assistant", "logical-schema.json")
+    logical = _load_contract("packages.t0assistant", "logical-v2.schema.json")
     registry = Registry().with_resource(
         logical["$id"], Resource.from_contents(logical)
     )

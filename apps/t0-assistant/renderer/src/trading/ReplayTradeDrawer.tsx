@@ -137,11 +137,16 @@ export function ReplayTradeDrawer({
         <button
           type="button"
           className="primary-button"
-          disabled={availability !== "available"}
+          disabled={
+            availability !== "available" ||
+            security.instrument_type === "index"
+          }
           title={
             availability === "unavailable"
               ? "当前正式启动路径尚未提供 Replay Session 成交服务"
-              : undefined
+              : security.instrument_type === "index"
+                ? "指数不支持录入成交"
+                : undefined
           }
           onClick={() => setForm({ mode: "create" })}
         >

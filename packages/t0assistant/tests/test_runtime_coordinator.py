@@ -12,11 +12,30 @@ from packages.t0assistant.runtime import (
     AppCoordinator,
     AppMode,
     CoordinatorRetirementError,
+    CoordinatorSnapshot,
     CoordinatorStateError,
     CoordinatorValidationError,
     SessionSpec,
     SessionType,
 )
+from packages.marketdata.t0_schema import InstrumentIdentity, InstrumentType
+
+
+def _identity(symbol: str) -> InstrumentIdentity:
+    """Build a stock InstrumentIdentity for test symbols."""
+    market, _, code = symbol.partition(".")
+    return InstrumentIdentity(
+        symbol=symbol,
+        code=code or "000000",
+        market=market or "sh",
+        name="Test",
+        instrument_type=InstrumentType.STOCK,
+    )
+
+
+_STOCK = _identity("sh.600000")
+_STOCK_SZ = _identity("sz.000001")
+_STOCK_SZ2 = _identity("sz.000002")
 
 
 @dataclass
@@ -100,8 +119,8 @@ class AppCoordinatorTests(unittest.TestCase):
         self.assertIsNone(snapshot.visible_session)
 
     def test_select_symbol_creates_live_and_is_idempotent(self) -> None:
-        first = self.coordinator.select_symbol("sh.600000")
-        same = self.coordinator.select_symbol("sh.600000")
+        first = self.coordinator.select_symbol("sh.600000", instrument=_STOCK)
+        same = self.coordinator.select_symbol("sh.600000", instrument=_STOCK)
 
         self.assertEqual(first, same)
         self.assertEqual(len(self.factory.created), 1)
@@ -115,7 +134,7 @@ class AppCoordinatorTests(unittest.TestCase):
         self.assertEqual(first.visible_session, live)
 
     def test_replay_is_blank_until_begin_and_live_stays_active(self) -> None:
-        selected = self.coordinator.select_symbol("sz.000001")
+        selected = self.coordinator.select_symbol("sz.000001", instrument=_STOCK_SZ)
         live = selected.live_session
         assert live is not None
 
@@ -148,7 +167,7 @@ class AppCoordinatorTests(unittest.TestCase):
     def test_selecting_from_empty_replay_creates_only_background_live(self) -> None:
         self.coordinator.set_mode("replay")
 
-        selected = self.coordinator.select_symbol("sz.000001")
+        selected = self.coordinator.select_symbol("sz.000001", instrument=_STOCK_SZ)
 
         self.assertEqual(selected.current_symbol, "sz.000001")
         self.assertIsNotNone(selected.live_session)
@@ -156,7 +175,7 @@ class AppCoordinatorTests(unittest.TestCase):
         self.assertIsNone(selected.visible_session)
 
     def test_return_live_retires_replay_but_keeps_live(self) -> None:
-        selected = self.coordinator.select_symbol("sh.600000")
+        selected = self.coordinator.select_symbol("sh.600000", instrument=_STOCK)
         live = selected.live_session
         assert live is not None
         self.coordinator.set_mode(AppMode.REPLAY)
@@ -180,7 +199,7 @@ class AppCoordinatorTests(unittest.TestCase):
         )
 
     def test_switch_symbol_retires_old_sessions_and_blanks_replay(self) -> None:
-        first = self.coordinator.select_symbol("sh.600000")
+        first = self.coordinator.select_symbol("sh.600000", instrument=_STOCK)
         old_live = first.live_session
         assert old_live is not None
         self.coordinator.set_mode("replay")
@@ -188,7 +207,7 @@ class AppCoordinatorTests(unittest.TestCase):
         old_replay = replay_snapshot.replay_session
         assert old_replay is not None
 
-        switched = self.coordinator.select_symbol("sz.000001")
+        switched = self.coordinator.select_symbol("sz.000001", instrument=_STOCK_SZ)
 
         self.assertTrue(self.factory.created[0].retired)
         self.assertTrue(self.factory.created[1].retired)
@@ -215,7 +234,7 @@ class AppCoordinatorTests(unittest.TestCase):
         )
 
     def test_rebuilds_consume_new_generations(self) -> None:
-        self.coordinator.select_symbol("sh.600000")
+        self.coordinator.select_symbol("sh.600000", instrument=_STOCK)
         self.coordinator.set_mode("replay")
         self.coordinator.begin_replay("2026-07-21")
 
@@ -233,7 +252,7 @@ class AppCoordinatorTests(unittest.TestCase):
         self.assertEqual(retried.replay_session, replay)
 
     def test_result_requires_type_id_and_generation_match(self) -> None:
-        snapshot = self.coordinator.select_symbol("sh.600000")
+        snapshot = self.coordinator.select_symbol("sh.600000", instrument=_STOCK)
         live = snapshot.live_session
         assert live is not None
 
@@ -251,7 +270,7 @@ class AppCoordinatorTests(unittest.TestCase):
             )
 
     def test_session_is_invalidated_before_concrete_retirement_callback(self) -> None:
-        snapshot = self.coordinator.select_symbol("sh.600000")
+        snapshot = self.coordinator.select_symbol("sh.600000", instrument=_STOCK)
         live = snapshot.live_session
         assert live is not None
         accepted_during_retirement: list[bool] = []
@@ -283,7 +302,7 @@ class AppCoordinatorTests(unittest.TestCase):
 
         self.factory.create_live = create_live
 
-        snapshot = self.coordinator.select_symbol("sh.600000")
+        snapshot = self.coordinator.select_symbol("sh.600000", instrument=_STOCK)
 
         self.assertEqual(seen, [True])
         live = snapshot.live_session
@@ -319,7 +338,7 @@ class AppCoordinatorTests(unittest.TestCase):
 
         self.factory.create_live = create_live
 
-        snapshot = self.coordinator.select_symbol("sh.600000")
+        snapshot = self.coordinator.select_symbol("sh.600000", instrument=_STOCK)
         self.assertIsNotNone(snapshot.live_session)
         self.assertEqual(observed, [True])
 
@@ -348,7 +367,7 @@ class AppCoordinatorTests(unittest.TestCase):
 
         def select_symbol() -> None:
             try:
-                coordinator.select_symbol("sh.600000")
+                coordinator.select_symbol("sh.600000", instrument=_STOCK)
             except Exception as exc:
                 errors.append(exc)
 
@@ -386,7 +405,7 @@ class AppCoordinatorTests(unittest.TestCase):
         self.assertEqual(factory.created[0].retire_count, 1)
 
     def test_select_symbol_activation_failure_drops_derived_replay_for_new_symbol(self) -> None:
-        initial = self.coordinator.select_symbol("sh.600000")
+        initial = self.coordinator.select_symbol("sh.600000", instrument=_STOCK)
         old_live = initial.live_session
         assert old_live is not None
         self.coordinator.set_mode("replay")
@@ -417,7 +436,7 @@ class AppCoordinatorTests(unittest.TestCase):
 
         def select_symbol() -> None:
             try:
-                self.coordinator.select_symbol("sz.000001")
+                self.coordinator.select_symbol("sz.000001", instrument=_STOCK_SZ)
             except Exception as exc:
                 select_errors.append(exc)
 
@@ -467,7 +486,7 @@ class AppCoordinatorTests(unittest.TestCase):
         self.assertFalse(self.factory.created[1].retired)
 
     def test_select_symbol_activation_failure_does_not_revive_replay_after_mode_live(self) -> None:
-        self.coordinator.select_symbol("sh.600000")
+        self.coordinator.select_symbol("sh.600000", instrument=_STOCK)
         self.coordinator.set_mode("replay")
         replay_snapshot = self.coordinator.begin_replay("2026-07-23")
         old_replay = replay_snapshot.replay_session
@@ -495,7 +514,7 @@ class AppCoordinatorTests(unittest.TestCase):
 
         def select_symbol() -> None:
             try:
-                self.coordinator.select_symbol("sz.000001")
+                self.coordinator.select_symbol("sz.000001", instrument=_STOCK_SZ)
             except Exception as exc:
                 select_errors.append(exc)
 
@@ -534,7 +553,7 @@ class AppCoordinatorTests(unittest.TestCase):
         self.assertEqual(self.factory.created[2].retire_count, 1)
 
     def test_overlapping_select_symbol_failures_do_not_restore_failed_predecessor(self) -> None:
-        initial = self.coordinator.select_symbol("sh.600000")
+        initial = self.coordinator.select_symbol("sh.600000", instrument=_STOCK)
         stable_live = initial.live_session
         assert stable_live is not None
 
@@ -569,7 +588,7 @@ class AppCoordinatorTests(unittest.TestCase):
 
         def select_symbol(symbol: str) -> None:
             try:
-                self.coordinator.select_symbol(symbol)
+                self.coordinator.select_symbol(symbol, instrument=_identity(symbol))
             except Exception as exc:
                 select_errors.append(exc)
             finally:
@@ -625,7 +644,7 @@ class AppCoordinatorTests(unittest.TestCase):
         self.assertFalse(self.factory.created[0].retired)
 
     def test_select_symbol_idempotent_call_does_not_bypass_inflight_activation(self) -> None:
-        initial = self.coordinator.select_symbol("sh.600000")
+        initial = self.coordinator.select_symbol("sh.600000", instrument=_STOCK)
         stable_live = initial.live_session
         assert stable_live is not None
 
@@ -656,13 +675,13 @@ class AppCoordinatorTests(unittest.TestCase):
 
         def first() -> None:
             try:
-                self.coordinator.select_symbol("sz.000001")
+                self.coordinator.select_symbol("sz.000001", instrument=_STOCK_SZ)
             except Exception as exc:
                 first_errors.append(exc)
 
         def second() -> None:
             try:
-                self.coordinator.select_symbol("sz.000001")
+                self.coordinator.select_symbol("sz.000001", instrument=_STOCK_SZ)
             except Exception as exc:
                 second_errors.append(exc)
             finally:
@@ -701,13 +720,13 @@ class AppCoordinatorTests(unittest.TestCase):
         self.assertFalse(self.factory.created[0].retired)
 
     def test_factory_failures_preserve_previous_sessions_and_selection(self) -> None:
-        initial = self.coordinator.select_symbol("sh.600000")
+        initial = self.coordinator.select_symbol("sh.600000", instrument=_STOCK)
         old_live = initial.live_session
         assert old_live is not None
 
         self.factory.fail_next_live = True
         with self.assertRaisesRegex(RuntimeError, "live creation failed"):
-            self.coordinator.select_symbol("sz.000001")
+            self.coordinator.select_symbol("sz.000001", instrument=_STOCK_SZ)
 
         after_switch_failure = self.coordinator.snapshot
         self.assertEqual(after_switch_failure.current_symbol, "sh.600000")
@@ -745,7 +764,7 @@ class AppCoordinatorTests(unittest.TestCase):
         coordinator = AppCoordinator(factory, session_id_factory=_session_id)
 
         with self.assertRaises(CoordinatorStateError):
-            coordinator.select_symbol("sh.600000")
+            coordinator.select_symbol("sh.600000", instrument=_STOCK)
 
         snapshot = coordinator.snapshot
         self.assertIsNone(snapshot.current_symbol)
@@ -770,7 +789,7 @@ class AppCoordinatorTests(unittest.TestCase):
         factory = _ActivationFailingFactory()
         coordinator = AppCoordinator(factory, session_id_factory=_session_id)
 
-        first = coordinator.select_symbol("sh.600000")
+        first = coordinator.select_symbol("sh.600000", instrument=_STOCK)
         old_live = first.live_session
         assert old_live is not None
         old_session = factory.created[0]
@@ -798,7 +817,7 @@ class AppCoordinatorTests(unittest.TestCase):
         factory = _ActivationFailingFactory()
         coordinator = AppCoordinator(factory, session_id_factory=_session_id)
 
-        selected = coordinator.select_symbol("sh.600000")
+        selected = coordinator.select_symbol("sh.600000", instrument=_STOCK)
         live = selected.live_session
         assert live is not None
         live_session = factory.created[0]
@@ -815,7 +834,7 @@ class AppCoordinatorTests(unittest.TestCase):
         self.assertEqual(factory.created[1].retire_count, 1)
 
     def test_retirement_runs_outside_state_lock(self) -> None:
-        selected = self.coordinator.select_symbol("sh.600000")
+        selected = self.coordinator.select_symbol("sh.600000", instrument=_STOCK)
         old_live = selected.live_session
         assert old_live is not None
         retirement_started = Event()
@@ -853,7 +872,7 @@ class AppCoordinatorTests(unittest.TestCase):
         self.assertFalse(reader_thread.is_alive())
 
     def test_factory_runs_outside_lock_and_stale_candidate_is_retired(self) -> None:
-        selected = self.coordinator.select_symbol("sh.600000")
+        selected = self.coordinator.select_symbol("sh.600000", instrument=_STOCK)
         old_live = selected.live_session
         assert old_live is not None
         creation_started = Event()
@@ -897,7 +916,7 @@ class AppCoordinatorTests(unittest.TestCase):
         self.assertEqual(after.live_session, old_live)
 
     def test_retirement_failure_is_retained_for_retire_all_retry(self) -> None:
-        selected = self.coordinator.select_symbol("sh.600000")
+        selected = self.coordinator.select_symbol("sh.600000", instrument=_STOCK)
         old_live = selected.live_session
         assert old_live is not None
         self.factory.created[0].retire_failures_remaining = 1
@@ -926,7 +945,7 @@ class AppCoordinatorTests(unittest.TestCase):
     def test_retire_all_reports_cleanup_failure_without_restoring_sessions(
         self,
     ) -> None:
-        selected = self.coordinator.select_symbol("sh.600000")
+        selected = self.coordinator.select_symbol("sh.600000", instrument=_STOCK)
         live = selected.live_session
         assert live is not None
         self.factory.created[0].retire_failures_remaining = 1
@@ -949,7 +968,7 @@ class AppCoordinatorTests(unittest.TestCase):
         with self.assertRaises(CoordinatorStateError):
             self.coordinator.begin_replay("2026-07-23")
         with self.assertRaises(CoordinatorValidationError):
-            self.coordinator.select_symbol("600000")
+            self.coordinator.select_symbol("600000", instrument=_STOCK)
         with self.assertRaises(CoordinatorValidationError):
             self.coordinator.set_mode("paper")
         self.assertEqual(self.coordinator.snapshot, initial)
@@ -963,7 +982,7 @@ class AppCoordinatorTests(unittest.TestCase):
             self.coordinator.begin_replay(datetime(2026, 7, 23, 9, 30))
 
     def test_retire_all_invalidates_results_without_resetting_app_state(self) -> None:
-        self.coordinator.select_symbol("sh.600000")
+        self.coordinator.select_symbol("sh.600000", instrument=_STOCK)
         self.coordinator.set_mode("replay")
         before = self.coordinator.begin_replay("2026-07-23")
         live = before.live_session
@@ -1002,7 +1021,7 @@ class CommitIfAcceptedTests(unittest.TestCase):
             self.factory,
             session_id_factory=_session_id,
         )
-        selected = self.coordinator.select_symbol("sh.600000")
+        selected = self.coordinator.select_symbol("sh.600000", instrument=_STOCK)
         self.live = selected.live_session
         assert self.live is not None
 
@@ -1108,7 +1127,7 @@ class CommitIfAcceptedTests(unittest.TestCase):
         def switch_symbol() -> None:
             switch_started.set()
             try:
-                switch_results.append(self.coordinator.select_symbol("sz.000001"))
+                switch_results.append(self.coordinator.select_symbol("sz.000001", instrument=_STOCK_SZ))
             except Exception as exc:  # pragma: no cover - surfaced via switch_errors
                 switch_errors.append(exc)
             finally:

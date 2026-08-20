@@ -192,11 +192,26 @@ class HistoricalSnapshotApi:
                 self._market_context,
                 resolved_trade_date,
             )
-            instrument_type: str | None = None
-            if self._resolve_security is not None:
-                identity = self._resolve_security(symbol)
-                if identity is not None:
-                    instrument_type = str(identity.instrument_type)
+            # Issue #151 P2 #5: do not fail-open when identity resolution is
+            # missing or returns None.  A None instrument_type would silently
+            # fall back to the provider's default security-type handling, which
+            # can misclassify indices as stocks.  Reject explicitly instead.
+            if self._resolve_security is None:
+                return self._reject(
+                    request_id,
+                    "service_unavailable",
+                    "security identity resolver is not configured",
+                    retryable=True,
+                )
+            identity = self._resolve_security(symbol)
+            if identity is None:
+                return self._reject(
+                    request_id,
+                    "security_not_found",
+                    f"no securities master entry for {symbol}",
+                    retryable=False,
+                )
+            instrument_type = str(identity.instrument_type)
             snapshot = build_historical_snapshot(
                 symbol=symbol,
                 trade_date=trade_date,

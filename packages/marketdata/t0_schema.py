@@ -1,7 +1,7 @@
 """Stable T+0 market-data dictionaries built from existing provider output.
 
 The cross-process shape is owned by
-``apps/t0-assistant/contracts/logical-schema.json``.  This module deliberately
+``apps/t0-assistant/contracts/logical-v2.schema.json``.  This module deliberately
 does not introduce a second hierarchy of bar or quote classes: it validates
 and maps provider dictionaries into that frozen logical shape, with security
 identity and timezone carried by a small series/snapshot envelope. Tencent

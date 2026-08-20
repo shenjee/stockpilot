@@ -36,13 +36,13 @@ _CONTRACTS_DIR = _REPO_ROOT / "apps" / "t0-assistant" / "contracts"
 
 
 def _load_logical_schema() -> dict[str, Any]:
-    path = _CONTRACTS_DIR / "logical-schema.json"
+    path = _CONTRACTS_DIR / "logical-v2.schema.json"
     with path.open(encoding="utf-8") as stream:
         return json.load(stream)
 
 
 def _load_replay_schema() -> dict[str, Any]:
-    path = _CONTRACTS_DIR / "replay-v1.schema.json"
+    path = _CONTRACTS_DIR / "replay-v2.schema.json"
     with path.open(encoding="utf-8") as stream:
         return json.load(stream)
 
@@ -951,7 +951,7 @@ class DeterminismTests(unittest.TestCase):
 class SchemaSyncTests(unittest.TestCase):
     def test_package_data_matches_canonical_contracts(self) -> None:
         """Runtime package data must not drift from apps/t0-assistant/contracts."""
-        for name in ("logical-schema.json", "replay-v1.schema.json"):
+        for name in ("logical-v2.schema.json", "replay-v2.schema.json"):
             canonical = (_CONTRACTS_DIR / name).read_text(encoding="utf-8")
             packaged = (resources.files("packages.t0assistant") / "contracts" / name).read_text(
                 encoding="utf-8"
@@ -959,7 +959,7 @@ class SchemaSyncTests(unittest.TestCase):
             self.assertEqual(canonical, packaged, f"{name} package data drift")
 
     def test_contracts_are_accessible_via_package_resources(self) -> None:
-        for name in ("logical-schema.json", "replay-v1.schema.json"):
+        for name in ("logical-v2.schema.json", "replay-v2.schema.json"):
             data_file = resources.files("packages.t0assistant") / "contracts" / name
             self.assertTrue(data_file.is_file())
             payload = json.loads(data_file.read_text(encoding="utf-8"))
@@ -1021,7 +1021,7 @@ class WheelSmokeTests(unittest.TestCase):
             with zipfile.ZipFile(wheels[0]) as archive:
                 archive.extractall(extract_dir)
 
-            for name in ("logical-schema.json", "replay-v1.schema.json"):
+            for name in ("logical-v2.schema.json", "replay-v2.schema.json"):
                 self.assertTrue(
                     (extract_dir / "packages" / "t0assistant" / "contracts" / name).is_file(),
                     f"{name} missing from wheel",

@@ -8,7 +8,7 @@
       "type": "object",
       "required": ["schema_version", "request_id", "session_id"],
       "properties": {
-        "schema_version": {"const": "t0_replay_v2"},
+        "schema_version": {"const": "t0_replay_v1"},
         "request_id": {"type": "string", "minLength": 1},
         "session_id": {"type": "string", "minLength": 1}
       }
@@ -21,7 +21,7 @@
           "additionalProperties": false,
           "required": ["schema_version", "request_id", "session_id", "playback_speed"],
           "properties": {
-            "schema_version": {"const": "t0_replay_v2"},
+            "schema_version": {"const": "t0_replay_v1"},
             "request_id": {"type": "string", "minLength": 1},
             "session_id": {"type": "string", "minLength": 1},
             "playback_speed": {"type": "integer", "enum": [1, 2, 5, 10]}
@@ -46,7 +46,7 @@
     },
     "workbench_snapshot": {
       "allOf": [
-        {"$ref": "https://stockpilot.local/contracts/t0-logic-v2.schema.json#/$defs/workbench_snapshot"},
+        {"$ref": "https://stockpilot.local/contracts/t0-logic-v1.schema.json#/$defs/workbench_snapshot"},
         {
           "type": "object",
           "required": ["replay"],
@@ -69,7 +69,7 @@
       "additionalProperties": false,
       "required": ["schema_version", "service_generation", "session_id", "revision", "event_type", "payload"],
       "properties": {
-        "schema_version": {"const": "t0_replay_v2"},
+        "schema_version": {"const": "t0_replay_v1"},
         "service_generation": {"type": "integer", "minimum": 1},
         "session_id": {"type": "string", "minLength": 1},
         "revision": {"type": "integer", "minimum": 0},

@@ -14,7 +14,11 @@ from packages.t0assistant.repositories import (
     SqliteTradeRepository,
     open_app_database,
 )
-from packages.t0assistant.trading import TradeCommandApi, TradeService
+from packages.t0assistant.trading import (
+    AllowAllEligibility,
+    TradeCommandApi,
+    TradeService,
+)
 
 
 def _request(command: str, payload: dict, request_id: str) -> dict:
@@ -37,7 +41,9 @@ class TradeEndToEndAcceptanceTest(unittest.TestCase):
 
     def _apis(self, database, *, ids=iter(("trade-1", "trade-2", "trade-3"))):
         trade_service = TradeService(
-            SqliteTradeRepository(database), id_factory=lambda: next(ids)
+            SqliteTradeRepository(database),
+            id_factory=lambda: next(ids),
+            eligibility=AllowAllEligibility(),
         )
         trade_api = TradeCommandApi(trade_service, service_generation=1)
         plan_service = FeePlanService(SqliteFeePlanRepository(database))

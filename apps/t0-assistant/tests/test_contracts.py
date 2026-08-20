@@ -28,9 +28,9 @@ def load_json(name: str):
 class ContractTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.logical = load_json("logical-schema.json")
-        cls.app = load_json("app-v1.schema.json")
-        cls.replay = load_json("replay-v1.schema.json")
+        cls.logical = load_json("logical-v2.schema.json")
+        cls.app = load_json("app-v2.schema.json")
+        cls.replay = load_json("replay-v2.schema.json")
         cls.fixture = load_json("fixtures/replay-speed-v1.json")
         cls.workbench_flow = load_json("fixtures/workbench-flow-v1.json")
         cls.list_trades_flow = load_json("fixtures/list-trades-flow-v1.json")
@@ -83,12 +83,12 @@ class ContractTest(unittest.TestCase):
         self.assertNotIn("operation_id", self.fixture["changed_event"])
         self.assertEqual(self.fixture["changed_event"]["revision"], self.fixture["snapshot"]["session"]["revision"])
 
-    def test_app_contract_references_replay_v1_without_redefining_commands(self) -> None:
+    def test_app_contract_references_replay_v2_without_redefining_commands(self) -> None:
         refs = {
             self.app["$defs"][name]["$ref"]
             for name in ("replay_set_speed_request", "replay_event_envelope", "replay_workbench_snapshot")
         }
-        self.assertTrue(all("t0-replay-v1.schema.json" in ref for ref in refs))
+        self.assertTrue(all("t0-replay-v2.schema.json" in ref for ref in refs))
         commands = self.app["$defs"]["command_request"]["properties"]["command"]["enum"]
         self.assertNotIn("set_replay_speed", commands)
 

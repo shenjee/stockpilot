@@ -752,12 +752,12 @@ class LiveProjectionStoreTests(unittest.TestCase):
         from pathlib import Path
 
         logical = json_loads(
-            (resources.files("packages.t0assistant") / "contracts" / "logical-schema.json")
+            (resources.files("packages.t0assistant") / "contracts" / "logical-v2.schema.json")
             .read_text(encoding="utf-8")
         )
         app_path = (
             Path(__file__).resolve().parents[3]
-            / "apps" / "t0-assistant" / "contracts" / "app-v1.schema.json"
+            / "apps" / "t0-assistant" / "contracts" / "app-v2.schema.json"
         )
         app = json_loads(app_path.read_text(encoding="utf-8"))
         registry = Registry().with_resources(

@@ -3,14 +3,21 @@
 This directory is the integration-owned boundary shared by Python, Electron,
 preload, and the React renderer.
 
-- `logical-schema.json` freezes project-owned security, bar, quote, indicator,
-  session, warning, CZSC, and workbench snapshot structures for T0-002.
-  Issue #151: the `security` def uses `instrument_type` (stock|etf|index).
-- `app-v1.schema.json` freezes Live, **historical snapshot**, real/simulated
+- `logical-v2.schema.json` freezes project-owned security, bar, quote,
+  indicator, session, warning, CZSC, and workbench snapshot structures for
+  T0-002. Issue #151: the `security` def uses `instrument_type`
+  (stock|etf|index). The v1 file (`logical-schema.json`) is preserved
+  unchanged with `security_type` (a_share|etf) for consumers that have not
+  migrated.
+- `app-v2.schema.json` freezes Live, **historical snapshot**, real/simulated
   trade, preference, service status, synchronous response, and ordered event
   structures for T0-003. Uses `schema_version: "t0_app_v2"` (issue #151).
-- `replay-v1.schema.json` adds the Replay command/event state required by
-  T0-056. Uses `schema_version: "t0_replay_v2"` (issue #151).
+  The v1 file (`app-v1.schema.json`) is preserved unchanged with
+  `schema_version: "t0_app_v1"`.
+- `replay-v2.schema.json` adds the Replay command/event state required by
+  T0-056. Uses `schema_version: "t0_replay_v2"` (issue #151). The v1 file
+  (`replay-v1.schema.json`) is preserved unchanged with
+  `schema_version: "t0_replay_v1"`.
 - `fixtures/` contains transport-neutral deterministic payloads intended for
   both Python and TypeScript compatibility tests.
 

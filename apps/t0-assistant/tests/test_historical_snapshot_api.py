@@ -79,6 +79,19 @@ class _ObservingProvider:
         raise AssertionError("get_kline should not be called when get_kline_result exists")
 
 
+class _FakeIdentity:
+    """Minimal fake InstrumentIdentity for resolver tests."""
+
+    def __init__(self, instrument_type: str = "stock") -> None:
+        self.instrument_type = instrument_type
+
+
+def _fake_resolver(instrument_type: str = "stock"):
+    """Return a resolve_security callable returning a fake identity."""
+
+    return lambda _symbol: _FakeIdentity(instrument_type)
+
+
 class HistoricalSnapshotApiTests(unittest.TestCase):
     def _market_context(self) -> MarketContextService:
         return MarketContextService(
@@ -125,6 +138,7 @@ class HistoricalSnapshotApiTests(unittest.TestCase):
             store=store,
             provider=provider,
             market_context=self._market_context(),
+            resolve_security=_fake_resolver("stock"),
         )
 
         with patch(
@@ -249,6 +263,7 @@ class HistoricalSnapshotApiTests(unittest.TestCase):
             store=MagicMock(spec=KLineStore),
             provider=MagicMock(),
             market_context=self._market_context(),
+            resolve_security=_fake_resolver("stock"),
         )
         with patch(
             "backend.historical_snapshot_api.build_historical_snapshot"
@@ -310,6 +325,7 @@ class HistoricalSnapshotApiTests(unittest.TestCase):
             store=MagicMock(spec=KLineStore),
             provider=MagicMock(),
             market_context=self._market_context(),
+            resolve_security=_fake_resolver("stock"),
         )
         with patch(
             "backend.historical_snapshot_api.build_historical_snapshot"
@@ -374,6 +390,7 @@ class HistoricalSnapshotApiTests(unittest.TestCase):
             store=store,
             provider=provider,
             market_context=market_context,
+            resolve_security=_fake_resolver("stock"),
         )
         with patch(
             "backend.historical_snapshot_api.build_historical_snapshot"
@@ -435,6 +452,46 @@ class HistoricalSnapshotApiTests(unittest.TestCase):
             )
         self.assertTrue(response["accepted"])
         mock_build.assert_called_once()
+
+    def test_missing_resolver_rejects_instead_of_fail_open(self) -> None:
+        """Issue #151 P2 #5: no resolver must reject, not silently default."""
+        api = HistoricalSnapshotApi(
+            service_generation=1,
+            store=MagicMock(spec=KLineStore),
+            provider=MagicMock(),
+            market_context=self._market_context(),
+            # resolve_security intentionally omitted
+        )
+        response = api.get_historical_snapshot(
+            request_id="req-1",
+            symbol="sh.600000",
+            trade_date="2026-07-21",
+        )
+        self.assertFalse(response["accepted"])
+        self.assertEqual(
+            response["error"]["error_code"], "service_unavailable"
+        )
+        self.assertTrue(response["error"]["retryable"])
+
+    def test_resolver_returns_none_rejects_with_security_not_found(self) -> None:
+        """Issue #151 P2 #5: unresolved identity must not silently default."""
+        api = HistoricalSnapshotApi(
+            service_generation=1,
+            store=MagicMock(spec=KLineStore),
+            provider=MagicMock(),
+            market_context=self._market_context(),
+            resolve_security=lambda _symbol: None,
+        )
+        response = api.get_historical_snapshot(
+            request_id="req-1",
+            symbol="sh.600000",
+            trade_date="2026-07-21",
+        )
+        self.assertFalse(response["accepted"])
+        self.assertEqual(
+            response["error"]["error_code"], "security_not_found"
+        )
+        self.assertFalse(response["error"]["retryable"])
 
 
 class CreateHistoricalSnapshotApiTests(unittest.TestCase):

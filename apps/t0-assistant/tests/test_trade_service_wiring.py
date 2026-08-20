@@ -44,7 +44,11 @@ from packages.t0assistant.repositories import (  # noqa: E402
     SqliteTradeRepository,
     open_app_database,
 )
-from packages.t0assistant.trading import TradeCommandApi, TradeService  # noqa: E402
+from packages.t0assistant.trading import (  # noqa: E402
+    AllowAllEligibility,
+    TradeCommandApi,
+    TradeService,
+)
 from backend.event_publisher import EventPublisher  # noqa: E402
 
 
@@ -170,7 +174,7 @@ class TradeServiceWiringTest(unittest.TestCase):
         self.db_path = Path(self._tempdir.name) / "t0_assistant.sqlite"
         self._database = open_app_database(self.db_path)
         repository = SqliteTradeRepository(self._database)
-        service = TradeService(repository)
+        service = TradeService(repository, eligibility=AllowAllEligibility())
         self.publisher = EventPublisher(service_generation=7)
         self.trade_api = TradeCommandApi(
             service, service_generation=7, publisher=self.publisher

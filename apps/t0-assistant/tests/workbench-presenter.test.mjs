@@ -39,6 +39,19 @@ test("security responses must contain a frozen standard identity", () => {
     }),
     null,
   );
+  // Issue #151: instrument_type is required and must be a known value.
+  assert.equal(
+    standardSecurityFromResponse({
+      security: { ...security, instrument_type: undefined },
+    }),
+    null,
+  );
+  assert.equal(
+    standardSecurityFromResponse({
+      security: { ...security, instrument_type: "bond" },
+    }),
+    null,
+  );
 });
 
 test("operation failures only match the originating generation and session", () => {

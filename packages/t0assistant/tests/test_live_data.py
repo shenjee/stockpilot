@@ -6,12 +6,22 @@ from types import SimpleNamespace
 from typing import Any
 
 from packages.marketdata.services.market_context_service import MarketContextService
+from packages.marketdata.t0_schema import InstrumentIdentity, InstrumentType
 from packages.t0assistant.runtime import (
     LiveDataPreparator,
     LiveDataUnavailableError,
     LivePreparationConfig,
     SessionSpec,
     SessionType,
+)
+
+
+_STOCK = InstrumentIdentity(
+    symbol="sh.600000",
+    code="600000",
+    market="sh",
+    name="Test Stock",
+    instrument_type=InstrumentType.STOCK,
 )
 
 
@@ -108,6 +118,7 @@ class LiveDataPreparatorTests(unittest.TestCase):
             session_type=SessionType.LIVE,
             symbol="sh.600000",
             generation=1,
+            instrument=_STOCK,
         )
 
     def test_prepare_builds_first_live_warmup_and_forwards_session_validator(self) -> None:

@@ -649,6 +649,7 @@ class _Handler(BaseHTTPRequestHandler):
         if not result.get("accepted"):
             status = {
                 "invalid_fee_plan_request": HTTPStatus.BAD_REQUEST,
+                "automatic_fee_not_supported": HTTPStatus.BAD_REQUEST,
                 "fee_plan_not_found": HTTPStatus.NOT_FOUND,
                 "fee_plan_conflict": HTTPStatus.CONFLICT,
             }.get(error_code, HTTPStatus.SERVICE_UNAVAILABLE)
@@ -1152,8 +1153,8 @@ def _build_command_request_validator() -> Draft202012Validator:
     constraints, so the validation never drifts if the contract evolves.
     """
 
-    app_path = APP_CONTRACTS_DIR / "app-v1.schema.json"
-    logical_path = APP_CONTRACTS_DIR / "logical-schema.json"
+    app_path = APP_CONTRACTS_DIR / "app-v2.schema.json"
+    logical_path = APP_CONTRACTS_DIR / "logical-v2.schema.json"
     with app_path.open(encoding="utf-8") as stream:
         app = json.load(stream)
     with logical_path.open(encoding="utf-8") as stream:

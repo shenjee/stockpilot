@@ -78,6 +78,19 @@ class TradeEligibilityError(TradeValidationError):
         super().__init__(field, message)
 
 
+class AllowAllEligibility(InstrumentEligibilityPort):
+    """Test/replay helper: every symbol is tradable.
+
+    Issue #151 P2 #6: ``TradeService`` now requires an
+    :class:`InstrumentEligibilityPort`; tests and replay-simulated flows that
+    never touch the real-trade repository can inject this port to preserve the
+    old "no eligibility check" behaviour without bypassing the contract.
+    """
+
+    def check_eligibility(self, symbol: str) -> str | None:
+        return "tradable"
+
+
 def _default_trade_id() -> str:
     return uuid.uuid4().hex
 
@@ -98,11 +111,20 @@ class TradeService:
         *,
         id_factory: Callable[[], str] | None = None,
         marker_projection: TradeMarkerProjection | None = None,
-        eligibility: InstrumentEligibilityPort | None = None,
+        eligibility: InstrumentEligibilityPort,
     ) -> None:
         self._repository = repository
         self._id_factory = id_factory or _default_trade_id
         self._markers = marker_projection or TradeMarkerProjector()
+        # Issue #151 P2 #6: eligibility is required and must implement the
+        # InstrumentEligibilityPort contract (check_eligibility).  We use a
+        # structural hasattr check instead of isinstance because the Protocol
+        # is not @runtime_checkable.
+        if not callable(getattr(eligibility, "check_eligibility", None)):
+            raise TypeError(
+                "eligibility must implement InstrumentEligibilityPort "
+                "(check_eligibility)"
+            )
         self._eligibility = eligibility
 
     @property
@@ -213,13 +235,11 @@ class TradeService:
     def _require_eligible(self, draft: TradeDraft) -> None:
         """Enforce instrument eligibility before persisting a real trade.
 
-        When no :class:`InstrumentEligibilityPort` is injected the check is
-        skipped (backward-compatible with tests and Replay-simulated flows
-        that never touch the real-trade repository).
+        Issue #151 P2 #6: the eligibility port is required, so the check is
+        never bypassed.  Callers that do not need real eligibility (e.g.
+        unit tests with a fake repository) must inject an allow-all port.
         """
 
-        if self._eligibility is None:
-            return
         try:
             status = self._eligibility.check_eligibility(draft.symbol)
         except Exception as exc:  # noqa: BLE001 - surface as stable error

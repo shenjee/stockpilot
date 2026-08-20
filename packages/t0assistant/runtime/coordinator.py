@@ -16,6 +16,8 @@ from threading import Lock, RLock
 from typing import Any, Callable, Protocol
 from uuid import uuid4
 
+from packages.marketdata.t0_schema import InstrumentIdentity
+
 
 _SYMBOL_PATTERN = re.compile(r"^(sh|sz)\.[0-9]{6}$")
 
@@ -58,17 +60,16 @@ class SessionSpec:
     resolved once at the App/API orchestration entry (issue #151).  It is a
     domain value (what the instrument *is*), not a provider implementation
     detail; the coordinator only stores and forwards it and never interprets
-    ``instrument_type``.  It is optional so legacy callers that still pass a
-    bare ``symbol`` continue to work during migration, but new code should
-    resolve identity upstream and pass the full ``instrument``.
+    ``instrument_type``.  It is required so every caller resolves identity
+    upstream before creating a Session; bare symbols are no longer accepted.
     """
 
     session_id: str
     session_type: SessionType
     symbol: str
     generation: int
+    instrument: InstrumentIdentity
     trade_date: str | None = None
-    instrument: Any = None
 
 
 class SessionPort(Protocol):
@@ -95,7 +96,7 @@ class SessionIdentity:
     symbol: str
     generation: int
     trade_date: str | None
-    instrument: Any = None
+    instrument: InstrumentIdentity
 
     @classmethod
     def from_spec(cls, spec: SessionSpec) -> SessionIdentity:
@@ -192,7 +193,7 @@ class AppCoordinator:
         self._lock = RLock()
         self._transition_lock = Lock()
         self._current_symbol: str | None = None
-        self._current_instrument: Any = None
+        self._current_instrument: InstrumentIdentity | None = None
         self._mode = AppMode.LIVE
         self._generation = 0
         self._revision = 0
@@ -209,7 +210,7 @@ class AppCoordinator:
         self,
         symbol: str,
         *,
-        instrument: Any = None,
+        instrument: InstrumentIdentity,
     ) -> CoordinatorSnapshot:
         """Select the App stock and create its background Live Session.
 
@@ -560,7 +561,7 @@ class AppCoordinator:
         *,
         generation: int,
         trade_date: str | None,
-        instrument: Any = None,
+        instrument: InstrumentIdentity,
     ) -> _ManagedSession:
         session_id = self._session_id_factory(session_type, generation)
         if not isinstance(session_id, str) or not session_id:

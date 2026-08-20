@@ -10,6 +10,7 @@ from typing import Any, Mapping, Sequence
 from packages.marketdata.calendar_query import FixtureCalendarQuery
 from packages.marketdata.services.market_context_service import MarketContextService
 from packages.t0assistant.runtime.coordinator import SessionSpec, SessionType
+from packages.marketdata.t0_schema import InstrumentIdentity, InstrumentType
 from packages.t0assistant.runtime.live_refresh import LiveRefreshKind
 from packages.t0assistant.runtime.live_runtime import (
     BranchingLiveInput,
@@ -20,6 +21,15 @@ from packages.t0assistant.runtime.live_session import (
     PreparedLiveWarmup,
 )
 from packages.t0assistant.runtime.pipeline import PipelineMarketInput
+
+
+_STOCK = InstrumentIdentity(
+    symbol="sh.600000",
+    code="600000",
+    market="sh",
+    name="Test Stock",
+    instrument_type=InstrumentType.STOCK,
+)
 
 
 def _bar(timestamp: str, close: float = 10.0) -> dict[str, Any]:
@@ -218,6 +228,7 @@ class BranchingLiveInputPhaseRefreshTests(unittest.TestCase):
             symbol="sh.600000",
             generation=1,
             trade_date=None,
+            instrument=_STOCK,
         )
 
     def test_phase_change_republishes_full_snapshot(self) -> None:
