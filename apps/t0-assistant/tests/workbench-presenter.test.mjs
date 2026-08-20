@@ -8,7 +8,7 @@ import {
   clearLiveScopedBackgroundError,
   createLatestRequestTracker,
   initialSecuritySearchState,
-  isCompleteWorkbenchSnapshot,
+  hasWorkbenchSnapshotEnvelope,
   latestDailyBars,
   liveOperationFailurePresentation,
   operationMatchesEnvelope,
@@ -131,7 +131,7 @@ test("a later search invalidates an older in-flight result", () => {
   assert.equal(tracker.isCurrent(current), true);
 });
 
-test("full snapshot validation rejects partial chart-only payloads", () => {
+test("snapshot envelope validation rejects partial chart-only payloads", () => {
   const complete = {
     timezone: "Asia/Shanghai",
     session: {
@@ -153,20 +153,20 @@ test("full snapshot validation rejects partial chart-only payloads", () => {
     warnings: [],
   };
 
-  assert.equal(isCompleteWorkbenchSnapshot(complete), true);
+  assert.equal(hasWorkbenchSnapshotEnvelope(complete), true);
   assert.equal(
-    isCompleteWorkbenchSnapshot({
+    hasWorkbenchSnapshotEnvelope({
       ...complete,
       market: { bars_1m: [], bars_5m: [] },
     }),
     false,
   );
   assert.equal(
-    isCompleteWorkbenchSnapshot({ ...complete, chan_analysis: undefined }),
+    hasWorkbenchSnapshotEnvelope({ ...complete, chan_analysis: undefined }),
     false,
   );
   assert.equal(
-    isCompleteWorkbenchSnapshot({ ...complete, warnings: undefined }),
+    hasWorkbenchSnapshotEnvelope({ ...complete, warnings: undefined }),
     false,
   );
 });

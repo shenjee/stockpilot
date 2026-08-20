@@ -321,6 +321,12 @@ export function calculateIntradayPriceTicks(P0, R) {
 
 import { projectTradeMarkers } from "./trade-markers.mjs";
 
+/**
+ * Strict chart-model builder. Throws RangeError/TypeError on contract
+ * violations (unordered bars, indicator timestamps without matching bars,
+ * etc.). Callers that must preserve the last good chart should use
+ * {@link tryCreateChartGroupModel} instead of catching ad hoc.
+ */
 export function createChartGroupModel(snapshot, kind, layers = {}, trades = []) {
   if (kind !== FIVE_MINUTE && kind !== ONE_MINUTE) {
     throw new TypeError(`Unsupported chart group: ${kind}`);
@@ -543,6 +549,29 @@ export function createChartGroupModel(snapshot, kind, layers = {}, trades = []) 
     },
     tradeMarkers,
   };
+}
+
+/**
+ * Non-throwing wrapper around {@link createChartGroupModel}.
+ * Preserves strict failure semantics inside the builder; only the call boundary
+ * softens to a result object so UI can keep the last valid model.
+ *
+ * @returns {{ ok: true, model: object } | { ok: false, error: unknown }}
+ */
+export function tryCreateChartGroupModel(
+  snapshot,
+  kind,
+  layers = {},
+  trades = [],
+) {
+  try {
+    return {
+      ok: true,
+      model: createChartGroupModel(snapshot, kind, layers, trades),
+    };
+  } catch (error) {
+    return { ok: false, error };
+  }
 }
 
 function buildIntradayTradingTimeline(tradeDate) {

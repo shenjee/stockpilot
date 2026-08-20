@@ -324,3 +324,20 @@ export function createChartGroupModel(
   },
   trades?: Array<{ trade_id: string; bucket_start: string; trade_scope: "real" | "simulated"; symbol: string; side: "buy" | "sell"; executed_at: string; price: number; quantity: number; fee: number | null; note: string; fee_plan_id: string | null }>,
 ): ChartGroupModel;
+
+export function tryCreateChartGroupModel(
+  snapshot: WorkbenchChartSnapshot,
+  kind: ChartGroupKindValue,
+  layers?: {
+    ma5?: boolean;
+    ma10?: boolean;
+    ma20?: boolean;
+    ma30?: boolean;
+    ma60?: boolean;
+    strokes?: boolean;
+    pivot_zones?: boolean;
+  },
+  trades?: Array<{ trade_id: string; bucket_start: string; trade_scope: "real" | "simulated"; symbol: string; side: "buy" | "sell"; executed_at: string; price: number; quantity: number; fee: number | null; note: string; fee_plan_id: string | null }>,
+):
+  | { ok: true; model: ChartGroupModel }
+  | { ok: false; error: unknown };

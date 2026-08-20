@@ -87,9 +87,11 @@ export function securitySearchEnterTarget(
   count: number,
 ): number | null;
 
-export function isCompleteWorkbenchSnapshot(
-  candidate: unknown,
-): candidate is WorkbenchChartSnapshot;
+/**
+ * Shallow envelope-shape check only. Does not prove deep workbench_snapshot
+ * contract validity; see ``inspectWorkbenchSnapshotCandidate``.
+ */
+export function hasWorkbenchSnapshotEnvelope(candidate: unknown): boolean;
 export function operationMatchesEnvelope(
   operation: { serviceGeneration: number; sessionId: string | null } | null,
   envelope: { service_generation: number | null; session_id: string | null },
