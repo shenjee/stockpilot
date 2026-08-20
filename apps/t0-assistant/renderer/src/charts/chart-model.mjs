@@ -456,6 +456,10 @@ export function createChartGroupModel(snapshot, kind, layers = {}, trades = []) 
       ? padPointsToTimeline(normalizedVolumePoints, timestamps)
       : normalizedVolumePoints;
   if (kind === FIVE_MINUTE) {
+    // 动态未闭合 K 的成交量来自 bar，不进入正式 volume.values。
+    // MACD / VOL MA 仍只跟已闭合 K；下方 padPointsToTimeline 在动态槽留 null，
+    // 模型数组与 K 等长。5 分钟 fixRightEdge 下仅靠 whitespace 撑不住右缘，
+    // Renderer 还需隐藏 series 占槽（见 SynchronizedChartGroup.macdTimeAnchorSeries）。
     for (const bar of bars) {
       if (
         !bar.closed &&
@@ -509,46 +513,52 @@ export function createChartGroupModel(snapshot, kind, layers = {}, trades = []) 
     volume: volumePoints,
     volumeMa5:
       kind === FIVE_MINUTE
-        ? normalizePoints(
-            clipRows(indicator.volume.ma5),
-            timestampSet,
-            "five_minute volume ma5",
+        ? padPointsToTimeline(
+            normalizePoints(
+              clipRows(indicator.volume.ma5),
+              timestampSet,
+              "five_minute volume ma5",
+            ),
+            timestamps,
           )
         : [],
     volumeMa10:
       kind === FIVE_MINUTE
-        ? normalizePoints(
-            clipRows(indicator.volume.ma10),
-            timestampSet,
-            "five_minute volume ma10",
+        ? padPointsToTimeline(
+            normalizePoints(
+              clipRows(indicator.volume.ma10),
+              timestampSet,
+              "five_minute volume ma10",
+            ),
+            timestamps,
           )
         : [],
+    // 1 分钟：补全日交易分钟空白。5 分钟：动态未闭合 K 不进入正式指标，
+    // 在对应时间槽留 null（可见 series 转 whitespace）。5 分钟还开了
+    // fixRightEdge，仅靠 whitespace 撑不住右缘，Renderer 另用隐藏 series 占槽。
     macd: {
-      dif: padIntradayIndicator(
+      dif: padPointsToTimeline(
         normalizePoints(
           clipRows(indicator.macd.dif),
           timestampSet,
           `${kind} macd dif`,
         ),
-        kind,
         timestamps,
       ),
-      dea: padIntradayIndicator(
+      dea: padPointsToTimeline(
         normalizePoints(
           clipRows(indicator.macd.dea),
           timestampSet,
           `${kind} macd dea`,
         ),
-        kind,
         timestamps,
       ),
-      histogram: padIntradayIndicator(
+      histogram: padPointsToTimeline(
         normalizePoints(
           clipRows(indicator.macd.histogram),
           timestampSet,
           `${kind} macd histogram`,
         ),
-        kind,
         timestamps,
       ),
     },
@@ -580,12 +590,6 @@ function padPointsToTimeline(points, timestamps) {
     timestamp,
     value: values.get(timestamp) ?? null,
   }));
-}
-
-function padIntradayIndicator(points, kind, timestamps) {
-  return kind === ONE_MINUTE
-    ? padPointsToTimeline(points, timestamps)
-    : points;
 }
 
 function collectStrokeRows(chanAnalysis) {

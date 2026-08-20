@@ -581,3 +581,145 @@ test("real LC: aligned plot widths map the same time to the same x coordinate", 
     restore();
   }
 });
+
+test("real controller: dynamic 5m MACD null slot stays x-aligned via time-anchor", async () => {
+  // 走 createChartGroupModel → SynchronizedChartGroup 生产路径，而不是手搭 LC。
+  // 动态未闭合 K 有成交量、无正式 MACD；fixRightEdge 下仅靠 whitespace 不够，
+  // 必须经 macdTimeAnchorSeries 占槽，三图 timeToCoordinate 才对齐。
+  const restore = installDom();
+  try {
+    const { SynchronizedChartGroup } = await import(
+      "../renderer/src/charts/SynchronizedChartGroup.ts"
+    );
+    const { createChartGroupModel, parseMarketTimestamp } = await import(
+      "../renderer/src/charts/chart-model.mjs"
+    );
+
+    const closedTs = "2026-07-22 10:00:00";
+    const lastClosedTs = "2026-07-22 10:05:00";
+    const dynamicTs = "2026-07-22 10:10:00";
+    const bars = [
+      {
+        timestamp: closedTs,
+        open: 10,
+        high: 11,
+        low: 9,
+        close: 10.2,
+        volume: 1000,
+        amount: 10200,
+        closed: true,
+      },
+      {
+        timestamp: lastClosedTs,
+        open: 10.2,
+        high: 10.4,
+        low: 10.1,
+        close: 10.3,
+        volume: 1100,
+        amount: 11330,
+        closed: true,
+      },
+      {
+        timestamp: dynamicTs,
+        open: 10.3,
+        high: 10.4,
+        low: 10.2,
+        close: 10.25,
+        volume: 500,
+        amount: 5125,
+        closed: false,
+      },
+    ];
+    const closedMacd = [
+      { timestamp: closedTs, value: 0.01 },
+      { timestamp: lastClosedTs, value: 0.02 },
+    ];
+    const snapshot = {
+      session: { trade_date: "2026-07-22" },
+      market: {
+        bars_5m: bars,
+        bars_1m: [],
+        quote: { previous_close: 10 },
+      },
+      indicators: {
+        five_minute: {
+          ma: {},
+          boll: { upper: [], middle: [], lower: [] },
+          volume: {
+            values: bars
+              .filter((bar) => bar.closed)
+              .map((bar) => ({ timestamp: bar.timestamp, value: bar.volume })),
+            ma5: closedMacd.map((point) => ({
+              timestamp: point.timestamp,
+              value: 1000,
+            })),
+            ma10: [],
+          },
+          macd: {
+            fast_period: 12,
+            slow_period: 26,
+            signal_period: 9,
+            dif: closedMacd,
+            dea: closedMacd,
+            histogram: closedMacd,
+          },
+        },
+        one_minute: {
+          vwap: [],
+          volume: { values: [] },
+          macd: { dif: [], dea: [], histogram: [] },
+        },
+      },
+      chan_analysis: {},
+    };
+
+    const group = new SynchronizedChartGroup({
+      containers: {
+        price: makeEl("div"),
+        volume: makeEl("div"),
+        macd: makeEl("div"),
+      },
+      kind: "five_minute",
+    });
+    globalThis.__flushRaf();
+
+    const model = createChartGroupModel(snapshot, "five_minute");
+    assert.equal(model.macd.dif.at(-1).value, null);
+    assert.equal(model.volume.at(-1).value, 500);
+    group.setModel(model);
+    globalThis.__flushRaf();
+
+    const charts = [group.priceChart, group.volumeChart, group.macdChart];
+    const range = { from: 0, to: 2 };
+    for (const chart of charts) {
+      chart.timeScale().setVisibleLogicalRange(range);
+    }
+    globalThis.__flushRaf();
+
+    const assertAligned = (timestamp) => {
+      const time = parseMarketTimestamp(timestamp);
+      const coordinates = charts.map((chart) =>
+        chart.timeScale().timeToCoordinate(time),
+      );
+      assert.ok(
+        coordinates.every((value) => value !== null),
+        `${timestamp}: ${coordinates.join(", ")}`,
+      );
+      assert.ok(
+        coordinates.every(
+          (value) => Math.abs(value - coordinates[0]) <= 0.5,
+        ),
+        `${timestamp}: ${coordinates.join(", ")}`,
+      );
+      return coordinates[0];
+    };
+    const closedX = assertAligned(lastClosedTs);
+    const dynamicX = assertAligned(dynamicTs);
+    assert.ok(
+      Math.abs(dynamicX - closedX) > 1,
+      `dynamic and closed slots must map to distinct x (${closedX}, ${dynamicX})`,
+    );
+  } finally {
+    restore();
+  }
+});
