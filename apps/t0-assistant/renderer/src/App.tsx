@@ -14,13 +14,13 @@ import {
   type MarketBar,
   type WorkbenchChartSnapshot,
 } from "./charts/chart-model.mjs";
+import { selectActiveWorkbenchProjection } from "./charts/active-workbench-projection.mjs";
 import {
-  applyLiveChartEvent,
-  applyWorkbenchSnapshot,
-  beginChartSession,
   createChartProjection,
   type ChartProjection,
 } from "./charts/chart-projection.mjs";
+import { LiveProjectionController } from "./charts/live-projection-controller.mjs";
+import { ReplaySessionController } from "./charts/replay-session-controller.mjs";
 import {
   applyWorkbenchPreferences,
   createWorkbenchState,
@@ -68,11 +68,9 @@ import {
   marketClockLabel,
   marketTimeFromValue,
   replayFactsFromSnapshot,
-  replayOperationMatches,
   replaySessionMatches,
   type ReplayFacts,
 } from "./replay-controls.mjs";
-import { createReplayCursorTracker } from "./replay-cursor-tracker.mjs";
 import {
   TradeDrawer,
   createBoundTradeClient,
@@ -161,13 +159,6 @@ export function App() {
   const [workbench, setWorkbench] = useState<WorkbenchState>(
     createWorkbenchState,
   );
-  const [projection, setProjection] = useState<ChartProjection>(() =>
-    createChartProjection(
-      window.stockpilot
-        ? emptyChartSnapshot
-        : (chartFixture as unknown as WorkbenchChartSnapshot),
-    ),
-  );
   const [query, setQuery] = useState("");
   const [suggestions, setSuggestions] = useState<SecurityIdentity[]>([]);
   const [searching, setSearching] = useState(false);
@@ -183,11 +174,6 @@ export function App() {
   const [preferenceHydrationAttempt, setPreferenceHydrationAttempt] =
     useState(0);
   const [replayDate, setReplayDate] = useState("");
-  const [replaySnapshot, setReplaySnapshot] =
-    useState<WorkbenchChartSnapshot | null>(null);
-  const [replayLoading, setReplayLoading] = useState(false);
-  const [replayBusy, setReplayBusy] = useState(false);
-  const [replayPlaybackPending, setReplayPlaybackPending] = useState(false);
   // T0-043: repository-scoped real-trade snapshot, kept at the App level so
   // both the trade Drawer/Dialog and the 5m chart markers consume the same
   // authoritative list. The reducer applies the same generation/revision gate
@@ -203,15 +189,9 @@ export function App() {
   // historical workbench; see the T0-043 contract gap). Never wipes the last
   // successful chart.
   const [dayChartNotice, setDayChartNotice] = useState<string | null>(null);
-  const rebaselineRequest = useRef<string | null>(null);
   const activeOperations = useRef(new Map<string, ActiveOperation>());
   const modeRef = useRef(workbench.mode);
-  const liveProjection = useRef(projection);
   const serviceGeneration = useRef(initialStatus.service_generation);
-  const activeReplaySession = useRef<string | null>(null);
-  const activeReplayLoadOperation = useRef<string | null>(null);
-  const replayCursorTracker = useRef(createReplayCursorTracker());
-  const resumeReplayAfterSeek = useRef(false);
   const searchRequests = useRef(createLatestRequestTracker());
   const navigationRequests = useRef(createLatestRequestTracker());
   const preferenceHydrationInFlight = useRef(false);
@@ -230,11 +210,6 @@ export function App() {
       if (error) throw error;
       return response;
     }),
-  );
-  const snapshot = projection.snapshot;
-  const replayFacts = useMemo(
-    () => replayFactsFromSnapshot(replaySnapshot),
-    [replaySnapshot],
   );
   // 正式环境中的成交、收费方案和费用建议均经 Safe Bridge 访问 Python 权威
   // 服务；fixture 模式保留内存方案和 null 顾问，不复制收费公式。
@@ -270,6 +245,25 @@ export function App() {
   if (tradeOpController.current === null) {
     tradeOpController.current = new TradeOperationController();
   }
+  const liveProjectionController = useRef<LiveProjectionController | null>(
+    null,
+  );
+  if (liveProjectionController.current === null) {
+    liveProjectionController.current = new LiveProjectionController(
+      createChartProjection(
+        window.stockpilot
+          ? emptyChartSnapshot
+          : (chartFixture as unknown as WorkbenchChartSnapshot),
+      ),
+    );
+  }
+  const replaySessionController = useRef<ReplaySessionController | null>(
+    null,
+  );
+  if (replaySessionController.current === null) {
+    replaySessionController.current = new ReplaySessionController();
+  }
+  const [, bumpProjection] = useReducer((n: number) => n + 1, 0);
   // Multiple trade operations may fail concurrently; the controller keeps them
   // all (keyed by operation id) so a later failure never overwrites an earlier
   // one's retry. The App renders every failure, each with its own retry/dismiss.
@@ -283,8 +277,45 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    const live = liveProjectionController.current;
+    const replay = replaySessionController.current;
+    if (!live || !replay) return;
+    const unsubLive = live.subscribe(() => bumpProjection());
+    const unsubReplay = replay.subscribe(() => bumpProjection());
+    return () => {
+      unsubLive();
+      unsubReplay();
+    };
+  }, []);
+
+  useEffect(() => {
     modeRef.current = workbench.mode;
   }, [workbench.mode]);
+
+  const liveCtrl = liveProjectionController.current!;
+  const replayCtrl = replaySessionController.current!;
+  replayCtrl.setServiceGeneration(serviceGeneration.current);
+
+  const projection =
+    selectActiveWorkbenchProjection({
+      mode: workbench.mode,
+      liveProjection: liveCtrl.projection,
+      replayProjection: replayCtrl.projection,
+      loadingFallbackProjection: replayCtrl.loadingFallbackProjection,
+    }) ?? liveCtrl.projection;
+
+  const snapshot = projection.snapshot;
+  const replayFacts = useMemo(
+    () =>
+      replayCtrl.hasAuthoritativeProjection
+        ? replayFactsFromSnapshot(replayCtrl.projection!.snapshot)
+        : null,
+    [
+      workbench.mode,
+      replayCtrl.projection,
+      replayCtrl.hasAuthoritativeProjection,
+    ],
+  );
 
   useEffect(() => {
     if (!window.stockpilot) {
@@ -304,15 +335,11 @@ export function App() {
       serviceGeneration.current = next.service_generation;
       setStatus(next);
       if (generationChanged) {
-        activeReplaySession.current = null;
-        activeReplayLoadOperation.current = null;
-        replayCursorTracker.current.clear();
-        resumeReplayAfterSeek.current = false;
-        setReplaySnapshot(null);
+        replaySessionController.current?.clearForGenerationChange();
+        replaySessionController.current?.setServiceGeneration(
+          next.service_generation,
+        );
         setReplayDate("");
-        setReplayLoading(false);
-        setReplayBusy(false);
-        setReplayPlaybackPending(false);
         setSimulatedTrades([]);
       }
       if (next.state === "ready" || next.state === "connected") {
@@ -329,27 +356,21 @@ export function App() {
         // the new generation's revisions restart. The controller itself stays
         // mounted (it only clears its pending map, not its failure surface).
         tradeOpController.current?.clearPending();
-        const replacement = createChartProjection(emptyChartSnapshot, {
-          service_generation: next.service_generation,
-        });
-        liveProjection.current = replacement;
-        setProjection(replacement);
+        liveProjectionController.current?.resetForGeneration(
+          emptyChartSnapshot,
+          next.service_generation,
+        );
         return;
       }
-      setProjection((current) => {
-        if (
-          current.serviceGeneration === null ||
-          current.serviceGeneration === next.service_generation
-        ) {
-          return current;
-        }
+      const live = liveProjectionController.current;
+      if (
+        live &&
+        live.projection.serviceGeneration !== null &&
+        live.projection.serviceGeneration !== next.service_generation
+      ) {
         activeOperations.current.clear();
-        const replacement = createChartProjection(emptyChartSnapshot, {
-          service_generation: next.service_generation,
-        });
-        liveProjection.current = replacement;
-        return replacement;
-      });
+        live.resetForGeneration(emptyChartSnapshot, next.service_generation);
+      }
     };
     void window.stockpilot.getServiceStatus().then(updateServiceStatus);
     const stopStatus = window.stockpilot.onServiceStatus(updateServiceStatus);
@@ -457,14 +478,7 @@ export function App() {
       if (!envelope) return;
       const applyLiveEvent = () => {
         if (!isChartAppEvent(event)) return;
-        if (modeRef.current === WorkbenchMode.REPLAY) {
-          liveProjection.current = applyLiveChartEvent(
-            liveProjection.current,
-            event,
-          );
-        } else {
-          setProjection((current) => applyLiveChartEvent(current, event));
-        }
+        liveProjectionController.current?.applyEvent(event);
       };
       if (envelope.event_type === "live_session_status") {
         const state = (envelope.payload as { state?: unknown })?.state;
@@ -604,22 +618,11 @@ export function App() {
       }
       const baseline = chartProjectionFromEvent(event);
       if (baseline) {
-        rebaselineRequest.current = null;
-        if (modeRef.current === WorkbenchMode.REPLAY) {
-          liveProjection.current = applyWorkbenchSnapshot(
-            liveProjection.current,
-            baseline.snapshot,
-            projectionIdentity(baseline),
-          );
-        } else {
-          setProjection((current) =>
-            applyWorkbenchSnapshot(
-              current,
-              baseline.snapshot,
-              projectionIdentity(baseline),
-            ),
-          );
-        }
+        liveProjectionController.current?.clearRebaselineRequest();
+        liveProjectionController.current?.applySnapshot(
+          baseline.snapshot,
+          projectionIdentity(baseline),
+        );
         if (
           restoreInFlight.current &&
           restoreInFlight.current.sessionId === baseline.sessionId
@@ -643,35 +646,21 @@ export function App() {
       if (!isCompleteWorkbenchSnapshot(candidate)) return;
       const facts = replayFactsFromSnapshot(candidate);
       if (!facts) return;
-      if (
-        !replaySessionMatches(
-          activeReplaySession.current,
-          facts.sessionId,
-        )
-      ) {
-        return;
-      }
-      setReplaySnapshot(candidate);
-      if (modeRef.current === WorkbenchMode.REPLAY) {
-        setProjection(
-          createChartProjection(candidate, {
-            service_generation: serviceGeneration.current,
-            session_id: facts.sessionId,
-            revision: candidate.session?.revision,
-          }),
-        );
-      }
+      replaySessionController.current?.acceptSnapshot(candidate, {
+        service_generation: serviceGeneration.current,
+        session_id: facts.sessionId,
+        revision: candidate.session?.revision,
+      });
     });
     const stopEvent = window.stockpilot.onReplayEvent((event) => {
       if (modeRef.current !== WorkbenchMode.REPLAY) return;
       const envelope = replayEventEnvelope(event);
       if (!envelope) return;
+      const replay = replaySessionController.current;
+      if (!replay) return;
       if (
         envelope.service_generation !== serviceGeneration.current ||
-        !replaySessionMatches(
-          activeReplaySession.current,
-          envelope.session_id,
-        )
+        !replaySessionMatches(replay.sessionId, envelope.session_id)
       ) {
         return;
       }
@@ -679,53 +668,34 @@ export function App() {
         const error = applicationErrorFrom(envelope.payload);
         // Ownership comes from the Replay event channel, not affected_capability.
         if (error) setBackgroundError(asReplayOwnedError(error));
-        if (
-          replayOperationMatches(
-            activeReplayLoadOperation.current,
-            envelope.operation_id,
-          )
-        ) {
-          activeReplayLoadOperation.current = null;
-          activeReplaySession.current = null;
-          replayCursorTracker.current.clear();
-          resumeReplayAfterSeek.current = false;
-          setReplayLoading(false);
-          setReplayBusy(false);
+        if (replay.matchesLoadOperation(envelope.operation_id)) {
+          replay.failLoadOperation();
         }
-        const cursorNote = replayCursorTracker.current.noteOutcome(
+        const cursorNote = replay.noteCursorOutcome(
           typeof envelope.operation_id === "string"
             ? envelope.operation_id
             : null,
           "failed",
         );
         if (cursorNote === "settled") {
-          resumeReplayAfterSeek.current = false;
-          setReplayBusy(false);
+          replay.setResumeAfterSeek(false);
         }
         return;
       }
       if (envelope.event_type === "workbench_snapshot") {
-        if (
-          replayOperationMatches(
-            activeReplayLoadOperation.current,
-            envelope.operation_id,
-          )
-        ) {
-          activeReplayLoadOperation.current = null;
-          setReplayLoading(false);
+        if (replay.matchesLoadOperation(envelope.operation_id)) {
+          replay.clearLoadOperation();
         }
-        const cursorNote = replayCursorTracker.current.noteOutcome(
+        const cursorNote = replay.noteCursorOutcome(
           typeof envelope.operation_id === "string"
             ? envelope.operation_id
             : null,
           "completed",
         );
         if (cursorNote === "settled") {
-          setReplayBusy(false);
-          if (resumeReplayAfterSeek.current) {
-            resumeReplayAfterSeek.current = false;
+          if (replay.takeResumeAfterSeek()) {
             requestReplayPlayback(
-              activeReplaySession.current,
+              replay.sessionId,
               true,
               (error) => setBackgroundError(error),
             );
@@ -738,31 +708,10 @@ export function App() {
         state?: unknown;
         playback_speed?: unknown;
       };
-      setReplaySnapshot((current) => {
-        if (!current?.session || !current.replay) return current;
-        const nextState =
-          typeof payload.state === "string"
-            ? payload.state
-            : current.session.state;
-        const nextSpeed = REPLAY_SPEEDS.includes(
-          payload.playback_speed as 1 | 2 | 5 | 10,
-        )
-          ? (payload.playback_speed as 1 | 2 | 5 | 10)
-          : current.replay.playback_speed;
-        return {
-          ...current,
-          session: {
-            ...current.session,
-            state: nextState,
-            revision:
-              envelope.revision ?? current.session.revision,
-          },
-          replay: {
-            ...current.replay,
-            playing: nextState === "playing",
-            playback_speed: nextSpeed,
-          },
-        };
+      replay.applySessionStatus({
+        state: payload.state,
+        playback_speed: payload.playback_speed,
+        revision: envelope.revision,
       });
     });
     return () => {
@@ -772,51 +721,52 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (!window.stockpilot || workbench.mode !== WorkbenchMode.LIVE) return;
+    const live = liveProjectionController.current;
+    if (!live) return;
+    const liveProjection = live.projection;
     if (
-      !window.stockpilot ||
-      !projection.rebaselineRequired ||
-      projection.serviceGeneration === null ||
-      projection.sessionId === null ||
-      projection.revision === null
+      !liveProjection.rebaselineRequired ||
+      liveProjection.serviceGeneration === null ||
+      liveProjection.sessionId === null ||
+      liveProjection.revision === null
     ) {
       return;
     }
     const requestKey = [
-      projection.serviceGeneration,
-      projection.sessionId,
-      projection.revision,
+      liveProjection.serviceGeneration,
+      liveProjection.sessionId,
+      liveProjection.revision,
     ].join(":");
-    if (rebaselineRequest.current === requestKey) return;
-    rebaselineRequest.current = requestKey;
-    const requestedProjection = projection;
+    if (!live.beginRebaselineRequest(requestKey)) return;
+    const requestedProjection = liveProjection;
     void window.stockpilot
       .getLiveSnapshot(
-        appRequest("get_live_snapshot", projection.sessionId, {}),
+        appRequest("get_live_snapshot", liveProjection.sessionId, {}),
       )
       .then((response) => {
         const candidate = workbenchSnapshotFromResponse(response);
         if (!candidate) return;
-        setProjection((current) => {
-          if (
-            !current.rebaselineRequired ||
-            current.serviceGeneration !==
-              requestedProjection.serviceGeneration ||
-            current.sessionId !== requestedProjection.sessionId
-          ) {
-            return current;
-          }
-          return applyWorkbenchSnapshot(current, candidate, {
-            service_generation:
-              requestedProjection.serviceGeneration ?? undefined,
-            session_id: requestedProjection.sessionId,
-            revision: candidate.session?.revision,
-          });
+        const current = live.projection;
+        if (
+          !current.rebaselineRequired ||
+          current.serviceGeneration !==
+            requestedProjection.serviceGeneration ||
+          current.sessionId !== requestedProjection.sessionId
+        ) {
+          return;
+        }
+        live.applySnapshot(candidate, {
+          service_generation:
+            requestedProjection.serviceGeneration ?? undefined,
+          session_id: requestedProjection.sessionId,
+          revision: candidate.session?.revision,
         });
       })
       .catch(() => {
         // The gateway also owns the bounded rebaseline path.
       });
-  }, [projection]);
+  }, [liveCtrl.projection, workbench.mode]);
 
   useEffect(() => {
     if (!window.stockpilot || !preferencesHydrated) return;
@@ -924,14 +874,10 @@ export function App() {
         if (!navigationRequests.current.isCurrent(selectionSequence)) return;
         const recovered = workbenchSnapshotFromResponse(snapshotResponse);
         if (recovered) {
-          setProjection((current) => {
-            const replacement = applyWorkbenchSnapshot(current, recovered, {
-              service_generation: status.service_generation,
-              session_id: sessionId,
-              revision: recovered.session?.revision,
-            });
-            liveProjection.current = replacement;
-            return replacement;
+          liveProjectionController.current?.applySnapshot(recovered, {
+            service_generation: status.service_generation,
+            session_id: sessionId,
+            revision: recovered.session?.revision,
           });
           setLoading(false);
           setRestoreMessage(null);
@@ -942,21 +888,18 @@ export function App() {
       } catch {
         // The event channel may still deliver the startup snapshot.
       }
-      setProjection((current) => {
-        if (
-          current.serviceGeneration === status.service_generation &&
-          current.sessionId === sessionId
-        ) {
-          return current;
-        }
-        const replacement = beginChartSession(
-          current.snapshot,
+      const live = liveProjectionController.current;
+      if (
+        live &&
+        (live.projection.serviceGeneration !== status.service_generation ||
+          live.projection.sessionId !== sessionId)
+      ) {
+        live.beginSession(
+          live.projection.snapshot,
           status.service_generation,
           sessionId,
         );
-        liveProjection.current = replacement;
-        return replacement;
-      });
+      }
     }
   }
 
@@ -1056,44 +999,33 @@ export function App() {
       const authoritative = standardSecurityFromResponse(response);
       const resolvedSecurity = authoritative ?? security;
       activeOperations.current.clear();
-      rebaselineRequest.current = null;
-      if (modeRef.current === WorkbenchMode.REPLAY) {
-        const current = liveProjection.current;
+      liveProjectionController.current?.clearRebaselineRequest();
+      const live = liveProjectionController.current;
+      if (live) {
+        const current = live.projection;
         if (
           current.serviceGeneration !== status.service_generation ||
           current.sessionId !== sessionId ||
           current.snapshot.session?.symbol !== resolvedSecurity.symbol ||
           current.snapshot.session?.state !== "ready"
         ) {
-          liveProjection.current = beginChartSession(
+          live.beginSession(
             current.snapshot,
             status.service_generation,
             sessionId,
           );
         }
-      } else {
-        setProjection((current) => {
-          // Startup restoration can publish the complete snapshot before the
-          // select_security HTTP response resolves. Never overwrite that newer
-          // baseline with the request's empty waiting projection.
+        if (modeRef.current !== WorkbenchMode.REPLAY) {
+          const updated = live.projection;
           if (
-            current.serviceGeneration === status.service_generation &&
-            current.sessionId === sessionId &&
-            current.snapshot.session?.symbol === resolvedSecurity.symbol &&
-            current.snapshot.session?.state === "ready"
+            updated.serviceGeneration === status.service_generation &&
+            updated.sessionId === sessionId &&
+            updated.snapshot.session?.symbol === resolvedSecurity.symbol &&
+            updated.snapshot.session?.state === "ready"
           ) {
-            liveProjection.current = current;
             setLoading(false);
-            return current;
           }
-          const replacement = beginChartSession(
-            current.snapshot,
-            status.service_generation,
-            sessionId,
-          );
-          liveProjection.current = replacement;
-          return replacement;
-        });
+        }
       }
       if (operationId) {
         activeOperations.current.set(operationId, {
@@ -1124,22 +1056,8 @@ export function App() {
             session_id: sessionId,
             revision: recovered.session?.revision,
           };
-          if (modeRef.current === WorkbenchMode.REPLAY) {
-            liveProjection.current = applyWorkbenchSnapshot(
-              liveProjection.current,
-              recovered,
-              identity,
-            );
-          } else {
-            setProjection((current) => {
-              const replacement = applyWorkbenchSnapshot(
-                current,
-                recovered,
-                identity,
-              );
-              liveProjection.current = replacement;
-              return replacement;
-            });
+          liveProjectionController.current?.applySnapshot(recovered, identity);
+          if (modeRef.current !== WorkbenchMode.REPLAY) {
             setLoading(false);
           }
           activeOperations.current.delete(operationId ?? "");
@@ -1249,7 +1167,7 @@ export function App() {
       }
       setWorkbench((current) => selectWorkbenchSecurity(current, identity));
       setQuery(identity.code);
-      setProjection(
+      liveProjectionController.current?.replace(
         createChartProjection(snapshot, {
           service_generation: serviceGeneration.current,
           session_id: snapshot.session.session_id,
@@ -1296,10 +1214,10 @@ export function App() {
     const replayOwned =
       isReplayOwnedError(background) || isReplayOwnedError(failure?.error);
     if (replayOwned) {
-      replayCursorTracker.current.clear();
-      resumeReplayAfterSeek.current = false;
-      setReplayBusy(false);
-      setReplayPlaybackPending(false);
+      replaySessionController.current?.clearCursor();
+      replaySessionController.current?.setResumeAfterSeek(false);
+      replaySessionController.current?.setBusy(false);
+      replaySessionController.current?.setPlaybackPending(false);
       const replayError = background ?? failure?.error;
       if (replayError?.affected_capability === "service") {
         setLoading(true);
@@ -1341,19 +1259,13 @@ export function App() {
       if (error) throw error;
       const operationId = responseOperationId(response);
       const replacementSessionId = responseSessionId(response);
-      const retainedSnapshot =
-        modeRef.current === WorkbenchMode.REPLAY
-          ? liveProjection.current.snapshot
-          : projection.snapshot;
-      const nextLiveProjection = beginChartSession(
+      const retainedSnapshot = liveProjectionController.current!.projection
+        .snapshot;
+      liveProjectionController.current!.beginSession(
         retainedSnapshot,
         status.service_generation,
         replacementSessionId,
       );
-      liveProjection.current = nextLiveProjection;
-      if (modeRef.current !== WorkbenchMode.REPLAY) {
-        setProjection(nextLiveProjection);
-      }
       if (operationId) {
         activeOperations.current.set(operationId, {
           retry: "live",
@@ -1369,10 +1281,13 @@ export function App() {
 
   async function beginReplay() {
     if (!window.stockpilot || !workbench.security || !replayDate) return;
-    setReplayLoading(true);
-    setReplayBusy(false);
-    replayCursorTracker.current.clear();
-    resumeReplayAfterSeek.current = false;
+    const replay = replaySessionController.current;
+    if (!replay) return;
+    replay.setServiceGeneration(serviceGeneration.current);
+    replay.setLoading(true);
+    replay.setBusy(false);
+    replay.clearCursor();
+    replay.setResumeAfterSeek(false);
     setBackgroundError(null);
     try {
       const response = await window.stockpilot.beginReplay({
@@ -1385,20 +1300,16 @@ export function App() {
       if (error) throw error;
       const sessionId = responseSessionId(response);
       if (!sessionId) throw new TypeError("回放响应缺少 session_id");
-      activeReplaySession.current = sessionId;
-      activeReplayLoadOperation.current = responseOperationId(response);
-      if (!activeReplayLoadOperation.current) setReplayLoading(false);
+      replay.beginSession(sessionId, responseOperationId(response));
     } catch (error) {
-      activeReplaySession.current = null;
-      activeReplayLoadOperation.current = null;
-      setReplayLoading(false);
+      replay.failLoadOperation();
       setBackgroundError(clientError(error, "replay"));
     }
   }
 
   async function setReplayPlayback(playing: boolean) {
     if (!window.stockpilot || !replayFacts) return;
-    setReplayPlaybackPending(true);
+    replaySessionController.current?.setPlaybackPending(true);
     try {
       const response = await window.stockpilot.setReplayPlayback({
         schema_version: "t0_replay_v2",
@@ -1411,7 +1322,7 @@ export function App() {
     } catch (error) {
       setBackgroundError(clientError(error, "replay"));
     } finally {
-      setReplayPlaybackPending(false);
+      replaySessionController.current?.setPlaybackPending(false);
     }
   }
 
@@ -1438,29 +1349,25 @@ export function App() {
   }
 
   function adoptReplayCursorResponse(operationId: string | null) {
-    const adopted = replayCursorTracker.current.adopt(operationId);
+    const replay = replaySessionController.current;
+    if (!replay) return;
+    const adopted = replay.adoptCursorOperation(operationId);
     if (adopted.status === "no_operation") {
-      setReplayBusy(false);
-      if (resumeReplayAfterSeek.current) {
-        resumeReplayAfterSeek.current = false;
+      if (replay.takeResumeAfterSeek()) {
         void setReplayPlayback(true);
       }
       return;
     }
     if (adopted.status === "already_settled") {
-      setReplayBusy(false);
-      if (adopted.early === "completed" && resumeReplayAfterSeek.current) {
-        resumeReplayAfterSeek.current = false;
+      if (adopted.early === "completed" && replay.takeResumeAfterSeek()) {
         void setReplayPlayback(true);
-      } else if (adopted.early === "failed") {
-        resumeReplayAfterSeek.current = false;
       }
     }
   }
 
   async function stepReplay() {
     if (!window.stockpilot || !replayFacts) return;
-    setReplayBusy(true);
+    replaySessionController.current?.setBusy(true);
     try {
       const response = await window.stockpilot.stepReplay({
         schema_version: "t0_replay_v2",
@@ -1471,15 +1378,15 @@ export function App() {
       if (error) throw error;
       adoptReplayCursorResponse(responseOperationId(response));
     } catch (error) {
-      replayCursorTracker.current.clear();
-      setReplayBusy(false);
+      replaySessionController.current?.clearCursor();
+      replaySessionController.current?.setBusy(false);
       setBackgroundError(asReplayOwnedError(clientError(error, "replay")));
     }
   }
 
   async function seekReplay(targetTime: string) {
     if (!window.stockpilot || !replayFacts) return;
-    setReplayBusy(true);
+    replaySessionController.current?.setBusy(true);
     try {
       const response = await window.stockpilot.seekReplay({
         schema_version: "t0_replay_v2",
@@ -1491,9 +1398,9 @@ export function App() {
       if (error) throw error;
       adoptReplayCursorResponse(responseOperationId(response));
     } catch (error) {
-      replayCursorTracker.current.clear();
-      resumeReplayAfterSeek.current = false;
-      setReplayBusy(false);
+      replaySessionController.current?.clearCursor();
+      replaySessionController.current?.setResumeAfterSeek(false);
+      replaySessionController.current?.setBusy(false);
       setBackgroundError(asReplayOwnedError(clientError(error, "replay")));
     }
   }
@@ -1501,8 +1408,10 @@ export function App() {
   function selectMode(mode: "live" | "replay") {
     if (mode === workbench.mode) return;
     modeRef.current = mode;
+    const live = liveProjectionController.current;
+    const replay = replaySessionController.current;
     if (mode === WorkbenchMode.REPLAY) {
-      liveProjection.current = projection;
+      replay?.enterMode(live?.projection);
       setLoading(false);
       if (activeFailure) {
         const presentation = liveOperationFailurePresentation(
@@ -1517,20 +1426,11 @@ export function App() {
       );
       return;
     }
-    const sessionId = activeReplaySession.current;
-    activeReplaySession.current = null;
-    activeReplayLoadOperation.current = null;
-    replayCursorTracker.current.clear();
-    resumeReplayAfterSeek.current = false;
+    const sessionId = replay?.exitMode() ?? null;
     updateWorkbenchFromUser((current) =>
       selectWorkbenchMode(current, WorkbenchMode.LIVE),
     );
-    setProjection(liveProjection.current);
-    setReplaySnapshot(null);
     setReplayDate("");
-    setReplayLoading(false);
-    setReplayBusy(false);
-    setReplayPlaybackPending(false);
     setSimulatedTrades([]);
     if (window.stockpilot && sessionId) {
       void window.stockpilot
@@ -1849,9 +1749,9 @@ export function App() {
         <ReplayControls
           tradeDate={replayDate}
           securitySelected={Boolean(workbench.security)}
-          loading={replayLoading}
-          busy={replayBusy}
-          playbackPending={replayPlaybackPending}
+          loading={replayCtrl.loading}
+          busy={replayCtrl.busy}
+          playbackPending={replayCtrl.playbackPending}
           facts={replayFacts}
           onTradeDate={setReplayDate}
           onBegin={() => void beginReplay()}
@@ -1859,7 +1759,7 @@ export function App() {
           onStep={() => void stepReplay()}
           onSpeed={(speed) => void setReplaySpeed(speed)}
           onSeek={(targetTime, options) => {
-            resumeReplayAfterSeek.current = Boolean(options?.resumeAfter);
+            replayCtrl.setResumeAfterSeek(Boolean(options?.resumeAfter));
             void seekReplay(targetTime);
           }}
         />
