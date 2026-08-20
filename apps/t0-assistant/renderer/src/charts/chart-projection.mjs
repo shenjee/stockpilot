@@ -274,10 +274,16 @@ function mergeMacd(current, incoming) {
   };
 }
 
-function mergeFiveMinuteBars(current, incoming) {
-  // Mirror LiveProjectionStore._merge_five_minute_bars: unclosed 5m rows whose
-  // timestamps are absent from the increment are the previous bucket's dynamic
-  // K and must be dropped. Closed history is never deleted by this path.
+/**
+ * Upsert 5m bars and drop unclosed rows absent from the increment.
+ *
+ * Mirrors Python `LiveProjectionStore` / `merge_five_minute_bars`. Locked by
+ * `contracts/fixtures/live-five-minute-merge-v1.json` (#155).
+ */
+export function mergeFiveMinuteBars(current, incoming) {
+  // Unclosed 5m rows whose timestamps are absent from the increment are the
+  // previous bucket's dynamic K and must be dropped. Closed history is never
+  // deleted by this path.
   const incomingTimestamps = new Set(
     (incoming ?? []).map((row) => row.timestamp),
   );

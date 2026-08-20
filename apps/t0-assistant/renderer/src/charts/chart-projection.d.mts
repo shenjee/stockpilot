@@ -42,3 +42,8 @@ export function applyLiveChartEvent(
   projection: ChartProjection,
   event: ChartAppEvent,
 ): ChartProjection;
+
+export function mergeFiveMinuteBars(
+  current: WorkbenchChartSnapshot["market"]["bars_5m"] | null | undefined,
+  incoming: WorkbenchChartSnapshot["market"]["bars_5m"] | null | undefined,
+): WorkbenchChartSnapshot["market"]["bars_5m"];

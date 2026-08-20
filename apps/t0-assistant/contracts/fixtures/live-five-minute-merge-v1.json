@@ -1,0 +1,219 @@
+{
+  "schema_version": "live_five_minute_merge_v1",
+  "description": "Shared Python/Renderer test vector for dynamic 5m bar merge semantics (#155). Does not change the public event contract; both sides apply the same merge/replace ops and assert expected bars_5m after every step.",
+  "initial_bars_5m": [
+    {
+      "timestamp": "2026-07-22 09:35:00",
+      "open": 10.0,
+      "high": 10.2,
+      "low": 9.9,
+      "close": 10.1,
+      "volume": 100.0,
+      "amount": 1000.0,
+      "closed": false
+    }
+  ],
+  "steps": [
+    {
+      "id": "revise_dynamic_bucket",
+      "op": "merge",
+      "incoming": [
+        {
+          "timestamp": "2026-07-22 09:35:00",
+          "open": 10.0,
+          "high": 10.4,
+          "low": 9.9,
+          "close": 10.3,
+          "volume": 350.0,
+          "amount": 3550.0,
+          "closed": false
+        }
+      ],
+      "expected_bars_5m": [
+        {
+          "timestamp": "2026-07-22 09:35:00",
+          "open": 10.0,
+          "high": 10.4,
+          "low": 9.9,
+          "close": 10.3,
+          "volume": 350.0,
+          "amount": 3550.0,
+          "closed": false
+        }
+      ]
+    },
+    {
+      "id": "replace_with_new_dynamic_bucket",
+      "op": "merge",
+      "incoming": [
+        {
+          "timestamp": "2026-07-22 09:40:00",
+          "open": 11.0,
+          "high": 11.0,
+          "low": 11.0,
+          "close": 11.0,
+          "volume": 2.0,
+          "amount": 22.0,
+          "closed": false
+        }
+      ],
+      "expected_bars_5m": [
+        {
+          "timestamp": "2026-07-22 09:40:00",
+          "open": 11.0,
+          "high": 11.0,
+          "low": 11.0,
+          "close": 11.0,
+          "volume": 2.0,
+          "amount": 22.0,
+          "closed": false
+        }
+      ]
+    },
+    {
+      "id": "official_close_keeps_current_dynamic",
+      "op": "merge",
+      "incoming": [
+        {
+          "timestamp": "2026-07-22 09:35:00",
+          "open": 10.0,
+          "high": 10.5,
+          "low": 9.8,
+          "close": 10.4,
+          "volume": 900.0,
+          "amount": 9200.0,
+          "closed": true
+        },
+        {
+          "timestamp": "2026-07-22 09:40:00",
+          "open": 11.0,
+          "high": 11.0,
+          "low": 11.0,
+          "close": 11.0,
+          "volume": 2.0,
+          "amount": 22.0,
+          "closed": false
+        }
+      ],
+      "expected_bars_5m": [
+        {
+          "timestamp": "2026-07-22 09:35:00",
+          "open": 10.0,
+          "high": 10.5,
+          "low": 9.8,
+          "close": 10.4,
+          "volume": 900.0,
+          "amount": 9200.0,
+          "closed": true
+        },
+        {
+          "timestamp": "2026-07-22 09:40:00",
+          "open": 11.0,
+          "high": 11.0,
+          "low": 11.0,
+          "close": 11.0,
+          "volume": 2.0,
+          "amount": 22.0,
+          "closed": false
+        }
+      ]
+    },
+    {
+      "id": "late_official_without_current_dynamic_drops_unclosed",
+      "op": "merge",
+      "note": "A late official close that omits the current dynamic bucket drops that unclosed row. Official increments must include the current dynamic bar to preserve it.",
+      "incoming": [
+        {
+          "timestamp": "2026-07-22 09:35:00",
+          "open": 10.0,
+          "high": 10.6,
+          "low": 9.7,
+          "close": 10.45,
+          "volume": 950.0,
+          "amount": 9600.0,
+          "closed": true
+        }
+      ],
+      "expected_bars_5m": [
+        {
+          "timestamp": "2026-07-22 09:35:00",
+          "open": 10.0,
+          "high": 10.6,
+          "low": 9.7,
+          "close": 10.45,
+          "volume": 950.0,
+          "amount": 9600.0,
+          "closed": true
+        }
+      ]
+    },
+    {
+      "id": "rebaseline_full_bars",
+      "op": "replace",
+      "bars_5m": [
+        {
+          "timestamp": "2026-07-22 09:35:00",
+          "open": 10.0,
+          "high": 10.5,
+          "low": 9.8,
+          "close": 10.4,
+          "volume": 900.0,
+          "amount": 9200.0,
+          "closed": true
+        },
+        {
+          "timestamp": "2026-07-22 09:40:00",
+          "open": 11.0,
+          "high": 11.2,
+          "low": 10.9,
+          "close": 11.1,
+          "volume": 120.0,
+          "amount": 1320.0,
+          "closed": true
+        },
+        {
+          "timestamp": "2026-07-22 09:45:00",
+          "open": 11.1,
+          "high": 11.3,
+          "low": 11.0,
+          "close": 11.2,
+          "volume": 40.0,
+          "amount": 448.0,
+          "closed": false
+        }
+      ],
+      "expected_bars_5m": [
+        {
+          "timestamp": "2026-07-22 09:35:00",
+          "open": 10.0,
+          "high": 10.5,
+          "low": 9.8,
+          "close": 10.4,
+          "volume": 900.0,
+          "amount": 9200.0,
+          "closed": true
+        },
+        {
+          "timestamp": "2026-07-22 09:40:00",
+          "open": 11.0,
+          "high": 11.2,
+          "low": 10.9,
+          "close": 11.1,
+          "volume": 120.0,
+          "amount": 1320.0,
+          "closed": true
+        },
+        {
+          "timestamp": "2026-07-22 09:45:00",
+          "open": 11.1,
+          "high": 11.3,
+          "low": 11.0,
+          "close": 11.2,
+          "volume": 40.0,
+          "amount": 448.0,
+          "closed": false
+        }
+      ]
+    }
+  ]
+}
