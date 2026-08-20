@@ -333,6 +333,49 @@ test("applySessionStatus rejects missing or non-integer revision", () => {
   assert.equal(replay.projection.snapshot.session.state, "paused");
 });
 
+test("acceptSnapshot rejects missing outer revision even when payload has one", () => {
+  const live = new LiveProjectionController(liveBaseline());
+  const replay = new ReplaySessionController();
+  replay.setServiceGeneration(live.projection.serviceGeneration);
+  replay.enterMode(live.projection);
+  replay.beginSession("replay-1");
+  const fallback = replay.loadingFallbackProjection;
+  const snapshot = cloneReplaySnapshot();
+  assert.equal(snapshot.session.revision, 8);
+
+  assert.equal(
+    replay.acceptSnapshot(snapshot, {
+      service_generation: live.projection.serviceGeneration,
+      session_id: "replay-1",
+    }),
+    false,
+  );
+  assert.equal(replay.projection, null);
+  assert.equal(activeFrom(WorkbenchMode.REPLAY, live, replay), fallback);
+});
+
+test("acceptSnapshot rejects mismatched outer and payload revision", () => {
+  const live = new LiveProjectionController(liveBaseline());
+  const replay = new ReplaySessionController();
+  replay.setServiceGeneration(live.projection.serviceGeneration);
+  replay.enterMode(live.projection);
+  replay.beginSession("replay-1");
+  const fallback = replay.loadingFallbackProjection;
+  const snapshot = cloneReplaySnapshot();
+  assert.equal(snapshot.session.revision, 8);
+
+  assert.equal(
+    replay.acceptSnapshot(snapshot, {
+      service_generation: live.projection.serviceGeneration,
+      session_id: "replay-1",
+      revision: 9,
+    }),
+    false,
+  );
+  assert.equal(replay.projection, null);
+  assert.equal(activeFrom(WorkbenchMode.REPLAY, live, replay), fallback);
+});
+
 test("Replay load settles only after acceptSnapshot succeeds", () => {
   const live = new LiveProjectionController(liveBaseline());
   const replay = new ReplaySessionController();

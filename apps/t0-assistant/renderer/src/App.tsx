@@ -28,6 +28,7 @@ import {
 } from "./charts/chart-projection.mjs";
 import { LiveProjectionController } from "./charts/live-projection-controller.mjs";
 import { ReplaySessionController } from "./charts/replay-session-controller.mjs";
+import { replayEventEnvelope } from "./replay-event-envelope.mjs";
 import {
   applyWorkbenchPreferences,
   createWorkbenchState,
@@ -729,13 +730,13 @@ export function App() {
           }
           return;
         }
-        // operation_id participates in the controller accept gate so the first
-        // matching projection atomically replaces fallback and clears loading.
+        // Outer envelope identity is authoritative; do not fill revision from
+        // payload. acceptSnapshot also requires payload session.revision to
+        // match (#162 review P2).
         const accepted = replay.acceptSnapshot(inspected.snapshot, {
-          service_generation: envelope.service_generation ?? undefined,
+          service_generation: envelope.service_generation,
           session_id: envelope.session_id,
-          revision:
-            envelope.revision ?? inspected.snapshot.session?.revision,
+          revision: envelope.revision,
           operation_id: operationId,
         });
         if (!accepted) {
@@ -2578,41 +2579,6 @@ function eventEnvelope(event: unknown) {
         payload: envelope.payload,
       }
     : null;
-}
-
-function replayEventEnvelope(event: unknown) {
-  if (!event || typeof event !== "object") return null;
-  const envelope = event as {
-    schema_version?: unknown;
-    event_type?: unknown;
-    operation_id?: unknown;
-    service_generation?: unknown;
-    session_id?: unknown;
-    revision?: unknown;
-    payload?: unknown;
-  };
-  if (
-    envelope.schema_version !== "t0_replay_v2" ||
-    typeof envelope.event_type !== "string" ||
-    typeof envelope.session_id !== "string"
-  ) {
-    return null;
-  }
-  return {
-    event_type: envelope.event_type,
-    operation_id:
-      typeof envelope.operation_id === "string"
-        ? envelope.operation_id
-        : null,
-    service_generation:
-      typeof envelope.service_generation === "number"
-        ? envelope.service_generation
-        : null,
-    session_id: envelope.session_id,
-    revision:
-      typeof envelope.revision === "number" ? envelope.revision : null,
-    payload: envelope.payload,
-  };
 }
 
 function chartProjectionFromEvent(event: unknown): ChartProjection | null {

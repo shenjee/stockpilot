@@ -203,9 +203,12 @@ export class ReplaySessionController {
 
   /**
    * Accept a Replay workbench snapshot when generation/session/facts match.
-   * While a load operation is outstanding, `identity.operation_id` must also
-   * match before the first authoritative projection can replace fallback
-   * (#155: generation/session/operation gate is atomic).
+   * Outer envelope identity is required: do not fill revision/session/
+   * generation from the snapshot payload. Payload `session.revision` must
+   * equal the outer revision. While a load operation is outstanding,
+   * `identity.operation_id` must also match before the first authoritative
+   * projection can replace fallback (#155: generation/session/operation
+   * gate is atomic).
    * @param {WorkbenchChartSnapshot} snapshot
    * @param {{
    *   service_generation?: number,
@@ -217,14 +220,16 @@ export class ReplaySessionController {
    */
   acceptSnapshot(snapshot, identity = {}) {
     if (!this._inReplayMode || this._sessionId == null) return false;
-    const sessionId = identity.session_id ?? snapshot.session?.session_id;
-    const generation =
-      identity.service_generation ?? this._serviceGeneration;
-    const revision = identity.revision ?? snapshot.session?.revision;
+    // Outer envelope identity is authoritative — never fill revision /
+    // session / generation from the snapshot payload (#162 review P2).
+    const sessionId = identity.session_id;
+    const generation = identity.service_generation;
+    const revision = identity.revision;
     if (
       generation !== this._serviceGeneration ||
       !replaySessionMatches(this._sessionId, sessionId) ||
-      !Number.isInteger(revision)
+      !Number.isInteger(revision) ||
+      snapshot.session?.revision !== revision
     ) {
       return false;
     }
