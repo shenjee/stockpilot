@@ -46,6 +46,10 @@ export const SAFE_BRIDGE_METHODS = Object.freeze([
   ...Object.keys(SUBSCRIPTIONS),
 ]);
 
+export const SAFE_BRIDGE_COMMANDS = Object.freeze([
+  ...new Set(Object.values({ ...APP_COMMANDS, ...REPLAY_COMMANDS })),
+]);
+
 export function buildSafeBridge({ invoke, subscribe }) {
   if (typeof invoke !== "function" || typeof subscribe !== "function") {
     throw new TypeError("Safe Bridge requires invoke and subscribe adapters");

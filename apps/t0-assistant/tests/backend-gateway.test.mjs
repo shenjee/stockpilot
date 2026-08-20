@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { ALLOWED_COMMANDS, BackendGateway } from "../electron/backend-gateway.mjs";
 import { PythonServiceHost } from "../electron/python-service-host.mjs";
+import { SAFE_BRIDGE_COMMANDS } from "../electron/safe-bridge.mjs";
 
 class FakeWebSocket {
   static instances = [];
@@ -173,6 +174,13 @@ test("gateway rejects old generations and non-allowlisted commands", async () =>
   await assert.rejects(gateway.invoke("raw_fetch", {}), /not allowed/);
   assert.equal(ALLOWED_COMMANDS.has("raw_fetch"), false);
   gateway.close();
+});
+
+test("Gateway allowlist matches every Safe Bridge command", () => {
+  assert.deepEqual(
+    [...ALLOWED_COMMANDS].sort(),
+    [...SAFE_BRIDGE_COMMANDS].sort(),
+  );
 });
 
 test("gateway resolves structured service errors across the IPC boundary", async () => {

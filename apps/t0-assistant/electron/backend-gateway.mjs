@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 
 const ALLOWED_COMMANDS = new Set([
   "search_securities",
+  "resolve_security_identity",
   "select_security",
   "save_last_symbol",
   "get_live_snapshot",
