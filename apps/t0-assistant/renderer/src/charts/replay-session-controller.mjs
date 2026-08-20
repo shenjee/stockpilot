@@ -203,8 +203,16 @@ export class ReplaySessionController {
 
   /**
    * Accept a Replay workbench snapshot when generation/session/facts match.
+   * While a load operation is outstanding, `identity.operation_id` must also
+   * match before the first authoritative projection can replace fallback
+   * (#155: generation/session/operation gate is atomic).
    * @param {WorkbenchChartSnapshot} snapshot
-   * @param {{ service_generation?: number, session_id?: string, revision?: number }} [identity]
+   * @param {{
+   *   service_generation?: number,
+   *   session_id?: string,
+   *   revision?: number,
+   *   operation_id?: string | null,
+   * }} [identity]
    * @returns {boolean}
    */
   acceptSnapshot(snapshot, identity = {}) {
@@ -220,6 +228,15 @@ export class ReplaySessionController {
     ) {
       return false;
     }
+    // Initial load: operation must match inside the same accept boundary so a
+    // same-session advancing snapshot cannot replace fallback while loading
+    // stays true (#155 review follow-up).
+    if (
+      this._loadOperationId != null &&
+      !replayOperationMatches(this._loadOperationId, identity.operation_id)
+    ) {
+      return false;
+    }
     const facts = replayFactsFromSnapshot(snapshot);
     if (!facts || facts.sessionId !== this._sessionId) {
       return false;
@@ -230,6 +247,10 @@ export class ReplaySessionController {
         session_id: sessionId,
         revision,
       });
+      if (this._loadOperationId != null) {
+        this._loadOperationId = null;
+        this._loading = false;
+      }
       this._notify();
       return true;
     }
@@ -246,6 +267,8 @@ export class ReplaySessionController {
 
   /**
    * Patch session_status fields onto the authoritative Replay snapshot.
+   * Requires an integer revision strictly greater than the current projection
+   * revision; missing / float / NaN revisions are rejected (#155 review).
    * @param {{ state?: unknown, playback_speed?: unknown, revision?: number | null }} payload
    * @returns {boolean}
    */
@@ -254,14 +277,14 @@ export class ReplaySessionController {
     if (!current?.snapshot?.session || !current.snapshot.replay) {
       return false;
     }
-    const nextRevision = Number.isInteger(payload.revision)
-      ? payload.revision
-      : null;
+    if (!Number.isInteger(payload.revision)) {
+      return false;
+    }
+    const nextRevision = payload.revision;
     // Same-session revision must strictly advance; stale/equal status must not
-    // roll back projection identity (#155 review P2).
+    // roll back or mutate projection identity without advancing revision.
     if (
-      nextRevision !== null &&
-      current.revision !== null &&
+      Number.isInteger(current.revision) &&
       nextRevision <= current.revision
     ) {
       return false;
@@ -275,17 +298,15 @@ export class ReplaySessionController {
     )
       ? /** @type {1 | 2 | 5 | 10} */ (payload.playback_speed)
       : current.snapshot.replay.playback_speed;
-    const revision =
-      nextRevision !== null ? nextRevision : current.snapshot.session.revision;
     this._projection = {
       ...current,
-      revision,
+      revision: nextRevision,
       snapshot: {
         ...current.snapshot,
         session: {
           ...current.snapshot.session,
           state: nextState,
-          revision,
+          revision: nextRevision,
         },
         replay: {
           ...current.snapshot.replay,

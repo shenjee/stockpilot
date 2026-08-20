@@ -670,28 +670,11 @@ export function App() {
 
   useEffect(() => {
     if (!window.stockpilot) return;
-    // Backup accept path when a snapshot is delivered without a matching event
-    // envelope. Loading/cursor settle stays on the replay-event path which owns
-    // operation_id (#155 review P2).
-    const stopSnapshot = window.stockpilot.onReplaySnapshot((candidate) => {
-      if (modeRef.current !== WorkbenchMode.REPLAY) return;
-      const inspected = inspectWorkbenchSnapshotCandidate(candidate);
-      if (!inspected.ok) {
-        setBackgroundError(
-          inspected.reason === "contract"
-            ? chartContractApplicationError(inspected.error)
-            : asReplayOwnedError(chartEnvelopeApplicationError()),
-        );
-        return;
-      }
-      const facts = replayFactsFromSnapshot(inspected.snapshot);
-      if (!facts) return;
-      replaySessionController.current?.acceptSnapshot(inspected.snapshot, {
-        service_generation: serviceGeneration.current,
-        session_id: facts.sessionId,
-        revision: inspected.snapshot.session?.revision,
-      });
-    });
+    // replay-event is the sole authoritative Replay ingress. Gateway also
+    // emits bare replay-snapshot payloads (no service_generation / outer
+    // session_id / operation_id); those must not write the controller or they
+    // would bypass the identity gate and overwrite Replay-owned errors
+    // (#155 / #162 review P1).
     const stopEvent = window.stockpilot.onReplayEvent((event) => {
       if (modeRef.current !== WorkbenchMode.REPLAY) return;
       const envelope = replayEventEnvelope(event);
@@ -746,20 +729,18 @@ export function App() {
           }
           return;
         }
+        // operation_id participates in the controller accept gate so the first
+        // matching projection atomically replaces fallback and clears loading.
         const accepted = replay.acceptSnapshot(inspected.snapshot, {
           service_generation: envelope.service_generation ?? undefined,
           session_id: envelope.session_id,
           revision:
             envelope.revision ?? inspected.snapshot.session?.revision,
+          operation_id: operationId,
         });
         if (!accepted) {
           // Identity/operation mismatch: keep loading/fallback; do not settle.
           return;
-        }
-        // Only after a matching valid snapshot is accepted may loading clear
-        // and cursor ops settle (#155 review P2).
-        if (replay.matchesLoadOperation(operationId)) {
-          replay.clearLoadOperation();
         }
         const cursorNote = replay.noteCursorOutcome(operationId, "completed");
         if (cursorNote === "settled") {
@@ -785,7 +766,6 @@ export function App() {
       });
     });
     return () => {
-      stopSnapshot();
       stopEvent();
     };
   }, []);

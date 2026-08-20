@@ -24,6 +24,7 @@ export declare class ReplaySessionController {
       service_generation?: number;
       session_id?: string;
       revision?: number;
+      operation_id?: string | null;
     },
   ): boolean;
   applySessionStatus(payload: {

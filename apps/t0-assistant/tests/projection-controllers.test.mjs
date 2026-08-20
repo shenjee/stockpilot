@@ -116,10 +116,10 @@ test("ReplaySessionController acceptSnapshot replaces fallback atomically", () =
       service_generation: live.projection.serviceGeneration,
       session_id: "replay-1",
       revision: snapshot.session.revision,
+      operation_id: "op-load-1",
     }),
     true,
   );
-  replay.clearLoadOperation();
 
   const active = activeFrom(WorkbenchMode.REPLAY, live, replay);
   assert.equal(active, replay.projection);
@@ -127,6 +127,7 @@ test("ReplaySessionController acceptSnapshot replaces fallback atomically", () =
   assert.equal(facts?.sessionId, "replay-1");
   assert.equal(deriveReplayControls(facts).active, true);
   assert.equal(replay.loading, false);
+  assert.equal(replay.loadOperationId, null);
 });
 
 test("mismatched Replay snapshots cannot replace fallback", () => {
@@ -146,6 +147,40 @@ test("mismatched Replay snapshots cannot replace fallback", () => {
     false,
   );
   assert.equal(activeFrom(WorkbenchMode.REPLAY, live, replay), fallback);
+});
+
+test("load-operation mismatch cannot replace fallback while loading", () => {
+  const live = new LiveProjectionController(liveBaseline());
+  const replay = new ReplaySessionController();
+  replay.setServiceGeneration(live.projection.serviceGeneration);
+  replay.enterMode(live.projection);
+  replay.beginSession("replay-1", "expected-load-op");
+  const fallback = replay.loadingFallbackProjection;
+
+  assert.equal(
+    replay.acceptSnapshot(cloneReplaySnapshot(), {
+      service_generation: live.projection.serviceGeneration,
+      session_id: "replay-1",
+      revision: 8,
+      operation_id: "other-op",
+    }),
+    false,
+  );
+  assert.equal(replay.projection, null);
+  assert.equal(replay.loading, true);
+  assert.equal(replay.loadOperationId, "expected-load-op");
+  assert.equal(activeFrom(WorkbenchMode.REPLAY, live, replay), fallback);
+
+  assert.equal(
+    replay.acceptSnapshot(cloneReplaySnapshot(), {
+      service_generation: live.projection.serviceGeneration,
+      session_id: "replay-1",
+      revision: 8,
+    }),
+    false,
+  );
+  assert.equal(replay.projection, null);
+  assert.equal(replay.loading, true);
 });
 
 test("new Replay session converts prior success into loading fallback", () => {
@@ -255,6 +290,49 @@ test("applySessionStatus rejects stale or equal revision", () => {
   assert.equal(replay.projection.revision, 8);
 });
 
+test("applySessionStatus rejects missing or non-integer revision", () => {
+  const live = new LiveProjectionController(liveBaseline());
+  const replay = new ReplaySessionController();
+  replay.setServiceGeneration(live.projection.serviceGeneration);
+  replay.enterMode(live.projection);
+  replay.beginSession("replay-1");
+  replay.acceptSnapshot(cloneReplaySnapshot(), {
+    service_generation: live.projection.serviceGeneration,
+    session_id: "replay-1",
+    revision: 8,
+  });
+  assert.equal(
+    replay.applySessionStatus({ state: "playing", playback_speed: 2 }),
+    false,
+  );
+  assert.equal(
+    replay.applySessionStatus({
+      state: "playing",
+      playback_speed: 2,
+      revision: null,
+    }),
+    false,
+  );
+  assert.equal(
+    replay.applySessionStatus({
+      state: "playing",
+      playback_speed: 2,
+      revision: 9.5,
+    }),
+    false,
+  );
+  assert.equal(
+    replay.applySessionStatus({
+      state: "playing",
+      playback_speed: 2,
+      revision: Number.NaN,
+    }),
+    false,
+  );
+  assert.equal(replay.projection.revision, 8);
+  assert.equal(replay.projection.snapshot.session.state, "paused");
+});
+
 test("Replay load settles only after acceptSnapshot succeeds", () => {
   const live = new LiveProjectionController(liveBaseline());
   const replay = new ReplaySessionController();
@@ -263,9 +341,7 @@ test("Replay load settles only after acceptSnapshot succeeds", () => {
   replay.beginSession("replay-1", "load-op-1");
   assert.equal(replay.loading, true);
   assert.equal(replay.projection, null);
-  // Mimic the App event-path policy: invalid payload must not clear loading.
   assert.equal(replay.matchesLoadOperation("load-op-1"), true);
-  // Do not call clearLoadOperation until accept succeeds.
   assert.equal(replay.loading, true);
   const snapshot = cloneReplaySnapshot();
   assert.equal(
@@ -273,11 +349,12 @@ test("Replay load settles only after acceptSnapshot succeeds", () => {
       service_generation: live.projection.serviceGeneration,
       session_id: "replay-1",
       revision: 8,
+      operation_id: "load-op-1",
     }),
     true,
   );
-  replay.clearLoadOperation();
   assert.equal(replay.loading, false);
+  assert.equal(replay.loadOperationId, null);
   assert.ok(replay.projection);
   assert.equal(
     activeFrom(WorkbenchMode.REPLAY, live, replay),
