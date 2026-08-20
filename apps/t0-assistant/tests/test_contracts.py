@@ -31,10 +31,16 @@ class ContractTest(unittest.TestCase):
         cls.logical = load_json("logical-v2.schema.json")
         cls.app = load_json("app-v2.schema.json")
         cls.replay = load_json("replay-v2.schema.json")
-        cls.fixture = load_json("fixtures/replay-speed-v1.json")
-        cls.workbench_flow = load_json("fixtures/workbench-flow-v1.json")
-        cls.list_trades_flow = load_json("fixtures/list-trades-flow-v1.json")
+        cls.fixture = load_json("fixtures/replay-speed-v2.json")
+        cls.fixture_v1 = load_json("fixtures/replay-speed-v1.json")
+        cls.workbench_flow = load_json("fixtures/workbench-flow-v2.json")
+        cls.workbench_flow_v1 = load_json("fixtures/workbench-flow-v1.json")
+        cls.list_trades_flow = load_json("fixtures/list-trades-flow-v2.json")
+        cls.list_trades_flow_v1 = load_json("fixtures/list-trades-flow-v1.json")
         cls.historical_snapshot_flow = load_json(
+            "fixtures/historical-snapshot-flow-v2.json"
+        )
+        cls.historical_snapshot_flow_v1 = load_json(
             "fixtures/historical-snapshot-flow-v1.json"
         )
         cls.registry = Registry().with_resources(
@@ -71,6 +77,14 @@ class ContractTest(unittest.TestCase):
         self.assertEqual(self.fixture["valid_speeds"], [1, 2, 5, 10])
         for request in self.fixture["set_speed_requests"]:
             validator.validate(request)
+
+    def test_v1_fixtures_remain_v1_compatibility_payloads(self) -> None:
+        self.assertEqual(self.fixture_v1["schema_version"], "t0_replay_v1")
+        self.assertEqual(self.workbench_flow_v1["schema_version"], "t0_app_v1")
+        self.assertEqual(self.list_trades_flow_v1["schema_version"], "t0_app_v1")
+        self.assertEqual(
+            self.historical_snapshot_flow_v1["schema_version"], "t0_app_v1"
+        )
 
     def test_invalid_speed_is_rejected(self) -> None:
         invalid = dict(self.fixture["set_speed_requests"][0], playback_speed=3)

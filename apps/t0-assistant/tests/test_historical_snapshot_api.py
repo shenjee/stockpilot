@@ -491,6 +491,7 @@ class HistoricalSnapshotApiTests(unittest.TestCase):
         self.assertEqual(
             response["error"]["error_code"], "security_not_found"
         )
+        self.assertEqual(response["error"]["category"], "validation")
         self.assertFalse(response["error"]["retryable"])
 
 

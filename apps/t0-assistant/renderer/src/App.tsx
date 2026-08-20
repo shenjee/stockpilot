@@ -970,8 +970,8 @@ export function App() {
   ): Promise<SecurityIdentity | null> {
     if (!window.stockpilot) return null;
     try {
-      const response = await window.stockpilot.selectSecurity(
-        appRequest("select_security", null, { symbol }),
+      const response = await window.stockpilot.resolveSecurityIdentity(
+        appRequest("resolve_security_identity", null, { symbol }),
       );
       const error = applicationErrorFrom(response);
       if (error) return null;
@@ -1182,22 +1182,16 @@ export function App() {
   async function handleEnterDayChart(symbol: string, tradeDate: string) {
     const requestSequence = navigationRequests.current.begin();
     const today = localToday();
-    // Issue #151: do not fabricate instrument_type. For today, the Live
-    // select_security path resolves the authoritative identity. For a
-    // historical date, resolve identity via select_security first, then load
-    // the historical snapshot with the authoritative instrument_type.
+    // Resolve identity before entering today's Live chart or loading a
+    // historical snapshot. Identity lookup itself never changes Live state.
     if (tradeDate === today) {
       setDayChartNotice(null);
-      // performSecuritySelection resolves the authoritative identity from
-      // the select_security response; the pre-call object is a placeholder.
-      const placeholder: SecurityIdentity = {
-        symbol,
-        code: symbol.slice(3),
-        market: (symbol.slice(0, 2) === "sz" ? "sz" : "sh") as "sh" | "sz",
-        name: symbol.slice(3),
-        instrument_type: "stock",
-      };
-      void performSecuritySelection(placeholder);
+      const identity = await resolveSecurity(symbol);
+      if (!identity || !navigationRequests.current.isCurrent(requestSequence)) {
+        setDayChartNotice("证券身份解析失败，无法进入当天图形。");
+        return;
+      }
+      void performSecuritySelection(identity);
       return;
     }
 
@@ -1219,19 +1213,7 @@ export function App() {
       if (workbench.security && workbench.security.symbol === symbol) {
         identity = workbench.security;
       } else {
-        const selectResponse = await window.stockpilot.selectSecurity(
-          appRequest("select_security", null, { symbol }),
-        );
-        if (!navigationRequests.current.isCurrent(requestSequence)) return;
-        const selectError = applicationErrorFrom(selectResponse);
-        if (selectError) {
-          setLoading(false);
-          setDayChartNotice(
-            `该交易日（${tradeDate}）的证券信息加载失败：${selectError.message}`,
-          );
-          return;
-        }
-        const authoritative = standardSecurityFromResponse(selectResponse);
+        const authoritative = await resolveSecurity(symbol);
         if (!authoritative) {
           setLoading(false);
           setDayChartNotice(

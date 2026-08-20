@@ -8,10 +8,10 @@ import { createFakeSafeBridge } from "./fake-safe-bridge.mjs";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const fixture = JSON.parse(
-  await readFile(resolve(testDir, "../contracts/fixtures/workbench-flow-v1.json"), "utf8"),
+  await readFile(resolve(testDir, "../contracts/fixtures/workbench-flow-v2.json"), "utf8"),
 );
 const replayFixture = JSON.parse(
-  await readFile(resolve(testDir, "../contracts/fixtures/replay-speed-v1.json"), "utf8"),
+  await readFile(resolve(testDir, "../contracts/fixtures/replay-speed-v2.json"), "utf8"),
 );
 
 test("Fake Safe Bridge exposes only the domain allowlist", () => {

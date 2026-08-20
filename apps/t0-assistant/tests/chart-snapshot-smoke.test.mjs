@@ -21,9 +21,9 @@ import { createFakeSafeBridge } from "./fake-safe-bridge.mjs";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const [workbenchFixture, replayFixture, chartGroups] = await Promise.all([
-  readFile(resolve(testDir, "../contracts/fixtures/workbench-flow-v1.json"), "utf8")
+  readFile(resolve(testDir, "../contracts/fixtures/workbench-flow-v2.json"), "utf8")
     .then(JSON.parse),
-  readFile(resolve(testDir, "../contracts/fixtures/replay-speed-v1.json"), "utf8")
+  readFile(resolve(testDir, "../contracts/fixtures/replay-speed-v2.json"), "utf8")
     .then(JSON.parse),
   readFile(resolve(testDir, "../contracts/fixtures/chart-groups-v1.json"), "utf8")
     .then(JSON.parse),

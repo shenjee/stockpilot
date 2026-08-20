@@ -37,6 +37,8 @@ def _error_category(error_code: str) -> str:
     """Map historical snapshot error codes to contract categories."""
     if error_code == "invalid_request":
         return "validation"
+    if error_code == "security_not_found":
+        return "validation"
     if error_code == "historical_data_unavailable":
         return "data"
     if error_code == "service_unavailable":

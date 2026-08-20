@@ -214,6 +214,23 @@ class LiveApplicationTests(unittest.TestCase):
             "sh.600000",
         )
 
+    def test_identity_lookup_does_not_select_or_persist(self) -> None:
+        input_port = _DeterministicLiveInput()
+        app = self._app(input_port)
+
+        response = app.resolve_security_identity(
+            request_id="resolve-1",
+            symbol="sh.600000",
+        )
+
+        self.assertTrue(response["accepted"])
+        self.assertEqual(response["data"]["security"]["symbol"], "sh.600000")
+        self.assertIsNone(app.coordinator.snapshot.current_symbol)
+        self.assertEqual(input_port.requests, [])
+        self.assertIsNone(
+            self.preferences.restore_for_startup().snapshot.preferences.last_symbol
+        )
+
     def test_missing_coordinator_session_returns_structured_service_errors(self) -> None:
         app = self._app(_DeterministicLiveInput())
         app._coordinator = SimpleNamespace(

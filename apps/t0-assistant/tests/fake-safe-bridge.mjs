@@ -69,6 +69,24 @@ export function createFakeSafeBridge(fixture, { replayFixture = null, historical
           error: null,
         };
       }
+      if (command === "resolve_security_identity") {
+        return {
+          schema_version: "t0_app_v2",
+          request_id: request.request_id,
+          accepted: true,
+          operation_id: null,
+          data: {
+            security: {
+              symbol: "sh.600000",
+              code: "600000",
+              market: "sh",
+              name: "浦发银行",
+              instrument_type: "stock",
+            },
+          },
+          error: null,
+        };
+      }
       if (command === "select_symbol") {
         return {
           schema_version: "t0_replay_v2",

@@ -1,15 +1,15 @@
 {
-  "schema_version": "t0_replay_v1",
+  "schema_version": "t0_replay_v2",
   "valid_speeds": [1, 2, 5, 10],
   "default_speed": 1,
   "set_speed_requests": [
-    {"schema_version": "t0_replay_v1", "request_id": "speed-1", "session_id": "replay-1", "playback_speed": 1},
-    {"schema_version": "t0_replay_v1", "request_id": "speed-2", "session_id": "replay-1", "playback_speed": 2},
-    {"schema_version": "t0_replay_v1", "request_id": "speed-5", "session_id": "replay-1", "playback_speed": 5},
-    {"schema_version": "t0_replay_v1", "request_id": "speed-10", "session_id": "replay-1", "playback_speed": 10}
+    {"schema_version": "t0_replay_v2", "request_id": "speed-1", "session_id": "replay-1", "playback_speed": 1},
+    {"schema_version": "t0_replay_v2", "request_id": "speed-2", "session_id": "replay-1", "playback_speed": 2},
+    {"schema_version": "t0_replay_v2", "request_id": "speed-5", "session_id": "replay-1", "playback_speed": 5},
+    {"schema_version": "t0_replay_v2", "request_id": "speed-10", "session_id": "replay-1", "playback_speed": 10}
   ],
   "changed_event": {
-    "schema_version": "t0_replay_v1",
+    "schema_version": "t0_replay_v2",
     "service_generation": 1,
     "session_id": "replay-1",
     "revision": 8,

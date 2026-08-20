@@ -555,6 +555,7 @@
         "command": {
           "enum": [
             "search_securities",
+            "resolve_security_identity",
             "select_security",
             "get_live_snapshot",
             "retry_live",
@@ -585,6 +586,22 @@
         }
       },
       "allOf": [
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "const": "resolve_security_identity"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/security_selection_payload"
+              }
+            }
+          }
+        },
         {
           "if": {
             "properties": {

@@ -8,7 +8,7 @@ import { applyTradesChanged } from "../renderer/src/trading/trade-state.mjs";
 const testDir = dirname(fileURLToPath(import.meta.url));
 const fixturePath = resolve(
   testDir,
-  "../contracts/fixtures/list-trades-flow-v1.json",
+  "../contracts/fixtures/list-trades-flow-v2.json",
 );
 
 test("list_trades is a fact-via-changed-event command (contract flow)", async () => {

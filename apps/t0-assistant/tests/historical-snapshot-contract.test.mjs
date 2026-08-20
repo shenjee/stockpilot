@@ -7,7 +7,7 @@ import { dirname, resolve } from "node:path";
 const testDir = dirname(fileURLToPath(import.meta.url));
 const fixturePath = resolve(
   testDir,
-  "../contracts/fixtures/historical-snapshot-flow-v1.json",
+  "../contracts/fixtures/historical-snapshot-flow-v2.json",
 );
 
 test("renderer-side tooling consumes the canonical historical snapshot fixture", async () => {

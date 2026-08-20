@@ -21,11 +21,13 @@ preload, and the React renderer.
 - `fixtures/` contains transport-neutral deterministic payloads intended for
   both Python and TypeScript compatibility tests.
 
-`fixtures/workbench-flow-v1.json` is the canonical T0-004 compatibility flow.
-It contains a complete Live workbench snapshot, typed incremental updates, a
-deterministic out-of-order delivery sequence, an asynchronous operation error,
-and a synchronous rejection. `tests/fake-safe-bridge.mjs` feeds the same file
-to Renderer tests without Electron, Python, or network access.
+The `*-v1.json` fixtures are preserved compatibility payloads. The matching
+`*-v2.json` fixtures carry the v2 schema versions and are used by current v2
+contract and Renderer tests. The workbench fixtures contain a complete Live
+snapshot, typed incremental updates, a deterministic out-of-order delivery
+sequence, an asynchronous operation error, and a synchronous rejection.
+`tests/fake-safe-bridge.mjs` feeds the v2 files to Renderer tests without
+Electron, Python, or network access.
 
 These files describe logical JSON messages. They are **not SQLite schemas**,
 HTTP route definitions, WebSocket framing, Electron IPC names, or generated

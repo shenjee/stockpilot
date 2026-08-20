@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
-const fixturePath = resolve(testDir, "../contracts/fixtures/replay-speed-v1.json");
+const fixturePath = resolve(testDir, "../contracts/fixtures/replay-speed-v2.json");
 const appSchemaPath = resolve(testDir, "../contracts/app-v2.schema.json");
 
 test("TypeScript-side tooling consumes the Replay v1.0 speed fixture", async () => {

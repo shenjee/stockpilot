@@ -338,6 +338,35 @@ class LiveApplicationApi:
             data=data,
         )
 
+    def resolve_security_identity(
+        self,
+        *,
+        request_id: str,
+        symbol: str,
+    ) -> dict[str, Any]:
+        """Resolve security master identity without changing Live state."""
+
+        if self._resolve_security is None:
+            return self._rejected(
+                request_id,
+                "service_unavailable",
+                "证券主数据服务暂时不可用",
+                category="service",
+                affected_capability="security_identity",
+                retryable=True,
+            )
+        identity = self._resolve_security(symbol)
+        if identity is None:
+            return self._rejected(
+                request_id,
+                "security_not_found",
+                f"证券 {symbol} 未在证券主数据中找到",
+                category="validation",
+                affected_capability="security_identity",
+                retryable=False,
+            )
+        return self._accepted(request_id, data={"security": identity.to_dict()})
+
     def save_last_symbol(
         self,
         *,
@@ -435,6 +464,11 @@ class LiveApplicationApi:
     def dispatch(self, command: str, request: dict[str, Any]) -> dict[str, Any]:
         request_id = request["request_id"]
         payload = request.get("payload") or {}
+        if command == "resolve_security_identity":
+            return self.resolve_security_identity(
+                request_id=request_id,
+                symbol=payload["symbol"],
+            )
         if command == "select_security":
             return self.select_security(
                 request_id=request_id,

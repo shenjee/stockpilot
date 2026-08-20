@@ -19,7 +19,7 @@ import {
 const testDir = dirname(fileURLToPath(import.meta.url));
 const fixture = JSON.parse(
   await readFile(
-    resolve(testDir, "../contracts/fixtures/replay-speed-v1.json"),
+    resolve(testDir, "../contracts/fixtures/replay-speed-v2.json"),
     "utf8",
   ),
 );

@@ -88,6 +88,7 @@ except ImportError:  # script context: ``python backend/service.py``
 
 APP_COMMANDS = {
     "search_securities",
+    "resolve_security_identity",
     "select_security",
     "save_last_symbol",
     "get_live_snapshot",
@@ -108,6 +109,7 @@ APP_COMMANDS = {
 
 _LIVE_COMMANDS = frozenset({"get_live_snapshot"})
 _LIVE_APPLICATION_COMMANDS = frozenset({
+    "resolve_security_identity",
     "select_security",
     "save_last_symbol",
     "get_live_snapshot",
@@ -512,6 +514,7 @@ class _Handler(BaseHTTPRequestHandler):
         if not result.get("accepted"):
             status = {
                 "invalid_request": HTTPStatus.BAD_REQUEST,
+                "security_not_found": HTTPStatus.BAD_REQUEST,
                 "session_not_found": HTTPStatus.NOT_FOUND,
             }.get(error_code, HTTPStatus.SERVICE_UNAVAILABLE)
         self._json(status, result)

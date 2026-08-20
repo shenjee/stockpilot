@@ -263,6 +263,23 @@ test("securityCategoryLabel maps standard fields to market classification labels
   );
 });
 
+test("identity conversion rejects missing instrument_type", () => {
+  const incomplete = {
+    symbol: "sh.600000",
+    code: "600000",
+    market: "sh",
+    name: "浦发银行",
+  };
+  assert.deepEqual(
+    securitiesFromSearchResponse({ data: { securities: [incomplete] } }),
+    [],
+  );
+  assert.equal(
+    restoredSecurityFromResponse({ data: { restored_security: incomplete } }),
+    null,
+  );
+});
+
 test("the quote sidebar keeps every field and renders missing values in place", () => {
   const quote = {
     timestamp: "2026-07-22 09:35:03",
