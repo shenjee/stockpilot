@@ -128,7 +128,16 @@ export function securitySearchEnterTarget(state, count) {
   return state.activeIndex >= 0 ? state.activeIndex : 0;
 }
 
-export function isCompleteWorkbenchSnapshot(candidate) {
+/**
+ * Shallow envelope-shape check for Renderer ingress.
+ *
+ * This is NOT a full workbench_snapshot contract validator: it only confirms
+ * the fields the Renderer needs to accept a payload into projection plumbing.
+ * Deep bar/indicator/timeline invariants remain owned by the Python-side JSON
+ * Schema, and chart renderability is probed separately via
+ * ``inspectWorkbenchSnapshotCandidate`` / ``createChartGroupModel``.
+ */
+export function hasWorkbenchSnapshotEnvelope(candidate) {
   if (!candidate || typeof candidate !== "object") return false;
   const session = candidate.session;
   const market = candidate.market;

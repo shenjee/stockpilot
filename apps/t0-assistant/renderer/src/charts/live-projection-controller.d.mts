@@ -26,5 +26,6 @@ export declare class LiveProjectionController {
   ): ChartProjection;
   beginRebaselineRequest(requestKey: string): boolean;
   clearRebaselineRequest(): void;
+  requestRebaseline(): boolean;
   subscribe(listener: (projection: ChartProjection) => void): () => void;
 }

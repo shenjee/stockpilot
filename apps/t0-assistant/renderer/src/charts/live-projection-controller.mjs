@@ -136,6 +136,24 @@ export class LiveProjectionController {
   }
 
   /**
+   * Mark the current Live projection as needing a full snapshot rebaseline
+   * without mutating its visible snapshot. Used when a payload passes the
+   * envelope check but fails chart-model contract probing (#155).
+   * @returns {boolean} true when rebaselineRequired newly became true
+   */
+  requestRebaseline() {
+    if (!this._projection || this._projection.rebaselineRequired) {
+      return false;
+    }
+    this._projection = {
+      ...this._projection,
+      rebaselineRequired: true,
+    };
+    this._notify();
+    return true;
+  }
+
+  /**
    * @param {(projection: ChartProjection) => void} listener
    * @returns {() => void}
    */

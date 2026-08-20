@@ -11,9 +11,15 @@ import { ChartGroup } from "./charts/ChartGroup";
 import {
   ChartGroupKind,
   createChartGroupModel,
+  tryCreateChartGroupModel,
+  type ChartGroupModel,
   type MarketBar,
   type WorkbenchChartSnapshot,
 } from "./charts/chart-model.mjs";
+import {
+  chartContractApplicationError,
+  inspectWorkbenchSnapshotCandidate,
+} from "./charts/workbench-snapshot-guard.mjs";
 import { selectActiveWorkbenchProjection } from "./charts/active-workbench-projection.mjs";
 import {
   createChartProjection,
@@ -45,7 +51,6 @@ import {
   clearLiveScopedBackgroundError,
   createLatestRequestTracker,
   initialSecuritySearchState,
-  isCompleteWorkbenchSnapshot,
   latestDailyBars,
   liveOperationFailurePresentation,
   operationMatchesEnvelope,
@@ -189,6 +194,10 @@ export function App() {
   // historical workbench; see the T0-043 contract gap). Never wipes the last
   // successful chart.
   const [dayChartNotice, setDayChartNotice] = useState<string | null>(null);
+  const lastGoodChartModels = useRef<{
+    fiveMinute: ChartGroupModel;
+    intraday: ChartGroupModel;
+  } | null>(null);
   const activeOperations = useRef(new Map<string, ActiveOperation>());
   const modeRef = useRef(workbench.mode);
   const serviceGeneration = useRef(initialStatus.service_generation);
@@ -635,6 +644,20 @@ export function App() {
         setBackgroundError((current) => clearLiveScopedBackgroundError(current));
         return;
       }
+      if (
+        event &&
+        typeof event === "object" &&
+        (event as { event_type?: unknown }).event_type === "workbench_snapshot"
+      ) {
+        const inspected = inspectWorkbenchSnapshotCandidate(
+          (event as { payload?: unknown }).payload,
+        );
+        if (!inspected.ok && inspected.reason === "contract") {
+          setBackgroundError(chartContractApplicationError(inspected.error));
+          liveProjectionController.current?.requestRebaseline();
+          return;
+        }
+      }
       applyLiveEvent();
     });
   }, []);
@@ -643,13 +666,19 @@ export function App() {
     if (!window.stockpilot) return;
     const stopSnapshot = window.stockpilot.onReplaySnapshot((candidate) => {
       if (modeRef.current !== WorkbenchMode.REPLAY) return;
-      if (!isCompleteWorkbenchSnapshot(candidate)) return;
-      const facts = replayFactsFromSnapshot(candidate);
+      const inspected = inspectWorkbenchSnapshotCandidate(candidate);
+      if (!inspected.ok) {
+        if (inspected.reason === "contract") {
+          setBackgroundError(chartContractApplicationError(inspected.error));
+        }
+        return;
+      }
+      const facts = replayFactsFromSnapshot(inspected.snapshot);
       if (!facts) return;
-      replaySessionController.current?.acceptSnapshot(candidate, {
+      replaySessionController.current?.acceptSnapshot(inspected.snapshot, {
         service_generation: serviceGeneration.current,
         session_id: facts.sessionId,
-        revision: candidate.session?.revision,
+        revision: inspected.snapshot.session?.revision,
       });
     });
     const stopEvent = window.stockpilot.onReplayEvent((event) => {
@@ -1157,21 +1186,30 @@ export function App() {
         return;
       }
       const responseData = (response as { data?: unknown }).data;
-      const snapshot = responseData as WorkbenchChartSnapshot;
-      if (!isCompleteWorkbenchSnapshot(snapshot) || !snapshot.session) {
+      const inspected = inspectWorkbenchSnapshotCandidate(responseData);
+      const session = inspected.ok ? inspected.snapshot.session : undefined;
+      if (!inspected.ok || !session) {
         setLoading(false);
-        setDayChartNotice(
-          `该交易日（${tradeDate}）的历史图形响应不完整，已保留当前图形。`,
-        );
+        if (inspected.ok === false && inspected.reason === "contract") {
+          setBackgroundError(chartContractApplicationError(inspected.error));
+          setDayChartNotice(
+            `该交易日（${tradeDate}）的历史图形载荷无效，已保留当前图形。`,
+          );
+        } else {
+          setDayChartNotice(
+            `该交易日（${tradeDate}）的历史图形响应不完整，已保留当前图形。`,
+          );
+        }
         return;
       }
+      const snapshot = inspected.snapshot;
       setWorkbench((current) => selectWorkbenchSecurity(current, identity));
       setQuery(identity.code);
       liveProjectionController.current?.replace(
         createChartProjection(snapshot, {
           service_generation: serviceGeneration.current,
-          session_id: snapshot.session.session_id,
-          revision: snapshot.session.revision,
+          session_id: session.session_id,
+          revision: session.revision,
         }),
       );
       setLoading(false);
@@ -1484,9 +1522,9 @@ export function App() {
     [replayFacts?.sessionId],
   );
 
-  const fiveMinuteModel = useMemo(
+  const fiveMinuteModelResult = useMemo(
     () =>
-      createChartGroupModel(
+      tryCreateChartGroupModel(
         snapshot,
         ChartGroupKind.FIVE_MINUTE,
         workbench.layers,
@@ -1494,10 +1532,51 @@ export function App() {
       ),
     [snapshot, workbench.layers, chartTrades],
   );
-  const intradayModel = useMemo(
-    () => createChartGroupModel(snapshot, ChartGroupKind.ONE_MINUTE),
+  const intradayModelResult = useMemo(
+    () => tryCreateChartGroupModel(snapshot, ChartGroupKind.ONE_MINUTE),
     [snapshot],
   );
+  const fiveMinuteModel =
+    fiveMinuteModelResult.ok
+      ? fiveMinuteModelResult.model
+      : (lastGoodChartModels.current?.fiveMinute ??
+        createChartGroupModel(
+          emptyChartSnapshot,
+          ChartGroupKind.FIVE_MINUTE,
+        ));
+  const intradayModel =
+    intradayModelResult.ok
+      ? intradayModelResult.model
+      : (lastGoodChartModels.current?.intraday ??
+        createChartGroupModel(emptyChartSnapshot, ChartGroupKind.ONE_MINUTE));
+
+  useEffect(() => {
+    if (fiveMinuteModelResult.ok && intradayModelResult.ok) {
+      lastGoodChartModels.current = {
+        fiveMinute: fiveMinuteModelResult.model,
+        intraday: intradayModelResult.model,
+      };
+      setBackgroundError((current) =>
+        current?.error_code === "chart_contract_failed" ? null : current,
+      );
+      return;
+    }
+    const failure = !fiveMinuteModelResult.ok
+      ? fiveMinuteModelResult.error
+      : !intradayModelResult.ok
+        ? intradayModelResult.error
+        : null;
+    if (failure == null) return;
+    setBackgroundError(chartContractApplicationError(failure));
+    if (workbench.mode === WorkbenchMode.LIVE) {
+      liveProjectionController.current?.requestRebaseline();
+    }
+  }, [
+    fiveMinuteModelResult,
+    intradayModelResult,
+    workbench.mode,
+  ]);
+
   // 视口状态镜像到 workbench.chartViews（UI 规格 §12：在 React 状态层保存可见范围）。
   // 保存 {range, followState} 快照；controller 节流上报，避免高频 setState。React 是
   // 运行时权威，组件重建后据此恢复，不依赖图表实例未被卸载。
@@ -2515,17 +2594,21 @@ function chartProjectionFromEvent(event: unknown): ChartProjection | null {
     revision?: unknown;
     payload?: unknown;
   };
-  return envelope.event_type === "workbench_snapshot" &&
-    Number.isInteger(envelope.service_generation) &&
-    typeof envelope.session_id === "string" &&
-    Number.isInteger(envelope.revision) &&
-    isCompleteWorkbenchSnapshot(envelope.payload)
-    ? createChartProjection(envelope.payload, {
-        service_generation: envelope.service_generation as number,
-        session_id: envelope.session_id,
-        revision: envelope.revision as number,
-      })
-    : null;
+  if (
+    envelope.event_type !== "workbench_snapshot" ||
+    !Number.isInteger(envelope.service_generation) ||
+    typeof envelope.session_id !== "string" ||
+    !Number.isInteger(envelope.revision)
+  ) {
+    return null;
+  }
+  const inspected = inspectWorkbenchSnapshotCandidate(envelope.payload);
+  if (!inspected.ok) return null;
+  return createChartProjection(inspected.snapshot, {
+    service_generation: envelope.service_generation as number,
+    session_id: envelope.session_id,
+    revision: envelope.revision as number,
+  });
 }
 
 function isChartAppEvent(
@@ -2546,7 +2629,8 @@ function workbenchSnapshotFromResponse(
   if (!response || typeof response !== "object") return null;
   const result = response as { data?: unknown; snapshot?: unknown };
   const candidate = result.data ?? result.snapshot ?? response;
-  return isCompleteWorkbenchSnapshot(candidate) ? candidate : null;
+  const inspected = inspectWorkbenchSnapshotCandidate(candidate);
+  return inspected.ok ? inspected.snapshot : null;
 }
 
 function projectionIdentity(projection: ChartProjection) {
