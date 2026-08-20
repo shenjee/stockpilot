@@ -8,7 +8,7 @@ from copy import deepcopy
 from pathlib import Path
 
 from packages.t0assistant.runtime.live_projection_store import (
-    _merge_five_minute_bars,
+    merge_five_minute_bars,
 )
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -44,7 +44,7 @@ class LiveFiveMinuteMergeContractTests(unittest.TestCase):
         for step in _FIXTURE["steps"]:
             op = step["op"]
             if op == "merge":
-                bars = _merge_five_minute_bars(bars, step["incoming"])
+                bars = merge_five_minute_bars(bars, step["incoming"])
             elif op == "replace":
                 bars = deepcopy(step["bars_5m"])
             else:

@@ -532,7 +532,7 @@ def _apply_incremental(
         target["chan_analysis"] = copy.deepcopy(payload)
 
 
-def _merge_five_minute_bars(
+def merge_five_minute_bars(
     current: list[dict[str, Any]] | None,
     incoming: list[dict[str, Any]] | None,
 ) -> list[dict[str, Any]]:
@@ -543,6 +543,10 @@ def _merge_five_minute_bars(
     unclosed row whose timestamp is missing from ``incoming`` is removed.
     Closed bars are never deleted here; official 5m increments include the
     current dynamic bar so they cannot wipe it.
+
+    Public test surface for cross-runtime parity with Renderer
+    ``mergeFiveMinuteBars``; locked by
+    ``apps/t0-assistant/contracts/fixtures/live-five-minute-merge-v1.json``.
     """
 
     incoming_timestamps = {
@@ -554,6 +558,15 @@ def _merge_five_minute_bars(
         if row.get("closed") is True or row.get("timestamp") in incoming_timestamps
     ]
     return _merge_rows_by_timestamp(retained, incoming)
+
+
+def _merge_five_minute_bars(
+    current: list[dict[str, Any]] | None,
+    incoming: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Compatibility alias for :func:`merge_five_minute_bars`."""
+
+    return merge_five_minute_bars(current, incoming)
 
 
 def _merge_rows_by_timestamp(

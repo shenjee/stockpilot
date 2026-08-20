@@ -20,14 +20,11 @@ preload, and the React renderer.
   `schema_version: "t0_replay_v1"`.
 - `fixtures/` contains transport-neutral deterministic payloads intended for
   both Python and TypeScript compatibility tests.
-- `fixtures/live-five-minute-merge-v1.json` locks Python
-  `LiveProjectionStore._merge_five_minute_bars` and Renderer
-  `mergeFiveMinuteBars` to the same step-wise `bars_5m` results (#155). It is
-  a test vector only and does not change the public event contract.
-  `fixtures/live-five-minute-merge-v1.json` (#155) locks the shared dynamic
-  5m merge semantics for Python `merge_five_minute_bars` and Renderer
-  `mergeFiveMinuteBars`; both runtimes assert every step, not only the final
-  `bars_5m`.
+  `fixtures/live-five-minute-merge-v1.json` (#155) locks Python
+  `merge_five_minute_bars` and Renderer `mergeFiveMinuteBars` to the same
+  step-wise `bars_5m` results. Both runtimes assert every step, not only the
+  final state. It is a test vector only and does not change the public event
+  contract.
 
 The `*-v1.json` fixtures are preserved compatibility payloads. The matching
 `*-v2.json` fixtures carry the v2 schema versions and are used by current v2
