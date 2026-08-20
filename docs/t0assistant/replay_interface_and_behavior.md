@@ -735,7 +735,10 @@ fixture 不访问网络，时间戳严格递增，覆盖上午、午休、下午
 证明：
 
 1. 相同输入前缀、配置和目标时点产生字节级稳定或经明确忽略字段后的等价快照；
-2. 任意快照中的 bar、指标、CZSC、绘图原语和行情值都不晚于 `current_time`；
+2. 任意快照中的正式闭合 bar、指标、CZSC、绘图原语和行情值都不晚于 `current_time`；
+   唯一例外是当前正在形成的 5 分钟动态 K（`closed: false`），其 `timestamp` 可使用
+   该桶的标准收盘边界，因而可晚于 `current_time`。展示层不得再按 `replay.current_time`
+   二次截断。
    绘图原语特指 `chan_analysis` 中由 `chantheory` `AnalysisResult.to_dict()` 输出的
    `plot_primitives`。
    `start_time`、`end_time` 和 `next_bar_time` 只描述回放时间位置，不得携带未来价格、

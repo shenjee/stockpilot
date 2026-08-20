@@ -326,27 +326,12 @@ export function createChartGroupModel(snapshot, kind, layers = {}, trades = []) 
     throw new TypeError(`Unsupported chart group: ${kind}`);
   }
 
-  // 回放截断（前端防线）：后端快照已按时点截断；此处再丢弃 current_time 之后的数据，
-  // 防止视口或图层越过当前模拟时点。时间戳为定长字符串，字典序与时间序一致。
-  const asOf = snapshot.replay?.current_time ?? null;
-  const clipRows = (rows) => {
-    const list = rows ?? [];
-    return asOf === null
-      ? list
-      : list.filter((row) => row.timestamp <= asOf);
-  };
-  const clipChanByEnd = (rows) => {
-    const list = rows ?? [];
-    return asOf === null
-      ? list
-      : list.filter((row) => row.end_timestamp <= asOf);
-  };
-
-  const bars = clipRows(
+  // 展示层只消费已对齐的快照载荷，不读取 replay / session_type 做内容裁剪。
+  // 时点正确性由后端契约保证（含 closed=false 动态 5m 的桶收盘标签）。
+  const bars =
     kind === FIVE_MINUTE
-      ? snapshot.market.bars_5m
-      : snapshot.market.bars_1m,
-  );
+      ? (snapshot.market.bars_5m ?? [])
+      : (snapshot.market.bars_1m ?? []);
   const previousClose =
     typeof snapshot.market.quote?.previous_close === "number" &&
     Number.isFinite(snapshot.market.quote.previous_close)
@@ -381,7 +366,7 @@ export function createChartGroupModel(snapshot, kind, layers = {}, trades = []) 
     movingAverages[period] =
       kind === FIVE_MINUTE && enabled(period)
         ? normalizePoints(
-            clipRows(indicator.ma?.[period]),
+            indicator.ma?.[period] ?? [],
             timestampSet,
             `five_minute ${period}`,
           )
@@ -393,17 +378,17 @@ export function createChartGroupModel(snapshot, kind, layers = {}, trades = []) 
     kind === FIVE_MINUTE
       ? {
           upper: normalizePoints(
-            clipRows(indicator.boll?.upper),
+            indicator.boll?.upper ?? [],
             timestampSet,
             "five_minute boll upper",
           ),
           middle: normalizePoints(
-            clipRows(indicator.boll?.middle),
+            indicator.boll?.middle ?? [],
             timestampSet,
             "five_minute boll middle",
           ),
           lower: normalizePoints(
-            clipRows(indicator.boll?.lower),
+            indicator.boll?.lower ?? [],
             timestampSet,
             "five_minute boll lower",
           ),
@@ -413,27 +398,21 @@ export function createChartGroupModel(snapshot, kind, layers = {}, trades = []) 
   // meta.pending_stroke，单独用虚线画出，不进入 strokes 数组。
   const strokes =
     kind === FIVE_MINUTE && enabled("strokes")
-      ? normalizeStrokes(
-          clipChanByEnd(collectStrokeRows(snapshot.chan_analysis)),
-          timestampSet,
-        )
+      ? normalizeStrokes(collectStrokeRows(snapshot.chan_analysis), timestampSet)
       : [];
   // PRD：中枢均指笔中枢。chantheory 会同时产出 stroke/segment，
   // 图层只投影 level=stroke（缺省 level 视为 stroke，兼容旧快照）。
   const pivotZones =
     kind === FIVE_MINUTE && enabled("pivot_zones")
-      ? normalizePivotZones(
-          clipChanByEnd(snapshot.chan_analysis?.pivot_zones),
-          timestampSet,
-        )
+      ? normalizePivotZones(snapshot.chan_analysis?.pivot_zones, timestampSet)
       : [];
   // CZSC 买卖点映射标准 1B/1S/2B/2S/3B/3S 和结构候选 Buy?/Sell?；
   // 显示投影不修改后端 CZSC 数据。
   const czscMarkers =
     kind === FIVE_MINUTE
       ? normalizeCzscMarkers(
-          clipRows(snapshot.chan_analysis?.candidate_buy_points),
-          clipRows(snapshot.chan_analysis?.candidate_sell_points),
+          snapshot.chan_analysis?.candidate_buy_points,
+          snapshot.chan_analysis?.candidate_sell_points,
           timestampSet,
         )
       : [];
@@ -441,13 +420,13 @@ export function createChartGroupModel(snapshot, kind, layers = {}, trades = []) 
   const divergenceMarkers =
     kind === FIVE_MINUTE
       ? normalizeDivergenceMarkers(
-          clipRows(snapshot.chan_analysis?.divergences),
+          snapshot.chan_analysis?.divergences,
           timestampSet,
         )
       : [];
 
   const normalizedVolumePoints = normalizePoints(
-    clipRows(indicator.volume.values),
+    indicator.volume.values ?? [],
     timestampSet,
     `${kind} volume`,
   );
@@ -497,7 +476,7 @@ export function createChartGroupModel(snapshot, kind, layers = {}, trades = []) 
       kind === ONE_MINUTE
         ? padPointsToTimeline(
             normalizePoints(
-              clipRows(indicator.vwap),
+              indicator.vwap ?? [],
               timestampSet,
               "one_minute vwap",
             ),
@@ -515,7 +494,7 @@ export function createChartGroupModel(snapshot, kind, layers = {}, trades = []) 
       kind === FIVE_MINUTE
         ? padPointsToTimeline(
             normalizePoints(
-              clipRows(indicator.volume.ma5),
+              indicator.volume.ma5 ?? [],
               timestampSet,
               "five_minute volume ma5",
             ),
@@ -526,7 +505,7 @@ export function createChartGroupModel(snapshot, kind, layers = {}, trades = []) 
       kind === FIVE_MINUTE
         ? padPointsToTimeline(
             normalizePoints(
-              clipRows(indicator.volume.ma10),
+              indicator.volume.ma10 ?? [],
               timestampSet,
               "five_minute volume ma10",
             ),
@@ -539,7 +518,7 @@ export function createChartGroupModel(snapshot, kind, layers = {}, trades = []) 
     macd: {
       dif: padPointsToTimeline(
         normalizePoints(
-          clipRows(indicator.macd.dif),
+          indicator.macd.dif ?? [],
           timestampSet,
           `${kind} macd dif`,
         ),
@@ -547,7 +526,7 @@ export function createChartGroupModel(snapshot, kind, layers = {}, trades = []) 
       ),
       dea: padPointsToTimeline(
         normalizePoints(
-          clipRows(indicator.macd.dea),
+          indicator.macd.dea ?? [],
           timestampSet,
           `${kind} macd dea`,
         ),
@@ -555,7 +534,7 @@ export function createChartGroupModel(snapshot, kind, layers = {}, trades = []) 
       ),
       histogram: padPointsToTimeline(
         normalizePoints(
-          clipRows(indicator.macd.histogram),
+          indicator.macd.histogram ?? [],
           timestampSet,
           `${kind} macd histogram`,
         ),
