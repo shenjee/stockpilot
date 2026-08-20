@@ -18,6 +18,7 @@ import {
 } from "./charts/chart-model.mjs";
 import {
   chartContractApplicationError,
+  chartEnvelopeApplicationError,
   inspectWorkbenchSnapshotCandidate,
 } from "./charts/workbench-snapshot-guard.mjs";
 import { selectActiveWorkbenchProjection } from "./charts/active-workbench-projection.mjs";
@@ -27,6 +28,7 @@ import {
 } from "./charts/chart-projection.mjs";
 import { LiveProjectionController } from "./charts/live-projection-controller.mjs";
 import { ReplaySessionController } from "./charts/replay-session-controller.mjs";
+import { replayEventEnvelope } from "./replay-event-envelope.mjs";
 import {
   applyWorkbenchPreferences,
   createWorkbenchState,
@@ -644,6 +646,9 @@ export function App() {
         setBackgroundError((current) => clearLiveScopedBackgroundError(current));
         return;
       }
+      // Invalid or incomplete workbench_snapshot must never enter the incremental
+      // reducer: that would advance revision while keeping the old snapshot body
+      // (#155 review P1). Always surface an error and request rebaseline.
       if (
         event &&
         typeof event === "object" &&
@@ -654,9 +659,11 @@ export function App() {
         );
         if (!inspected.ok && inspected.reason === "contract") {
           setBackgroundError(chartContractApplicationError(inspected.error));
-          liveProjectionController.current?.requestRebaseline();
-          return;
+        } else {
+          setBackgroundError(chartEnvelopeApplicationError());
         }
+        liveProjectionController.current?.requestRebaseline();
+        return;
       }
       applyLiveEvent();
     });
@@ -664,23 +671,11 @@ export function App() {
 
   useEffect(() => {
     if (!window.stockpilot) return;
-    const stopSnapshot = window.stockpilot.onReplaySnapshot((candidate) => {
-      if (modeRef.current !== WorkbenchMode.REPLAY) return;
-      const inspected = inspectWorkbenchSnapshotCandidate(candidate);
-      if (!inspected.ok) {
-        if (inspected.reason === "contract") {
-          setBackgroundError(chartContractApplicationError(inspected.error));
-        }
-        return;
-      }
-      const facts = replayFactsFromSnapshot(inspected.snapshot);
-      if (!facts) return;
-      replaySessionController.current?.acceptSnapshot(inspected.snapshot, {
-        service_generation: serviceGeneration.current,
-        session_id: facts.sessionId,
-        revision: inspected.snapshot.session?.revision,
-      });
-    });
+    // replay-event is the sole authoritative Replay ingress. Gateway also
+    // emits bare replay-snapshot payloads (no service_generation / outer
+    // session_id / operation_id); those must not write the controller or they
+    // would bypass the identity gate and overwrite Replay-owned errors
+    // (#155 / #162 review P1).
     const stopEvent = window.stockpilot.onReplayEvent((event) => {
       if (modeRef.current !== WorkbenchMode.REPLAY) return;
       const envelope = replayEventEnvelope(event);
@@ -712,15 +707,43 @@ export function App() {
         return;
       }
       if (envelope.event_type === "workbench_snapshot") {
-        if (replay.matchesLoadOperation(envelope.operation_id)) {
-          replay.clearLoadOperation();
-        }
-        const cursorNote = replay.noteCursorOutcome(
+        const operationId =
           typeof envelope.operation_id === "string"
             ? envelope.operation_id
-            : null,
-          "completed",
-        );
+            : null;
+        const inspected = inspectWorkbenchSnapshotCandidate(envelope.payload);
+        if (!inspected.ok) {
+          setBackgroundError(
+            asReplayOwnedError(
+              inspected.reason === "contract"
+                ? chartContractApplicationError(inspected.error)
+                : chartEnvelopeApplicationError(),
+            ),
+          );
+          if (replay.matchesLoadOperation(operationId)) {
+            replay.failLoadOperation();
+          } else {
+            const cursorNote = replay.noteCursorOutcome(operationId, "failed");
+            if (cursorNote === "settled") {
+              replay.setResumeAfterSeek(false);
+            }
+          }
+          return;
+        }
+        // Outer envelope identity is authoritative; do not fill revision from
+        // payload. acceptSnapshot also requires payload session.revision to
+        // match (#162 review P2).
+        const accepted = replay.acceptSnapshot(inspected.snapshot, {
+          service_generation: envelope.service_generation,
+          session_id: envelope.session_id,
+          revision: envelope.revision,
+          operation_id: operationId,
+        });
+        if (!accepted) {
+          // Identity/operation mismatch: keep loading/fallback; do not settle.
+          return;
+        }
+        const cursorNote = replay.noteCursorOutcome(operationId, "completed");
         if (cursorNote === "settled") {
           if (replay.takeResumeAfterSeek()) {
             requestReplayPlayback(
@@ -744,13 +767,14 @@ export function App() {
       });
     });
     return () => {
-      stopSnapshot();
       stopEvent();
     };
   }, []);
 
   useEffect(() => {
-    if (!window.stockpilot || workbench.mode !== WorkbenchMode.LIVE) return;
+    // Live rebaseline belongs to the Live controller lifecycle and must keep
+    // running while Replay is foreground (#155 review P2).
+    if (!window.stockpilot) return;
     const live = liveProjectionController.current;
     if (!live) return;
     const liveProjection = live.projection;
@@ -795,7 +819,7 @@ export function App() {
       .catch(() => {
         // The gateway also owns the bounded rebaseline path.
       });
-  }, [liveCtrl.projection, workbench.mode]);
+  }, [liveCtrl.projection]);
 
   useEffect(() => {
     if (!window.stockpilot || !preferencesHydrated) return;
@@ -1557,7 +1581,10 @@ export function App() {
         intraday: intradayModelResult.model,
       };
       setBackgroundError((current) =>
-        current?.error_code === "chart_contract_failed" ? null : current,
+        current?.error_code === "chart_contract_failed" ||
+        current?.error_code === "chart_envelope_failed"
+          ? null
+          : current,
       );
       return;
     }
@@ -2552,41 +2579,6 @@ function eventEnvelope(event: unknown) {
         payload: envelope.payload,
       }
     : null;
-}
-
-function replayEventEnvelope(event: unknown) {
-  if (!event || typeof event !== "object") return null;
-  const envelope = event as {
-    schema_version?: unknown;
-    event_type?: unknown;
-    operation_id?: unknown;
-    service_generation?: unknown;
-    session_id?: unknown;
-    revision?: unknown;
-    payload?: unknown;
-  };
-  if (
-    envelope.schema_version !== "t0_replay_v2" ||
-    typeof envelope.event_type !== "string" ||
-    typeof envelope.session_id !== "string"
-  ) {
-    return null;
-  }
-  return {
-    event_type: envelope.event_type,
-    operation_id:
-      typeof envelope.operation_id === "string"
-        ? envelope.operation_id
-        : null,
-    service_generation:
-      typeof envelope.service_generation === "number"
-        ? envelope.service_generation
-        : null,
-    session_id: envelope.session_id,
-    revision:
-      typeof envelope.revision === "number" ? envelope.revision : null,
-    payload: envelope.payload,
-  };
 }
 
 function chartProjectionFromEvent(event: unknown): ChartProjection | null {

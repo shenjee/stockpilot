@@ -338,3 +338,19 @@ test("bars_5m increments revise the dynamic bar, drop the previous bucket, and k
     1,
   );
 });
+
+test("workbench_snapshot events never advance Live revision as increments", () => {
+  // #155 review P1: invalid/full snapshots must replace via applySnapshot, not
+  // applyLiveChartEvent. Defense in depth if App wrongly routes them here.
+  const start = baselineProjection();
+  const ignored = applyLiveChartEvent(start, {
+    event_type: "workbench_snapshot",
+    service_generation: start.serviceGeneration,
+    session_id: start.sessionId,
+    revision: start.revision + 1,
+    payload: { timezone: "Asia/Shanghai" },
+  });
+  assert.equal(ignored, start);
+  assert.equal(ignored.revision, start.revision);
+  assert.equal(ignored.snapshot, start.snapshot);
+});

@@ -11,6 +11,7 @@ import {
 } from "../renderer/src/charts/chart-model.mjs";
 import {
   chartContractApplicationError,
+  chartEnvelopeApplicationError,
   inspectWorkbenchSnapshotCandidate,
 } from "../renderer/src/charts/workbench-snapshot-guard.mjs";
 import { hasWorkbenchSnapshotEnvelope } from "../renderer/src/workbench-presenter.mjs";
@@ -89,5 +90,12 @@ test("contract failure keeps last good Live projection and requests rebaseline",
   assert.equal(live.projection.snapshot, good.snapshot);
   const error = chartContractApplicationError(inspected.error);
   assert.equal(error.error_code, "chart_contract_failed");
+  assert.match(error.message, /已保留上一幅有效图形/);
+});
+
+test("chartEnvelopeApplicationError retains last chart and is retryable", () => {
+  const error = chartEnvelopeApplicationError();
+  assert.equal(error.error_code, "chart_envelope_failed");
+  assert.equal(error.retryable, true);
   assert.match(error.message, /已保留上一幅有效图形/);
 });
