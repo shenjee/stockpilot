@@ -689,6 +689,18 @@ test("real controller: dynamic 5m MACD null slot stays x-aligned via time-anchor
     group.setModel(model);
     globalThis.__flushRaf();
 
+    // Issue #154：动态未闭合 K 必须追加 99 alpha；正式闭合 K 保持不透明。
+    // TypeScript private 在运行时仍可访问（与下方 priceChart 用法一致）。
+    const { MismatchDirection } = await import("lightweight-charts");
+    const closedCandle = group.priceSeries.dataByIndex(0, MismatchDirection.None);
+    const dynamicCandle = group.priceSeries.dataByIndex(2, MismatchDirection.None);
+    assert.equal(closedCandle.color, "#ef5350");
+    assert.equal(closedCandle.borderColor, "#ef5350");
+    assert.equal(closedCandle.wickColor, "#ef5350");
+    assert.equal(dynamicCandle.color, "#26a69a99");
+    assert.equal(dynamicCandle.borderColor, "#26a69a99");
+    assert.equal(dynamicCandle.wickColor, "#26a69a99");
+
     const charts = [group.priceChart, group.volumeChart, group.macdChart];
     const range = { from: 0, to: 2 };
     for (const chart of charts) {

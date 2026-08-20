@@ -861,6 +861,11 @@ test("replay metadata does not truncate bars, indicators, or CZSC layers", () =>
   assert.equal(model.pivotZones.length, 1);
   assert.equal(model.czscMarkers.length, 1);
   assert.equal(model.divergenceMarkers.length, 1);
+  // 验收 D（#154）：游标 10:00 之后、且与 bars 对齐的正式指标点仍须保留。
+  assert.deepEqual(
+    model.macd.histogram.find((point) => point.timestamp === "2026-07-22 10:05:00"),
+    { timestamp: "2026-07-22 10:05:00", value: 0.0476 },
+  );
   // 动态末槽仍由 padPointsToTimeline 留 null，MACD 长度与 bars 对齐。
   assert.equal(model.macd.histogram.at(-1)?.timestamp, "2026-07-22 10:10:00");
   assert.equal(model.macd.histogram.at(-1)?.value, null);
@@ -1063,7 +1068,7 @@ test("replay projects forming 5m frames T1/T2/T3 without current_time clipping",
 });
 
 test("live and replay project identical chart models for the same market payload", () => {
-  // 场景 B（#154）：去掉 / 保留 replay 包装时，K / 动态 VOL / MACD 投影一致。
+  // 场景 B（#154）：去掉 / 保留 replay 包装时，5 分钟与 1 分钟投影均一致。
   const live = structuredClone(fixture);
   live.replay = null;
   const replay = structuredClone(fixture);
@@ -1079,17 +1084,14 @@ test("live and replay project identical chart models for the same market payload
   };
 
   const layers = { strokes: true, pivot_zones: true, ma5: true };
-  const liveModel = createChartGroupModel(
-    live,
-    ChartGroupKind.FIVE_MINUTE,
-    layers,
+  assert.deepEqual(
+    createChartGroupModel(replay, ChartGroupKind.FIVE_MINUTE, layers),
+    createChartGroupModel(live, ChartGroupKind.FIVE_MINUTE, layers),
   );
-  const replayModel = createChartGroupModel(
-    replay,
-    ChartGroupKind.FIVE_MINUTE,
-    layers,
+  assert.deepEqual(
+    createChartGroupModel(replay, ChartGroupKind.ONE_MINUTE),
+    createChartGroupModel(live, ChartGroupKind.ONE_MINUTE),
   );
-  assert.deepEqual(replayModel, liveModel);
 });
 
 // ---------------------------------------------------------------------------
