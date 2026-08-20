@@ -8,13 +8,21 @@
  * - following：右对齐最新一根可见 K；宽度变化重算 N；新数据自然前滚。
  * - manual：保留逻辑可见范围；刷新/动态 K/布局/react 重渲不强制跳回最新；
  *   用户回到最新边缘后恢复 following。
- *   实盘 5 分钟“新增真实 K 强制贴右”由 SynchronizedChartGroup.forceFollowOnLiveAppend
- *   在 applyModel 之上处理，不改变本模块默认语义（Issue #148）。
+ *   实盘 5 分钟“新增真实 K 强制贴右”由 SynchronizedChartGroup.appendFollowPolicy
+ *   （``force-follow-latest``）在 applyModel 之上处理，不改变本模块默认语义（Issue #148）。
  * - 回放截断：applyModel 在 manual 下将范围夹紧到新序列长度，丢弃对未来时点的引用。
  *
  * 时间戳为字符串（与契约一致），比较按字典序——契约时间戳为定长
  * "YYYY-MM-DD HH:MM:SS"，字典序与时间序一致。
  */
+
+/** Chart viewport append-follow strategy (#155). Not Live/Replay product modes. */
+export const AppendFollowPolicy = Object.freeze({
+  /** Keep manual/following semantics from applyModel (Replay / non-forcing paths). */
+  PRESERVE: "preserve",
+  /** On stable forward append of a real bar, force followLatest (Live 5m, #148). */
+  FORCE_FOLLOW_LATEST: "force-follow-latest",
+});
 
 export const FollowState = Object.freeze({
   FOLLOWING: "following",

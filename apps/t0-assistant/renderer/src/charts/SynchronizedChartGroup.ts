@@ -42,6 +42,7 @@ import {
   syncChartGroupPriceScaleWidths,
 } from "./chart-scale-alignment.mjs";
 import {
+  AppendFollowPolicy,
   FOLLOW_MIN_VISIBLE_BARS_5M,
   FollowState,
   MANUAL_MIN_VISIBLE_BARS_5M,
@@ -54,6 +55,7 @@ import {
   restoreViewportFromSnapshot,
   setManualRange,
   toChartLogicalRange,
+  type AppendFollowPolicyValue,
   type ChartViewportSnapshot,
   type ChartViewportState,
 } from "./chart-viewport.mjs";
@@ -83,15 +85,17 @@ interface ChartGroupOptions {
   initialViewport?: ChartViewportSnapshot | null;
   onViewportChange?: (snapshot: ChartViewportSnapshot | null) => void;
   /**
-   * 实盘 5 分钟：稳定向前追加真实新 K 时强制 followLatest（含打断手工向左浏览）。
-   * 回放 / 分时不得开启。默认 false，不改变 applyModel 默认语义。
+   * Append-follow viewport policy (#155 / #148). Chart controller understands
+   * dataset identity + this policy only — not Live/Replay product modes.
+   * Live 5m uses ``force-follow-latest``; Replay uses ``preserve``.
    */
-  forceFollowOnLiveAppend?: boolean;
+  appendFollowPolicy?: AppendFollowPolicyValue;
   /**
-   * 实盘 Live Session identity。变化时按首次加载重置视口（不继承旧 manual），
-   * 与 forceFollowOnLiveAppend 配合；回放传 null。
+   * Dataset / session identity for the bound chart series. When it changes,
+   * viewport resets as a first load (does not inherit prior manual range).
+   * Replay passes null.
    */
-  liveSessionId?: string | null;
+  datasetIdentity?: string | null;
 }
 
 
@@ -174,10 +178,13 @@ export class SynchronizedChartGroup {
   private readonly initialViewport?: ChartViewportSnapshot | null;
   private readonly onViewportChange?:
     | ((snapshot: ChartViewportSnapshot | null) => void);
-  /** 实盘 5 分钟新增真实 K 时强制贴右；回放保持 false。 */
-  private readonly forceFollowOnLiveAppend: boolean;
-  /** 当前实盘 Live Session identity；null 表示回放或未绑定。 */
-  private liveSessionId: string | null = null;
+  /**
+   * Append-follow policy for stable forward bar appends (#148 via #155 naming).
+   * ``force-follow-latest`` forces followLatest on real new bars; ``preserve`` keeps applyModel.
+   */
+  private readonly appendFollowPolicy: AppendFollowPolicyValue;
+  /** Bound dataset identity; null means unbound / Replay. */
+  private datasetIdentity: string | null = null;
   private viewport: ChartViewportState | null = null;
   /** Session 替换后的下一次 applyViewport 走首次加载（忽略 initialViewport）。 */
   private resetViewportAsFirstLoad = false;
@@ -256,10 +263,14 @@ export class SynchronizedChartGroup {
     this.barSlotWidth = options.barSlotWidth ?? 8;
     this.initialViewport = options.initialViewport;
     this.onViewportChange = options.onViewportChange;
-    this.forceFollowOnLiveAppend = options.forceFollowOnLiveAppend === true;
-    this.liveSessionId =
-      typeof options.liveSessionId === "string" && options.liveSessionId.length > 0
-        ? options.liveSessionId
+    this.appendFollowPolicy =
+      options.appendFollowPolicy === AppendFollowPolicy.FORCE_FOLLOW_LATEST
+        ? AppendFollowPolicy.FORCE_FOLLOW_LATEST
+        : AppendFollowPolicy.PRESERVE;
+    this.datasetIdentity =
+      typeof options.datasetIdentity === "string" &&
+      options.datasetIdentity.length > 0
+        ? options.datasetIdentity
         : null;
 
     this.priceChart = this.createChart(options.containers.price, false, {
@@ -419,7 +430,7 @@ export class SynchronizedChartGroup {
     this.logDiag("setModel", {
       tsCount: model.timestamps.length,
       latestIdx: model.timestamps.length - 1,
-      liveSessionId: this.liveSessionId,
+      datasetIdentity: this.datasetIdentity,
     });
     // setData() can synchronously emit a visible-range notification before
     // applyViewport() has advanced the logical viewport to the new model.
@@ -458,23 +469,24 @@ export class SynchronizedChartGroup {
   }
 
   /**
-   * 绑定实盘 Live Session identity。identity 变化时按首次加载重置视口，
-   * 不得继承上一 Session 的 manual 范围（Issue #148）。回传/空串视为解绑。
+   * Bind dataset identity. On identity change, reset viewport as first load —
+   * do not inherit the previous dataset's manual range (Issue #148 / #155).
+   * Null / empty unbinds.
    */
-  setLiveSessionId(sessionId: string | null | undefined) {
+  setDatasetIdentity(identity: string | null | undefined) {
     const next =
-      typeof sessionId === "string" && sessionId.length > 0 ? sessionId : null;
-    if (next === this.liveSessionId) {
+      typeof identity === "string" && identity.length > 0 ? identity : null;
+    if (next === this.datasetIdentity) {
       return;
     }
-    const previous = this.liveSessionId;
-    this.liveSessionId = next;
+    const previous = this.datasetIdentity;
+    this.datasetIdentity = next;
     // 仅在已有绑定后发生替换时重置；首次从 null→id 由 initialViewport / 首次 setModel 处理。
     if (previous !== null && next !== null && previous !== next) {
       this.viewport = null;
       this.resetViewportAsFirstLoad = true;
       this.lastTrackedLcRange = null;
-      this.logDiag("live-session-replaced", {
+      this.logDiag("dataset-identity-replaced", {
         previous,
         next,
       });
@@ -484,9 +496,10 @@ export class SynchronizedChartGroup {
   // 视口状态机：following 右对齐最新；manual 保留逻辑范围；空数据重置。
   // 5 分钟首次 setModel 可从 React 保存的 initialViewport 恢复；分时始终忽略旧视口，
   // 展示目标日截至当前的完整交易分钟。
-  // Issue #148：实盘 forceFollowOnLiveAppend 时，稳定向前追加真实新 K 强制 followLatest
-  //（打断手工浏览），N 按绘图区密度重算并遵守 following 72–360；同根 tick / prepend /
-  // 不触发。整段 Session 替换由 setLiveSessionId 走首次加载，不改变 applyModel 默认语义。
+  // Issue #148：appendFollowPolicy=force-follow-latest 时，稳定向前追加真实新 K 强制
+  // followLatest（打断手工浏览），N 按绘图区密度重算并遵守 following 72–360；同根 tick /
+  // prepend 不触发。整段数据集替换由 setDatasetIdentity 走首次加载，不改变 applyModel
+  // 默认语义。
   private applyViewport() {
     if (!this.model) {
       return;
@@ -518,7 +531,7 @@ export class SynchronizedChartGroup {
       );
     } else {
       const shouldForceFollow =
-        this.forceFollowOnLiveAppend &&
+        this.appendFollowPolicy === AppendFollowPolicy.FORCE_FOLLOW_LATEST &&
         this.kind === ChartGroupKind.FIVE_MINUTE &&
         isStableForwardAppend(this.viewport.logicalToTime, times);
       this.viewport = applyModel(this.viewport, times, visibleCount);
@@ -858,11 +871,11 @@ export class SynchronizedChartGroup {
   // 不能仅复用 resize()/resyncPriceScaleAfterLayout() 中基于"当前 followState"
   // 的分支，因为故障发生后当前状态可能已误变为 manual（来源门控修复后此场景
   // 已消除，但恢复语义作为独立保障层仍需基于保存的 pre-background 状态）。
-  // Issue #148：实盘 forceFollowOnLiveAppend 时，若后台期间最后时间戳前进或
-  // Live Session identity 变化，忽略旧 manual 快照并贴右。
+  // Issue #148：appendFollowPolicy=force-follow-latest 时，若后台期间最后时间戳前进或
+  // dataset identity 变化，忽略旧 manual 快照并贴右。
   private preBackgroundViewport: ChartViewportSnapshot | null = null;
   private preBackgroundLastTime: string | null = null;
-  private preBackgroundSessionId: string | null = null;
+  private preBackgroundDatasetIdentity: string | null = null;
 
   onBackgroundEnter() {
     // 首次进入后台时保存一次；重复 background 事件（blur + minimize）不覆盖，
@@ -876,12 +889,12 @@ export class SynchronizedChartGroup {
       const times = this.viewport.logicalToTime;
       this.preBackgroundLastTime =
         times.length > 0 ? times[times.length - 1] : null;
-      this.preBackgroundSessionId = this.liveSessionId;
+      this.preBackgroundDatasetIdentity = this.datasetIdentity;
     }
     this.logDiag("background-enter", {
       savedFollowState: this.preBackgroundViewport?.followState ?? null,
       savedLastTime: this.preBackgroundLastTime,
-      savedSessionId: this.preBackgroundSessionId,
+      savedDatasetIdentity: this.preBackgroundDatasetIdentity,
       skipped: alreadySaved,
     });
   }
@@ -890,29 +903,30 @@ export class SynchronizedChartGroup {
     if (!this.model || this.model.timestamps.length === 0 || !this.viewport) {
       this.preBackgroundViewport = null;
       this.preBackgroundLastTime = null;
-      this.preBackgroundSessionId = null;
+      this.preBackgroundDatasetIdentity = null;
       return;
     }
     const saved = this.preBackgroundViewport;
     const savedLastTime = this.preBackgroundLastTime;
-    const savedSessionId = this.preBackgroundSessionId;
+    const savedDatasetIdentity = this.preBackgroundDatasetIdentity;
     this.preBackgroundViewport = null;
     this.preBackgroundLastTime = null;
-    this.preBackgroundSessionId = null;
+    this.preBackgroundDatasetIdentity = null;
     if (!saved) {
       return;
     }
     const times = this.model.timestamps;
     const currentLastTime = times[times.length - 1] ?? null;
-    const sessionChangedWhileBackground =
-      this.forceFollowOnLiveAppend &&
-      this.kind === ChartGroupKind.FIVE_MINUTE &&
-      savedSessionId != null &&
-      this.liveSessionId != null &&
-      this.liveSessionId !== savedSessionId;
-    const liveAppendWhileBackground =
-      this.forceFollowOnLiveAppend &&
-      this.kind === ChartGroupKind.FIVE_MINUTE &&
+    const forcesFollow =
+      this.appendFollowPolicy === AppendFollowPolicy.FORCE_FOLLOW_LATEST &&
+      this.kind === ChartGroupKind.FIVE_MINUTE;
+    const identityChangedWhileBackground =
+      forcesFollow &&
+      savedDatasetIdentity != null &&
+      this.datasetIdentity != null &&
+      this.datasetIdentity !== savedDatasetIdentity;
+    const appendWhileBackground =
+      forcesFollow &&
       savedLastTime != null &&
       currentLastTime != null &&
       currentLastTime > savedLastTime;
@@ -923,17 +937,17 @@ export class SynchronizedChartGroup {
     this.applyingViewportRange = true;
     try {
       if (
-        sessionChangedWhileBackground ||
-        liveAppendWhileBackground ||
+        identityChangedWhileBackground ||
+        appendWhileBackground ||
         saved.followState === FollowState.FOLLOWING
       ) {
-        // following，或实盘后台期间 Session 替换 / 新增真实 K：恢复后基于最新数据重新右对齐。
+        // following，或强制跟随策略下后台期间 identity 替换 / 新增真实 K：恢复后基于最新数据重新右对齐。
         const plotWidth = this.priceChart.timeScale().width();
         const visibleCount = this.visibleCount(plotWidth, times.length);
         this.viewport = followLatest(this.viewport, visibleCount);
         this.applyVisibleRange();
       } else {
-        // 后台前为 manual 且无新 K / Session 未变：恢复保存的 pre-background 范围，按最新数据边界合法 clamp。
+        // 后台前为 manual 且无新 K / identity 未变：恢复保存的 pre-background 范围，按最新数据边界合法 clamp。
         // 不能使用当前 visibleStart/visibleEnd——后台期间的程序性通知可能已漂移
         // 当前范围（manual 状态下程序性通知仍走 setManualRange 进行 clamp）。
         const length = times.length;
@@ -966,8 +980,8 @@ export class SynchronizedChartGroup {
     this.logDiag("foreground-restore", {
       savedFollowState: saved.followState,
       savedRange: saved.range,
-      sessionChangedWhileBackground,
-      liveAppendWhileBackground,
+      identityChangedWhileBackground,
+      appendWhileBackground,
     });
   }
 

@@ -382,8 +382,8 @@ async function makeGroup(reports, options = {}) {
   const group = new SynchronizedChartGroup({
     containers: { price: makeEl("div"), volume: makeEl("div"), macd: makeEl("div") },
     kind: "five_minute",
-    forceFollowOnLiveAppend: options.forceFollowOnLiveAppend === true,
-    liveSessionId: options.liveSessionId ?? null,
+    appendFollowPolicy: options.appendFollowPolicy ?? "preserve",
+    datasetIdentity: options.datasetIdentity ?? null,
     initialViewport: options.initialViewport ?? null,
     onViewportChange: (snap) => reports.push(snap),
   });
@@ -790,7 +790,7 @@ test("restore semantics: following before background re-aligns to latest after r
 });
 
 test("restore semantics: manual before background preserves range after restore", async () => {
-  // 默认 forceFollowOnLiveAppend=false（回放/关闭路径）：后台期间新增 K 仍保留手工范围。
+  // 默认 appendFollowPolicy=preserve（回放/关闭路径）：后台期间新增 K 仍保留手工范围。
   // 实盘开启强制贴右的对应行为见 Issue #148 用例。
   const restore = installDom();
   try {
@@ -1421,7 +1421,7 @@ test("restore semantics: first background-enter logs skipped=false (P3)", async 
 // ============================================================================
 // Issue #148：实盘 5 分钟新增真实 K 强制贴右
 //
-// forceFollowOnLiveAppend=true 时：
+// appendFollowPolicy=force-follow-latest 时：
 //   - 稳定向前追加打断 manual（含最新端缩放与向左翻历史）
 //   - 同根 tick / prepend 不触发
 //   - 同股票 Live Session 替换走首次加载，不继承旧 manual
@@ -1434,7 +1434,7 @@ test("issue 148: live append from edge-zoomed manual forces follow and right-ali
   try {
     const reports = [];
     const { group, createChartGroupModel } = await makeGroup(reports, {
-      forceFollowOnLiveAppend: true,
+      appendFollowPolicy: "force-follow-latest",
     });
 
     group.setModel(createChartGroupModel(makeSnapshot(80), "five_minute"));
@@ -1471,7 +1471,7 @@ test("issue 148: live append while browsing history forces follow", async () => 
   try {
     const reports = [];
     const { group, createChartGroupModel } = await makeGroup(reports, {
-      forceFollowOnLiveAppend: true,
+      appendFollowPolicy: "force-follow-latest",
     });
 
     group.setModel(createChartGroupModel(makeSnapshot(80), "five_minute"));
@@ -1503,7 +1503,7 @@ test("issue 148: same-length live tick does not force follow from manual", async
   try {
     const reports = [];
     const { group, createChartGroupModel } = await makeGroup(reports, {
-      forceFollowOnLiveAppend: true,
+      appendFollowPolicy: "force-follow-latest",
     });
 
     group.setModel(createChartGroupModel(makeSnapshot(80), "five_minute"));
@@ -1536,7 +1536,7 @@ test("issue 148: history prepend does not force follow from manual", async () =>
   try {
     const reports = [];
     const { group, createChartGroupModel } = await makeGroup(reports, {
-      forceFollowOnLiveAppend: true,
+      appendFollowPolicy: "force-follow-latest",
     });
 
     const base = makeSnapshot(60);
@@ -1592,7 +1592,7 @@ test("issue 148: background manual + new bars restores to latest", async () => {
   try {
     const reports = [];
     const { group, createChartGroupModel } = await makeGroup(reports, {
-      forceFollowOnLiveAppend: true,
+      appendFollowPolicy: "force-follow-latest",
     });
 
     group.setModel(createChartGroupModel(makeSnapshot(80), "five_minute"));
@@ -1610,7 +1610,7 @@ test("issue 148: background manual + new bars restores to latest", async () => {
     globalThis.__flushRaf();
     await settle();
 
-    // setModel 已因 forceFollow 贴右；恢复仍不得用旧 manual 覆盖。
+    // setModel 已因 force-follow-latest 贴右；恢复仍不得用旧 manual 覆盖。
     group.onForegroundRestore();
     globalThis.__flushRaf();
     await settle();
@@ -1628,7 +1628,7 @@ test("issue 148: background manual without new bars keeps manual range", async (
   try {
     const reports = [];
     const { group, createChartGroupModel } = await makeGroup(reports, {
-      forceFollowOnLiveAppend: true,
+      appendFollowPolicy: "force-follow-latest",
     });
 
     group.setModel(createChartGroupModel(makeSnapshot(80), "five_minute"));
@@ -1666,8 +1666,8 @@ test("issue 148: same-stock live session replace does not inherit old manual", a
   try {
     const reports = [];
     const { group, createChartGroupModel } = await makeGroup(reports, {
-      forceFollowOnLiveAppend: true,
-      liveSessionId: "live-session-a",
+      appendFollowPolicy: "force-follow-latest",
+      datasetIdentity: "live-session-a",
       // 模拟 React 仍持有上一 Session 的手工快照；Session 替换不得消费它。
       initialViewport: {
         followState: "manual",
@@ -1692,7 +1692,7 @@ test("issue 148: same-stock live session replace does not inherit old manual", a
       ...bar,
       close: 20 + index * 0.01,
     }));
-    group.setLiveSessionId("live-session-b");
+    group.setDatasetIdentity("live-session-b");
     group.setModel(createChartGroupModel(replaced, "five_minute"));
     globalThis.__flushRaf();
     await settle();
@@ -1711,8 +1711,8 @@ test("issue 148: background session replace restores to latest", async () => {
   try {
     const reports = [];
     const { group, createChartGroupModel } = await makeGroup(reports, {
-      forceFollowOnLiveAppend: true,
-      liveSessionId: "live-session-a",
+      appendFollowPolicy: "force-follow-latest",
+      datasetIdentity: "live-session-a",
     });
 
     group.setModel(createChartGroupModel(makeSnapshot(80), "five_minute"));
@@ -1732,7 +1732,7 @@ test("issue 148: background session replace restores to latest", async () => {
       ...bar,
       open: bar.open + 1,
     }));
-    group.setLiveSessionId("live-session-b");
+    group.setDatasetIdentity("live-session-b");
     group.setModel(createChartGroupModel(replaced, "five_minute"));
     globalThis.__flushRaf();
     await settle();

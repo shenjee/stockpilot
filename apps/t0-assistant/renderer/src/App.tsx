@@ -1604,20 +1604,20 @@ export function App() {
       };
     });
   };
-  // 同股票 Live Session 替换时丢弃旧手工范围，避免 key 重建后错误恢复（Issue #148）。
-  const liveChartSessionId = replayFacts ? null : projection.sessionId;
-  const liveChartSessionIdRef = useRef(liveChartSessionId);
-  const liveSessionJustReplaced =
-    liveChartSessionIdRef.current != null &&
-    liveChartSessionId != null &&
-    liveChartSessionIdRef.current !== liveChartSessionId;
+  // 同股票数据集 identity 替换时丢弃旧手工范围，避免 key 重建后错误恢复（Issue #148）。
+  const chartDatasetIdentity = replayFacts ? null : projection.sessionId;
+  const chartDatasetIdentityRef = useRef(chartDatasetIdentity);
+  const datasetIdentityJustReplaced =
+    chartDatasetIdentityRef.current != null &&
+    chartDatasetIdentity != null &&
+    chartDatasetIdentityRef.current !== chartDatasetIdentity;
   useEffect(() => {
-    const previous = liveChartSessionIdRef.current;
-    liveChartSessionIdRef.current = liveChartSessionId;
+    const previous = chartDatasetIdentityRef.current;
+    chartDatasetIdentityRef.current = chartDatasetIdentity;
     if (
       previous == null ||
-      liveChartSessionId == null ||
-      previous === liveChartSessionId
+      chartDatasetIdentity == null ||
+      previous === chartDatasetIdentity
     ) {
       return;
     }
@@ -1625,13 +1625,13 @@ export function App() {
       ...current,
       chartViews: { fiveMinute: null, intraday: null },
     }));
-  }, [liveChartSessionId]);
+  }, [chartDatasetIdentity]);
   const fiveMinuteInitialViewport =
-    replayFacts || liveSessionJustReplaced
+    replayFacts || datasetIdentityJustReplaced
       ? null
       : workbench.chartViews.fiveMinute;
   const intradayInitialViewport =
-    replayFacts || liveSessionJustReplaced
+    replayFacts || datasetIdentityJustReplaced
       ? null
       : workbench.chartViews.intraday;
   const layoutMode = workbenchLayoutMode(workbench);
@@ -1746,8 +1746,12 @@ export function App() {
               replayFacts?.sessionId ?? projection.sessionId ?? "live"
             }`}
             model={fiveMinuteModel}
-            forceFollowOnLiveAppend={!replayFacts}
-            liveSessionId={liveChartSessionId}
+            appendFollowPolicy={
+              replayFacts
+                ? "preserve"
+                : "force-follow-latest"
+            }
+            datasetIdentity={chartDatasetIdentity}
             initialViewport={fiveMinuteInitialViewport}
             onViewportChange={
               replayFacts
