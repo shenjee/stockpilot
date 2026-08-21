@@ -127,3 +127,63 @@ test("enterTodayChart waits for delayed liveReady before leaving Replay", async 
   assert.deepEqual(result, { ok: true });
   assert.equal(mode, "live");
 });
+
+test("delayed resolve superseded by a later navigation returns stale, not identity", async () => {
+  const navigationRequests = createLatestRequestTracker();
+  let mode = "replay";
+  let releaseResolve;
+  const resolveGate = new Promise((resolve) => {
+    releaseResolve = resolve;
+  });
+
+  const first = enterTodayChart({
+    symbol: "sh.600584",
+    beginNavigation: () => navigationRequests.begin(),
+    isCurrent: (sequence) => navigationRequests.isCurrent(sequence),
+    resolveSecurity: async () => {
+      await resolveGate;
+      return { symbol: "sh.600584", instrument_type: "stock" };
+    },
+    performSecuritySelection: async () => true,
+    isReplayMode: () => mode === "replay",
+    selectLiveMode: () => {
+      mode = "live";
+    },
+  });
+
+  // A later navigation begins while the first resolveSecurity is still pending.
+  const second = await enterTodayChart({
+    symbol: "sz.000001",
+    beginNavigation: () => navigationRequests.begin(),
+    isCurrent: (sequence) => navigationRequests.isCurrent(sequence),
+    resolveSecurity: async (symbol) => ({
+      symbol,
+      instrument_type: "stock",
+    }),
+    performSecuritySelection: async () => true,
+    isReplayMode: () => mode === "replay",
+    selectLiveMode: () => {
+      mode = "live";
+    },
+  });
+  assert.deepEqual(second, { ok: true });
+
+  releaseResolve();
+  const firstResult = await first;
+  assert.deepEqual(firstResult, { ok: false, reason: "stale" });
+  assert.equal(mode, "live");
+});
+
+test("missing identity still returns identity failure", async () => {
+  const navigationRequests = createLatestRequestTracker();
+  const result = await enterTodayChart({
+    symbol: "sh.600584",
+    beginNavigation: () => navigationRequests.begin(),
+    isCurrent: (sequence) => navigationRequests.isCurrent(sequence),
+    resolveSecurity: async () => null,
+    performSecuritySelection: async () => true,
+    isReplayMode: () => true,
+    selectLiveMode: () => {},
+  });
+  assert.deepEqual(result, { ok: false, reason: "identity" });
+});

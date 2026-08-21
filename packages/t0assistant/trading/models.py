@@ -120,7 +120,11 @@ def _optional_text(value: Any, field: str) -> str | None:
 
 @dataclass(frozen=True, slots=True)
 class TradeDraft:
-    """Validated input shared by real and Replay-simulated trades."""
+    """Validated input for a real trade create/update payload.
+
+    ``trade_scope`` may still carry the legacy ``simulated`` enum for wire
+    recognition; runtime command handling rejects simulated scope (Issue #163).
+    """
 
     trade_scope: TradeScope
     symbol: str

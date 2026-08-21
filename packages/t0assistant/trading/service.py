@@ -80,12 +80,12 @@ class TradeEligibilityError(TradeValidationError):
 
 
 class AllowAllEligibility(InstrumentEligibilityPort):
-    """Test/replay helper: every symbol is tradable.
+    """Test helper: every symbol is tradable.
 
-    Issue #151 P2 #6: ``TradeService`` now requires an
-    :class:`InstrumentEligibilityPort`; tests and replay-simulated flows that
-    never touch the real-trade repository can inject this port to preserve the
-    old "no eligibility check" behaviour without bypassing the contract.
+    Issue #151 P2 #6: ``TradeService`` requires an
+    :class:`InstrumentEligibilityPort`. Unit tests that never exercise index
+    rejection can inject this port to preserve "no eligibility check"
+    behaviour without bypassing the create/update contract.
     """
 
     def check_eligibility(self, symbol: str) -> str | None:

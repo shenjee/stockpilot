@@ -29,8 +29,13 @@ export async function enterTodayChart({
 }) {
   const requestSequence = beginNavigation();
   const identity = await resolveSecurity(symbol);
-  if (!identity || !isCurrent(requestSequence)) {
+  if (!identity) {
     return { ok: false, reason: "identity" };
+  }
+  // A later navigation may have begun while resolveSecurity was in flight;
+  // do not surface that as an identity failure (which would overwrite newer UI).
+  if (!isCurrent(requestSequence)) {
+    return { ok: false, reason: "stale" };
   }
   const liveReady = await performSecuritySelection(identity, false, {
     navigationSequence: requestSequence,
