@@ -821,9 +821,14 @@ def _normalize_target_day_bars(
     """
 
     parsed: dict[datetime, dict[str, Any]] = {}
-    invalid: list[tuple[datetime, str, str]] = []
+    invalid: list[tuple[str, str, str]] = []
     for row in rows:
-        timestamp = _row_timestamp(row)
+        timestamp, timestamp_error = _try_parse_row_timestamp(row)
+        if timestamp_error is not None:
+            raw = row.get("timestamp", row.get("date"))
+            stamp = raw if isinstance(raw, str) else ""
+            invalid.append((stamp, "timestamp", str(timestamp_error)))
+            continue
         if timestamp.date() != session.trade_date:
             continue
         if not session.is_trading_time(timestamp):
@@ -831,17 +836,29 @@ def _normalize_target_day_bars(
         try:
             bar = standardize_bar(row, closed=True)
         except (TypeError, ValueError) as exc:
-            invalid.append((timestamp, _invalid_price_field(exc), str(exc)))
+            invalid.append(
+                (
+                    timestamp.strftime(MARKET_TIMESTAMP_FORMAT),
+                    _invalid_price_field(exc),
+                    str(exc),
+                )
+            )
             continue
         if bar.get("closed") is not True:
-            invalid.append((timestamp, "closed", "expected a closed bar"))
+            invalid.append(
+                (
+                    timestamp.strftime(MARKET_TIMESTAMP_FORMAT),
+                    "closed",
+                    "expected a closed bar",
+                )
+            )
             continue
         parsed[timestamp] = bar
     if invalid:
-        first_timestamp, affected_field, reason = invalid[0]
-        stamp = first_timestamp.strftime(MARKET_TIMESTAMP_FORMAT)
+        stamp, affected_field, reason = invalid[0]
+        location = stamp or "unknown"
         raise ReplayDataInvalidError(
-            f"invalid bar at {stamp}: {reason}",
+            f"invalid bar at {location}: {reason}",
             details={
                 "timeframe": timeframe,
                 "affected_field": affected_field,
@@ -896,6 +913,17 @@ def _normalize_daily_bars(
             continue
         parsed[bar_date.isoformat()] = bar
     return tuple(parsed[key] for key in sorted(parsed))
+
+
+def _try_parse_row_timestamp(
+    row: Mapping[str, Any],
+) -> tuple[datetime | None, Exception | None]:
+    """Parse a bar timestamp without aborting the rest of the granularity."""
+
+    try:
+        return _row_timestamp(row), None
+    except (ReplayDataError, TypeError, ValueError) as exc:
+        return None, exc
 
 
 def _row_timestamp(row: Mapping[str, Any]) -> datetime:
