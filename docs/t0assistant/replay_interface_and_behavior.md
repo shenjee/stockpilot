@@ -6,7 +6,7 @@
 | --- | --- |
 | 状态 | 历史行情回放开发基线 |
 | 版本 | v1.0 |
-| 更新日期 | 2026-07-22 |
+| 更新日期 | 2026-08-21 |
 | 范围 | 单只股票、单个交易日、只读 Replay |
 | 上位需求 | [`t0_assistant_prd.md`](./t0_assistant_prd.md) |
 | 架构 | [`architecture.md`](./architecture.md) |
@@ -29,7 +29,7 @@ main/preload 和 React 可以独立实现并用同一组确定性 fixture 验收
 - 通过完整快照建立或替换前端状态；
 - 验证向后定位和并发定位不会泄漏未来数据。
 
-本功能暂不包含实时行情、真实/模拟成交、收费方案、偏好持久化、后台预取和生产级
+本功能暂不包含实时行情、真实成交、收费方案、偏好持久化、后台预取和生产级
 增量事件。后续能力只能扩展本契约，不能绕过 Session、revision
 或完整快照规则。
 
@@ -779,6 +779,8 @@ fixture 不访问网络，时间戳严格递增，覆盖上午、午休、下午
 
 ## 10. 后续扩展
 
-实时行情、普通指标增量、完整 CZSC 替换事件、模拟成交、真实成交和偏好将在各自垂直
-切片中扩展。任何扩展都继续遵守本契约的 generation、Session、revision、完整快照
-重新基线和稳定错误边界。
+实时行情、普通指标增量、完整 CZSC 替换事件和偏好由各自垂直切片扩展。真实成交是例外：它不进入 Replay Session、Replay 快照或 Replay revision 序列，而是由 Renderer 按 `symbol + trade_date` 独立查询 SQLite 事实，按游标做本地过滤，再通过不参与 autoscale 的独立覆盖层展示。退出、重建或定位 Replay 均不读写成交库。
+
+对可交易标的，Renderer 在 Replay 的 `symbol + trade_date` 就绪或改变时只读取一次全天成交。播放、单步和 seek 只重新应用 `executed_at <= current_time` 本地过滤；当前 scope 收到成交变化、服务 generation 变更或重连时才重新读取。指数不读取成交。Replay 底部栏隐藏成交录入，保留只读历史记录入口。
+
+其他扩展继续遵守本契约的 generation、Session、revision、完整快照重新基线和稳定错误边界。

@@ -7,9 +7,9 @@
 | 产品 | StockPilot 盘中 T+0 助手 |
 | 文档类型 | 可执行开发 Backlog 与依赖基线 |
 | 状态 | 待创建 GitHub Epic / Issue |
-| 版本 | v1.7 |
-| 更新日期 | 2026-08-02 |
-| 上位需求 | [`t0_assistant_prd.md`](./t0_assistant_prd.md) v0.45 |
+| 版本 | v1.8 |
+| 更新日期 | 2026-08-21 |
+| 上位需求 | [`t0_assistant_prd.md`](./t0_assistant_prd.md) v0.46 |
 | 架构基线 | [`architecture.md`](./architecture.md) |
 | 模块基线 | [`module_design.md`](./module_design.md) |
 | UI 基线 | [`ui_layout_spec.md`](./ui_layout_spec.md) |
@@ -34,16 +34,20 @@ skill 实现，也不要求 T+0 的指标参数、输出或测试与 skill 保�
 必须区分“设计或技术验证已完成”和“正式产品代码已实现”。`spikes/` 下的代码是 ADR
 验证证据，不直接迁入正式 `apps/` 或 `packages/`。
 
+> **Issue #163 决策更新**：早期 backlog 中的 Replay 模拟成交任务保留为历史记录，
+> 但不再代表当前产品方向。当前实现移除模拟成交；Replay 只读展示 SQLite 真实成交，
+> 成交覆盖层与行情 model、价格轴和 Session 生命周期完全分离。
+
 | 范围 | 设计/验证覆盖 | 正式实现状态 | 本 Backlog 的处理 |
 | --- | --- | --- | --- |
 | FR-01：5 分钟 K、MA、BOLL、CZSC、笔和中枢 | PRD、架构、UI、图表/CZSC spike 已覆盖 | `chantheory` 可复用；T+0 runtime 和桌面图表未实现 | Epic C、D、E |
 | FR-02：5 分钟 VOL、MACD 与联动 | PRD、UI、图表 spike 已覆盖 | 正式指标 package 和图表组未实现 | Epic C、E |
 | FR-03：分时、VWAP、1 分钟指标、日 K、行情栏、布局和偏好 | PRD、架构、UI 已覆盖 | `marketdata` 有部分基础；产品链路大部分未实现 | Epic B、C、D、E |
 | FR-04：自动刷新、旧数据保留、重试和日志 | 架构、ADR、Electron/Python spike 已覆盖 | 正式 App 未实现 | Epic B、D、E、H |
-| FR-05：真实/模拟成交、收费方案、历史成交和标记 | PRD、模块边界已覆盖 | 未实现 | Epic F、G、H |
+| FR-05：真实成交、收费方案、历史成交和独立标记覆盖层 | PRD、模块边界已覆盖 | Issue #163 负责移除旧模拟成交并解耦 | Epic F、H / #163 |
 | FR-06：产品边界 | PRD 已冻结 | 需要贯穿全部实现与验收 | 通用 DoD、T0-054 |
 | FR-07：单日历史回放 | Replay v1.0 契约已冻结 | 未实现 | Epic G、H |
-| Electron 桌面应用与 Python 生命周期 | ADR 0006/0007 和 spike 已验证 | 正式 `apps/t0-assistant/` 不存在 | Epic A、E |
+| Electron 桌面应用与 Python 生命周期 | ADR 0006/0007 和 spike 已验证 | 正式 App 已建立，仍按 Epic A、E 的生命周期与安全边界继续收口 | Epic A、E |
 | 行情缓存与证券主数据 | 已有部分 `marketdata` 基础 | 尚不满足 T+0 全部数据粒度和缺口补齐 | Epic B |
 | Live/Replay 共用处理管线 | 架构和模块设计已冻结 | 未实现 | Epic C、D、G |
 | T+0 成交与设置数据库 | 架构已冻结 | 未实现 | Epic D、F |
@@ -87,7 +91,7 @@ skill 实现，也不要求 T+0 的指标参数、输出或测试与 skill 保�
 - [ ] CZSC 标签只是当前结构结果，不保存首次出现快照或“失效”状态；
 - [ ] 动态未闭合 5 分钟 K 不进入 CZSC；
 - [ ] Replay 输出不读取目标时点之后的数据；
-- [ ] Replay 模拟成交不进入真实成交仓储；
+- [ ] Replay Session 不拥有成交状态；回放只读展示按股票/日期查询的真实成交；
 - [ ] 缺失行情不生成虚假 K 线，也不改写市场规定的回放结束时间。
 
 ## 4. 目录所有权和并行轨道
@@ -205,13 +209,13 @@ T0-029～T0-036 优先使用 T0-004 的 fixture 和 Fake Safe Bridge，不等待
 
 | ID | Issue | 主责/目录 | 覆盖 | 依赖 | 交付与验收 |
 | --- | --- | --- | --- | --- | --- |
-| T0-037 | 定义共享成交领域模型、校验和 5m 归桶规则 | Claude / `t0assistant/trading` | FR-05/07 | T0-002 | 真实与模拟成交共用值对象和校验；时间精确到秒；分钟输入补 `00`；不依赖 SQLite |
+| T0-037 | 定义成交领域模型、校验和 5m 归桶规则 | Claude / `t0assistant/trading` | FR-05/07 | T0-002 | 真实成交时间精确到秒；分钟输入补 `00`；不依赖 SQLite；旧 simulated 分支由 #163 删除 |
 | T0-038 | 实现成交/收费 SQLite Schema、迁移和 Repository | Claude / `t0assistant/repositories` | FR-05 | T0-022, T0-037 | 参考 `packages/fundamentalscreener/sqlite_schema.py` 的单事务幂等 `init_db`、`IF NOT EXISTS`、字段检查和时间/审计字段测试模式，但不共享表、不照搬行情采集的 `fetch_run_id` 等无关血缘字段；与设置共用 App 私有数据库；CRUD、事务、永久删除、只读/不可写测试通过 |
 | T0-039 | 实现收费 Policy、方案 Service 和默认申万宏源配置 | Claude / `t0assistant/trading,preferences` | FR-05 | T0-037, T0-038 | A 股/ETF 佣金、印花税、过户费方向和最低佣金正确；历史成交不追溯重算 |
-| T0-040 | 实现真实成交 Service、CRUD 与标记投影数据 | Claude / `t0assistant/trading` | FR-05 | T0-037～T0-039 | 只有仓储成功后成为事实；支持修改和永久删除；通过 Renderer 无关的端口输出成交时间桶、价格、方向和手数等标记数据；不实现任何图表组件或渲染逻辑 |
+| T0-040 | 实现真实成交 Service、CRUD 与标记投影数据 | Claude / `t0assistant/trading` | FR-05 | T0-037～T0-039 | 只有仓储成功后成为事实；支持修改和按 `trade_id` 永久删除；通过 Renderer 无关的端口输出成交时间桶、价格、方向和手数等标记数据；不实现任何图表组件或渲染逻辑。#163 独立负责 scope 显式化、scoped `trades_changed`、跨 scope 双发、指数 create/update 硬拒绝、旧 simulated 路由停用，以及 scoped 迁移所必需的最小 `list_trade_history` 兼容链，不回填到 T0-040 |
 | T0-041 | 实现收费方案设置和真实成交录入/编辑 UI | Trae / `renderer` | FR-05 | T0-004, T0-037, T0-039 | 支持不计算/方案下拉、费用覆盖、结构化方案编辑和删除确认；主动失败可重试 |
-| T0-042 | 实现可复用的 5m 成交标记图层 | Trae / `renderer` | FR-05/07 | T0-004, T0-030, T0-037 | 基于共享成交契约和固定测试数据建立真实/模拟共用图层；标记纵坐标为成交价，标签为 B/S 加手数，同 K 多笔分别显示且区别于 CZSC；本 Issue 只负责共用渲染入口和契约数据绑定，不负责真实 CRUD、收费或 Replay Session；真实端到端联调属于 T0-052，模拟成交接入属于 T0-050 |
-| T0-043 | 实现历史成交入口和对应日期图形还原 | Trae + Claude / Renderer + Backend | FR-05 | T0-040, T0-042 | 指定一名集成协调人；列出方向、时间、价格、数量、费用和备注；可编辑删除并进入当天图形；不增加筛选器 |
+| T0-042 | 实现可复用的 5m 成交标记图层 | Trae / `renderer` | FR-05/07 | T0-004, T0-030, T0-037 | 基于真实成交建立独立 primitive/overlay；标记纵坐标为成交价，标签为 B/S 加手数，同 K 多笔分别显示且区别于 CZSC；不参与 autoscale、不进入行情 model、不触发全图 setData；#163 负责从旧共用图层迁移 |
+| T0-043 | 实现历史成交入口和对应日期图形还原 | Trae + Claude / Renderer + Backend | FR-05 | T0-040, T0-042 | 指定一名集成协调人；列出方向、时间、价格、数量、费用和备注；实盘/专用历史入口可编辑删除并进入当天图形，Replay 中只读；不增加筛选器。#163 只负责为 scoped 迁移接通已有历史入口的最小同步读取合同，不扩展筛选、分页或新管理页 |
 
 ### Epic G：单日历史回放
 
@@ -224,7 +228,7 @@ T0-029～T0-036 优先使用 T0-004 的 fixture 和 Fake Safe Bridge，不等待
 | T0-047 | 实现前后定位、向后重建和未来数据隔离 | Claude / `t0assistant/runtime` | FR-07 | T0-046 | 向前顺序推进；向后从预热状态重建；相同输入和命令序列输出确定；无未来数据残留 |
 | T0-048 | 实现 Live/Replay 并存、切换和一次性生命周期 | Claude / `t0assistant/runtime` | FR-03/04/07 | T0-024, T0-026, T0-046 | 回放期间 Live 继续更新；退出销毁 Replay 画面/日期/进度；返回实盘立即展示最新状态 |
 | T0-049 | 基于 Replay v1.0 和 Fake Safe Bridge 实现 Replay 面板 | Trae / `renderer` | FR-07 | T0-004, T0-029, T0-056 | 可提前并行；日期、开始、播放/暂停、进度、单步、四档倍速和 5m 降级 UI 符合 Replay v1.0；不得自行扩展速率字段 |
-| T0-050 | 实现 Session 内存模拟成交及 UI 集成 | Claude + Trae / runtime + renderer | FR-05/07 | T0-037, T0-042, T0-046, T0-049 | 指定一名集成协调人；复用成交领域模型和 T0-042 共用标记图层，但不依赖真实 CRUD/Repository；退出 Replay 后自动清空且 SQLite 无写入 |
+| T0-050 | ~~实现 Session 内存模拟成交及 UI 集成~~ | — | — | — | **已由 #163 产品决策废弃**；删除现有实现与相关合同路径，Replay 改为只读展示 SQLite 真实成交 |
 
 ### Epic H：集成、产品边界与发布验收
 
@@ -232,7 +236,7 @@ T0-029～T0-036 优先使用 T0-004 的 fixture 和 Fake Safe Bridge，不等待
 | --- | --- | --- | --- | --- | --- |
 | T0-051 | Live 端到端验收：启动、选股、加载、刷新与故障恢复 | 集成负责人 | FR-01～04 | T0-027, T0-031～T0-036 | 使用确定性 fake 和故障注入覆盖完整链路；刷新失败不丢最后成功图表 |
 | T0-052 | 成交端到端验收：收费、CRUD、标记与重启恢复 | 集成负责人 | FR-05 | T0-041～T0-043 | 真实成交重启后存在；收费方案修改不影响历史费用；永久删除和失败恢复正确 |
-| T0-053 | Replay 端到端与确定性验收 | 集成负责人 | FR-07 | T0-044～T0-050 | 覆盖 1m、5m 降级、拖动重建、事件乱序、Live 并存、模拟成交清理和同输入同输出 |
+| T0-053 | Replay 端到端与确定性验收 | 集成负责人 | FR-07 | T0-044～T0-049, #163 | 覆盖 1m、5m 降级、拖动重建、事件乱序、Live 并存、真实成交游标过滤和同输入同输出 |
 | T0-054 | FR-06、图表交互和目标设备验收 | 产品 + 集成负责人 | FR-01～07 | T0-051～T0-053 | 完成 FR-06 清单；在目标 13/14 英寸视口验证布局、缩放、十字光标、状态保持和无横向滚动 |
 | T0-055 | 打包、迁移、首次启动、异常重启和退出验收 | 集成负责人 | 公共基础 | T0-051～T0-054 | 可安装桌面包；运行时数据不写源码；数据库迁移可重复；Python 崩溃/重启/退出符合 ADR |
 
@@ -326,10 +330,10 @@ flowchart LR
     G46 --> G48
     A4 --> G49["T0-049 Replay UI"]
     A56 --> G49
-    F37 --> G50["T0-050 模拟成交"]
-    F42 --> G50
-    G46 --> G50
-    G49 --> G50
+    F37 --> I163["#163 成交/行情解耦"]
+    F42 --> I163
+    G46 --> I163
+    G49 --> I163
 
     D27 --> H51["T0-051 Live E2E"]
     E31 --> H51
@@ -347,7 +351,7 @@ flowchart LR
     G47 --> H53
     G48 --> H53
     G49 --> H53
-    G50 --> H53
+    I163 --> H53
     H51 --> H54["T0-054 产品验收"]
     H52 --> H54
     H53 --> H54
@@ -370,18 +374,18 @@ T0-010/T0-011/T0-012/T0-018/T0-020 → T0-045 → T0-046 → T0-047/T0-048
 播放速率契约与 UI：
 T0-056 → T0-044/T0-046/T0-049
 
-模拟成交与共用标记：
+真实成交独立覆盖层：
 T0-002 → T0-037
-T0-004 + T0-030 + T0-037 → T0-042 → T0-050
+T0-004 + T0-030 + T0-037 → T0-042 → #163
 
 汇合：
-T0-044～T0-050 → T0-053 → T0-054 → T0-055
+T0-044～T0-049 + #163 → T0-053 → T0-054 → T0-055
 ```
 
 应优先缩短 `T0-006`、`T0-010`、`T0-018` 和 `T0-023` 的等待时间。App Coordinator
 核心和 UI 不在这条链上等待真实实现：T0-021 使用端口/fake，T0-029～T0-036、T0-049
-使用冻结 fixture/Fake Safe Bridge 提前开发。T0-037 应在 T0-002 后立即启动，避免模拟
-成交链在 T0-053 前成为晚到的硬前置。T0-048 是 Replay 引擎链与 Live 刷新链的汇合点，
+使用冻结 fixture/Fake Safe Bridge 提前开发。T0-037 应在 T0-002 后立即启动，避免 #163
+真实成交查询与独立覆盖链在 T0-053 前成为晚到的硬前置。T0-048 是 Replay 引擎链与 Live 刷新链的汇合点，
 必须同时等到 T0-046、T0-024 和 T0-026 完成，不能把它视为仅在 T0-046 后即可启动的
 普通并行分支。
 
@@ -425,7 +429,7 @@ T0-044～T0-050 → T0-053 → T0-054 → T0-055
 | M1：Shared Runtime Ready | Epic B、C 完成，固定行情可生成完整 Workbench Projection |
 | M2：Live Workbench Ready | T0-021～T0-036 完成，实盘工作台使用真实 Backend 跑通 |
 | M3：Trading Ready | Epic F 完成，真实成交和收费链路可持久化并在图表还原 |
-| M4：Replay Ready | Epic G 完成，1m/5m 降级、定位、四档倍速和模拟成交符合 Replay v1.0 |
+| M4：Replay Ready | Epic G 与 #163 完成，1m/5m 降级、定位、四档倍速和真实成交只读覆盖符合当前契约 |
 | M5：Release Candidate | Epic H 完成，FR-01～FR-07 和桌面发布验收通过 |
 
 ## 8. GitHub 组织建议

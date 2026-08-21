@@ -6,8 +6,9 @@
  * minute-only execution time to seconds. Validation mirrors
  * `TradeDraft.from_mapping` in `packages/t0assistant/trading/models.py`; the
  * renderer keeps its own copy because the Python domain layer is not
- * transport-accessible. Only real trades are created here - Replay-simulated
- * trades belong to the Replay Session and never reach this form.
+ * transport-accessible. Only real trades are created here; ``trade_scope:
+ * simulated`` is rejected by the backend (Issue #163) and must not be
+ * submitted from this form.
  *
  * Fee suggestion is NOT part of this module: the fee-calculation rule belongs
  * to `packages/t0assistant/trading/fee_policy.py` and the renderer obtains

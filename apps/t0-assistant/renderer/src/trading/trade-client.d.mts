@@ -29,12 +29,20 @@ export class TradeClientError extends Error {
   readonly affected_capability: string;
 }
 
+export interface TradeHistoryListData {
+  trade_revision: number;
+  trades: TradeRecord[];
+}
+
 export interface TradeClient {
   listTrades(args: {
     symbol: string;
     tradeDate: string;
     tradeScope?: "real" | "simulated";
   }): Promise<{ accepted: true; operationId: string | null }>;
+  listTradeHistory(args?: {
+    tradeScope?: "real";
+  }): Promise<TradeHistoryListData>;
   createTrade(
     draft: TradeDraft,
   ): Promise<{ accepted: true; operationId: string | null }>;
@@ -49,6 +57,7 @@ export interface TradeClient {
 
 export interface TradeBridge {
   listTrades(request: unknown): Promise<unknown>;
+  listTradeHistory?(request: unknown): Promise<unknown>;
   createTrade(request: unknown): Promise<unknown>;
   updateTrade(request: unknown): Promise<unknown>;
   deleteTrade(request: unknown): Promise<unknown>;

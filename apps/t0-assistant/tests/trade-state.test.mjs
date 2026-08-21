@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   applyTradesChanged,
+  filterTradesByReplayCursor,
   isRealTradesChangedEvent,
   matchTradeOperationFailed,
   pendingOpResolvedByTradesChanged,
@@ -32,13 +33,28 @@ function tradesEvent(revision, trades, overrides = {}) {
     session_id: null,
     service_generation: 1,
     revision,
-    payload: { trade_revision: revision, trades },
+    payload: {
+      symbol: scope.symbol,
+      trade_date: scope.tradeDate,
+      trade_revision: revision,
+      trades,
+    },
     ...overrides,
   };
 }
 
-function state(revision, trades = [], generation = 1) {
-  return { trades, tradeRevision: revision, serviceGeneration: generation };
+function state(revision, trades = [], generation = 1, loadedScope) {
+  return {
+    trades,
+    tradeRevision: revision,
+    serviceGeneration: generation,
+    loadedScope:
+      loadedScope !== undefined
+        ? loadedScope
+        : trades.length > 0
+          ? { ...scope }
+          : null,
+  };
 }
 
 test("isRealTradesChangedEvent accepts real (session_id null) events", () => {
@@ -78,16 +94,86 @@ test("applyTradesChanged ignores a stale (lower-or-equal) same-generation revisi
   assert.equal(next.trades[0].trade_id, "t1");
 });
 
-test("applyTradesChanged filters the event trades to the current symbol and date", () => {
+test("applyTradesChanged uses authoritative scoped payload trades without filtering", () => {
+  // Payload is already scoped; even a mismatched record in trades is kept.
   const current = state(0);
   const event = tradesEvent(1, [
     trade("same"),
     trade("other-symbol", { symbol: "sz.000001" }),
-    trade("other-date", { executed_at: "2026-07-25 10:03:00" }),
   ]);
   const next = applyTradesChanged(current, event, scope);
+  assert.equal(next.trades.length, 2);
+  assert.deepEqual(
+    next.trades.map((t) => t.trade_id),
+    ["same", "other-symbol"],
+  );
+});
+
+test("applyTradesChanged keeps existing trades when scope does not match", () => {
+  const current = state(1, [trade("keep-me")]);
+  const otherScope = tradesEvent(2, [trade("other-day")], {
+    payload: {
+      symbol: "sh.600584",
+      trade_date: "2026-07-25",
+      trade_revision: 2,
+      trades: [trade("other-day", { executed_at: "2026-07-25 10:00:00" })],
+    },
+  });
+  const next = applyTradesChanged(current, otherScope, scope);
+  assert.equal(next.tradeRevision, 2);
   assert.equal(next.trades.length, 1);
-  assert.equal(next.trades[0].trade_id, "same");
+  assert.equal(next.trades[0].trade_id, "keep-me");
+});
+
+test("applyTradesChanged revision jump alone must not clear trades", () => {
+  const current = state(1, [trade("day-trade")]);
+  const otherSymbol = tradesEvent(9, [], {
+    payload: {
+      symbol: "sz.000001",
+      trade_date: scope.tradeDate,
+      trade_revision: 9,
+      trades: [],
+    },
+  });
+  const next = applyTradesChanged(current, otherSymbol, scope);
+  assert.equal(next.tradeRevision, 9);
+  assert.deepEqual(
+    next.trades.map((t) => t.trade_id),
+    ["day-trade"],
+  );
+});
+
+test("applyTradesChanged accepts same-revision fact when loading a new scope", () => {
+  // list_trades does not bump trade_revision. After a scope switch, a
+  // non-current-scope event may advance the gate to N; the current-scope
+  // list_trades result can also carry N and must not be discarded.
+  const afterSwitch = state(-1, [], 1, null);
+  const otherScope = tradesEvent(7, [], {
+    payload: {
+      symbol: "sz.000001",
+      trade_date: scope.tradeDate,
+      trade_revision: 7,
+      trades: [],
+    },
+  });
+  const gated = applyTradesChanged(afterSwitch, otherScope, scope);
+  assert.equal(gated.tradeRevision, 7);
+  assert.equal(gated.loadedScope, null);
+  assert.deepEqual(gated.trades, []);
+
+  const currentScope = tradesEvent(7, [trade("t1")]);
+  const next = applyTradesChanged(gated, currentScope, scope);
+  assert.equal(next.tradeRevision, 7);
+  assert.deepEqual(next.loadedScope, scope);
+  assert.equal(next.trades.length, 1);
+  assert.equal(next.trades[0].trade_id, "t1");
+});
+
+test("applyTradesChanged still rejects duplicate same-revision for an already-loaded scope", () => {
+  const current = state(7, [trade("t1")]);
+  const next = applyTradesChanged(current, tradesEvent(7, [trade("t2")]), scope);
+  assert.equal(next, current);
+  assert.equal(next.trades[0].trade_id, "t1");
 });
 
 test("applyTradesChanged ignores a malformed event (no revision)", () => {
@@ -107,10 +193,7 @@ test("applyTradesChanged on a null current state initializes from the event", ()
   assert.equal(next.trades.length, 1);
 });
 
-// --- service_generation regression (review P1#3) ---
-
 test("applyTradesChanged accepts a newer generation's low revision over an old high revision", () => {
-  // Old generation climbed to revision 20; Python restarts to generation 2.
   const current = state(20, [trade("old")], 1);
   const event = tradesEvent(1, [trade("new")], { service_generation: 2 });
   const next = applyTradesChanged(current, event, scope);
@@ -121,7 +204,6 @@ test("applyTradesChanged accepts a newer generation's low revision over an old h
 });
 
 test("applyTradesChanged ignores an older generation's high revision", () => {
-  // Now tracking generation 2; a late generation-1 event (revision 21) is stale.
   const current = state(1, [trade("new")], 2);
   const event = tradesEvent(21, [trade("stale")], { service_generation: 1 });
   const next = applyTradesChanged(current, event, scope);
@@ -141,7 +223,22 @@ test("applyTradesChanged accepts the same generation with a higher revision", ()
   assert.equal(next.trades[0].trade_id, "t2");
 });
 
-// --- pending op resolution (review P1#2) ---
+test("filterTradesByReplayCursor keeps trades at or before current_time", () => {
+  const trades = [
+    trade("a", { executed_at: "2026-07-24 10:00:00" }),
+    trade("b", { executed_at: "2026-07-24 10:05:00" }),
+    trade("c", { executed_at: "2026-07-24 10:10:00" }),
+  ];
+  assert.deepEqual(
+    filterTradesByReplayCursor(trades, "2026-07-24 10:05:00").map((t) => t.trade_id),
+    ["a", "b"],
+  );
+  assert.deepEqual(
+    filterTradesByReplayCursor(trades, "2026-07-24 09:59:59").map((t) => t.trade_id),
+    [],
+  );
+  assert.equal(filterTradesByReplayCursor(trades, null).length, 3);
+});
 
 test("pendingOpResolvedByTradesChanged returns the id when the event carries a tracked operation_id", () => {
   const pending = new Map([["op-1", { command: "create" }]]);
@@ -157,7 +254,6 @@ test("pendingOpResolvedByTradesChanged returns null when the operation_id is unt
 
 test("pendingOpResolvedByTradesChanged returns null when the event has no operation_id", () => {
   const pending = new Map([["op-1", { command: "create" }]]);
-  // No operation_id on the event -> cannot correlate -> do NOT clear anything.
   assert.equal(pendingOpResolvedByTradesChanged(tradesEvent(1, []), pending), null);
 });
 

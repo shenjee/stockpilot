@@ -13,8 +13,8 @@ Contract obligations verified end-to-end:
   ``session_id: null``.
 * An empty repository still publishes one ``trades_changed`` with
   ``payload.trades: []``.
-* ``payload.trades`` is a complete repository snapshot (spans the request's
-  symbol/date and others).
+* ``payload.trades`` is a scoped repository snapshot for the request
+  ``symbol + trade_date`` (Issue #163).
 * Envelope ``revision`` is monotonic ``+1`` for ``session_id: null`` events
   (the renderer gateway drops gaps); ``payload.trade_revision`` is monotonic
   within the ``service_generation`` and starts at ``0``.
@@ -152,22 +152,6 @@ class _WebSocketClient:
             pass
 
 
-class _RecordingTradeApi:
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, dict]] = []
-
-    def dispatch(self, command: str, request: dict) -> dict:
-        self.calls.append((command, request))
-        return {
-            "schema_version": "t0_app_v2",
-            "request_id": request["request_id"],
-            "accepted": True,
-            "operation_id": None,
-            "data": {},
-            "error": None,
-        }
-
-
 class TradeServiceWiringTest(unittest.TestCase):
     def setUp(self) -> None:
         self._tempdir = tempfile.TemporaryDirectory()
@@ -246,8 +230,10 @@ class TradeServiceWiringTest(unittest.TestCase):
             self.assertEqual(event["revision"], 1)  # strict +1 over service_status
             self.assertEqual(event["payload"]["trade_revision"], 0)
             self.assertEqual(event["payload"]["trades"], [])
+            self.assertEqual(event["payload"]["symbol"], "sh.600584")
+            self.assertEqual(event["payload"]["trade_date"], "2026-07-24")
 
-            # create_trade bumps the revision and publishes a 1-trade snapshot.
+            # create_trade bumps the revision and publishes a scoped snapshot.
             status, response = self._post(
                 "create_trade", {"trade": _draft()}, "r-create"
             )
@@ -256,14 +242,15 @@ class TradeServiceWiringTest(unittest.TestCase):
             event = client.recv_text()
             self.assertEqual(event["revision"], 2)
             self.assertEqual(event["payload"]["trade_revision"], 1)
+            self.assertEqual(event["payload"]["symbol"], "sh.600584")
+            self.assertEqual(event["payload"]["trade_date"], "2026-07-24")
             self.assertEqual(len(event["payload"]["trades"]), 1)
             trade_id = event["payload"]["trades"][0]["trade_id"]
             self.assertEqual(
                 event["payload"]["trades"][0]["bucket_start"], "2026-07-24 10:00:00"
             )
 
-            # Add a second trade for a different symbol/date to prove the
-            # snapshot is complete, not scoped to the request.
+            # Add a second trade for a different symbol/date.
             self._post(
                 "create_trade",
                 {"trade": _draft(symbol="sz.000001", executed_at="2026-07-25 14:10:00",
@@ -272,7 +259,7 @@ class TradeServiceWiringTest(unittest.TestCase):
             )
             client.recv_text()  # consume the create event
 
-            # list_trades for one symbol/date still publishes EVERY trade.
+            # list_trades for one symbol/date publishes only that scope.
             self._post(
                 "list_trades",
                 {"trade_scope": "real", "symbol": "sh.600584",
@@ -280,8 +267,10 @@ class TradeServiceWiringTest(unittest.TestCase):
                 "r-list-2",
             )
             event = client.recv_text()
+            self.assertEqual(event["payload"]["symbol"], "sh.600584")
+            self.assertEqual(event["payload"]["trade_date"], "2026-07-24")
             symbols = {t["symbol"] for t in event["payload"]["trades"]}
-            self.assertEqual(symbols, {"sh.600584", "sz.000001"})
+            self.assertEqual(symbols, {"sh.600584"})
 
             # update_trade preserves trade_id and the user-confirmed fee.
             status, response = self._post(
@@ -293,6 +282,8 @@ class TradeServiceWiringTest(unittest.TestCase):
             self.assertEqual(status, 200)
             self.assertTrue(response["accepted"])
             event = client.recv_text()
+            self.assertEqual(event["payload"]["symbol"], "sh.600584")
+            self.assertEqual(event["payload"]["trade_date"], "2026-07-24")
             updated = next(
                 t for t in event["payload"]["trades"] if t["trade_id"] == trade_id
             )
@@ -300,7 +291,7 @@ class TradeServiceWiringTest(unittest.TestCase):
             self.assertEqual(updated["fee"], 9.99)  # not recomputed
             self.assertEqual(updated["note"], "edited")
 
-            # delete_trade is a hard delete and publishes the reduced snapshot.
+            # delete_trade is a hard delete and publishes the reduced scoped snapshot.
             status, response = self._post(
                 "delete_trade",
                 {"trade_id": trade_id, "trade_scope": "real"},
@@ -309,6 +300,8 @@ class TradeServiceWiringTest(unittest.TestCase):
             self.assertEqual(status, 200)
             self.assertTrue(response["accepted"])
             event = client.recv_text()
+            self.assertEqual(event["payload"]["symbol"], "sh.600584")
+            self.assertEqual(event["payload"]["trade_date"], "2026-07-24")
             self.assertNotIn(
                 trade_id, {t["trade_id"] for t in event["payload"]["trades"]}
             )
@@ -409,20 +402,15 @@ class TradeServiceWiringTest(unittest.TestCase):
             server.server_close()
             thread.join(timeout=2)
 
-    def test_session_scoped_trade_does_not_fall_through_to_real_repository(self) -> None:
-        """Until a Replay registry is injected, simulated UI fails closed.
-
-        The production bootstrap currently owns only the real Trade API. A
-        session-scoped request must therefore report unavailable instead of
-        accidentally persisting a simulated trade through that API.
-        """
+    def test_simulated_trade_scope_is_rejected(self) -> None:
+        """Issue #163: simulated trade_scope fails closed without persistence."""
 
         request = Request(
             f"{self.base_url}/api/commands/create_trade",
             data=json.dumps(
                 {
                     "schema_version": "t0_app_v2",
-                    "request_id": "r-simulated-unwired",
+                    "request_id": "r-simulated-rejected",
                     "command": "create_trade",
                     "session_id": "replay-not-registered",
                     "payload": {
@@ -438,10 +426,12 @@ class TradeServiceWiringTest(unittest.TestCase):
         )
         with self.assertRaises(HTTPError) as rejected:
             urlopen(request, timeout=2)
-        self.assertEqual(rejected.exception.code, 503)
+        self.assertEqual(rejected.exception.code, 400)
         payload = json.load(rejected.exception)
         rejected.exception.close()
-        self.assertEqual(payload["error"]["error_code"], "service_unavailable")
+        self.assertEqual(payload["error"]["error_code"], "unsupported_trade_scope")
+        self.assertEqual(payload["error"]["category"], "invalid_request")
+        self.assertFalse(payload["error"]["retryable"])
         self.assertEqual(
             self._database.connection.execute(
                 "SELECT COUNT(*) FROM trades"
@@ -449,10 +439,7 @@ class TradeServiceWiringTest(unittest.TestCase):
             0,
         )
 
-    def test_scope_and_session_route_real_and_simulated_without_crossing(self) -> None:
-        simulated_api = _RecordingTradeApi()
-        self.server.simulated_trade_api = simulated_api
-
+    def test_real_scope_requires_null_session_and_rejects_simulated(self) -> None:
         def post(request_id: str, session_id: str | None, trade_scope: str):
             request = Request(
                 f"{self.base_url}/api/commands/create_trade",
@@ -485,7 +472,6 @@ class TradeServiceWiringTest(unittest.TestCase):
         status, rejected = post("r-real-wrong-session", "replay-1", "real")
         self.assertEqual(status, 400)
         self.assertEqual(rejected["error"]["error_code"], "invalid_trade_request")
-        self.assertEqual(simulated_api.calls, [])
         self.assertEqual(
             self._database.connection.execute(
                 "SELECT COUNT(*) FROM trades"
@@ -493,12 +479,10 @@ class TradeServiceWiringTest(unittest.TestCase):
             0,
         )
 
-        # A simulated trade with a Replay identity reaches only Session memory.
-        status, accepted = post("r-simulated", "replay-1", "simulated")
-        self.assertEqual(status, 200)
-        self.assertTrue(accepted["accepted"])
-        self.assertEqual(len(simulated_api.calls), 1)
-        self.assertEqual(simulated_api.calls[0][0], "create_trade")
+        # Simulated scope is unsupported regardless of Session identity.
+        status, rejected = post("r-simulated", "replay-1", "simulated")
+        self.assertEqual(status, 400)
+        self.assertEqual(rejected["error"]["error_code"], "unsupported_trade_scope")
         self.assertEqual(
             self._database.connection.execute(
                 "SELECT COUNT(*) FROM trades"
@@ -506,17 +490,14 @@ class TradeServiceWiringTest(unittest.TestCase):
             0,
         )
 
-        # Missing Replay identity is invalid and reaches neither API.
         status, rejected = post("r-simulated-no-session", None, "simulated")
         self.assertEqual(status, 400)
-        self.assertEqual(rejected["error"]["error_code"], "invalid_trade_request")
-        self.assertEqual(len(simulated_api.calls), 1)
+        self.assertEqual(rejected["error"]["error_code"], "unsupported_trade_scope")
 
         # A real trade with null Session reaches only the SQLite-backed API.
         status, accepted = post("r-real", None, "real")
         self.assertEqual(status, 200)
         self.assertTrue(accepted["accepted"])
-        self.assertEqual(len(simulated_api.calls), 1)
         self.assertEqual(
             self._database.connection.execute(
                 "SELECT COUNT(*) FROM trades"

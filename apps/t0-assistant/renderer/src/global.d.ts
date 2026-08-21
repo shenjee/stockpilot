@@ -26,6 +26,7 @@ declare global {
     getLiveSnapshot(request: unknown): Promise<unknown>;
     retryLive(request: unknown): Promise<unknown>;
     listTrades(request: unknown): Promise<unknown>;
+    listTradeHistory(request: unknown): Promise<unknown>;
     createTrade(request: unknown): Promise<unknown>;
     updateTrade(request: unknown): Promise<unknown>;
     deleteTrade(request: unknown): Promise<unknown>;

@@ -25,10 +25,12 @@ test("list_trades is a fact-via-changed-event command (contract flow)", async ()
     assert.equal(response.data, null);
 
     // After an accepted list_trades the backend publishes one authoritative
-    // real trades_changed event (session_id null), even when empty.
+    // scoped real trades_changed event (session_id null), even when empty.
     const event = scenario.trades_changed_event;
     assert.equal(event.event_type, "trades_changed");
     assert.equal(event.session_id, null);
+    assert.equal(event.payload.symbol, "sh.600584");
+    assert.equal(event.payload.trade_date, "2026-07-24");
     assert.equal(
       Number.isInteger(event.payload.trade_revision),
       true,
@@ -37,43 +39,44 @@ test("list_trades is a fact-via-changed-event command (contract flow)", async ()
   }
 });
 
-test("real trades_changed.payload.trades is a complete repository snapshot, not a query-scoped subset", async () => {
+test("real trades_changed.payload is already scoped to symbol + trade_date", async () => {
   const fixture = JSON.parse(await readFile(fixturePath, "utf8"));
+  const request = fixture.existing_trades.list_trades_request;
   const event = fixture.existing_trades.trades_changed_event;
   const trades = event.payload.trades;
 
-  // The snapshot contains trades for multiple symbols and trading dates, even
-  // though the list_trades request asked for one symbol/date. The payload has
-  // no scope fields, so the snapshot must be the full repository.
-  const symbols = new Set(trades.map((t) => t.symbol));
-  const dates = new Set(trades.map((t) => t.executed_at.slice(0, 10)));
-  assert.ok(symbols.size > 1, "snapshot should span multiple symbols");
-  assert.ok(dates.size > 1, "snapshot should span multiple trading dates");
+  assert.equal(event.payload.symbol, request.payload.symbol);
+  assert.equal(event.payload.trade_date, request.payload.trade_date);
+  assert.equal(trades.length, 1);
+  assert.equal(trades[0].trade_id, "trade-1");
+  assert.equal(trades[0].symbol, request.payload.symbol);
+  assert.equal(trades[0].executed_at.slice(0, 10), request.payload.trade_date);
 });
 
-test("the renderer treats the trades_changed event as authoritative and filters the snapshot itself", async () => {
+test("the renderer treats the scoped trades_changed event as authoritative", async () => {
   const fixture = JSON.parse(await readFile(fixturePath, "utf8"));
   const event = fixture.existing_trades.trades_changed_event;
-  const scope = fixture.existing_trades.expected_scope_filter;
+  const request = fixture.existing_trades.list_trades_request;
 
   // The renderer does NOT read command_response.data.trades; it consumes the
-  // frozen trades_changed event and filters the full snapshot to the
-  // symbol/date it currently shows. applyTradesChanged is the real reducer.
+  // frozen scoped trades_changed event. applyTradesChanged is the real reducer.
   const state = applyTradesChanged(null, event, {
-    symbol: scope.symbol,
-    tradeDate: scope.trade_date,
+    symbol: request.payload.symbol,
+    tradeDate: request.payload.trade_date,
   });
   assert.equal(state.tradeRevision, event.payload.trade_revision);
   assert.deepEqual(
     state.trades.map((t) => t.trade_id),
-    scope.matched_trade_ids,
-    "renderer should keep only the symbol/date slice of the full snapshot",
+    ["trade-1"],
+    "renderer should accept the already-scoped payload",
   );
 });
 
-test("an empty repository still publishes a trades_changed event with an empty snapshot", async () => {
+test("an empty repository still publishes a scoped trades_changed with trades:[]", async () => {
   const fixture = JSON.parse(await readFile(fixturePath, "utf8"));
   const event = fixture.empty_repository.trades_changed_event;
+  assert.equal(event.payload.symbol, "sh.600584");
+  assert.equal(event.payload.trade_date, "2026-07-24");
   assert.deepEqual(event.payload.trades, []);
 
   // applyTradesChanged accepts the empty authoritative snapshot (revision 0

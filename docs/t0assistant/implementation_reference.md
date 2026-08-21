@@ -62,7 +62,7 @@ flowchart LR
 | `apps/t0-assistant/tests/` | Python 与 Node 契约/集成测试 |
 | `packages/t0assistant/runtime/` | Session、Coordinator、共用 Pipeline、Live/Replay 时钟 |
 | `packages/t0assistant/replay/` | Replay 命令 API |
-| `packages/t0assistant/trading/` | 真实/模拟成交、收费规则 |
+| `packages/t0assistant/trading/` | SQLite 真实成交、收费规则和独立图表标记投影 |
 | `packages/t0assistant/preferences/` | 收费方案、偏好 |
 | `packages/t0assistant/repositories/` | T+0 专用 SQLite（成交、设置） |
 | `docs/t0assistant/` | PRD、架构、模块设计、UI 规格、Replay 契约、验收清单 |

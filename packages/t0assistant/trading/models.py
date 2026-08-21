@@ -1,9 +1,11 @@
 """Transport-independent trade domain values.
 
-The same values are used by persisted real trades and Replay-only simulated
-trades.  Persistence and Session ownership are deliberately outside this
-module; this layer only owns validation, timestamp normalization, and the
-deterministic five-minute chart bucket.
+These values are used by persisted real trades. ``TradeScope.SIMULATED`` is
+retained only as a legacy wire/enum compatibility value; Issue #163 removed
+Replay Session ownership of simulated trades and the runtime command API
+rejects simulated scope. Persistence ownership stays outside this module; this
+layer only owns validation, timestamp normalization, and the deterministic
+five-minute chart bucket.
 """
 
 from __future__ import annotations
@@ -118,7 +120,11 @@ def _optional_text(value: Any, field: str) -> str | None:
 
 @dataclass(frozen=True, slots=True)
 class TradeDraft:
-    """Validated input shared by real and Replay-simulated trades."""
+    """Validated input for a real trade create/update payload.
+
+    ``trade_scope`` may still carry the legacy ``simulated`` enum for wire
+    recognition; runtime command handling rejects simulated scope (Issue #163).
+    """
 
     trade_scope: TradeScope
     symbol: str

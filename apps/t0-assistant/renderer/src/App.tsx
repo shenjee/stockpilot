@@ -27,7 +27,10 @@ import {
   type ChartProjection,
 } from "./charts/chart-projection.mjs";
 import { LiveProjectionController } from "./charts/live-projection-controller.mjs";
+import { waitForLiveProjectionReady } from "./charts/wait-live-projection-ready.mjs";
 import { ReplaySessionController } from "./charts/replay-session-controller.mjs";
+import { enterTodayChart } from "./trading/enter-today-chart.mjs";
+import { resolveTradeUiPolicy } from "./trading/trade-ui-policy.mjs";
 import { replayEventEnvelope } from "./replay-event-envelope.mjs";
 import {
   applyWorkbenchPreferences,
@@ -91,10 +94,13 @@ import {
   TradeOperationController,
   type TradeOperationFailure,
 } from "./trading/trade-operation-controller.mjs";
-import { applyHistoryTradesChanged } from "./trading/history-state.mjs";
+import {
+  applyTradesChanged,
+  filterTradesByReplayCursor,
+  isRealTradesChangedEvent,
+} from "./trading/trade-state.mjs";
 import type { TradeRecord } from "./trading/trade-client.mjs";
-import { createSimulatedTradeClient } from "./trading/simulated-trade-client.mjs";
-import { ReplayTradeDrawer } from "./trading/ReplayTradeDrawer";
+import { projectTradeMarkers } from "./charts/trade-markers.mjs";
 
 const initialStatus: ServiceStatus = {
   state: "starting",
@@ -182,16 +188,21 @@ export function App() {
   const [preferenceHydrationAttempt, setPreferenceHydrationAttempt] =
     useState(0);
   const [replayDate, setReplayDate] = useState("");
-  // T0-043: repository-scoped real-trade snapshot, kept at the App level so
-  // both the trade Drawer/Dialog and the 5m chart markers consume the same
-  // authoritative list. The reducer applies the same generation/revision gate
-  // used by the history dialog.
+  // T0-043 / Issue #163: scoped real-trade day list at App level so the 5m
+  // chart overlay and Replay read-only day list share one authoritative source.
   const [realTrades, setRealTrades] = useState<{
     trades: TradeRecord[];
     tradeRevision: number;
     serviceGeneration: number | null;
-  }>({ trades: [], tradeRevision: -1, serviceGeneration: null });
-  const [simulatedTrades, setSimulatedTrades] = useState<TradeRecord[]>([]);
+    loadedScope: { symbol: string; tradeDate: string } | null;
+  }>({
+    trades: [],
+    tradeRevision: -1,
+    serviceGeneration: null,
+    loadedScope: null,
+  });
+  const realTradesRef = useRef(realTrades);
+  realTradesRef.current = realTrades;
   // T0-043 "进入当天图形": a dismissible notice when a historical trade's full
   // day chart cannot be restored (no frozen non-Replay command serves a static
   // historical workbench; see the T0-043 contract gap). Never wipes the last
@@ -203,6 +214,10 @@ export function App() {
   } | null>(null);
   const activeOperations = useRef(new Map<string, ActiveOperation>());
   const modeRef = useRef(workbench.mode);
+  const tradeScopeRef = useRef<{ symbol: string | null; tradeDate: string }>({
+    symbol: null,
+    tradeDate: localToday(),
+  });
   const serviceGeneration = useRef(initialStatus.service_generation);
   const searchRequests = useRef(createLatestRequestTracker());
   const navigationRequests = useRef(createLatestRequestTracker());
@@ -352,7 +367,12 @@ export function App() {
           next.service_generation,
         );
         setReplayDate("");
-        setSimulatedTrades([]);
+        setRealTrades({
+          trades: [],
+          tradeRevision: -1,
+          serviceGeneration: next.service_generation,
+          loadedScope: null,
+        });
       }
       if (next.state === "ready" || next.state === "connected") {
         setBackgroundError((current) =>
@@ -610,21 +630,24 @@ export function App() {
         return;
       }
       if (envelope.event_type === "trades_changed") {
-        // Trade-list updates are consumed by the TradeDrawer; they are not
-        // chart events and must not be routed to the workbench projection.
-        // Resolve any pending trade operation the controller is tracking via
-        // the event's operation_id (the controller is always mounted, even in
-        // Replay, so an op started in Live is resolved here even if the Drawer
-        // unmounted).
+        // Trade-list updates are not chart events and must not be routed to
+        // the workbench projection. Resolve any pending trade operation the
+        // controller is tracking via the event's operation_id.
         const opId =
           typeof envelope.operation_id === "string"
             ? envelope.operation_id
             : null;
         if (opId) tradeOpController.current?.resolve(opId);
-        // Keep the authoritative repository-scoped snapshot at the App level so
-        // the 5m chart can overlay real-trade markers for the current symbol
-        // and trading date.
-        setRealTrades((current) => applyHistoryTradesChanged(current, event));
+        // Scoped day list for the current symbol + trade_date (Issue #163).
+        const scope = tradeScopeRef.current;
+        if (scope.symbol && isRealTradesChangedEvent(event)) {
+          setRealTrades((current) =>
+            applyTradesChanged(current, event, {
+              symbol: scope.symbol as string,
+              tradeDate: scope.tradeDate,
+            }),
+          );
+        }
         applyLiveEvent();
         return;
       }
@@ -981,8 +1004,12 @@ export function App() {
   async function performSecuritySelection(
     security: SecurityIdentity,
     restoring = false,
-  ) {
-    const selectionSequence = navigationRequests.current.begin();
+    options?: { navigationSequence?: number },
+  ): Promise<boolean> {
+    // Share the caller's navigation sequence when provided (e.g. enter-today
+    // from Replay) so an outer begin() is not invalidated by a nested begin().
+    const selectionSequence =
+      options?.navigationSequence ?? navigationRequests.current.begin();
     cancelStartupRestoreTracking(
       restoreInFlight.current,
       activeOperations.current,
@@ -994,7 +1021,7 @@ export function App() {
       setWorkbench((current) =>
         selectWorkbenchSecurity(current, security),
       );
-      return;
+      return true;
     }
     if (!replayOwnsView) {
       setActiveFailure(null);
@@ -1014,7 +1041,7 @@ export function App() {
       const response = await window.stockpilot.selectSecurity(
         appRequest("select_security", null, { symbol: security.symbol }),
       );
-      if (!navigationRequests.current.isCurrent(selectionSequence)) return;
+      if (!navigationRequests.current.isCurrent(selectionSequence)) return false;
       const error = applicationErrorFrom(response);
       if (error) {
         const presentation = liveOperationFailurePresentation(
@@ -1039,7 +1066,7 @@ export function App() {
         } else {
           setBackgroundError(presentation.error);
         }
-        return;
+        return false;
       }
       const operationId = responseOperationId(response);
       const sessionId = responseSessionId(response);
@@ -1097,12 +1124,12 @@ export function App() {
       setSearchMessage("");
       // Recover the authoritative baseline when it raced ahead of the command
       // response or the event channel. A cold load may not be ready yet; in
-      // that normal case the later workbench_snapshot event remains the owner.
+      // that normal case wait for the later workbench_snapshot / status event.
       if (sessionId) {
         const snapshotResponse = await window.stockpilot.getLiveSnapshot(
           appRequest("get_live_snapshot", sessionId, {}),
         );
-        if (!navigationRequests.current.isCurrent(selectionSequence)) return;
+        if (!navigationRequests.current.isCurrent(selectionSequence)) return false;
         const recovered = workbenchSnapshotFromResponse(snapshotResponse);
         if (recovered) {
           const identity = {
@@ -1117,8 +1144,36 @@ export function App() {
           activeOperations.current.delete(operationId ?? "");
         }
       }
+      if (
+        liveProjectionReadyForSymbol(resolvedSecurity.symbol, sessionId)
+      ) {
+        if (modeRef.current !== WorkbenchMode.REPLAY) {
+          setLoading(false);
+        }
+        return true;
+      }
+      const liveController = liveProjectionController.current;
+      if (!liveController) return false;
+      const becameReady = await waitForLiveProjectionReady({
+        getProjection: () => liveProjectionController.current?.projection,
+        subscribe: (listener) => liveController.subscribe(listener),
+        symbol: resolvedSecurity.symbol,
+        sessionId,
+        serviceGeneration: status.service_generation,
+        isCurrent: () => navigationRequests.current.isCurrent(selectionSequence),
+      });
+      if (
+        becameReady &&
+        navigationRequests.current.isCurrent(selectionSequence) &&
+        modeRef.current !== WorkbenchMode.REPLAY
+      ) {
+        setLoading(false);
+      }
+      return (
+        becameReady && navigationRequests.current.isCurrent(selectionSequence)
+      );
     } catch (error) {
-      if (!navigationRequests.current.isCurrent(selectionSequence)) return;
+      if (!navigationRequests.current.isCurrent(selectionSequence)) return false;
       const failure = clientError(error, "symbol_selection");
       const presentation = liveOperationFailurePresentation(
         modeRef.current,
@@ -1142,6 +1197,21 @@ export function App() {
       } else {
         setBackgroundError(presentation.error);
       }
+      return false;
+    }
+
+    function liveProjectionReadyForSymbol(
+      symbol: string,
+      sessionId?: string | null,
+    ): boolean {
+      const projection = liveProjectionController.current?.projection;
+      return Boolean(
+        projection &&
+          projection.serviceGeneration === status.service_generation &&
+          projection.snapshot.session?.symbol === symbol &&
+          projection.snapshot.session?.state === "ready" &&
+          (sessionId == null || projection.sessionId === sessionId),
+      );
     }
   }
 
@@ -1151,21 +1221,39 @@ export function App() {
   // TradeDrawer already scopes). A historical trading day loads a complete,
   // static workbench snapshot via get_historical_snapshot and replaces the
   // current projection with it.
+  // When opened from Replay, exit Replay only after the target chart is ready
+  // so identity/snapshot failures keep the Replay session and projection.
   async function handleEnterDayChart(symbol: string, tradeDate: string) {
-    const requestSequence = navigationRequests.current.begin();
     const today = localToday();
     // Resolve identity before entering today's Live chart or loading a
     // historical snapshot. Identity lookup itself never changes Live state.
     if (tradeDate === today) {
       setDayChartNotice(null);
-      const identity = await resolveSecurity(symbol);
-      if (!identity || !navigationRequests.current.isCurrent(requestSequence)) {
-        setDayChartNotice("证券身份解析失败，无法进入当天图形。");
-        return;
+      const result = await enterTodayChart({
+        symbol,
+        beginNavigation: () => navigationRequests.current.begin(),
+        isCurrent: (sequence) => navigationRequests.current.isCurrent(sequence),
+        resolveSecurity,
+        performSecuritySelection: (identity, restoring, options) =>
+          performSecuritySelection(
+            identity as SecurityIdentity,
+            restoring,
+            options,
+          ),
+        isReplayMode: () => modeRef.current === WorkbenchMode.REPLAY,
+        selectLiveMode: () => selectMode(WorkbenchMode.LIVE),
+      });
+      if (!result.ok) {
+        if (result.reason === "identity") {
+          setDayChartNotice("证券身份解析失败，无法进入当天图形。");
+        } else if (result.reason === "live_not_ready") {
+          setDayChartNotice("当天图形加载失败，已保留当前图形。");
+        }
       }
-      void performSecuritySelection(identity);
       return;
     }
+
+    const requestSequence = navigationRequests.current.begin();
 
     if (!window.stockpilot) {
       if (!navigationRequests.current.isCurrent(requestSequence)) return;
@@ -1228,6 +1316,8 @@ export function App() {
         return;
       }
       const snapshot = inspected.snapshot;
+      // Install the historical projection on Live first, then leave Replay so
+      // the visible switch lands on the prepared day chart (not a stale Live).
       setWorkbench((current) => selectWorkbenchSecurity(current, identity));
       setQuery(identity.code);
       liveProjectionController.current?.replace(
@@ -1237,6 +1327,9 @@ export function App() {
           revision: session.revision,
         }),
       );
+      if (modeRef.current === WorkbenchMode.REPLAY) {
+        selectMode(WorkbenchMode.LIVE);
+      }
       setLoading(false);
     } catch (error) {
       if (!navigationRequests.current.isCurrent(requestSequence)) return;
@@ -1494,7 +1587,6 @@ export function App() {
       selectWorkbenchMode(current, WorkbenchMode.LIVE),
     );
     setReplayDate("");
-    setSimulatedTrades([]);
     if (window.stockpilot && sessionId) {
       void window.stockpilot
         .endReplay({
@@ -1512,40 +1604,99 @@ export function App() {
     }
   }
 
-  const currentSymbol = workbench.security?.symbol ?? null;
-  const currentTradeDate = snapshot.session?.trade_date ?? localToday();
-  const chartTrades = useMemo(() => {
-    if (!currentSymbol) return [];
-    if (workbench.mode === WorkbenchMode.REPLAY) {
-      return simulatedTrades.filter(
-        (trade) =>
-          trade.symbol === currentSymbol &&
-          tradeDateOf(trade.executed_at) === currentTradeDate,
-      );
+  // Issue #163: trade scope follows the *visible* chart projection session,
+  // not the search-box selection. In Replay the user may pick another code
+  // before beginning a new session; workbench.security then diverges from the
+  // still-visible Replay projection.
+  const tradeUi = resolveTradeUiPolicy({
+    session: snapshot.session,
+    workbenchSecurity: workbench.security,
+    mode: workbench.mode,
+    today: localToday(),
+  });
+  const {
+    visibleSymbol,
+    visibleTradeDate,
+    isTradableSecurity,
+    isKnownNonTradableVisible,
+    tradeDrawerReadOnly,
+  } = tradeUi;
+  const serviceReady =
+    status.state === "connected" || status.state === "ready";
+
+  tradeScopeRef.current = {
+    symbol: visibleSymbol,
+    tradeDate: visibleTradeDate,
+  };
+
+  // Issue #163: list_trades once when the visible symbol+trade_date is ready
+  // (Live + Replay tradable only). Play/step/seek must not re-list — only
+  // filter by cursor. Re-list on matching scoped trades_changed (via event
+  // handler), generation change, or reconnect (serviceReady / generation deps).
+  useEffect(() => {
+    if (!visibleSymbol || isKnownNonTradableVisible) {
+      setRealTrades({
+        trades: [],
+        tradeRevision: -1,
+        serviceGeneration: realTradesRef.current.serviceGeneration,
+        loadedScope: null,
+      });
+      return;
     }
-    return realTrades.trades.filter(
-      (trade) =>
-        trade.symbol === currentSymbol &&
-        tradeDateOf(trade.executed_at) === currentTradeDate,
-    );
+    if (!tradeClient || !serviceReady || !isTradableSecurity) {
+      // Selection diverged from the visible chart (e.g. Replay pending a new
+      // begin): keep existing markers for the visible session; do not list
+      // the newly selected code onto the old chart.
+      return;
+    }
+    let cancelled = false;
+    setRealTrades((current) => ({
+      trades: [],
+      tradeRevision: current.tradeRevision,
+      serviceGeneration: current.serviceGeneration,
+      loadedScope: null,
+    }));
+    void tradeClient
+      .listTrades({ symbol: visibleSymbol, tradeDate: visibleTradeDate })
+      .catch(() => {
+        // Keep empty list; trades_changed or retry will recover.
+        if (cancelled) return;
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [
-    realTrades.trades,
-    simulatedTrades,
-    currentSymbol,
-    currentTradeDate,
-    workbench.mode,
+    tradeClient,
+    serviceReady,
+    isTradableSecurity,
+    isKnownNonTradableVisible,
+    visibleSymbol,
+    visibleTradeDate,
+    status.service_generation,
   ]);
 
-  const simulatedTradeClient = useMemo(
-    () =>
-      window.stockpilot && replayFacts
-        ? createSimulatedTradeClient(
-            window.stockpilot,
-            replayFacts.sessionId,
-          )
-        : null,
-    [replayFacts?.sessionId],
-  );
+  const chartTrades = useMemo(() => {
+    if (!visibleSymbol || isKnownNonTradableVisible) return [];
+    const scoped = realTrades.trades.filter(
+      (trade) =>
+        trade.symbol === visibleSymbol &&
+        tradeDateOf(trade.executed_at) === visibleTradeDate,
+    );
+    if (workbench.mode === WorkbenchMode.REPLAY) {
+      return filterTradesByReplayCursor(
+        scoped,
+        replayFacts?.currentTime ?? null,
+      ) as TradeRecord[];
+    }
+    return scoped;
+  }, [
+    realTrades.trades,
+    visibleSymbol,
+    visibleTradeDate,
+    workbench.mode,
+    isKnownNonTradableVisible,
+    replayFacts?.currentTime,
+  ]);
 
   const fiveMinuteModelResult = useMemo(
     () =>
@@ -1553,9 +1704,8 @@ export function App() {
         snapshot,
         ChartGroupKind.FIVE_MINUTE,
         workbench.layers,
-        chartTrades,
       ),
-    [snapshot, workbench.layers, chartTrades],
+    [snapshot, workbench.layers],
   );
   const intradayModelResult = useMemo(
     () => tryCreateChartGroupModel(snapshot, ChartGroupKind.ONE_MINUTE),
@@ -1574,6 +1724,12 @@ export function App() {
       ? intradayModelResult.model
       : (lastGoodChartModels.current?.intraday ??
         createChartGroupModel(emptyChartSnapshot, ChartGroupKind.ONE_MINUTE));
+
+  const fiveMinuteTradeMarkers = useMemo(() => {
+    if (fiveMinuteModel.kind !== ChartGroupKind.FIVE_MINUTE) return [];
+    const allowedTimes = new Set(Object.values(fiveMinuteModel.timeByTimestamp));
+    return projectTradeMarkers(chartTrades, { allowedTimes });
+  }, [chartTrades, fiveMinuteModel]);
 
   useEffect(() => {
     if (fiveMinuteModelResult.ok && intradayModelResult.ok) {
@@ -1774,6 +1930,7 @@ export function App() {
               replayFacts?.sessionId ?? projection.sessionId ?? "live"
             }`}
             model={fiveMinuteModel}
+            tradeMarkers={fiveMinuteTradeMarkers}
             appendFollowPolicy={
               replayFacts
                 ? "preserve"
@@ -1876,34 +2033,23 @@ export function App() {
         />
       )}
 
-      {!replayMode && (
+      {isTradableSecurity && (
         <TradeDrawer
           security={workbench.security}
           tradeClient={tradeClient}
-          feePlanClient={feePlanClient}
+          feePlanClient={tradeDrawerReadOnly ? null : feePlanClient}
           feeAdvisor={feeAdvisor}
-          serviceReady={status.state === "connected" || status.state === "ready"}
+          serviceReady={serviceReady}
           subscribeAppEvent={subscribeAppEvent}
           serviceGeneration={status.service_generation}
           tradeOpController={tradeOpController.current as TradeOperationController}
           onEnterDayChart={handleEnterDayChart}
           resolveSecurity={resolveSecurity}
+          readOnly={tradeDrawerReadOnly}
+          dayTrades={tradeDrawerReadOnly ? chartTrades : undefined}
+          tradeDate={tradeDrawerReadOnly ? visibleTradeDate : undefined}
         />
       )}
-
-      {replayMode &&
-        replayFacts &&
-        workbench.security &&
-        simulatedTradeClient && (
-          <ReplayTradeDrawer
-            security={workbench.security}
-            sessionId={replayFacts.sessionId}
-            currentTime={replayFacts.currentTime}
-            tradeClient={simulatedTradeClient}
-            subscribeAppEvent={subscribeAppEvent}
-            onTradesChange={setSimulatedTrades}
-          />
-        )}
 
       {dayChartNotice && (
         <div className="inline-error" role="status" style={{ margin: "8px 12px" }}>

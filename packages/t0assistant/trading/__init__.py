@@ -34,7 +34,6 @@ from .service import (
     TradeEligibilityError,
     TradeService,
 )
-from .simulated_api import SimulatedTradeCommandApi, SimulatedTradeSessionPort
 
 __all__ = [
     "SHARES_PER_LOT",
@@ -62,8 +61,6 @@ __all__ = [
     "TradeRecord",
     "TradeScope",
     "TradeService",
-    "SimulatedTradeCommandApi",
-    "SimulatedTradeSessionPort",
     "TradeSide",
     "TradeValidationError",
 ]

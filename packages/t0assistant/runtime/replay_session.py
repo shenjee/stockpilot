@@ -39,14 +39,6 @@ from decimal import Decimal
 from enum import Enum
 from threading import Event, RLock
 from typing import Any, Callable
-from uuid import uuid4
-
-from packages.t0assistant.trading.models import (
-    TradeDraft,
-    TradeRecord,
-    TradeScope,
-    TradeValidationError,
-)
 
 from ._market_bars import MARKET_TIMESTAMP_FORMAT
 from .computation_contract import (
@@ -153,7 +145,6 @@ class PlaybackPumpResult:
 
 
 EventPublisher = Callable[[dict[str, Any]], None]
-TradeEventPublisher = Callable[[dict[str, Any]], None]
 
 
 class ReplaySession:
@@ -196,7 +187,6 @@ class ReplaySession:
         clock: MonotonicClockPort | None = None,
         scheduler: PlaybackSchedulerPort | None = None,
         on_event: EventPublisher | None = None,
-        on_trade_event: TradeEventPublisher | None = None,
         analyzer: CzscAnalyzerPort | None = None,
         initial_operation_id: str | None = None,
         auto_ready: bool = True,
@@ -223,9 +213,6 @@ class ReplaySession:
         self._analyzer = analyzer
         self._clock = clock or SystemMonotonicClock()
         self._on_event: EventPublisher = on_event or (lambda _event: None)
-        self._on_trade_event: TradeEventPublisher = (
-            on_trade_event or (lambda _event: None)
-        )
         self._initial_operation_id = initial_operation_id
         self._computation_timeout = computation_timeout
         self._deadline_seconds = deadline_seconds
@@ -261,8 +248,6 @@ class ReplaySession:
         self._last_pipeline_result: PipelineResult | None = None
         self._retired = False
         self._ended_converged = False
-        self._simulated_trades: dict[str, TradeRecord] = {}
-        self._trade_revision = -1
 
         self._next_ticket = 1
         self._inflight_ticket: int | None = None
@@ -388,61 +373,6 @@ class ReplaySession:
             result = self._initial_result
             self._initial_result = None
             return result
-
-    @property
-    def simulated_trades(self) -> tuple[TradeRecord, ...]:
-        """Return the Session-owned simulated trades in deterministic order."""
-
-        with self._lock:
-            return self._sorted_simulated_trades_locked()
-
-    def create_simulated_trade(
-        self, draft: TradeDraft | dict[str, Any], *, trade_id: str | None = None
-    ) -> TradeRecord:
-        """Create a Replay-only trade without touching a repository."""
-
-        with self._lock:
-            normalized = self._validate_simulated_draft_locked(draft)
-            record_id = trade_id or f"sim-{uuid4().hex}"
-            if record_id in self._simulated_trades:
-                raise TradeValidationError("trade_id", "must be unique in Replay Session")
-            record = TradeRecord(record_id, normalized)
-            self._simulated_trades[record_id] = record
-            self._publish_simulated_trades_locked()
-            return record
-
-    def update_simulated_trade(
-        self, trade_id: str, draft: TradeDraft | dict[str, Any]
-    ) -> TradeRecord:
-        """Replace a Replay-only trade while preserving its identity."""
-
-        with self._lock:
-            if trade_id not in self._simulated_trades:
-                raise TradeValidationError("trade_id", "simulated trade not found")
-            record = TradeRecord(
-                trade_id, self._validate_simulated_draft_locked(draft)
-            )
-            self._simulated_trades[trade_id] = record
-            self._publish_simulated_trades_locked()
-            return record
-
-    def delete_simulated_trade(self, trade_id: str) -> bool:
-        """Permanently remove one in-memory simulated trade."""
-
-        with self._lock:
-            if trade_id not in self._simulated_trades:
-                return False
-            del self._simulated_trades[trade_id]
-            self._publish_simulated_trades_locked()
-            return True
-
-    def publish_simulated_trades(self) -> None:
-        """Publish the complete in-memory trade fact for Renderer hydration."""
-
-        with self._lock:
-            if self._retired:
-                raise ReplaySessionStateError("session is retired")
-            self._publish_simulated_trades_locked()
 
     # ------------------------------------------------------------------
     # Cursor operations
@@ -993,14 +923,6 @@ class ReplaySession:
             if self._retired:
                 return
             self._retired = True
-            had_simulated_trades = bool(self._simulated_trades)
-            self._simulated_trades.clear()
-            if had_simulated_trades:
-                # ``trades_changed`` is already the authoritative Session trade
-                # snapshot seam.  Publish the empty fact before the terminal
-                # status so consumers that still retain this Session cannot
-                # keep a stale Replay marker.
-                self._publish_simulated_trades_locked()
             # A retired Replay is one-shot state, not a historical snapshot
             # cache.  Drop the last projection so no caller retaining the
             # Python object can recover the retired picture/progress through
@@ -1397,68 +1319,6 @@ class ReplaySession:
         if operation_id is not None:
             envelope["operation_id"] = operation_id
         self._on_event(envelope)
-
-    def _validate_simulated_draft_locked(
-        self, draft: TradeDraft | dict[str, Any]
-    ) -> TradeDraft:
-        if self._retired:
-            raise ReplaySessionStateError("session is retired")
-        if not isinstance(draft, (TradeDraft, Mapping)):
-            raise TradeValidationError("trade", "must be a trade draft")
-        normalized = (
-            draft
-            if isinstance(draft, TradeDraft)
-            else TradeDraft.from_mapping(draft)
-        )
-        if normalized.trade_scope is not TradeScope.SIMULATED:
-            raise TradeValidationError(
-                "trade_scope", "Replay trades must use simulated scope"
-            )
-        if normalized.symbol != self._prepared.symbol:
-            raise TradeValidationError("symbol", "must match Replay Session symbol")
-        if normalized.executed_at.date().isoformat() != self._prepared.trade_date:
-            raise TradeValidationError(
-                "executed_at", "must be on the Replay trade date"
-            )
-        if normalized.executed_at > self._current_time:
-            raise TradeValidationError(
-                "executed_at", "must not be later than the Replay cursor"
-            )
-        return normalized
-
-    def _publish_simulated_trades_locked(self) -> None:
-        self._trade_revision += 1
-        trades = [
-            record.to_dict()
-            for record in self._sorted_simulated_trades_locked()
-        ]
-        self._on_trade_event(
-            {
-                "schema_version": "t0_app_v2",
-                "service_generation": self._service_generation,
-                "session_id": self._session_id,
-                "revision": self._trade_revision,
-                "event_type": "trades_changed",
-                "payload": {
-                    "trade_revision": self._trade_revision,
-                    "trades": trades,
-                },
-            }
-        )
-
-    def _sorted_simulated_trades_locked(self) -> tuple[TradeRecord, ...]:
-        """Return deterministic Session memory without re-entering the lock."""
-
-        return tuple(
-            sorted(
-                self._simulated_trades.values(),
-                key=lambda record: (
-                    record.trade.executed_at,
-                    record.trade_id,
-                ),
-            )
-        )
-
 
 def _outcome_is_failure(outcome: ComputationOutcome) -> bool:
     """Return whether a non-completed outcome should fail the Session.

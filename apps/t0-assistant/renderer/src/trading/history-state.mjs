@@ -1,21 +1,15 @@
 /**
- * Pure reducer helpers for the *historical* (full-repository) trade list.
+ * Pure helpers for the historical (cross-symbol / cross-date) trade list.
  *
- * The authoritative trade list arrives through the frozen `trades_changed`
- * event (`session_id: null` for real trades, payload
- * `real_trades_changed_payload` = `{ trade_revision, trades }`). Unlike
- * `trade-state.mjs` - which filters the snapshot to the drawer's current
- * symbol/date - the history list shows EVERY persisted real trade across all
- * symbols and trading dates, so this reducer applies the same revision gate
- * but keeps the full (unfiltered) snapshot and sorts it for display.
+ * Issue #163: history is hydrated from the synchronous `list_trade_history`
+ * response (`data: { trade_revision, trades }`). Scoped `trades_changed`
+ * events only invalidate the open dialog so it re-fetches; they must NOT be
+ * merged into the history list (their `trades` array is day-scoped, not a
+ * full repository snapshot).
  *
  * Display order (a renderer-side choice; the wire payload is unordered by
  * contract): `executed_at` descending (most recent first), then `trade_id`
  * ascending as a stable tiebreak. No sort selector is exposed to the user.
- *
- * Revision validity is scoped to a service generation: a revision is only
- * comparable within the same `service_generation`. When the Python service
- * restarts (new generation), the gate resets.
  */
 
 import { isRealTradesChangedEvent } from "./trade-state.mjs";
@@ -43,40 +37,72 @@ export function sortHistoryTrades(trades) {
 }
 
 /**
- * Apply a `trades_changed` event to the history-list state (no scope filter).
+ * True when a real `trades_changed` event should invalidate an open history
+ * dialog (trigger a coalesced `list_trade_history` refresh). Does not apply
+ * the scoped payload to history state.
  *
- * The gate compares the `(service_generation, trade_revision)` pair: a stale
- * event (older generation, or same generation with revision <= current) is
- * ignored and the unchanged `currentState` is returned. An event from a newer
- * generation is accepted and resets the revision context. Malformed events
- * (no integer `trade_revision`) leave the state unchanged.
+ * @param {unknown} event
+ * @returns {boolean}
+ */
+export function historyInvalidatedByTradesChanged(event) {
+  return isRealTradesChangedEvent(event);
+}
+
+/**
+ * Apply a synchronous `list_trade_history` response to history-list state.
+ *
+ * Accepts `{ trade_revision, trades }` when the revision is newer than the
+ * current gate (within the same `serviceGeneration`, or any revision when the
+ * generation advanced). Older revisions are discarded. Malformed data leaves
+ * state unchanged.
  *
  * @param {{trades: unknown[], tradeRevision: number, serviceGeneration: number | null} | null} currentState
- * @param {object} event - the `trades_changed` app event
+ * @param {{ trade_revision?: unknown, trades?: unknown } | null | undefined} data
+ * @param {number | null | undefined} serviceGeneration
  */
-export function applyHistoryTradesChanged(currentState, event) {
-  if (!isRealTradesChangedEvent(event)) return currentState;
-  const payload = event.payload ?? {};
-  const revision = integerOrNull(payload.trade_revision);
+export function applyHistoryListResponse(currentState, data, serviceGeneration) {
+  if (!data || typeof data !== "object") return currentState;
+  const revision = integerOrNull(data.trade_revision);
   if (revision === null) return currentState;
 
   const stateGen = integerOrNull(currentState?.serviceGeneration);
-  const eventGen = integerOrNull(event.service_generation);
+  const nextGen = integerOrNull(serviceGeneration);
   const currentRevision = currentState?.tradeRevision ?? -1;
 
-  if (stateGen !== null && eventGen !== null) {
-    if (eventGen < stateGen) return currentState; // stale generation
-    if (eventGen === stateGen && revision <= currentRevision) {
-      return currentState; // stale revision within the same generation
+  if (stateGen !== null && nextGen !== null) {
+    if (nextGen < stateGen) return currentState;
+    if (nextGen === stateGen && revision <= currentRevision) {
+      return currentState;
     }
-  } else if (revision <= currentRevision) {
-    return currentState; // no generation tracking yet: revision gate only
+  } else if (revision <= currentRevision && nextGen === stateGen) {
+    return currentState;
+  } else if (
+    nextGen === null &&
+    stateGen === null &&
+    revision <= currentRevision
+  ) {
+    return currentState;
   }
 
-  const allTrades = Array.isArray(payload.trades) ? payload.trades : [];
+  const allTrades = Array.isArray(data.trades) ? data.trades : [];
   return {
     trades: sortHistoryTrades(allTrades),
     tradeRevision: revision,
-    serviceGeneration: eventGen ?? stateGen,
+    serviceGeneration: nextGen ?? stateGen,
   };
+}
+
+/**
+ * @deprecated Issue #163: scoped trades_changed must not replace history.
+ * Prefer {@link historyInvalidatedByTradesChanged} + {@link applyHistoryListResponse}.
+ * Kept as a thin invalidation signal for tests that only need to assert that
+ * real trades_changed events are recognized (returns currentState unchanged).
+ *
+ * @param {{trades: unknown[], tradeRevision: number, serviceGeneration: number | null} | null} currentState
+ * @param {object} event
+ */
+export function applyHistoryTradesChanged(currentState, event) {
+  if (!historyInvalidatedByTradesChanged(event)) return currentState;
+  // Do not merge scoped payload.trades into the history list.
+  return currentState;
 }

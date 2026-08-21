@@ -75,8 +75,9 @@ receives a child-process handle, executable path, credential, or unrestricted
 IPC method.
 
 Python process restart creates a new service generation. Persisted inputs can be
-used to reconstruct Live state, but Replay progress and simulated trades are
-reported as lost and are not silently reconstructed.
+used to reconstruct Live state and real trades, but Replay progress is reported
+as lost and is not silently reconstructed. Issue #163 supersedes the earlier
+Session-owned simulated-trade assumption: Replay no longer owns trade state.
 
 ## Validation Required
 

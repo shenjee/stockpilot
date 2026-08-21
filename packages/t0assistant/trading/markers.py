@@ -9,10 +9,11 @@ concerns - no color, no marker shape, no Unix timestamp - so any renderer
 its own visual style. This is the ``Trade Service`` projection port referenced
 by ``module_design.md`` §5.6.
 
-Real and Replay-simulated trades share the same projection; only
-``trade_scope`` differs. Sorting is stable and mirrors the renderer-side
-projection in ``apps/t0-assistant/renderer/.../trade-markers.mjs`` so the two
-layers never disagree about marker order within a 5m bucket.
+``TradeScope.SIMULATED`` remains only for recognizing legacy payloads; runtime
+trade commands reject simulated scope (Issue #163). Sorting is stable and
+mirrors the renderer-side projection in
+``apps/t0-assistant/renderer/.../trade-markers.mjs`` so the two layers never
+disagree about marker order within a 5m bucket.
 """
 
 from __future__ import annotations

@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import {
   ChartGroupKind,
   type ChartGroupModel,
+  type TradeMarkerModel,
 } from "./chart-model.mjs";
 import { SynchronizedChartGroup } from "./SynchronizedChartGroup";
 import {
@@ -12,6 +13,8 @@ import {
 
 interface ChartGroupProps {
   model: ChartGroupModel;
+  /** Independent trade overlay; updates must not rebuild ChartGroupModel. */
+  tradeMarkers?: readonly TradeMarkerModel[];
   priceHeader: React.ReactNode;
   initialViewport?: ChartViewportSnapshot | null;
   onViewportChange?: (snapshot: ChartViewportSnapshot | null) => void;
@@ -26,6 +29,7 @@ interface ChartGroupProps {
 
 export function ChartGroup({
   model,
+  tradeMarkers = [],
   priceHeader,
   initialViewport,
   onViewportChange,
@@ -100,6 +104,14 @@ export function ChartGroup({
     controller.setDatasetIdentity(datasetIdentity);
     controller.setModel(model);
   }, [model, datasetIdentity]);
+
+  useEffect(() => {
+    const controller = controllerRef.current;
+    if (!controller) {
+      return;
+    }
+    controller.setTradeMarkers(tradeMarkers);
+  }, [tradeMarkers]);
 
   const isIntraday = model.kind === ChartGroupKind.ONE_MINUTE;
 

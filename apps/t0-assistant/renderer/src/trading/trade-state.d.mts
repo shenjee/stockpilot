@@ -5,6 +5,8 @@ export interface TradeListState {
   trades: TradeRecord[];
   tradeRevision: number;
   serviceGeneration: number | null;
+  /** Scope of the last accepted matching trades_changed fact; null until one arrives. */
+  loadedScope: { symbol: string; tradeDate: string } | null;
 }
 
 export function isRealTradesChangedEvent(event: unknown): event is {
@@ -14,6 +16,11 @@ export function isRealTradesChangedEvent(event: unknown): event is {
   operation_id?: string;
   service_generation?: number;
 };
+
+export function filterTradesByReplayCursor(
+  trades: ReadonlyArray<TradeRecord> | null | undefined,
+  currentTime: string | null | undefined,
+): TradeRecord[];
 
 export function applyTradesChanged(
   currentState: TradeListState | null,

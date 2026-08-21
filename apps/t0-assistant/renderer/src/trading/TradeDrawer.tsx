@@ -57,6 +57,9 @@ export function TradeDrawer({
   tradeOpController,
   onEnterDayChart,
   resolveSecurity,
+  readOnly = false,
+  dayTrades = null,
+  tradeDate = null,
 }: {
   security: SecurityIdentity | null;
   tradeClient: TradeClient | null;
@@ -85,6 +88,15 @@ export function TradeDrawer({
    * default.
    */
   resolveSecurity: (symbol: string) => Promise<SecurityIdentity | null>;
+  /** Replay: hide create/edit/delete and fee-plan settings. */
+  readOnly?: boolean;
+  /**
+   * When provided (including `[]`), use these as the visible day list and skip
+   * the drawer's own list_trades hydration (App owns realTrades for Replay).
+   */
+  dayTrades?: TradeRecord[] | null;
+  /** Override the day scope date (defaults to local today). */
+  tradeDate?: string | null;
 }) {
   const [trades, setTrades] = useState<TradeRecord[]>([]);
   const [expanded, setExpanded] = useState(false);
@@ -107,26 +119,38 @@ export function TradeDrawer({
     trades: [],
     tradeRevision: -1,
     serviceGeneration: null,
+    loadedScope: null,
   });
   const loadedSymbolRef = useRef<string | null>(null);
   const prevGenRef = useRef<number>(serviceGeneration);
+  const externalDayList = dayTrades !== null && dayTrades !== undefined;
+  const resolvedTradeDate = tradeDate || localToday();
 
   function commitTradeList(next: TradeListState) {
     tradeListRef.current = next;
     setTrades(next.trades);
   }
 
+  // External day list (Replay): mirror App-owned realTrades; no list_trades.
+  useEffect(() => {
+    if (!externalDayList) return;
+    setTrades(dayTrades ?? []);
+    setListError(null);
+  }, [externalDayList, dayTrades]);
+
   // Refresh trigger via list_trades. The trade list itself is NOT read from
   // the response (its data shape is unfrozen); the authoritative list arrives
   // through trades_changed. A trigger failure surfaces a retry error but does
   // not clear the last successful list.
   useEffect(() => {
+    if (externalDayList) return;
     if (!security) {
       loadedSymbolRef.current = null;
       commitTradeList({
         trades: [],
         tradeRevision: -1,
         serviceGeneration: tradeListRef.current.serviceGeneration,
+        loadedScope: null,
       });
       setListError(null);
       return;
@@ -141,14 +165,15 @@ export function TradeDrawer({
     if (symbolChanged) {
       commitTradeList({
         trades: [],
-        tradeRevision: -1,
+        tradeRevision: tradeListRef.current.tradeRevision,
         serviceGeneration: tradeListRef.current.serviceGeneration,
+        loadedScope: null,
       });
       setListError(null);
     }
     let cancelled = false;
     tradeClient
-      .listTrades({ symbol, tradeDate: localToday() })
+      .listTrades({ symbol, tradeDate: resolvedTradeDate })
       .then(() => {
         if (!cancelled) setListError(null);
       })
@@ -158,10 +183,18 @@ export function TradeDrawer({
     return () => {
       cancelled = true;
     };
-  }, [security, tradeClient, serviceReady, reloadKey]);
+  }, [
+    security,
+    tradeClient,
+    serviceReady,
+    reloadKey,
+    externalDayList,
+    resolvedTradeDate,
+  ]);
 
   // Reset the revision gate on a service_generation change (Python restart).
   useEffect(() => {
+    if (externalDayList) return;
     const prev = prevGenRef.current;
     prevGenRef.current = serviceGeneration;
     if (prev === serviceGeneration || serviceGeneration <= 0) return;
@@ -169,27 +202,29 @@ export function TradeDrawer({
       ...tradeListRef.current,
       tradeRevision: -1,
       serviceGeneration,
+      loadedScope: null,
     };
     setListError(null);
     setReloadKey((k) => k + 1);
-  }, [serviceGeneration]);
+  }, [serviceGeneration, externalDayList]);
 
   // Authoritative list updates via the frozen trades_changed event. Pending-op
   // resolution and operation_failed are handled by the App-level controller
   // (so they survive this Drawer unmounting in Replay); this subscription only
   // maintains the visible trade list.
   useEffect(() => {
+    if (externalDayList) return;
     if (!subscribeAppEvent) return;
     return subscribeAppEvent((event) => {
       if (!security) return;
       if (!isRealTradesChangedEvent(event)) return;
-      const scope = { symbol: security.symbol, tradeDate: localToday() };
+      const scope = { symbol: security.symbol, tradeDate: resolvedTradeDate };
       const next = applyTradesChanged(tradeListRef.current, event, scope);
       if (next !== tradeListRef.current) {
         commitTradeList(next);
       }
     });
-  }, [subscribeAppEvent, security]);
+  }, [subscribeAppEvent, security, externalDayList, resolvedTradeDate]);
 
   async function refreshFeePlans() {
     if (!feePlanClient) return;
@@ -351,22 +386,24 @@ export function TradeDrawer({
         </button>
         <span className="trade-drawer-summary">
           {security
-            ? `今日 ${todayCount} 笔（买 ${buyCount} / 卖 ${sellCount}）`
+            ? `${readOnly ? "当日" : "今日"} ${todayCount} 笔（买 ${buyCount} / 卖 ${sellCount}）`
             : "请先选择股票"}
         </span>
         <div className="trade-drawer-actions">
-          <button
-            type="button"
-            className="primary-button"
-            disabled={
-              !security ||
-              !tradeClient ||
-              security.instrument_type === "index"
-            }
-            onClick={() => setFormOpen({ mode: "create" })}
-          >
-            录入成交
-          </button>
+          {!readOnly && (
+            <button
+              type="button"
+              className="primary-button"
+              disabled={
+                !security ||
+                !tradeClient ||
+                security.instrument_type === "index"
+              }
+              onClick={() => setFormOpen({ mode: "create" })}
+            >
+              录入成交
+            </button>
+          )}
           <button
             type="button"
             disabled={!tradeClient}
@@ -375,14 +412,16 @@ export function TradeDrawer({
           >
             历史交易记录
           </button>
-          <button
-            type="button"
-            disabled={feePlanUnavailable}
-            title={feePlanUnavailable ? "收费方案持久化尚未接入" : undefined}
-            onClick={() => setSettingsOpen(true)}
-          >
-            收费方案设置
-          </button>
+          {!readOnly && (
+            <button
+              type="button"
+              disabled={feePlanUnavailable}
+              title={feePlanUnavailable ? "收费方案持久化尚未接入" : undefined}
+              onClick={() => setSettingsOpen(true)}
+            >
+              收费方案设置
+            </button>
+          )}
         </div>
       </div>
 
@@ -427,24 +466,26 @@ export function TradeDrawer({
                   {trade.note && (
                     <span className="trade-note">{trade.note}</span>
                   )}
-                  <span className="trade-item-actions">
-                    <button
-                      type="button"
-                      onClick={() => setFormOpen({ mode: "edit", trade })}
-                    >
-                      编辑
-                    </button>
-                    <button
-                      type="button"
-                      className="danger-button"
-                      onClick={() => {
-                        setDeleteError(null);
-                        setPendingDelete(trade);
-                      }}
-                    >
-                      删除
-                    </button>
-                  </span>
+                  {!readOnly && (
+                    <span className="trade-item-actions">
+                      <button
+                        type="button"
+                        onClick={() => setFormOpen({ mode: "edit", trade })}
+                      >
+                        编辑
+                      </button>
+                      <button
+                        type="button"
+                        className="danger-button"
+                        onClick={() => {
+                          setDeleteError(null);
+                          setPendingDelete(trade);
+                        }}
+                      >
+                        删除
+                      </button>
+                    </span>
+                  )}
                 </li>
               ))}
             </ul>
@@ -452,7 +493,7 @@ export function TradeDrawer({
         </div>
       )}
 
-      {formOpen && security && (
+      {!readOnly && formOpen && security && (
         <TradeFormDialog
           open
           mode={formOpen.mode}
@@ -465,7 +506,7 @@ export function TradeDrawer({
         />
       )}
 
-      {!feePlanUnavailable && (
+      {!readOnly && !feePlanUnavailable && (
         <FeePlanSettingsDialog
           open={settingsOpen}
           client={feePlanClient}
@@ -487,9 +528,10 @@ export function TradeDrawer({
         onEnterDayChart={onEnterDayChart}
         tradeOpController={tradeOpController}
         resolveSecurity={resolveSecurity}
+        readOnly={readOnly}
       />
 
-      {pendingDelete && (
+      {!readOnly && pendingDelete && (
         <div className="dialog-backdrop" role="presentation">
           <section
             className="confirm-dialog"
