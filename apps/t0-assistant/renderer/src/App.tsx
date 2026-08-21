@@ -1000,7 +1000,7 @@ export function App() {
   async function performSecuritySelection(
     security: SecurityIdentity,
     restoring = false,
-  ) {
+  ): Promise<boolean> {
     const selectionSequence = navigationRequests.current.begin();
     cancelStartupRestoreTracking(
       restoreInFlight.current,
@@ -1013,7 +1013,7 @@ export function App() {
       setWorkbench((current) =>
         selectWorkbenchSecurity(current, security),
       );
-      return;
+      return true;
     }
     if (!replayOwnsView) {
       setActiveFailure(null);
@@ -1033,7 +1033,7 @@ export function App() {
       const response = await window.stockpilot.selectSecurity(
         appRequest("select_security", null, { symbol: security.symbol }),
       );
-      if (!navigationRequests.current.isCurrent(selectionSequence)) return;
+      if (!navigationRequests.current.isCurrent(selectionSequence)) return false;
       const error = applicationErrorFrom(response);
       if (error) {
         const presentation = liveOperationFailurePresentation(
@@ -1058,7 +1058,7 @@ export function App() {
         } else {
           setBackgroundError(presentation.error);
         }
-        return;
+        return false;
       }
       const operationId = responseOperationId(response);
       const sessionId = responseSessionId(response);
@@ -1121,7 +1121,7 @@ export function App() {
         const snapshotResponse = await window.stockpilot.getLiveSnapshot(
           appRequest("get_live_snapshot", sessionId, {}),
         );
-        if (!navigationRequests.current.isCurrent(selectionSequence)) return;
+        if (!navigationRequests.current.isCurrent(selectionSequence)) return false;
         const recovered = workbenchSnapshotFromResponse(snapshotResponse);
         if (recovered) {
           const identity = {
@@ -1136,8 +1136,9 @@ export function App() {
           activeOperations.current.delete(operationId ?? "");
         }
       }
+      return liveProjectionReadyForSymbol(resolvedSecurity.symbol);
     } catch (error) {
-      if (!navigationRequests.current.isCurrent(selectionSequence)) return;
+      if (!navigationRequests.current.isCurrent(selectionSequence)) return false;
       const failure = clientError(error, "symbol_selection");
       const presentation = liveOperationFailurePresentation(
         modeRef.current,
@@ -1161,6 +1162,17 @@ export function App() {
       } else {
         setBackgroundError(presentation.error);
       }
+      return false;
+    }
+
+    function liveProjectionReadyForSymbol(symbol: string): boolean {
+      const projection = liveProjectionController.current?.projection;
+      return Boolean(
+        projection &&
+          projection.serviceGeneration === status.service_generation &&
+          projection.snapshot.session?.symbol === symbol &&
+          projection.snapshot.session?.state === "ready",
+      );
     }
   }
 
@@ -1184,10 +1196,17 @@ export function App() {
         setDayChartNotice("证券身份解析失败，无法进入当天图形。");
         return;
       }
+      // Prepare Live while Replay still owns the view; only leave Replay after
+      // the Live projection is ready for this symbol.
+      const liveReady = await performSecuritySelection(identity);
+      if (!navigationRequests.current.isCurrent(requestSequence)) return;
+      if (!liveReady) {
+        setDayChartNotice("当天图形加载失败，已保留当前图形。");
+        return;
+      }
       if (modeRef.current === WorkbenchMode.REPLAY) {
         selectMode(WorkbenchMode.LIVE);
       }
-      void performSecuritySelection(identity);
       return;
     }
 
