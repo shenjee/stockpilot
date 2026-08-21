@@ -5,6 +5,8 @@ export interface TradeListState {
   trades: TradeRecord[];
   tradeRevision: number;
   serviceGeneration: number | null;
+  /** Scope of the last accepted matching trades_changed fact; null until one arrives. */
+  loadedScope: { symbol: string; tradeDate: string } | null;
 }
 
 export function isRealTradesChangedEvent(event: unknown): event is {

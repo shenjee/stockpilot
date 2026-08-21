@@ -43,8 +43,18 @@ function tradesEvent(revision, trades, overrides = {}) {
   };
 }
 
-function state(revision, trades = [], generation = 1) {
-  return { trades, tradeRevision: revision, serviceGeneration: generation };
+function state(revision, trades = [], generation = 1, loadedScope) {
+  return {
+    trades,
+    tradeRevision: revision,
+    serviceGeneration: generation,
+    loadedScope:
+      loadedScope !== undefined
+        ? loadedScope
+        : trades.length > 0
+          ? { ...scope }
+          : null,
+  };
 }
 
 test("isRealTradesChangedEvent accepts real (session_id null) events", () => {
@@ -131,6 +141,39 @@ test("applyTradesChanged revision jump alone must not clear trades", () => {
     next.trades.map((t) => t.trade_id),
     ["day-trade"],
   );
+});
+
+test("applyTradesChanged accepts same-revision fact when loading a new scope", () => {
+  // list_trades does not bump trade_revision. After a scope switch, a
+  // non-current-scope event may advance the gate to N; the current-scope
+  // list_trades result can also carry N and must not be discarded.
+  const afterSwitch = state(-1, [], 1, null);
+  const otherScope = tradesEvent(7, [], {
+    payload: {
+      symbol: "sz.000001",
+      trade_date: scope.tradeDate,
+      trade_revision: 7,
+      trades: [],
+    },
+  });
+  const gated = applyTradesChanged(afterSwitch, otherScope, scope);
+  assert.equal(gated.tradeRevision, 7);
+  assert.equal(gated.loadedScope, null);
+  assert.deepEqual(gated.trades, []);
+
+  const currentScope = tradesEvent(7, [trade("t1")]);
+  const next = applyTradesChanged(gated, currentScope, scope);
+  assert.equal(next.tradeRevision, 7);
+  assert.deepEqual(next.loadedScope, scope);
+  assert.equal(next.trades.length, 1);
+  assert.equal(next.trades[0].trade_id, "t1");
+});
+
+test("applyTradesChanged still rejects duplicate same-revision for an already-loaded scope", () => {
+  const current = state(7, [trade("t1")]);
+  const next = applyTradesChanged(current, tradesEvent(7, [trade("t2")]), scope);
+  assert.equal(next, current);
+  assert.equal(next.trades[0].trade_id, "t1");
 });
 
 test("applyTradesChanged ignores a malformed event (no revision)", () => {

@@ -190,7 +190,13 @@ export function App() {
     trades: TradeRecord[];
     tradeRevision: number;
     serviceGeneration: number | null;
-  }>({ trades: [], tradeRevision: -1, serviceGeneration: null });
+    loadedScope: { symbol: string; tradeDate: string } | null;
+  }>({
+    trades: [],
+    tradeRevision: -1,
+    serviceGeneration: null,
+    loadedScope: null,
+  });
   const realTradesRef = useRef(realTrades);
   realTradesRef.current = realTrades;
   // T0-043 "进入当天图形": a dismissible notice when a historical trade's full
@@ -361,6 +367,7 @@ export function App() {
           trades: [],
           tradeRevision: -1,
           serviceGeneration: next.service_generation,
+          loadedScope: null,
         });
       }
       if (next.state === "ready" || next.state === "connected") {
@@ -1163,7 +1170,13 @@ export function App() {
   // TradeDrawer already scopes). A historical trading day loads a complete,
   // static workbench snapshot via get_historical_snapshot and replaces the
   // current projection with it.
+  // When opened from Replay, exit Replay first so Live/historical projection
+  // becomes the visible workbench (selectActiveWorkbenchProjection otherwise
+  // keeps showing the Replay chart).
   async function handleEnterDayChart(symbol: string, tradeDate: string) {
+    if (modeRef.current === WorkbenchMode.REPLAY) {
+      selectMode(WorkbenchMode.LIVE);
+    }
     const requestSequence = navigationRequests.current.begin();
     const today = localToday();
     // Resolve identity before entering today's Live chart or loading a
@@ -1523,42 +1536,58 @@ export function App() {
     }
   }
 
-  const currentSymbol = workbench.security?.symbol ?? null;
-  const currentTradeDate = snapshot.session?.trade_date ?? localToday();
-  const isTradableSecurity =
+  // Issue #163: trade scope follows the *visible* chart projection session,
+  // not the search-box selection. In Replay the user may pick another code
+  // before beginning a new session; workbench.security then diverges from the
+  // still-visible Replay projection.
+  const visibleSymbol = snapshot.session?.symbol ?? null;
+  const visibleTradeDate = snapshot.session?.trade_date ?? localToday();
+  const visibleSecurity =
     workbench.security != null &&
-    workbench.security.instrument_type !== "index";
+    workbench.security.symbol === visibleSymbol
+      ? workbench.security
+      : null;
+  const isTradableSecurity =
+    visibleSecurity != null && visibleSecurity.instrument_type !== "index";
+  const isKnownNonTradableVisible =
+    visibleSecurity != null && visibleSecurity.instrument_type === "index";
   const serviceReady =
     status.state === "connected" || status.state === "ready";
 
   tradeScopeRef.current = {
-    symbol: currentSymbol,
-    tradeDate: currentTradeDate,
+    symbol: visibleSymbol,
+    tradeDate: visibleTradeDate,
   };
 
-  // Issue #163: list_trades once when symbol+trade_date is ready (Live + Replay
-  // tradable only). Play/step/seek must not re-list — only filter by cursor.
-  // Re-list on matching scoped trades_changed (via event handler), generation
-  // change, or reconnect (serviceReady / generation deps).
+  // Issue #163: list_trades once when the visible symbol+trade_date is ready
+  // (Live + Replay tradable only). Play/step/seek must not re-list — only
+  // filter by cursor. Re-list on matching scoped trades_changed (via event
+  // handler), generation change, or reconnect (serviceReady / generation deps).
   useEffect(() => {
-    if (!tradeClient || !serviceReady || !isTradableSecurity || !currentSymbol) {
-      if (!isTradableSecurity || !currentSymbol) {
-        setRealTrades({
-          trades: [],
-          tradeRevision: -1,
-          serviceGeneration: realTradesRef.current.serviceGeneration,
-        });
-      }
+    if (!visibleSymbol || isKnownNonTradableVisible) {
+      setRealTrades({
+        trades: [],
+        tradeRevision: -1,
+        serviceGeneration: realTradesRef.current.serviceGeneration,
+        loadedScope: null,
+      });
+      return;
+    }
+    if (!tradeClient || !serviceReady || !isTradableSecurity) {
+      // Selection diverged from the visible chart (e.g. Replay pending a new
+      // begin): keep existing markers for the visible session; do not list
+      // the newly selected code onto the old chart.
       return;
     }
     let cancelled = false;
     setRealTrades((current) => ({
       trades: [],
-      tradeRevision: -1,
+      tradeRevision: current.tradeRevision,
       serviceGeneration: current.serviceGeneration,
+      loadedScope: null,
     }));
     void tradeClient
-      .listTrades({ symbol: currentSymbol, tradeDate: currentTradeDate })
+      .listTrades({ symbol: visibleSymbol, tradeDate: visibleTradeDate })
       .catch(() => {
         // Keep empty list; trades_changed or retry will recover.
         if (cancelled) return;
@@ -1570,17 +1599,18 @@ export function App() {
     tradeClient,
     serviceReady,
     isTradableSecurity,
-    currentSymbol,
-    currentTradeDate,
+    isKnownNonTradableVisible,
+    visibleSymbol,
+    visibleTradeDate,
     status.service_generation,
   ]);
 
   const chartTrades = useMemo(() => {
-    if (!currentSymbol || !isTradableSecurity) return [];
+    if (!visibleSymbol || isKnownNonTradableVisible) return [];
     const scoped = realTrades.trades.filter(
       (trade) =>
-        trade.symbol === currentSymbol &&
-        tradeDateOf(trade.executed_at) === currentTradeDate,
+        trade.symbol === visibleSymbol &&
+        tradeDateOf(trade.executed_at) === visibleTradeDate,
     );
     if (workbench.mode === WorkbenchMode.REPLAY) {
       return filterTradesByReplayCursor(
@@ -1591,10 +1621,10 @@ export function App() {
     return scoped;
   }, [
     realTrades.trades,
-    currentSymbol,
-    currentTradeDate,
+    visibleSymbol,
+    visibleTradeDate,
     workbench.mode,
-    isTradableSecurity,
+    isKnownNonTradableVisible,
     replayFacts?.currentTime,
   ]);
 
@@ -1933,7 +1963,7 @@ export function App() {
         />
       )}
 
-      {!replayMode && (
+      {!replayMode && isTradableSecurity && (
         <TradeDrawer
           security={workbench.security}
           tradeClient={tradeClient}
@@ -1962,7 +1992,7 @@ export function App() {
           resolveSecurity={resolveSecurity}
           readOnly
           dayTrades={chartTrades}
-          tradeDate={currentTradeDate}
+          tradeDate={visibleTradeDate}
         />
       )}
 

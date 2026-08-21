@@ -119,6 +119,7 @@ export function TradeDrawer({
     trades: [],
     tradeRevision: -1,
     serviceGeneration: null,
+    loadedScope: null,
   });
   const loadedSymbolRef = useRef<string | null>(null);
   const prevGenRef = useRef<number>(serviceGeneration);
@@ -149,6 +150,7 @@ export function TradeDrawer({
         trades: [],
         tradeRevision: -1,
         serviceGeneration: tradeListRef.current.serviceGeneration,
+        loadedScope: null,
       });
       setListError(null);
       return;
@@ -163,8 +165,9 @@ export function TradeDrawer({
     if (symbolChanged) {
       commitTradeList({
         trades: [],
-        tradeRevision: -1,
+        tradeRevision: tradeListRef.current.tradeRevision,
         serviceGeneration: tradeListRef.current.serviceGeneration,
+        loadedScope: null,
       });
       setListError(null);
     }
@@ -199,6 +202,7 @@ export function TradeDrawer({
       ...tradeListRef.current,
       tradeRevision: -1,
       serviceGeneration,
+      loadedScope: null,
     };
     setListError(null);
     setReloadKey((k) => k + 1);

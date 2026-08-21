@@ -55,6 +55,21 @@ export function filterTradesByReplayCursor(trades, currentTime) {
 }
 
 /**
+ * True when `state` already holds an authoritative list for `scope`.
+ *
+ * @param {{loadedScope?: {symbol: string, tradeDate: string} | null} | null} state
+ * @param {{symbol: string, tradeDate: string}} scope
+ */
+function loadedScopeMatches(state, scope) {
+  const loaded = state?.loadedScope;
+  return Boolean(
+    loaded &&
+      loaded.symbol === scope.symbol &&
+      loaded.tradeDate === scope.tradeDate,
+  );
+}
+
+/**
  * Apply a scoped `trades_changed` event to the current day-list state.
  *
  * After the generation/revision gate:
@@ -63,11 +78,16 @@ export function filterTradesByReplayCursor(trades, currentTime) {
  * - A non-matching scope still advances `tradeRevision` / `serviceGeneration`
  *   but keeps the existing trades array — a revision bump alone must not
  *   clear the day list.
+ * - `list_trades` does not bump `trade_revision`. After a scope switch, a
+ *   non-current-scope event may advance the global gate to revision N; the
+ *   subsequent current-scope fact can carry the same N. Accept equal
+ *   revision when the matching fact is the first load for the requested
+ *   scope (`loadedScope` differs or is null).
  *
  * Returns `currentState` unchanged for malformed events (no integer
  * `trade_revision`).
  *
- * @param {{trades: TradeRecord[], tradeRevision: number, serviceGeneration: number | null} | null} currentState
+ * @param {{trades: TradeRecord[], tradeRevision: number, serviceGeneration: number | null, loadedScope?: {symbol: string, tradeDate: string} | null} | null} currentState
  * @param {object} event - the `trades_changed` app event
  * @param {{symbol: string, tradeDate: string}} scope
  */
@@ -80,23 +100,33 @@ export function applyTradesChanged(currentState, event, scope) {
   const stateGen = integerOrNull(currentState?.serviceGeneration);
   const eventGen = integerOrNull(event.service_generation);
   const currentRevision = currentState?.tradeRevision ?? -1;
-
-  if (stateGen !== null && eventGen !== null) {
-    if (eventGen < stateGen) return currentState; // stale generation
-    if (eventGen === stateGen && revision <= currentRevision) {
-      return currentState; // stale revision within the same generation
-    }
-  } else if (revision <= currentRevision) {
-    // No generation tracking yet: fall back to the revision gate.
-    return currentState;
-  }
-
-  const nextGeneration = eventGen ?? stateGen;
   const scopeMatches =
     typeof payload.symbol === "string" &&
     typeof payload.trade_date === "string" &&
     payload.symbol === scope.symbol &&
     payload.trade_date === scope.tradeDate;
+  const initialFactForScope =
+    scopeMatches && !loadedScopeMatches(currentState, scope);
+
+  if (stateGen !== null && eventGen !== null) {
+    if (eventGen < stateGen) return currentState; // stale generation
+    if (eventGen === stateGen && revision < currentRevision) {
+      return currentState; // stale revision within the same generation
+    }
+    if (
+      eventGen === stateGen &&
+      revision === currentRevision &&
+      !initialFactForScope
+    ) {
+      return currentState; // duplicate or non-matching at the same revision
+    }
+  } else if (revision < currentRevision) {
+    return currentState;
+  } else if (revision === currentRevision && !initialFactForScope) {
+    return currentState;
+  }
+
+  const nextGeneration = eventGen ?? stateGen;
 
   if (scopeMatches) {
     const trades = Array.isArray(payload.trades) ? payload.trades : [];
@@ -104,14 +134,17 @@ export function applyTradesChanged(currentState, event, scope) {
       trades,
       tradeRevision: revision,
       serviceGeneration: nextGeneration,
+      loadedScope: { symbol: scope.symbol, tradeDate: scope.tradeDate },
     };
   }
 
-  // Non-matching scope: advance the gate, keep the existing day list.
+  // Non-matching scope: advance the gate, keep the existing day list and
+  // loadedScope so a later same-revision current-scope fact can still apply.
   return {
     trades: currentState?.trades ?? [],
     tradeRevision: revision,
     serviceGeneration: nextGeneration,
+    loadedScope: currentState?.loadedScope ?? null,
   };
 }
 
