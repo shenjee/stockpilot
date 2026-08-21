@@ -115,6 +115,8 @@ class NullableQuantityReplayTests(unittest.TestCase):
                 SYMBOL, TRADE_DATE, config=ReplayPreparationConfig()
             )
         self.assertEqual(raised.exception.details["timeframe"], "1m")
+        self.assertEqual(raised.exception.details["affected_field"], "high")
+        self.assertEqual(raised.exception.details["invalid_count"], 1)
 
     def test_both_granularities_invalid_raises_replay_data_invalid(self) -> None:
         fixture = one_minute_replay()
@@ -130,6 +132,32 @@ class NullableQuantityReplayTests(unittest.TestCase):
                 SYMBOL, TRADE_DATE, config=ReplayPreparationConfig()
             )
         self.assertEqual(raised.exception.details["timeframe"], "1m")
+        self.assertEqual(raised.exception.details["affected_field"], "high")
+        self.assertEqual(raised.exception.details["invalid_count"], 1)
+
+    def test_invalid_details_count_all_illegal_bars(self) -> None:
+        fixture = one_minute_replay()
+        port = FakeMarketDataPort()
+        _populate_from_fixture(port, fixture)
+        bars = port.store[("1m", TRADE_DATE.isoformat())]
+        first = dict(bars[0])
+        first["high"] = first["low"] - 1
+        second = dict(bars[1])
+        second["high"] = -1.0
+        port.store[("1m", TRADE_DATE.isoformat())][0] = first
+        port.store[("1m", TRADE_DATE.isoformat())][1] = second
+        port.store[("5m", TRADE_DATE.isoformat())] = []
+        port.missing_overrides[("5m", TRADE_DATE.isoformat())] = [
+            (TRADE_DATE.isoformat(), TRADE_DATE.isoformat())
+        ]
+
+        with self.assertRaises(ReplayDataInvalidError) as raised:
+            ReplayDataPreparator(port, self.context).prepare(
+                SYMBOL, TRADE_DATE, config=ReplayPreparationConfig()
+            )
+        self.assertEqual(raised.exception.details["timeframe"], "1m")
+        self.assertEqual(raised.exception.details["affected_field"], "high")
+        self.assertEqual(raised.exception.details["invalid_count"], 2)
 
     def test_both_granularities_missing_raises_price_unavailable(self) -> None:
         port = FakeMarketDataPort()

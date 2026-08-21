@@ -86,6 +86,8 @@ class ReplayDataInvalidError(ReplayDataError):
     """Raised when returned price bars contain illegal OHLC or field values.
 
     Maps onto ``ReplayApiError("replay_data_invalid")`` at the API boundary.
+    ``details`` always includes ``timeframe``, ``affected_field`` and
+    ``invalid_count`` so callers need not parse the exception message.
     """
 
     def __init__(
@@ -819,6 +821,7 @@ def _normalize_target_day_bars(
     """
 
     parsed: dict[datetime, dict[str, Any]] = {}
+    invalid: list[tuple[datetime, str, str]] = []
     for row in rows:
         timestamp = _row_timestamp(row)
         if timestamp.date() != session.trade_date:
@@ -828,25 +831,43 @@ def _normalize_target_day_bars(
         try:
             bar = standardize_bar(row, closed=True)
         except (TypeError, ValueError) as exc:
-            raise ReplayDataInvalidError(
-                f"invalid bar at {timestamp.strftime(MARKET_TIMESTAMP_FORMAT)}: {exc}",
-                details={
-                    "timeframe": timeframe,
-                    "timestamp": timestamp.strftime(MARKET_TIMESTAMP_FORMAT),
-                    "reason": str(exc),
-                },
-            ) from exc
+            invalid.append((timestamp, _invalid_price_field(exc), str(exc)))
+            continue
         if bar.get("closed") is not True:
-            raise ReplayDataInvalidError(
-                f"invalid bar at {timestamp.strftime(MARKET_TIMESTAMP_FORMAT)}: expected a closed bar",
-                details={
-                    "timeframe": timeframe,
-                    "timestamp": timestamp.strftime(MARKET_TIMESTAMP_FORMAT),
-                    "reason": "expected a closed bar",
-                },
-            )
+            invalid.append((timestamp, "closed", "expected a closed bar"))
+            continue
         parsed[timestamp] = bar
+    if invalid:
+        first_timestamp, affected_field, reason = invalid[0]
+        stamp = first_timestamp.strftime(MARKET_TIMESTAMP_FORMAT)
+        raise ReplayDataInvalidError(
+            f"invalid bar at {stamp}: {reason}",
+            details={
+                "timeframe": timeframe,
+                "affected_field": affected_field,
+                "invalid_count": len(invalid),
+                "timestamp": stamp,
+            },
+        )
     return tuple(parsed[key] for key in sorted(parsed))
+
+
+def _invalid_price_field(exc: BaseException) -> str:
+    """Return the first machine-readable price field named by a schema error."""
+
+    message = str(exc)
+    if message.startswith("bar high"):
+        return "high"
+    if message.startswith("bar low"):
+        return "low"
+    for field in ("open", "high", "low", "close", "closed", "timestamp"):
+        if message == f"{field} is required" or message.startswith(f"{field} "):
+            return field
+    if "closed" in message:
+        return "closed"
+    if "timestamp" in message:
+        return "timestamp"
+    return "ohlc"
 
 
 def _normalize_daily_bars(

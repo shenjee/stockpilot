@@ -496,11 +496,17 @@ class ReplayCommandApiTests(unittest.TestCase):
         invalid_error, invalid_channel = map_replay_prepare_error_to_replay_error(
             ReplayDataInvalidError(
                 "bad ohlc",
-                details={"timeframe": "1m", "reason": "high below close"},
+                details={
+                    "timeframe": "1m",
+                    "affected_field": "high",
+                    "invalid_count": 2,
+                },
             )
         )
         self.assertEqual(invalid_error.error_code, "replay_data_invalid")
         self.assertEqual(invalid_error.details["timeframe"], "1m")
+        self.assertEqual(invalid_error.details["affected_field"], "high")
+        self.assertEqual(invalid_error.details["invalid_count"], 2)
         self.assertEqual(invalid_channel, ReplayDeliveryChannel.ASYNCHRONOUS)
 
         timeout_error, timeout_channel = map_replay_prepare_error_to_replay_error(
