@@ -1,12 +1,12 @@
 /**
  * Pure reducer helpers for the real-trade list state.
  *
- * The authoritative trade list arrives through the frozen `trades_changed`
- * event (event_type "trades_changed", `session_id: null` for real trades,
- * payload `real_trades_changed_payload` = `{ trade_revision, trades }`).
- * `list_trades` is only a refresh trigger; its sync `command_response.data`
- * shape is unfrozen and is NOT consumed for state. All functions are pure and
- * side-effect free so they can be unit-tested without React.
+ * The authoritative day list arrives through the frozen `trades_changed`
+ * event (event_type "trades_changed", `session_id: null` for real trades).
+ * Issue #163: the payload is already scoped to `{ symbol, trade_date,
+ * trade_revision, trades }` — `trades` is the authoritative list for that
+ * scope only. `list_trades` is only a refresh trigger; its sync
+ * `command_response.data` is null and is NOT consumed for state.
  *
  * Revision validity is scoped to a service generation: a revision is only
  * comparable within the same `service_generation`. When the Python service
@@ -16,9 +16,9 @@
  */
 
 /**
- * True when an app event is a repository-scoped real-trades change
- * (`trades_changed` with `session_id: null`). Simulated trades
- * (`session_id` non-null) belong to the Replay Session and are ignored here.
+ * True when an app event is a real-trades change
+ * (`trades_changed` with `session_id: null`). Session-scoped events
+ * (`session_id` non-null) are ignored here.
  */
 export function isRealTradesChangedEvent(event) {
   return Boolean(
@@ -29,30 +29,43 @@ export function isRealTradesChangedEvent(event) {
   );
 }
 
-function tradeDateOf(executedAt) {
-  return typeof executedAt === "string" && executedAt.length >= 10
-    ? executedAt.slice(0, 10)
-    : null;
-}
-
 function integerOrNull(value) {
   return Number.isInteger(value) ? value : null;
 }
 
 /**
- * Apply a `trades_changed` event to the current state.
+ * Keep trades whose `executed_at` is at or before the Replay cursor.
+ * Used so play/step/seek only filter locally and never re-list.
  *
- * The gate compares the `(service_generation, trade_revision)` pair: an event
- * is stale (ignored, returning the unchanged `currentState`) when it is from
- * an older generation, or from the same generation with a revision not greater
- * than the current one. An event from a newer generation is accepted and
- * resets the revision context (so a fresh generation's low revision is not
- * rejected by a stale high revision from the previous generation).
+ * @param {Array<Record<string, unknown>>} trades
+ * @param {string | null | undefined} currentTime
+ * @returns {Array<Record<string, unknown>>}
+ */
+export function filterTradesByReplayCursor(trades, currentTime) {
+  if (!Array.isArray(trades)) return [];
+  if (typeof currentTime !== "string" || currentTime.length === 0) {
+    return [...trades];
+  }
+  return trades.filter(
+    (trade) =>
+      trade &&
+      typeof trade.executed_at === "string" &&
+      trade.executed_at <= currentTime,
+  );
+}
+
+/**
+ * Apply a scoped `trades_changed` event to the current day-list state.
+ *
+ * After the generation/revision gate:
+ * - Matching `payload.symbol` + `payload.trade_date` replaces `trades` with
+ *   the authoritative scoped list (do NOT re-filter individual records).
+ * - A non-matching scope still advances `tradeRevision` / `serviceGeneration`
+ *   but keeps the existing trades array — a revision bump alone must not
+ *   clear the day list.
  *
  * Returns `currentState` unchanged for malformed events (no integer
- * `trade_revision`). Otherwise returns the event's trades filtered to the
- * drawer's current symbol and trading date (the event carries the full
- * repository list with no scope filter).
+ * `trade_revision`).
  *
  * @param {{trades: TradeRecord[], tradeRevision: number, serviceGeneration: number | null} | null} currentState
  * @param {object} event - the `trades_changed` app event
@@ -78,17 +91,27 @@ export function applyTradesChanged(currentState, event, scope) {
     return currentState;
   }
 
-  const allTrades = Array.isArray(payload.trades) ? payload.trades : [];
-  const trades = allTrades.filter(
-    (trade) =>
-      trade &&
-      trade.symbol === scope.symbol &&
-      tradeDateOf(trade.executed_at) === scope.tradeDate,
-  );
+  const nextGeneration = eventGen ?? stateGen;
+  const scopeMatches =
+    typeof payload.symbol === "string" &&
+    typeof payload.trade_date === "string" &&
+    payload.symbol === scope.symbol &&
+    payload.trade_date === scope.tradeDate;
+
+  if (scopeMatches) {
+    const trades = Array.isArray(payload.trades) ? payload.trades : [];
+    return {
+      trades,
+      tradeRevision: revision,
+      serviceGeneration: nextGeneration,
+    };
+  }
+
+  // Non-matching scope: advance the gate, keep the existing day list.
   return {
-    trades,
+    trades: currentState?.trades ?? [],
     tradeRevision: revision,
-    serviceGeneration: eventGen ?? stateGen,
+    serviceGeneration: nextGeneration,
   };
 }
 

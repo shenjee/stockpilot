@@ -1,10 +1,10 @@
 /**
  * Pure projection layer: trade_record[] -> TradeMarkerModel[]
  *
- * Trade records are rendered as markers on the 5m price chart only. The
- * projection keeps real and simulated trades in the same pipeline; only the
- * trade_scope field differs. Markers are sorted into a stable order so that
- * multiple trades in the same 5m bucket are rendered predictably.
+ * Trade records are rendered as markers on the 5m price chart only, via an
+ * independent SynchronizedChartGroup overlay (Issue #163) — not via
+ * ChartGroupModel. Markers are sorted into a stable order so that multiple
+ * trades in the same 5m bucket are rendered predictably.
  */
 
 /** @typedef {"real" | "simulated"} TradeScope */

@@ -61,7 +61,6 @@ class _ConcreteLifecycleFactory:
         self.live_sessions: list[_BackgroundLiveSession] = []
         self.replay_sessions: list[ReplaySession] = []
         self.replay_events: list[dict] = []
-        self.trade_events: list[dict] = []
 
     def create_live(self, spec: SessionSpec) -> _BackgroundLiveSession:
         session = _BackgroundLiveSession(spec)
@@ -80,7 +79,6 @@ class _ConcreteLifecycleFactory:
             scheduler=NullPlaybackScheduler(),
             analyzer=_CachingAnalyzer(_default_analyze_5m),
             on_event=self.replay_events.append,
-            on_trade_event=self.trade_events.append,
         )
         self.replay_sessions.append(session)
         return session
@@ -150,7 +148,7 @@ class LiveReplayLifecycleAcceptanceTests(unittest.TestCase):
             )
         )
 
-    def test_leaving_replay_destroys_date_progress_picture_and_simulated_trades(
+    def test_leaving_replay_destroys_date_progress_and_picture(
         self,
     ) -> None:
         self.coordinator.select_symbol("sh.600000", instrument=_STOCK)
@@ -160,37 +158,13 @@ class LiveReplayLifecycleAcceptanceTests(unittest.TestCase):
         assert replay_identity is not None
         replay = self.factory.replay_sessions[0]
         replay.step("step-trade-time")
-        replay.create_simulated_trade(
-            {
-                "trade_scope": "simulated",
-                "symbol": replay.symbol,
-                "side": "buy",
-                "executed_at": replay.current_time.strftime("%Y-%m-%d %H:%M:%S"),
-                "price": 10.01,
-                "quantity": 100,
-                "fee": None,
-                "note": "one-shot",
-                "fee_plan_id": None,
-            },
-            trade_id="sim-lifecycle",
-        )
         self.assertTrue(replay.snapshot()["market"]["bars_1m"])
-        self.assertEqual(len(replay.simulated_trades), 1)
-        self.assertEqual(
-            len(self.factory.trade_events[-1]["payload"]["trades"]),
-            1,
-        )
 
         returned = self.coordinator.set_mode(AppMode.LIVE)
 
         self.assertIsNone(returned.replay_session)
         self.assertTrue(replay.retired)
         self.assertEqual(replay.state, "retired")
-        self.assertEqual(replay.simulated_trades, ())
-        self.assertEqual(
-            self.factory.trade_events[-1]["payload"]["trades"],
-            [],
-        )
         self.assertEqual(
             self.factory.replay_events[-1]["event_type"],
             "session_status",
@@ -215,7 +189,6 @@ class LiveReplayLifecycleAcceptanceTests(unittest.TestCase):
         )
         new_replay = self.factory.replay_sessions[1]
         self.assertEqual(new_replay.current_time, new_replay.start_time)
-        self.assertEqual(new_replay.simulated_trades, ())
 
 
 if __name__ == "__main__":

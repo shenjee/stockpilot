@@ -90,10 +90,13 @@ import {
   TradeOperationController,
   type TradeOperationFailure,
 } from "./trading/trade-operation-controller.mjs";
-import { applyHistoryTradesChanged } from "./trading/history-state.mjs";
+import {
+  applyTradesChanged,
+  filterTradesByReplayCursor,
+  isRealTradesChangedEvent,
+} from "./trading/trade-state.mjs";
 import type { TradeRecord } from "./trading/trade-client.mjs";
-import { createSimulatedTradeClient } from "./trading/simulated-trade-client.mjs";
-import { ReplayTradeDrawer } from "./trading/ReplayTradeDrawer";
+import { projectTradeMarkers } from "./charts/trade-markers.mjs";
 
 const initialStatus: ServiceStatus = {
   state: "starting",
@@ -181,16 +184,15 @@ export function App() {
   const [preferenceHydrationAttempt, setPreferenceHydrationAttempt] =
     useState(0);
   const [replayDate, setReplayDate] = useState("");
-  // T0-043: repository-scoped real-trade snapshot, kept at the App level so
-  // both the trade Drawer/Dialog and the 5m chart markers consume the same
-  // authoritative list. The reducer applies the same generation/revision gate
-  // used by the history dialog.
+  // T0-043 / Issue #163: scoped real-trade day list at App level so the 5m
+  // chart overlay and Replay read-only day list share one authoritative source.
   const [realTrades, setRealTrades] = useState<{
     trades: TradeRecord[];
     tradeRevision: number;
     serviceGeneration: number | null;
   }>({ trades: [], tradeRevision: -1, serviceGeneration: null });
-  const [simulatedTrades, setSimulatedTrades] = useState<TradeRecord[]>([]);
+  const realTradesRef = useRef(realTrades);
+  realTradesRef.current = realTrades;
   // T0-043 "进入当天图形": a dismissible notice when a historical trade's full
   // day chart cannot be restored (no frozen non-Replay command serves a static
   // historical workbench; see the T0-043 contract gap). Never wipes the last
@@ -202,6 +204,10 @@ export function App() {
   } | null>(null);
   const activeOperations = useRef(new Map<string, ActiveOperation>());
   const modeRef = useRef(workbench.mode);
+  const tradeScopeRef = useRef<{ symbol: string | null; tradeDate: string }>({
+    symbol: null,
+    tradeDate: localToday(),
+  });
   const serviceGeneration = useRef(initialStatus.service_generation);
   const searchRequests = useRef(createLatestRequestTracker());
   const navigationRequests = useRef(createLatestRequestTracker());
@@ -351,7 +357,11 @@ export function App() {
           next.service_generation,
         );
         setReplayDate("");
-        setSimulatedTrades([]);
+        setRealTrades({
+          trades: [],
+          tradeRevision: -1,
+          serviceGeneration: next.service_generation,
+        });
       }
       if (next.state === "ready" || next.state === "connected") {
         setBackgroundError((current) =>
@@ -609,21 +619,24 @@ export function App() {
         return;
       }
       if (envelope.event_type === "trades_changed") {
-        // Trade-list updates are consumed by the TradeDrawer; they are not
-        // chart events and must not be routed to the workbench projection.
-        // Resolve any pending trade operation the controller is tracking via
-        // the event's operation_id (the controller is always mounted, even in
-        // Replay, so an op started in Live is resolved here even if the Drawer
-        // unmounted).
+        // Trade-list updates are not chart events and must not be routed to
+        // the workbench projection. Resolve any pending trade operation the
+        // controller is tracking via the event's operation_id.
         const opId =
           typeof envelope.operation_id === "string"
             ? envelope.operation_id
             : null;
         if (opId) tradeOpController.current?.resolve(opId);
-        // Keep the authoritative repository-scoped snapshot at the App level so
-        // the 5m chart can overlay real-trade markers for the current symbol
-        // and trading date.
-        setRealTrades((current) => applyHistoryTradesChanged(current, event));
+        // Scoped day list for the current symbol + trade_date (Issue #163).
+        const scope = tradeScopeRef.current;
+        if (scope.symbol && isRealTradesChangedEvent(event)) {
+          setRealTrades((current) =>
+            applyTradesChanged(current, event, {
+              symbol: scope.symbol as string,
+              tradeDate: scope.tradeDate,
+            }),
+          );
+        }
         applyLiveEvent();
         return;
       }
@@ -1493,7 +1506,6 @@ export function App() {
       selectWorkbenchMode(current, WorkbenchMode.LIVE),
     );
     setReplayDate("");
-    setSimulatedTrades([]);
     if (window.stockpilot && sessionId) {
       void window.stockpilot
         .endReplay({
@@ -1513,38 +1525,78 @@ export function App() {
 
   const currentSymbol = workbench.security?.symbol ?? null;
   const currentTradeDate = snapshot.session?.trade_date ?? localToday();
-  const chartTrades = useMemo(() => {
-    if (!currentSymbol) return [];
-    if (workbench.mode === WorkbenchMode.REPLAY) {
-      return simulatedTrades.filter(
-        (trade) =>
-          trade.symbol === currentSymbol &&
-          tradeDateOf(trade.executed_at) === currentTradeDate,
-      );
+  const isTradableSecurity =
+    workbench.security != null &&
+    workbench.security.instrument_type !== "index";
+  const serviceReady =
+    status.state === "connected" || status.state === "ready";
+
+  tradeScopeRef.current = {
+    symbol: currentSymbol,
+    tradeDate: currentTradeDate,
+  };
+
+  // Issue #163: list_trades once when symbol+trade_date is ready (Live + Replay
+  // tradable only). Play/step/seek must not re-list — only filter by cursor.
+  // Re-list on matching scoped trades_changed (via event handler), generation
+  // change, or reconnect (serviceReady / generation deps).
+  useEffect(() => {
+    if (!tradeClient || !serviceReady || !isTradableSecurity || !currentSymbol) {
+      if (!isTradableSecurity || !currentSymbol) {
+        setRealTrades({
+          trades: [],
+          tradeRevision: -1,
+          serviceGeneration: realTradesRef.current.serviceGeneration,
+        });
+      }
+      return;
     }
-    return realTrades.trades.filter(
+    let cancelled = false;
+    setRealTrades((current) => ({
+      trades: [],
+      tradeRevision: -1,
+      serviceGeneration: current.serviceGeneration,
+    }));
+    void tradeClient
+      .listTrades({ symbol: currentSymbol, tradeDate: currentTradeDate })
+      .catch(() => {
+        // Keep empty list; trades_changed or retry will recover.
+        if (cancelled) return;
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    tradeClient,
+    serviceReady,
+    isTradableSecurity,
+    currentSymbol,
+    currentTradeDate,
+    status.service_generation,
+  ]);
+
+  const chartTrades = useMemo(() => {
+    if (!currentSymbol || !isTradableSecurity) return [];
+    const scoped = realTrades.trades.filter(
       (trade) =>
         trade.symbol === currentSymbol &&
         tradeDateOf(trade.executed_at) === currentTradeDate,
     );
+    if (workbench.mode === WorkbenchMode.REPLAY) {
+      return filterTradesByReplayCursor(
+        scoped,
+        replayFacts?.currentTime ?? null,
+      ) as TradeRecord[];
+    }
+    return scoped;
   }, [
     realTrades.trades,
-    simulatedTrades,
     currentSymbol,
     currentTradeDate,
     workbench.mode,
+    isTradableSecurity,
+    replayFacts?.currentTime,
   ]);
-
-  const simulatedTradeClient = useMemo(
-    () =>
-      window.stockpilot && replayFacts
-        ? createSimulatedTradeClient(
-            window.stockpilot,
-            replayFacts.sessionId,
-          )
-        : null,
-    [replayFacts?.sessionId],
-  );
 
   const fiveMinuteModelResult = useMemo(
     () =>
@@ -1552,9 +1604,8 @@ export function App() {
         snapshot,
         ChartGroupKind.FIVE_MINUTE,
         workbench.layers,
-        chartTrades,
       ),
-    [snapshot, workbench.layers, chartTrades],
+    [snapshot, workbench.layers],
   );
   const intradayModelResult = useMemo(
     () => tryCreateChartGroupModel(snapshot, ChartGroupKind.ONE_MINUTE),
@@ -1573,6 +1624,12 @@ export function App() {
       ? intradayModelResult.model
       : (lastGoodChartModels.current?.intraday ??
         createChartGroupModel(emptyChartSnapshot, ChartGroupKind.ONE_MINUTE));
+
+  const fiveMinuteTradeMarkers = useMemo(() => {
+    if (fiveMinuteModel.kind !== ChartGroupKind.FIVE_MINUTE) return [];
+    const allowedTimes = new Set(Object.values(fiveMinuteModel.timeByTimestamp));
+    return projectTradeMarkers(chartTrades, { allowedTimes });
+  }, [chartTrades, fiveMinuteModel]);
 
   useEffect(() => {
     if (fiveMinuteModelResult.ok && intradayModelResult.ok) {
@@ -1773,6 +1830,7 @@ export function App() {
               replayFacts?.sessionId ?? projection.sessionId ?? "live"
             }`}
             model={fiveMinuteModel}
+            tradeMarkers={fiveMinuteTradeMarkers}
             appendFollowPolicy={
               replayFacts
                 ? "preserve"
@@ -1881,7 +1939,7 @@ export function App() {
           tradeClient={tradeClient}
           feePlanClient={feePlanClient}
           feeAdvisor={feeAdvisor}
-          serviceReady={status.state === "connected" || status.state === "ready"}
+          serviceReady={serviceReady}
           subscribeAppEvent={subscribeAppEvent}
           serviceGeneration={status.service_generation}
           tradeOpController={tradeOpController.current as TradeOperationController}
@@ -1890,19 +1948,23 @@ export function App() {
         />
       )}
 
-      {replayMode &&
-        replayFacts &&
-        workbench.security &&
-        simulatedTradeClient && (
-          <ReplayTradeDrawer
-            security={workbench.security}
-            sessionId={replayFacts.sessionId}
-            currentTime={replayFacts.currentTime}
-            tradeClient={simulatedTradeClient}
-            subscribeAppEvent={subscribeAppEvent}
-            onTradesChange={setSimulatedTrades}
-          />
-        )}
+      {replayMode && isTradableSecurity && (
+        <TradeDrawer
+          security={workbench.security}
+          tradeClient={tradeClient}
+          feePlanClient={null}
+          feeAdvisor={feeAdvisor}
+          serviceReady={serviceReady}
+          subscribeAppEvent={subscribeAppEvent}
+          serviceGeneration={status.service_generation}
+          tradeOpController={tradeOpController.current as TradeOperationController}
+          onEnterDayChart={handleEnterDayChart}
+          resolveSecurity={resolveSecurity}
+          readOnly
+          dayTrades={chartTrades}
+          tradeDate={currentTradeDate}
+        />
+      )}
 
       {dayChartNotice && (
         <div className="inline-error" role="status" style={{ margin: "8px 12px" }}>

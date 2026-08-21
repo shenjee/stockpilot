@@ -1,0 +1,76 @@
+{
+  "schema_version": "t0_app_v2",
+  "description": "Canonical list_trade_history synchronous repository snapshot for Issue #163. session_id is null; accepted response has operation_id:null and data:{trade_revision,trades} with no trades_changed event.",
+  "service_generation": 3,
+  "list_trade_history_request": {
+    "schema_version": "t0_app_v2",
+    "request_id": "req-history-1",
+    "command": "list_trade_history",
+    "session_id": null,
+    "payload": {
+      "trade_scope": "real"
+    }
+  },
+  "list_trade_history_response": {
+    "schema_version": "t0_app_v2",
+    "request_id": "req-history-1",
+    "accepted": true,
+    "operation_id": null,
+    "data": {
+      "trade_revision": 5,
+      "trades": [
+        {
+          "trade_id": "trade-1",
+          "bucket_start": "2026-07-24 10:00:00",
+          "trade_scope": "real",
+          "symbol": "sh.600584",
+          "side": "buy",
+          "executed_at": "2026-07-24 10:03:00",
+          "price": 38.25,
+          "quantity": 200,
+          "fee": 5.01,
+          "note": "",
+          "fee_plan_id": "shenwan-hongyuan"
+        },
+        {
+          "trade_id": "trade-2",
+          "bucket_start": "2026-07-25 10:00:00",
+          "trade_scope": "real",
+          "symbol": "sh.600584",
+          "side": "sell",
+          "executed_at": "2026-07-25 14:10:00",
+          "price": 38.8,
+          "quantity": 200,
+          "fee": 8.1,
+          "note": "",
+          "fee_plan_id": "shenwan-hongyuan"
+        },
+        {
+          "trade_id": "trade-3",
+          "bucket_start": "2026-07-24 10:00:00",
+          "trade_scope": "real",
+          "symbol": "sz.000001",
+          "side": "buy",
+          "executed_at": "2026-07-24 10:05:00",
+          "price": 12.4,
+          "quantity": 500,
+          "fee": 5.0,
+          "note": "",
+          "fee_plan_id": "shenwan-hongyuan"
+        }
+      ]
+    },
+    "error": null
+  },
+  "empty_repository_response": {
+    "schema_version": "t0_app_v2",
+    "request_id": "req-history-empty",
+    "accepted": true,
+    "operation_id": null,
+    "data": {
+      "trade_revision": 0,
+      "trades": []
+    },
+    "error": null
+  }
+}

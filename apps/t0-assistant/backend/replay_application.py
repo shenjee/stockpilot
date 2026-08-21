@@ -30,7 +30,6 @@ from packages.t0assistant.runtime import (
     ReplaySession,
     ReplaySessionStateError,
 )
-from packages.t0assistant.trading import SimulatedTradeCommandApi
 
 try:
     from backend.historical_snapshot_api import (
@@ -157,7 +156,6 @@ class ReplayApplication:
                 prepared,
                 self._executor,
                 on_event=self._publish_event,
-                on_trade_event=self._publish_event,
                 initial_operation_id=operation_id,
             )
             self._sessions[session_id] = session
@@ -247,7 +245,7 @@ def create_replay_application(
     db_path: Path | None = None,
     provider: TencentStockDataProvider | None = None,
     clock: Callable[[], date] | None = None,
-) -> tuple[ReplayCommandApi, SimulatedTradeCommandApi]:
+) -> ReplayCommandApi:
     paths = RuntimePaths()
     paths.ensure_dirs()
     market_db = db_path or paths.db_dir / "market_data.sqlite"
@@ -294,7 +292,7 @@ def create_replay_application(
         publish_event=publish_event,
     )
     application.bind(api)
-    return api, SimulatedTradeCommandApi(application.session)
+    return api
 
 
 __all__ = ["ReplayApplication", "create_replay_application"]

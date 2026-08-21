@@ -1,22 +1,19 @@
 /**
  * Trade client port over the frozen Safe Bridge trade commands.
  *
- * Wraps `listTrades` / `createTrade` / `updateTrade` / `deleteTrade` so the UI
- * depends on a small, injectable port instead of the bridge directly. Builds
- * `command_request` envelopes (`session_id: null` - real trades are
- * repository-scoped, not Session-scoped) and maps `command_response` into
- * either a result or a `TradeClientError` carrying the stable
- * `application_error`. The bridge methods themselves are frozen and are not
- * modified here.
+ * Wraps `listTrades` / `listTradeHistory` / `createTrade` / `updateTrade` /
+ * `deleteTrade` so the UI depends on a small, injectable port instead of the
+ * bridge directly. Builds `command_request` envelopes (`session_id: null` —
+ * real trades are not Session-scoped) and maps `command_response` into either
+ * a result or a `TradeClientError` carrying the stable `application_error`.
  *
- * Response-shape contract note: the frozen `command_response.data` is only
- * `object | null` - the per-command success `data` shapes are NOT frozen.
- * create/update/delete therefore return only an acceptance signal
- * (`{ accepted, operationId }`); the authoritative trade list arrives through
- * the frozen `trades_changed` event (see `trade-state.mjs`), which the UI
- * consumes separately. `listTrades` is retained for initial hydration; its
- * `data.trades` / `data.trade_revision` shape is a provisional assumption
- * pending a future `list_trades` response-shape freeze (out of scope here).
+ * Issue #163:
+ * - `list_trades` is fact-via-changed-event: accepted response has `data: null`;
+ *   the authoritative scoped day list arrives through `trades_changed`.
+ * - `list_trade_history` is synchronous: accepted response `data` is
+ *   `{ trade_revision, trades }` and is returned to the caller for history UI.
+ * - create/update/delete return only `{ accepted, operationId }`; the day list
+ *   is refreshed via scoped `trades_changed`.
  */
 
 export class TradeClientError extends Error {
@@ -101,12 +98,44 @@ export function createTradeClient(bridge, options = {}) {
       }),
     );
     ensureAccepted(response);
-    // The trade list is NOT read from the sync response: command_response.data
-    // is only `object | null` in the frozen contract, so its shape is unfrozen.
-    // list_trades is a refresh trigger; the authoritative list arrives through
-    // the frozen trades_changed event (see trade-state.mjs). Returning only an
-    // acceptance signal keeps the renderer off the unfrozen response shape.
+    // list_trades is a refresh trigger; accepted data is null. The authoritative
+    // scoped day list arrives through trades_changed (see trade-state.mjs).
     return { accepted: true, operationId: extractOperationId(response) };
+  }
+
+  async function listTradeHistory({ tradeScope = "real" } = {}) {
+    if (typeof bridge.listTradeHistory !== "function") {
+      throw new TradeClientError({
+        error_code: "trade_request_failed",
+        message: "历史成交查询尚未接入",
+        retryable: false,
+        affected_capability: "trades",
+      });
+    }
+    const response = await bridge.listTradeHistory(
+      appRequest("list_trade_history", {
+        trade_scope: tradeScope,
+      }),
+    );
+    ensureAccepted(response);
+    const data = response?.data;
+    if (
+      !data ||
+      typeof data !== "object" ||
+      !Number.isInteger(data.trade_revision) ||
+      !Array.isArray(data.trades)
+    ) {
+      throw new TradeClientError({
+        error_code: "trade_request_failed",
+        message: "历史成交响应格式无效",
+        retryable: true,
+        affected_capability: "trades",
+      });
+    }
+    return {
+      trade_revision: data.trade_revision,
+      trades: data.trades,
+    };
   }
 
   async function createTrade(draft) {
@@ -136,7 +165,13 @@ export function createTradeClient(bridge, options = {}) {
     return { accepted: true, operationId: extractOperationId(response) };
   }
 
-  return Object.freeze({ listTrades, createTrade, updateTrade, deleteTrade });
+  return Object.freeze({
+    listTrades,
+    listTradeHistory,
+    createTrade,
+    updateTrade,
+    deleteTrade,
+  });
 }
 
 function extractOperationId(response) {

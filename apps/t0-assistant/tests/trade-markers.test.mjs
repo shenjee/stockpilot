@@ -39,10 +39,10 @@ const realSell = {
   fee_plan_id: "shenwan-hongyuan",
 };
 
-const simulatedBuy = {
-  trade_id: "sim-buy-1",
+const realBuyLater = {
+  trade_id: "real-buy-2",
   bucket_start: "2024-07-22 10:05:00",
-  trade_scope: "simulated",
+  trade_scope: "real",
   symbol: "sh.600584",
   side: "buy",
   executed_at: "2024-07-22 10:05:00",
@@ -53,10 +53,10 @@ const simulatedBuy = {
   fee_plan_id: "shenwan-hongyuan",
 };
 
-const simulatedSell = {
-  trade_id: "sim-sell-1",
+const realSellLater = {
+  trade_id: "real-sell-2",
   bucket_start: "2024-07-22 10:05:00",
-  trade_scope: "simulated",
+  trade_scope: "real",
   symbol: "sh.600584",
   side: "sell",
   executed_at: "2024-07-22 10:05:00",
@@ -115,6 +115,10 @@ function makeSnapshot() {
   });
 }
 
+function allowedTimesFromModel(model) {
+  return new Set(Object.values(model.timeByTimestamp));
+}
+
 test("formatLotLabel formats whole and fractional lots", () => {
   assert.equal(formatLotLabel(200), "2");
   assert.equal(formatLotLabel(150), "1.5");
@@ -122,12 +126,10 @@ test("formatLotLabel formats whole and fractional lots", () => {
   assert.equal(formatLotLabel(1), "0.01");
 });
 
-test("projectTradeMarker maps real and simulated trades through the same projection", () => {
+test("projectTradeMarker maps real trades", () => {
   const real = projectTradeMarker(realBuy);
   assert.equal(real?.trade_scope, "real");
-
-  const simulated = projectTradeMarker(simulatedBuy);
-  assert.equal(simulated?.trade_scope, "simulated");
+  assert.equal(real?.label, "B2");
 });
 
 test("projectTradeMarker labels buy as B{lots} and sell as S{lots}", () => {
@@ -189,31 +191,31 @@ test("projectTradeMarkers sorts same-bucket markers into a stable order", () => 
   );
 });
 
-test("projectTradeMarkers filters out trades without a matching 5m K-line", () => {
+test("trade overlay projects independently of ChartGroupModel", () => {
+  // Issue #163: trades are not baked into createChartGroupModel; App projects
+  // markers separately and passes them to SynchronizedChartGroup.setTradeMarkers.
   const snapshot = makeSnapshot();
-  const model = createChartGroupModel(
-    snapshot,
-    ChartGroupKind.FIVE_MINUTE,
-    {},
-    [realBuy, realSell, simulatedBuy, simulatedSell],
+  const model = createChartGroupModel(snapshot, ChartGroupKind.FIVE_MINUTE);
+  assert.equal(Object.hasOwn(model, "tradeMarkers"), false);
+
+  const markers = projectTradeMarkers(
+    [realBuy, realSell, realBuyLater, realSellLater],
+    { allowedTimes: allowedTimesFromModel(model) },
   );
-  const markers = model.tradeMarkers;
   assert.equal(markers.length, 4);
 });
 
-test("chart model keeps trade markers empty for non-empty trade list when no times match", () => {
+test("projectTradeMarkers filters out trades without a matching 5m K-line", () => {
   const snapshot = minimalSnapshot({
     bars_5m: [
       bar("2024-07-22 11:00:00", 38, 39, 37, 38.5, 100, 3800, true),
     ],
   });
-  const model = createChartGroupModel(
-    snapshot,
-    ChartGroupKind.FIVE_MINUTE,
-    {},
-    [realBuy],
-  );
-  assert.deepEqual(model.tradeMarkers, []);
+  const model = createChartGroupModel(snapshot, ChartGroupKind.FIVE_MINUTE);
+  const markers = projectTradeMarkers([realBuy], {
+    allowedTimes: allowedTimesFromModel(model),
+  });
+  assert.deepEqual(markers, []);
 });
 
 test("projectTradeMarkers returns an empty array for non-array input", () => {
@@ -247,42 +249,19 @@ test("sortTradeMarkers orders by time, then buy before sell, then price, then tr
   assert.deepEqual(sorted.map((m) => m.trade_id), ["b", "a", "c", "d"]);
 });
 
-test("chart model includes trade markers on the 5m chart", () => {
+test("chart model rebuild is independent of trade list changes", () => {
   const snapshot = makeSnapshot();
-  const model = createChartGroupModel(
-    snapshot,
-    ChartGroupKind.FIVE_MINUTE,
-    {},
-    [realBuy, realSell, simulatedBuy, simulatedSell],
-  );
-  assert.equal(model.tradeMarkers.length, 4);
-});
+  const modelA = createChartGroupModel(snapshot, ChartGroupKind.FIVE_MINUTE);
+  const modelB = createChartGroupModel(snapshot, ChartGroupKind.FIVE_MINUTE);
+  assert.deepEqual(modelA.timestamps, modelB.timestamps);
+  assert.equal(modelA.bars.length, modelB.bars.length);
 
-test("chart model does not include trade markers on the 1m chart", () => {
-  const snapshot = makeSnapshot();
-  const model = createChartGroupModel(
-    snapshot,
-    ChartGroupKind.ONE_MINUTE,
-    {},
-    [realBuy, realSell],
-  );
-  assert.deepEqual(model.tradeMarkers, []);
-});
-
-test("chart model refreshes markers when an empty trade list is supplied", () => {
-  const snapshot = makeSnapshot();
-  const modelWithTrades = createChartGroupModel(
-    snapshot,
-    ChartGroupKind.FIVE_MINUTE,
-    {},
-    [realBuy],
-  );
-  const modelWithoutTrades = createChartGroupModel(
-    snapshot,
-    ChartGroupKind.FIVE_MINUTE,
-    {},
-    [],
-  );
-  assert.equal(modelWithTrades.tradeMarkers.length, 1);
-  assert.equal(modelWithoutTrades.tradeMarkers.length, 0);
+  const withTrades = projectTradeMarkers([realBuy], {
+    allowedTimes: allowedTimesFromModel(modelA),
+  });
+  const withoutTrades = projectTradeMarkers([], {
+    allowedTimes: allowedTimesFromModel(modelB),
+  });
+  assert.equal(withTrades.length, 1);
+  assert.equal(withoutTrades.length, 0);
 });

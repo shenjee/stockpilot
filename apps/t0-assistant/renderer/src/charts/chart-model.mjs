@@ -319,15 +319,17 @@ export function calculateIntradayPriceTicks(P0, R) {
   return ticks;
 }
 
-import { projectTradeMarkers } from "./trade-markers.mjs";
-
 /**
  * Strict chart-model builder. Throws RangeError/TypeError on contract
  * violations (unordered bars, indicator timestamps without matching bars,
  * etc.). Callers that must preserve the last good chart should use
  * {@link tryCreateChartGroupModel} instead of catching ad hoc.
+ *
+ * Issue #163: trade markers are an independent overlay on SynchronizedChartGroup
+ * (`setTradeMarkers`); they are not part of ChartGroupModel and must not force
+ * a full model rebuild when trades change.
  */
-export function createChartGroupModel(snapshot, kind, layers = {}, trades = []) {
+export function createChartGroupModel(snapshot, kind, layers = {}) {
   if (kind !== FIVE_MINUTE && kind !== ONE_MINUTE) {
     throw new TypeError(`Unsupported chart group: ${kind}`);
   }
@@ -362,11 +364,6 @@ export function createChartGroupModel(snapshot, kind, layers = {}, trades = []) 
   );
   const enabled = (layer) => layers[layer] !== false;
 
-  const allowedTimes = kind === FIVE_MINUTE ? new Set(Object.values(timeByTimestamp)) : null;
-  const tradeMarkers =
-    kind === FIVE_MINUTE
-      ? projectTradeMarkers(trades, { allowedTimes })
-      : [];
   const movingAverages = {};
   for (const period of ["ma5", "ma10", "ma20", "ma30", "ma60"]) {
     movingAverages[period] =
@@ -547,7 +544,6 @@ export function createChartGroupModel(snapshot, kind, layers = {}, trades = []) 
         timestamps,
       ),
     },
-    tradeMarkers,
   };
 }
 
@@ -562,12 +558,11 @@ export function tryCreateChartGroupModel(
   snapshot,
   kind,
   layers = {},
-  trades = [],
 ) {
   try {
     return {
       ok: true,
-      model: createChartGroupModel(snapshot, kind, layers, trades),
+      model: createChartGroupModel(snapshot, kind, layers),
     };
   } catch (error) {
     return { ok: false, error };

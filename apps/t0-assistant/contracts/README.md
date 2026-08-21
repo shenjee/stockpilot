@@ -9,7 +9,7 @@ preload, and the React renderer.
   (stock|etf|index). The v1 file (`logical-schema.json`) is preserved
   unchanged with `security_type` (a_share|etf) for consumers that have not
   migrated.
-- `app-v2.schema.json` freezes Live, **historical snapshot**, real/simulated
+- `app-v2.schema.json` freezes Live, **historical snapshot**, persisted real
   trade, preference, service status, synchronous response, and ordered event
   structures for T0-003. Uses `schema_version: "t0_app_v2"` (issue #151).
   The v1 file (`app-v1.schema.json`) is preserved unchanged with
@@ -63,29 +63,81 @@ paths, and SQLite implementation fields may not cross this boundary.
 - Workbench and CZSC events are authoritative full replacements. Market and
   ordinary indicator events are typed updates. Failed refreshes do not publish
   empty facts over the last successful state.
-- Real trades and Replay-simulated trades share the transport value shape but
-  retain an explicit `trade_scope`. Simulated trades never enter the real
-  trade repository. Trade validation and 5-minute bucketing remain owned by
-  T0-037 rather than this transport contract. A real `trades_changed` event is
-  repository-scoped and therefore has `session_id: null`; a simulated event is
-  Replay-Session-scoped, has a non-null `session_id`, and may only contain
-  `trade_scope: simulated` records.
+- The runtime supports persisted real trades only. `trade_scope: real` remains
+  a required compatibility field in this change; removing the field is a
+  separate public-schema migration. Legacy `simulated` definitions may remain
+  temporarily in v1/v2 schemas for wire compatibility, but commands using
+  `trade_scope: simulated` MUST fail with `error_code: unsupported_trade_scope`,
+  `category: invalid_request`, and `retryable: false`; the backend MUST NOT
+  publish simulated trade records or Session-scoped `trades_changed` events. Trade
+  validation and 5-minute bucketing remain owned by T0-037 rather than this
+  transport contract. Trade commands and events use `session_id: null`.
 - `list_trades` is a fact-via-changed-event command. An accepted `list_trades`
   response carries `operation_id: null` and `data: null`; the renderer must not
   consume `command_response.data.trades` (that object shape is intentionally
-  unfrozen). After an accepted `list_trades` request the backend MUST publish
-  exactly one authoritative real `trades_changed` event (`session_id: null`),
-  including when the repository is empty (`payload.trades: []`). The renderer
-  treats that event as the sole source of the trade list and never reads the
-  synchronous response data.
-- A real `trades_changed.payload.trades` value is a **complete repository
-  snapshot**: every persisted real trade for every symbol and trading date, in
-  no required order. The payload carries no symbol/date scope fields, so a
-  query-scoped subset would be ambiguous; consumers that need one symbol/date
-  filter the snapshot themselves. `trade_revision` is monotonic within a
-  `service_generation` and gates the snapshot (a consumer discards an event
-  whose `(service_generation, trade_revision)` is not newer than its current
-  state). A `service_generation` change resets the revision gate.
+  unfrozen). The request supplies `symbol + trade_date`; after acceptance the
+  backend MUST publish exactly one authoritative scoped `trades_changed` event
+  (`session_id: null`). In the Issue #163 implementation PR,
+  `real_trades_changed_payload` in both App v1 and App v2 MUST add required
+  `symbol` and `trade_date` fields. The payload contains only records from that
+  explicit scope, including an empty `trades: []`; consumers MUST NOT infer
+  scope from `trades[]`. This is an additive contract change. The renderer
+  treats the event as the sole source of the scoped trade list and never reads
+  the synchronous response data.
+- Chart-overlay reads are scoped by `symbol + trade_date` and use the trade
+  repository's scoped query; Replay cursor filtering remains Renderer-local.
+  `trades_changed` no longer broadcasts the complete repository; mutations
+  publish the resulting fact for each affected scope. An update that moves a
+  trade between scopes publishes both the old (without the moved record) and
+  new scope. The all-history dialog uses a separate history read rather than
+  abusing a chart-overlay query. `trade_revision` remains monotonic within one
+  `service_generation`; each published event receives a newer revision and a
+  generation change resets the gate. Consumers first apply the ordinary global
+  `service_generation`/event `revision` gate, then route the accepted event by
+  scope. An event for an unobserved scope advances the global revision gate but
+  does not replace the current scoped list. `trade_revision` is a monotonic
+  staleness marker, not a per-scope contiguous delivery sequence: a numeric
+  jump MUST NOT by itself trigger snapshot recovery. Only a gap in the outer
+  event revision uses the ordinary transport recovery rule.
+- Issue #163 also owns the minimum compatibility path for the existing
+  all-history dialog. App v1/v2 add a synchronous `list_trade_history` command
+  with `session_id: null` and payload `{ "trade_scope": "real" }`. Its accepted
+  response has `operation_id: null` and
+  `data: { "trade_revision": integer, "trades": [...] }`; it does not publish
+  an all-history event. The response is one repository snapshot and consumers
+  discard a late response whose `trade_revision` is older than the history
+  state already accepted. No filtering, pagination, or history-page redesign
+  belongs to Issue #163.
+- The all-history dialog MUST NOT merge scoped `trades_changed` payloads into
+  its repository-wide list. While open, it treats any accepted real
+  `trades_changed` as invalidation, coalesces repeated invalidations, and calls
+  `list_trade_history` again. While closed it keeps no authoritative hidden
+  history state and reads again on the next open. This preserves T0-043 while
+  keeping `trades_changed` strictly scoped.
+- `list_trades` remains a harmless scoped read. If an index request reaches the
+  backend, it is accepted and publishes an explicit empty fact for that
+  `symbol + trade_date`. Create/update eligibility is fail-closed and currently
+  allows only securities-master `instrument_type` values `stock` and `etf`;
+  `index` or an identity whose trade eligibility cannot be established fails
+  with `error_code: trade_not_allowed`, `category: invalid_request`, and
+  `retryable: false`. Delete resolves an existing record by `trade_id` and is
+  mode-independent at the service boundary so legacy invalid rows can be
+  cleaned up. Replay exposes no create/update/delete UI, including from a
+  history dialog opened while Replay is active.
+- Replay hides the `录入成交` action but keeps the `历史交易记录` entry. The
+  history dialog is read-only in Replay; viewing a historical day remains
+  read-only navigation and does not write the trade repository or add trade
+  state to Replay Session.
+- For a tradable Replay security, Renderer calls `list_trades` once when the
+  target `symbol + trade_date` becomes ready or changes. Play, step, and seek
+  only reapply the local `executed_at <= replay.current_time` filter and MUST
+  NOT issue another list request. Renderer re-reads only after a matching
+  scoped `trades_changed`, service-generation change, or reconnect. Index
+  Replay never calls `list_trades`.
+- The checked-in `list-trades-flow-v1/v2.json` and
+  `list-trade-history-flow-v1/v2.json` fixtures describe the Issue #163 scoped
+  and synchronous-history contracts and are the source of truth for contract
+  tests.
 - Preference events report persisted copies and their own revision. React
   remains authoritative for current layout and chart interaction state.
 
@@ -101,6 +153,10 @@ paths, and SQLite implementation fields may not cross this boundary.
   `historical_snapshot_success_response` definition enforces those semantics.
   The renderer treats the result as an authoritative full replacement of the
   current workbench view, exactly like a Live snapshot.
+- The historical chart independently requests persisted real trades for the
+  snapshot's `symbol + trade_date` and renders the same no-autoscale trade
+  overlay. The chart is read-only: create/update/delete remain in the Live trade
+  drawer or the dedicated all-history entry and are not inline chart actions.
 - Failures are delivered synchronously in `command_response.error` using the
   `historical_snapshot_error_response` definition. Both are retryable and
   affect `historical_chart`: `historical_data_unavailable` has category `data`

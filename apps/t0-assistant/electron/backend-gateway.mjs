@@ -8,6 +8,7 @@ const ALLOWED_COMMANDS = new Set([
   "get_live_snapshot",
   "retry_live",
   "list_trades",
+  "list_trade_history",
   "create_trade",
   "update_trade",
   "delete_trade",

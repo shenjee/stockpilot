@@ -133,13 +133,16 @@ class EventPublisher:
         service_generation: int,
         trade_revision: int,
         trades: list[dict[str, Any]],
+        symbol: str,
+        trade_date: str,
         operation_id: str | None = None,
     ) -> None:
-        """Publish one authoritative real ``trades_changed`` envelope.
+        """Publish one authoritative scoped real ``trades_changed`` envelope.
 
         ``session_id`` is ``None`` because real trades are repository-scoped,
-        not Session-scoped. ``payload.trades`` is the complete repository
-        snapshot supplied by the command API.
+        not Session-scoped. ``payload`` carries the explicit ``symbol`` and
+        ``trade_date`` scope alongside ``trade_revision`` and the scoped
+        ``trades`` snapshot supplied by the command API (Issue #163).
         """
         if service_generation != self._service_generation:
             raise ValueError(
@@ -150,6 +153,8 @@ class EventPublisher:
             payload={
                 "trade_revision": trade_revision,
                 "trades": trades,
+                "symbol": symbol,
+                "trade_date": trade_date,
             },
             session_id=None,
             operation_id=operation_id,

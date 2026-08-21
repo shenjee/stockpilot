@@ -15,6 +15,11 @@ export function isRealTradesChangedEvent(event: unknown): event is {
   service_generation?: number;
 };
 
+export function filterTradesByReplayCursor(
+  trades: ReadonlyArray<TradeRecord> | null | undefined,
+  currentTime: string | null | undefined,
+): TradeRecord[];
+
 export function applyTradesChanged(
   currentState: TradeListState | null,
   event: unknown,

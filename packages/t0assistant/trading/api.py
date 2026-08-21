@@ -1,33 +1,38 @@
-"""Transport-agnostic command boundary for real trades (T0-043).
+"""Transport-agnostic command boundary for real trades (Issue #163).
 
-``TradeCommandApi`` is the Python-side counterpart of the frozen App v1 trade
-commands ``list_trades`` / ``create_trade`` / ``update_trade`` / ``delete_trade``.
-It sits between the formal HTTP transport (``backend.service``) and the
-real-trade :class:`~packages.t0assistant.trading.service.TradeService`, turning
-validated command requests into either an accepted ``command_response`` plus an
-authoritative ``trades_changed`` event, or a structured ``application_error``.
+``TradeCommandApi`` is the Python-side counterpart of the App trade commands
+``list_trades`` / ``list_trade_history`` / ``create_trade`` / ``update_trade`` /
+``delete_trade``. It sits between the formal HTTP transport
+(``backend.service``) and the real-trade
+:class:`~packages.t0assistant.trading.service.TradeService`, turning validated
+command requests into either an accepted ``command_response`` plus (when
+applicable) an authoritative scoped ``trades_changed`` event, or a structured
+``application_error``.
 
-Contract obligations enforced here (see ``contracts/README.md`` and
-``contracts/fixtures/list-trades-flow-v1.json``):
+Contract obligations enforced here (see ``contracts/README.md``):
 
 * ``list_trades`` is a *fact-via-changed-event* command. Its accepted response
   carries ``operation_id: null`` and ``data: null``; the renderer must not read
   ``command_response.data``. After an accepted ``list_trades`` exactly one real
-  ``trades_changed`` event (``session_id: null``) is published, including when
-  the repository is empty (``payload.trades: []``).
+  ``trades_changed`` event (``session_id: null``) is published for the request
+  ``symbol + trade_date`` scope, including when that scope is empty
+  (``payload.trades: []``). Index symbols still accept and publish an empty
+  scoped fact. The command never publishes a full-repository snapshot.
+* ``list_trade_history`` is a synchronous full-repository read. Its accepted
+  response carries ``operation_id: null`` and
+  ``data: { trade_revision, trades }`` and publishes **no** event.
 * ``create_trade`` / ``update_trade`` / ``delete_trade`` persist synchronously
   through the repository. A trade only becomes a fact once the repository
   confirms the write; on any persistence failure the repository exception is
   mapped to an ``application_error`` and **no** ``trades_changed`` is published
-  and **no** revision is bumped, so a failed write can never leave the renderer
-  with a "front-end success, database failure" state.
-* ``payload.trades`` is a *complete repository snapshot* (every persisted real
-  trade for every symbol and trading date). The wire payload deliberately
-  carries no scope fields; consumers filter and sort themselves.
+  and **no** revision is bumped.
+* Mutations publish scoped facts only. An update that moves a trade between
+  ``(symbol, trade_date)`` scopes bumps and publishes the old scope (without
+  the moved trade) then the new scope, each with a newer ``trade_revision``.
+* ``trade_scope: simulated`` is rejected with ``unsupported_trade_scope``.
+* Create/update eligibility failures map to ``trade_not_allowed``.
 * ``trade_revision`` is monotonic within one ``service_generation`` and starts
-  at ``0`` for an empty repository. A Python restart produces a new
-  ``service_generation`` and resets the gate (the renderer compares the
-  ``(service_generation, trade_revision)`` pair).
+  at ``0`` for an empty repository.
 
 The transport (envelope ``revision`` used for delivery ordering) is owned by
 the injected :class:`TradeEventPublisher`; this layer owns only the
@@ -41,7 +46,7 @@ from __future__ import annotations
 from threading import Lock
 from typing import Any, Protocol
 
-from .models import TradeValidationError
+from .models import TradeRecord, TradeValidationError
 from .service import TradeEligibilityError, TradeService
 
 
@@ -50,8 +55,9 @@ class TradeEventPublisher(Protocol):
 
     The concrete implementation (owned by the formal service transport) assigns
     the envelope ``revision`` and ``service_generation`` and delivers the
-    envelope to connected renderers. This layer supplies only the trade-scoped
-    ``trade_revision`` and the full snapshot contents.
+    envelope to connected renderers. This layer supplies the trade-scoped
+    ``trade_revision``, the explicit ``symbol`` / ``trade_date`` scope, and the
+    scoped snapshot contents.
     """
 
     def publish_trades_changed(
@@ -60,9 +66,11 @@ class TradeEventPublisher(Protocol):
         service_generation: int,
         trade_revision: int,
         trades: list[dict[str, Any]],
+        symbol: str,
+        trade_date: str,
         operation_id: str | None = None,
     ) -> None:
-        """Publish one authoritative real ``trades_changed`` envelope."""
+        """Publish one authoritative scoped real ``trades_changed`` envelope."""
 
 
 # Map repository / domain exceptions to a stable application_error. The frozen
@@ -85,37 +93,16 @@ def _error_def(error_code: str, *, category: str, retryable: bool) -> dict[str, 
     }
 
 
-def _map_eligibility_error(error: TradeEligibilityError) -> dict[str, Any]:
-    """Map a :class:`TradeEligibilityError` to a stable application_error.
+def _map_eligibility_error(_error: TradeEligibilityError) -> dict[str, Any]:
+    """Map a :class:`TradeEligibilityError` to ``trade_not_allowed``.
 
-    The error message carries the specific stable code set by
-    :class:`TradeService._require_eligible`:
-    ``"security_not_found"``, ``"security_not_tradable"``, or
-    ``"service_unavailable"``.  Each maps to a distinct error_code so the
-    renderer can distinguish "not found" from "not tradable" from
-    "eligibility service down" instead of receiving a generic
-    ``trade_service_unavailable`` for all three.
+    Issue #163: index, not-found, and eligibility that cannot be established
+    (including service failures) all fail closed as
+    ``trade_not_allowed`` / ``invalid_request`` / ``retryable: false``.
     """
-    # TradeValidationError stores (field, message); str() yields "field message".
-    parts = str(error).strip().split(maxsplit=1)
-    code = parts[1].strip() if len(parts) == 2 else ""
-    if code == "security_not_found":
-        return _error_def(
-            "security_not_found", category="validation", retryable=False
-        )
-    if code == "security_not_tradable":
-        return _error_def(
-            "security_not_tradable", category="validation", retryable=False
-        )
-    if code == "service_unavailable":
-        return _error_def(
-            "eligibility_service_unavailable",
-            category="service",
-            retryable=True,
-        )
-    # Unknown eligibility code: surface as a retryable service error.
+
     return _error_def(
-        "trade_service_unavailable", category="service", retryable=True
+        "trade_not_allowed", category="invalid_request", retryable=False
     )
 
 
@@ -153,8 +140,9 @@ class TradeCommandApi:
 
     The API keeps no trade cache: every snapshot published to the renderer is
     read fresh from the repository, so a published ``trades_changed`` always
-    reflects the persisted truth. ``trade_revision`` is the only in-memory
-    state, and it is monotonic within the ``service_generation``.
+    reflects the persisted truth for one explicit scope. ``trade_revision`` is
+    the only in-memory state, and it is monotonic within the
+    ``service_generation``.
     """
 
     def __init__(
@@ -192,19 +180,27 @@ class TradeCommandApi:
         """Dispatch a schema-valid trade ``command_request``.
 
         Returns a ``command_response`` payload. On an accepted mutation the
-        authoritative ``trades_changed`` event has already been published.
+        authoritative scoped ``trades_changed`` event(s) have already been
+        published.
         """
         request_id = request.get("request_id")
         if not isinstance(request_id, str) or not request_id:
             request_id = "missing-request-id"
         payload = request.get("payload")
         if not isinstance(payload, dict):
-            return self._reject(request_id, "invalid_trade_request", "validation",
-                                "成交命令负载无效", retryable=False)
+            return self._reject(
+                request_id,
+                "invalid_trade_request",
+                "validation",
+                "成交命令负载无效",
+                retryable=False,
+            )
 
         try:
             if command == "list_trades":
                 return self._list_trades(request_id, payload)
+            if command == "list_trade_history":
+                return self._list_trade_history(request_id, payload)
             if command == "create_trade":
                 return self._create_trade(request_id, payload)
             if command == "update_trade":
@@ -223,42 +219,83 @@ class TradeCommandApi:
         # The transport validates the command name against the frozen schema
         # before dispatch, so an unknown command is a transport-layer concern.
         return self._reject(
-            request_id, "invalid_trade_request", "validation",
-            f"未知成交命令：{command}", retryable=False,
+            request_id,
+            "invalid_trade_request",
+            "validation",
+            f"未知成交命令：{command}",
+            retryable=False,
         )
 
     # -- Command handlers ------------------------------------------------
 
     def _list_trades(self, request_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-        # list_trades is real-only: simulated trades belong to the Replay
-        # Session and never reach this service or the real repository.
-        if payload.get("trade_scope") != "real":
+        rejected = self._reject_if_not_real_scope(request_id, payload.get("trade_scope"))
+        if rejected is not None:
+            return rejected
+        symbol = payload.get("symbol")
+        trade_date = payload.get("trade_date")
+        if not isinstance(symbol, str) or not symbol:
             return self._reject(
-                request_id, "invalid_trade_request", "validation",
-                "list_trades 仅支持真实成交", retryable=False,
+                request_id,
+                "invalid_trade_request",
+                "validation",
+                "标的代码缺失",
+                retryable=False,
             )
-        # Publish the current full snapshot at the current revision. A read
-        # failure does NOT publish an empty fact: the exception propagates to
-        # _map_error and no event is published.
+        if not isinstance(trade_date, str) or not trade_date:
+            return self._reject(
+                request_id,
+                "invalid_trade_request",
+                "validation",
+                "交易日期缺失",
+                retryable=False,
+            )
         with self._lock:
-            trades = self._snapshot()
+            if self._eligibility_is_index(symbol):
+                trades: list[dict[str, Any]] = []
+            else:
+                trades = self._scoped_snapshot(symbol, trade_date)
             revision = self._trade_revision
-        self._publish(revision, trades)
+        self._publish(revision, trades, symbol=symbol, trade_date=trade_date)
         return self._accepted(request_id)
+
+    def _list_trade_history(
+        self, request_id: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        rejected = self._reject_if_not_real_scope(request_id, payload.get("trade_scope"))
+        if rejected is not None:
+            return rejected
+        with self._lock:
+            trades = [record.to_dict() for record in self._service.list_all_trades()]
+            revision = self._trade_revision
+        return self._accepted(
+            request_id,
+            data={"trade_revision": revision, "trades": trades},
+        )
 
     def _create_trade(self, request_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         trade_payload = payload.get("trade")
         if not isinstance(trade_payload, dict):
             return self._reject(
-                request_id, "invalid_trade_request", "validation",
-                "成交记录缺失", retryable=False,
+                request_id,
+                "invalid_trade_request",
+                "validation",
+                "成交记录缺失",
+                retryable=False,
             )
+        rejected = self._reject_if_not_real_scope(
+            request_id, trade_payload.get("trade_scope")
+        )
+        if rejected is not None:
+            return rejected
         with self._lock:
-            self._service.create_trade(trade_payload)  # validates + persists
+            record = self._service.create_trade(trade_payload)
             self._trade_revision += 1
-            trades = self._snapshot()
+            symbol = record.trade.symbol
+            trade_date = self._trade_date_of(record)
+            trades = self._scoped_snapshot(symbol, trade_date)
             revision = self._trade_revision
-        self._publish(revision, trades)
+        self._publish(revision, trades, symbol=symbol, trade_date=trade_date)
         return self._accepted(request_id)
 
     def _update_trade(self, request_id: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -266,77 +303,169 @@ class TradeCommandApi:
         trade_payload = payload.get("trade")
         if not isinstance(trade_id, str) or not trade_id:
             return self._reject(
-                request_id, "invalid_trade_request", "validation",
-                "成交记录标识缺失", retryable=False,
+                request_id,
+                "invalid_trade_request",
+                "validation",
+                "成交记录标识缺失",
+                retryable=False,
             )
         if not isinstance(trade_payload, dict):
             return self._reject(
-                request_id, "invalid_trade_request", "validation",
-                "成交记录缺失", retryable=False,
+                request_id,
+                "invalid_trade_request",
+                "validation",
+                "成交记录缺失",
+                retryable=False,
             )
+        rejected = self._reject_if_not_real_scope(
+            request_id, trade_payload.get("trade_scope")
+        )
+        if rejected is not None:
+            return rejected
+        publishes: list[tuple[int, list[dict[str, Any]], str, str]] = []
         with self._lock:
-            # update_trade preserves trade_id and persists the user-confirmed
-            # fee verbatim; raises RepositoryNotFoundError if the id is gone.
-            self._service.update_trade(trade_id, trade_payload)
-            self._trade_revision += 1
-            trades = self._snapshot()
-            revision = self._trade_revision
-        self._publish(revision, trades)
+            old = self._service.get_trade(trade_id)
+            if old is None:
+                raise _TradeMissing(trade_id)
+            old_symbol = old.trade.symbol
+            old_date = self._trade_date_of(old)
+            updated = self._service.update_trade(trade_id, trade_payload)
+            new_symbol = updated.trade.symbol
+            new_date = self._trade_date_of(updated)
+            if (old_symbol, old_date) != (new_symbol, new_date):
+                self._trade_revision += 1
+                publishes.append(
+                    (
+                        self._trade_revision,
+                        self._scoped_snapshot(old_symbol, old_date),
+                        old_symbol,
+                        old_date,
+                    )
+                )
+                self._trade_revision += 1
+                publishes.append(
+                    (
+                        self._trade_revision,
+                        self._scoped_snapshot(new_symbol, new_date),
+                        new_symbol,
+                        new_date,
+                    )
+                )
+            else:
+                self._trade_revision += 1
+                publishes.append(
+                    (
+                        self._trade_revision,
+                        self._scoped_snapshot(new_symbol, new_date),
+                        new_symbol,
+                        new_date,
+                    )
+                )
+        for revision, trades, symbol, trade_date in publishes:
+            self._publish(revision, trades, symbol=symbol, trade_date=trade_date)
         return self._accepted(request_id)
 
     def _delete_trade(self, request_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         trade_id = payload.get("trade_id")
         if not isinstance(trade_id, str) or not trade_id:
             return self._reject(
-                request_id, "invalid_trade_request", "validation",
-                "成交记录标识缺失", retryable=False,
+                request_id,
+                "invalid_trade_request",
+                "validation",
+                "成交记录标识缺失",
+                retryable=False,
             )
-        if payload.get("trade_scope") != "real":
-            return self._reject(
-                request_id, "invalid_trade_request", "validation",
-                "delete_trade 仅支持真实成交", retryable=False,
-            )
+        rejected = self._reject_if_not_real_scope(request_id, payload.get("trade_scope"))
+        if rejected is not None:
+            return rejected
         with self._lock:
-            # Hard delete; returns False when no trade had the id. A missing
-            # trade is reported so the renderer can reconcile, but it is not a
-            # persistence failure (no revision bump, no publish on the False
-            # branch handled below).
+            existing = self._service.get_trade(trade_id)
+            if existing is None:
+                raise _TradeMissing(trade_id)
+            symbol = existing.trade.symbol
+            trade_date = self._trade_date_of(existing)
             deleted = self._service.delete_trade(trade_id)
             if not deleted:
                 raise _TradeMissing(trade_id)
             self._trade_revision += 1
-            trades = self._snapshot()
+            trades = self._scoped_snapshot(symbol, trade_date)
             revision = self._trade_revision
-        self._publish(revision, trades)
+        self._publish(revision, trades, symbol=symbol, trade_date=trade_date)
         return self._accepted(request_id)
 
     # -- Helpers ---------------------------------------------------------
 
-    def _snapshot(self) -> list[dict[str, Any]]:
-        """Read the complete real-trade repository snapshot, freshest first.
+    def _scoped_snapshot(self, symbol: str, trade_date: str) -> list[dict[str, Any]]:
+        """Read the scoped real-trade snapshot for one symbol and trade date."""
 
-        The wire payload is unordered by contract; the repository returns a
-        deterministic ``executed_at, trade_id`` ordering which is a stable base
-        for consumers. Renderers sort for display themselves.
-        """
-        return [record.to_dict() for record in self._service.list_all_trades()]
+        return [
+            record.to_dict()
+            for record in self._service.list_trades(symbol, trade_date)
+        ]
 
-    def _publish(self, trade_revision: int, trades: list[dict[str, Any]]) -> None:
+    @staticmethod
+    def _trade_date_of(record: TradeRecord) -> str:
+        """Return the ISO trade date (YYYY-MM-DD) for a persisted record."""
+
+        return record.trade.executed_at.date().isoformat()
+
+    def _eligibility_is_index(self, symbol: str) -> bool:
+        """Return True when eligibility resolves the symbol as an index."""
+
+        try:
+            status = self._service._eligibility.check_eligibility(symbol)
+        except Exception:
+            return False
+        return status == "index"
+
+    def _reject_if_not_real_scope(
+        self, request_id: str, trade_scope: Any
+    ) -> dict[str, Any] | None:
+        if trade_scope == "simulated":
+            return self._reject(
+                request_id,
+                "unsupported_trade_scope",
+                "invalid_request",
+                "模拟成交范围已停用",
+                retryable=False,
+            )
+        if trade_scope != "real":
+            return self._reject(
+                request_id,
+                "invalid_trade_request",
+                "validation",
+                "成交范围无效",
+                retryable=False,
+            )
+        return None
+
+    def _publish(
+        self,
+        trade_revision: int,
+        trades: list[dict[str, Any]],
+        *,
+        symbol: str,
+        trade_date: str,
+    ) -> None:
         if self._publisher is None:
             return
         self._publisher.publish_trades_changed(
             service_generation=self._service_generation,
             trade_revision=trade_revision,
             trades=trades,
+            symbol=symbol,
+            trade_date=trade_date,
         )
 
-    def _accepted(self, request_id: str) -> dict[str, Any]:
+    def _accepted(
+        self, request_id: str, data: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         return {
             "schema_version": "t0_app_v2",
             "request_id": request_id,
             "accepted": True,
             "operation_id": None,
-            "data": None,
+            "data": data,
             "error": None,
         }
 
@@ -376,11 +505,7 @@ class TradeCommandApi:
     def _map_error(error: BaseException) -> dict[str, Any]:
         if isinstance(error, _TradeMissing):
             return _error_def("trade_not_found", category="data", retryable=False)
-        # Issue #151: TradeEligibilityError is a TradeValidationError subclass.
-        # Its message carries the specific stable code ("security_not_found",
-        # "security_not_tradable", or "service_unavailable"), so check it
-        # before the generic parent mapping to avoid falling through to
-        # trade_service_unavailable.
+        # Issue #163: all eligibility failures collapse to trade_not_allowed.
         if isinstance(error, TradeEligibilityError):
             return _map_eligibility_error(error)
         definition = _ERROR_DEFINITIONS.get(type(error))

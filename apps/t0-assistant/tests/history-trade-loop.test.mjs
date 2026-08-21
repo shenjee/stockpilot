@@ -157,14 +157,16 @@ test("a trade whose 5m bucket has no chart bar is dropped (no fake candle)", () 
   );
 });
 
-test("createChartGroupModel wires trades into the five_minute group markers", () => {
-  // createChartGroupModel does not filter by symbol/date; App filters the
-  // authoritative full snapshot before passing it in. This test verifies the
-  // actual App -> chart wiring path: trades arrive as markers on the 5m group.
+test("createChartGroupModel does not embed trade markers (overlay is independent)", () => {
+  // Issue #163: App projects trades via projectTradeMarkers and calls
+  // SynchronizedChartGroup.setTradeMarkers — not createChartGroupModel.
   const model = createChartGroupModel(
     snapshotWithBars([bar("2026-07-24 10:00:00"), bar("2026-07-24 10:05:00")]),
     ChartGroupKind.FIVE_MINUTE,
-    {},
+  );
+  assert.equal(Object.hasOwn(model, "tradeMarkers"), false);
+
+  const markers = projectTradeMarkers(
     dayTrades(
       [
         trade({ trade_id: "a", executed_at: "2026-07-24 10:03:00", price: 38.20, quantity: 200 }),
@@ -175,28 +177,27 @@ test("createChartGroupModel wires trades into the five_minute group markers", ()
       "sh.600584",
       "2026-07-24",
     ),
+    { allowedTimes: new Set(Object.values(model.timeByTimestamp)) },
   );
-  assert.equal(model.tradeMarkers?.length, 2, "two markers rendered");
-  const ids = model.tradeMarkers.map((m) => m.trade_id).sort();
+  assert.equal(markers.length, 2, "two markers rendered");
+  const ids = markers.map((m) => m.trade_id).sort();
   assert.deepEqual(ids, ["a", "b"]);
-  const byId = Object.fromEntries(model.tradeMarkers.map((m) => [m.trade_id, m]));
+  const byId = Object.fromEntries(markers.map((m) => [m.trade_id, m]));
   assert.equal(byId.a.price, 38.20);
   assert.equal(byId.b.price, 38.40);
 });
 
-test("createChartGroupModel ignores trades on the one_minute group", () => {
+test("one_minute chart model remains trade-overlay free", () => {
   const model = createChartGroupModel(
     snapshotWithBars([bar("2026-07-24 10:00:00")]),
     ChartGroupKind.ONE_MINUTE,
-    {},
-    [trade({ trade_id: "a", executed_at: "2026-07-24 10:03:00" })],
   );
-  assert.deepEqual(model.tradeMarkers, []);
+  assert.equal(Object.hasOwn(model, "tradeMarkers"), false);
 });
 
 test("historical wiring path overlays only the loaded day's trades on the 5m chart", () => {
-  // App filters the full repository snapshot by snapshot.session.symbol and
-  // snapshot.session.trade_date before passing trades to createChartGroupModel.
+  // App filters the scoped day list by snapshot.session.symbol and
+  // snapshot.session.trade_date, then projects markers independently.
   const historicalSnapshot = {
     ...snapshotWithBars([
       bar("2026-07-20 10:00:00"),
@@ -222,10 +223,11 @@ test("historical wiring path overlays only the loaded day's trades on the 5m cha
   const model = createChartGroupModel(
     historicalSnapshot,
     ChartGroupKind.FIVE_MINUTE,
-    {},
-    filtered,
   );
-  assert.equal(model.tradeMarkers.length, 1);
-  assert.equal(model.tradeMarkers[0].trade_id, "on-day");
-  assert.equal(model.tradeMarkers[0].price, 38.2);
+  const markers = projectTradeMarkers(filtered, {
+    allowedTimes: new Set(Object.values(model.timeByTimestamp)),
+  });
+  assert.equal(markers.length, 1);
+  assert.equal(markers[0].trade_id, "on-day");
+  assert.equal(markers[0].price, 38.2);
 });

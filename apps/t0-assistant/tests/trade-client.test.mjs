@@ -13,8 +13,16 @@ function fakeBridge(handlers = {}) {
       request_id: request.request_id,
       accepted: true,
       operation_id: null,
+      data: null,
+      error: null,
+    }),
+    list_trade_history: (request) => ({
+      schema_version: "t0_app_v2",
+      request_id: request.request_id,
+      accepted: true,
+      operation_id: null,
       data: {
-        trade_revision: 3,
+        trade_revision: 5,
         trades: [
           {
             trade_id: "trade-1",
@@ -66,6 +74,7 @@ function fakeBridge(handlers = {}) {
   return {
     calls,
     listTrades: (r) => { calls.push(["list_trades", r]); return invoke("list_trades", r); },
+    listTradeHistory: (r) => { calls.push(["list_trade_history", r]); return invoke("list_trade_history", r); },
     createTrade: (r) => { calls.push(["create_trade", r]); return invoke("create_trade", r); },
     updateTrade: (r) => { calls.push(["update_trade", r]); return invoke("update_trade", r); },
     deleteTrade: (r) => { calls.push(["delete_trade", r]); return invoke("delete_trade", r); },
@@ -118,8 +127,8 @@ test("listTrades sends the list_trades payload and returns an acceptance signal"
     symbol: "sh.600584",
     tradeDate: "2026-07-24",
   });
-  // The trade list is NOT read from the sync response (its data shape is
-  // unfrozen); list_trades is a refresh trigger returning only acceptance +
+  // The trade list is NOT read from the sync response (data is null);
+  // list_trades is a refresh trigger returning only acceptance +
   // the optional operation_id. The authoritative list arrives via
   // trades_changed.
   assert.deepEqual(result, { accepted: true, operationId: null });
@@ -134,6 +143,21 @@ test("listTrades sends the list_trades payload and returns an acceptance signal"
     symbol: "sh.600584",
     trade_date: "2026-07-24",
   });
+});
+
+test("listTradeHistory returns synchronous trade_revision + trades", async () => {
+  const bridge = fakeBridge();
+  const client = createTradeClient(bridge, { makeRequestId: idFactory });
+  const result = await client.listTradeHistory();
+  assert.equal(result.trade_revision, 5);
+  assert.equal(result.trades.length, 1);
+  assert.equal(result.trades[0].trade_id, "trade-1");
+
+  const [command, request] = bridge.calls[0];
+  assert.equal(command, "list_trade_history");
+  assert.equal(request.command, "list_trade_history");
+  assert.equal(request.session_id, null);
+  assert.deepEqual(request.payload, { trade_scope: "real" });
 });
 
 test("createTrade sends create_trade payload and returns an acceptance signal", async () => {
@@ -191,6 +215,7 @@ test("service_unavailable response throws a retryable TradeClientError", async (
   const bridge = fakeBridge({
     create_trade: serviceUnavailable,
     list_trades: serviceUnavailable,
+    list_trade_history: serviceUnavailable,
     update_trade: serviceUnavailable,
     delete_trade: serviceUnavailable,
   });
@@ -201,6 +226,7 @@ test("service_unavailable response throws a retryable TradeClientError", async (
     () => client.updateTrade("trade-1", draft()),
     () => client.deleteTrade("trade-1"),
     () => client.listTrades({ symbol: "sh.600584", tradeDate: "2026-07-24" }),
+    () => client.listTradeHistory(),
   ]) {
     await assert.rejects(op, (err) => {
       assert.ok(err instanceof TradeClientError, "should be TradeClientError");

@@ -2,7 +2,7 @@
 
 This directory contains the Electron T+0 desktop app, React renderer, and the
 Electron-managed Python service. The local service provides Live and historical
-market data, Replay sessions and playback, real and simulated trades,
+market data, Replay sessions and playback, persisted real trades,
 preferences, authenticated loopback transport, bounded restart, and graceful
 shutdown.
 

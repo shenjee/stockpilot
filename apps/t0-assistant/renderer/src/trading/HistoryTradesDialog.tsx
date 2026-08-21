@@ -7,16 +7,13 @@ import {
 import type { FeeAdvisor } from "./fee-advisor.mjs";
 import type { FeePlan } from "./fee-plans.mjs";
 import type { TradeDraft } from "./trade-form.mjs";
-import { applyHistoryTradesChanged } from "./history-state.mjs";
+import {
+  applyHistoryListResponse,
+  historyInvalidatedByTradesChanged,
+} from "./history-state.mjs";
 import type { TradeOperationController } from "./trade-operation-controller.mjs";
 import type { SecurityIdentity } from "../workbench-layout.mjs";
 import { TradeFormDialog } from "./TradeFormDialog";
-
-function localToday() {
-  const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-}
 
 function errorMessage(error: unknown, fallback: string) {
   if (error instanceof TradeClientError) return error.message;
@@ -48,15 +45,12 @@ const EMPTY_HISTORY: HistoryListState = {
 };
 
 /**
- * Historical trade records overlay (T0-043).
+ * Historical trade records overlay (T0-043 / Issue #163).
  *
- * Reached from the T+0 trade bar's "历史交易记录" entry. Shows EVERY persisted
- * real trade across all symbols and trading dates (the full repository
- * snapshot), sorted by execution time descending. No search/filter/sort/paging
- * controls. Editing reuses ``TradeFormDialog``; deletion is a single
- * confirmation with a permanent-delete warning. Both succeed through the same
- * authoritative ``trades_changed`` snapshot that also drives the day list and
- * chart markers, so the three never drift apart.
+ * Hydrated from synchronous ``list_trade_history`` (full real-trade list).
+ * Scoped ``trades_changed`` only marks the list dirty so the dialog re-fetches;
+ * it must not merge day-scoped payloads into history. ``readOnly`` hides
+ * edit/delete (Replay mode) while keeping "进入当天图形".
  */
 export function HistoryTradesDialog({
   open,
@@ -71,6 +65,7 @@ export function HistoryTradesDialog({
   onEnterDayChart,
   tradeOpController,
   resolveSecurity,
+  readOnly = false,
 }: {
   open: boolean;
   onClose: () => void;
@@ -84,6 +79,8 @@ export function HistoryTradesDialog({
   onEnterDayChart: (symbol: string, tradeDate: string) => void;
   tradeOpController: TradeOperationController;
   resolveSecurity: (symbol: string) => Promise<SecurityIdentity | null>;
+  /** When true (Replay), hide edit/delete actions. */
+  readOnly?: boolean;
 }) {
   const [history, setHistory] = useState<HistoryListState>(EMPTY_HISTORY);
   const [listError, setListError] = useState<string | null>(null);
@@ -102,37 +99,74 @@ export function HistoryTradesDialog({
   const historyRef = useRef<HistoryListState>(EMPTY_HISTORY);
   const prevGenRef = useRef<number>(serviceGeneration);
   const wasOpenRef = useRef<boolean>(open);
+  const dirtyRef = useRef(false);
+  const fetchInFlightRef = useRef(false);
+  const fetchGenerationRef = useRef(0);
 
   function commitHistory(next: HistoryListState) {
     historyRef.current = next;
     setHistory(next);
   }
 
-  // Refresh trigger via list_trades when the dialog opens (or is reloaded).
-  // list_trades is a fact-via-changed-event command: its sync response carries
-  // no trade data; the authoritative full snapshot arrives through
-  // trades_changed. The symbol/date here are a schema-required refresh trigger
-  // only - the published snapshot spans every symbol and date.
+  function clearHistory() {
+    commitHistory(EMPTY_HISTORY);
+    setListError(null);
+    setLoading(false);
+    dirtyRef.current = false;
+  }
+
+  // On open / reload / generation bump: fetch authoritative history via
+  // list_trade_history. Discard late responses with an older trade_revision.
   useEffect(() => {
-    if (!open || !tradeClient || !serviceReady) return;
-    const symbol = selectedSecurity?.symbol ?? "sh.600000";
+    if (!open) {
+      clearHistory();
+      return;
+    }
+    if (!tradeClient || !serviceReady) return;
+    if (typeof tradeClient.listTradeHistory !== "function") {
+      setListError("历史成交查询尚未接入");
+      return;
+    }
+
+    const fetchId = ++fetchGenerationRef.current;
     let cancelled = false;
+    fetchInFlightRef.current = true;
     setLoading(true);
+    dirtyRef.current = false;
+
     tradeClient
-      .listTrades({ symbol, tradeDate: localToday() })
-      .then(() => {
-        if (!cancelled) setListError(null);
+      .listTradeHistory({ tradeScope: "real" })
+      .then((data) => {
+        if (cancelled || fetchId !== fetchGenerationRef.current) return;
+        const next = applyHistoryListResponse(
+          historyRef.current,
+          data,
+          serviceGeneration,
+        );
+        if (next && next !== historyRef.current) {
+          commitHistory(next);
+        }
+        setListError(null);
       })
       .catch((error) => {
-        if (!cancelled) setListError(errorMessage(error, "历史成交读取失败"));
+        if (cancelled || fetchId !== fetchGenerationRef.current) return;
+        setListError(errorMessage(error, "历史成交读取失败"));
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (cancelled || fetchId !== fetchGenerationRef.current) return;
+        fetchInFlightRef.current = false;
+        setLoading(false);
+        // Coalesce: a trades_changed arrived while fetching — refresh once more.
+        if (dirtyRef.current && wasOpenRef.current) {
+          dirtyRef.current = false;
+          setReloadKey((k) => k + 1);
+        }
       });
+
     return () => {
       cancelled = true;
     };
-  }, [open, tradeClient, serviceReady, selectedSecurity, reloadKey]);
+  }, [open, tradeClient, serviceReady, serviceGeneration, reloadKey]);
 
   // Reset the revision gate on a service_generation change (Python restart).
   useEffect(() => {
@@ -152,24 +186,23 @@ export function HistoryTradesDialog({
     wasOpenRef.current = open;
   }, [open]);
 
-  // Authoritative full-snapshot updates via the frozen trades_changed event.
+  // Scoped trades_changed only invalidates; never merge into history.
   useEffect(() => {
-    if (!subscribeAppEvent) return;
+    if (!subscribeAppEvent || !open) return;
     return subscribeAppEvent((event) => {
-      const next = applyHistoryTradesChanged(historyRef.current, event);
-      if (next !== historyRef.current) {
-        commitHistory(next);
-        if (listError) setListError(null);
+      if (!historyInvalidatedByTradesChanged(event)) return;
+      if (fetchInFlightRef.current) {
+        dirtyRef.current = true;
+        return;
       }
+      dirtyRef.current = false;
+      setReloadKey((k) => k + 1);
     });
-  }, [subscribeAppEvent, listError]);
+  }, [subscribeAppEvent, open]);
 
   async function handleSubmit(draft: TradeDraft) {
-    if (!tradeClient || !formOpen) return;
+    if (readOnly || !tradeClient || !formOpen) return;
     const tradeId = formOpen.trade.trade_id;
-    // A sync rejection throws here and the form surfaces an inline retry; an
-    // accepted op (operation_id null for the synchronous persist path) is
-    // resolved by the authoritative trades_changed published after the write.
     const result = await tradeClient.updateTrade(tradeId, draft);
     setFormOpen(null);
     if (result.operationId) {
@@ -185,7 +218,7 @@ export function HistoryTradesDialog({
   }
 
   async function confirmDelete() {
-    if (!pendingDelete || !tradeClient) return;
+    if (readOnly || !pendingDelete || !tradeClient) return;
     const tradeId = pendingDelete.trade_id;
     setDeleteBusy(true);
     setDeleteError(null);
@@ -218,11 +251,8 @@ export function HistoryTradesDialog({
     onClose();
   }
 
-  // Issue #151: resolve the authoritative identity via select_security
-  // instead of fabricating instrument_type. When the trade's symbol matches
-  // the currently selected security, use it directly; otherwise ask the
-  // backend to resolve the identity once.
   async function handleEditTrade(trade: TradeRecord) {
+    if (readOnly) return;
     if (selectedSecurity && selectedSecurity.symbol === trade.symbol) {
       setResolvedIdentity(selectedSecurity);
       setFormOpen({ mode: "edit", trade });
@@ -311,23 +341,27 @@ export function HistoryTradesDialog({
                     </span>
                     <span className="history-note">{trade.note || ""}</span>
                     <span className="history-item-actions">
-                      <button
-                        type="button"
-                        disabled={identityLoading}
-                        onClick={() => void handleEditTrade(trade)}
-                      >
-                        {identityLoading ? "解析中…" : "编辑"}
-                      </button>
-                      <button
-                        type="button"
-                        className="danger-button"
-                        onClick={() => {
-                          setDeleteError(null);
-                          setPendingDelete(trade);
-                        }}
-                      >
-                        删除
-                      </button>
+                      {!readOnly && (
+                        <>
+                          <button
+                            type="button"
+                            disabled={identityLoading}
+                            onClick={() => void handleEditTrade(trade)}
+                          >
+                            {identityLoading ? "解析中…" : "编辑"}
+                          </button>
+                          <button
+                            type="button"
+                            className="danger-button"
+                            onClick={() => {
+                              setDeleteError(null);
+                              setPendingDelete(trade);
+                            }}
+                          >
+                            删除
+                          </button>
+                        </>
+                      )}
                       <button
                         type="button"
                         onClick={() => enterDayChart(trade)}
@@ -343,7 +377,7 @@ export function HistoryTradesDialog({
         </div>
       </section>
 
-      {formOpen && resolvedIdentity && (
+      {!readOnly && formOpen && resolvedIdentity && (
         <TradeFormDialog
           open
           mode="edit"
@@ -359,7 +393,7 @@ export function HistoryTradesDialog({
         />
       )}
 
-      {pendingDelete && (
+      {!readOnly && pendingDelete && (
         <div className="dialog-backdrop" role="presentation">
           <section
             className="confirm-dialog"

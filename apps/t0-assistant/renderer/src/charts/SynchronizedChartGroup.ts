@@ -33,6 +33,7 @@ import {
   PRICE_EXACT_PRICE_FORMAT,
   resolvePriceAxisMinMove,
   type ChartGroupModel,
+  type TradeMarkerModel,
 } from "./chart-model.mjs";
 import { PivotZonePrimitive } from "./pivot-zone-primitive.mjs";
 import { CzscMarkerPrimitive } from "./czsc-marker-primitive.mjs";
@@ -230,6 +231,8 @@ export class SynchronizedChartGroup {
   private syncingCrosshair = false;
   private previousTimeByTime = new Map<number, number | null>();
   private structureSeries: ISeriesApi<"Line">[] = [];
+  /** Independent of ChartGroupModel — updated via setTradeMarkers only. */
+  private tradeMarkers: TradeMarkerModel[] = [];
   private tradeMarkerSeries = new Map<string, ISeriesApi<"Line">>();
   private tradeMarkerPlugins = new Map<string, ISeriesMarkersPluginApi<Time>>();
   private alignedPriceScaleWidth = CHART_RIGHT_Y_AXIS_WIDTH;
@@ -466,6 +469,17 @@ export class SynchronizedChartGroup {
     });
     // 实盘动态 K / 回放推进后原地刷新；激活时间不存在则立即隐藏。
     this.scheduleMarketBarTooltipRefresh();
+  }
+
+  /**
+   * Issue #163: update trade markers independently of ChartGroupModel.
+   * Does not call setData on candle / indicator / CZSC series and does not
+   * rebuild the chart model. Extreme trade prices must not expand the right
+   * price scale (autoscaleInfoProvider returns a null price range).
+   */
+  setTradeMarkers(markers: readonly TradeMarkerModel[] | null | undefined) {
+    this.tradeMarkers = Array.isArray(markers) ? [...markers] : [];
+    this.setTradeMarkerData();
   }
 
   /**
@@ -1316,7 +1330,10 @@ export class SynchronizedChartGroup {
       return;
     }
 
-    for (const marker of this.model.tradeMarkers) {
+    for (const marker of this.tradeMarkers) {
+      // Overlay-only LineSeries: autoscaleInfoProvider returns null priceRange
+      // so extreme trade prices never expand the candle price axis (same pattern
+      // as CZSC primitive autoscaleInfo / macdTimeAnchorSeries).
       const series = this.priceChart.addSeries(LineSeries, {
         color: marker.color,
         lineVisible: false,
@@ -1324,6 +1341,7 @@ export class SynchronizedChartGroup {
         priceLineVisible: false,
         pointMarkersVisible: false,
         priceScaleId: "right",
+        autoscaleInfoProvider: () => ({ priceRange: null }),
       });
       series.setData([{ time: marker.time as UTCTimestamp, value: marker.price }]);
       const seriesMarker: SeriesMarker<Time> = {

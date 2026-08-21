@@ -6,6 +6,7 @@ const APP_COMMANDS = Object.freeze({
   getLiveSnapshot: "get_live_snapshot",
   retryLive: "retry_live",
   listTrades: "list_trades",
+  listTradeHistory: "list_trade_history",
   createTrade: "create_trade",
   updateTrade: "update_trade",
   deleteTrade: "delete_trade",
