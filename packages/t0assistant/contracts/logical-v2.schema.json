@@ -78,11 +78,11 @@
           "minimum": 0
         },
         "volume": {
-          "type": "number",
+          "type": ["number", "null"],
           "minimum": 0
         },
         "amount": {
-          "type": "number",
+          "type": ["number", "null"],
           "minimum": 0
         },
         "closed": {
@@ -136,11 +136,11 @@
           "minimum": 0
         },
         "volume": {
-          "type": "number",
+          "type": ["number", "null"],
           "minimum": 0
         },
         "amount": {
-          "type": "number",
+          "type": ["number", "null"],
           "minimum": 0
         },
         "volume_ratio": {

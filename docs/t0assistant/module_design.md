@@ -141,7 +141,7 @@ Electron 主进程模块之间可以共享基础日志与配置，但不得成�
 | Workbench Grid | 三列三行尺寸、64/36、50/50、隐藏分时及状态保持 | 不创建行情或计算指标 |
 | 5 分钟图表组 | K、BOLL、MA、笔、笔中枢、CZSC、独立成交覆盖层、宽度驱动的最近 N 根满轴视口及组内联动 | 成交标记不进入行情 model、不参与 autoscale；成交变化不得重设行情 series 或视口 |
 | 1 分钟图表组 | 分时价格、VWAP、VOL、MACD；全日交易分钟轴（`09:30→15:00`）左锚视口，已发生数据从左向右填充；组内十字光标联动 | 与 5 分钟组不共享时间轴/跟随状态；不使用宽度驱动右对齐 N |
-| 日 K 与行情栏 | 日 K、「行情数据」字段与右对齐「数据截止」元信息 | 缺失值原位显示 `--`，不做信号解释 |
+| 日 K 与行情栏 | 日 K、「行情数据」字段与右对齐「数据截止」元信息 | 已有快照但字段不可用时显示 `N/A`；尚无快照或尚未推进到该点时显示 `--`；不做信号解释 |
 | 回放面板 | 日期、开始、播放/暂停、单步、倍速、进度定位；根据 Session 状态、当前时间、下一根实际 K 的时间、市场结束时间和回放粒度推导控件状态 | 发控制意图，不在前端自行推进市场时钟；不要求 Python 返回按钮开关字段 |
 | 成交模块 | SQLite 真实成交录入、编辑、删除确认、历史入口、按股票/日期查询与独立标记展示 | 不依赖 Live/Replay Session；Replay 和历史日图只读，不挂载增删改入口；不直接计算持仓、配对或盈亏 |
 | 设置模块 | 收费方案维护、布局和图层偏好入口 | 不追溯重算历史成交 |
@@ -268,7 +268,7 @@ Replay Python API 的实现任务必须提供并测试一份“错误码 → 默
 | 模块 | 职责 |
 | --- | --- |
 | Live Session | 绑定创建时的股票且不在原实例上切股；通过 Live Market View 解析 `effective_trade_date` 与轮询档位；使用系统时钟调度快照、1m、正式 5m 更新；09:30 原子切日；回放期间继续后台运行 |
-| Replay Session | 绑定 App 当前股票和目标日期；按市场交易日历确定回放起止边界，在 ready 前准备目标日完整序列，维护下一根实际 K 的时间，按实际序列播放、暂停、单步与定位；不读取或维护成交 |
+| Replay Session | 绑定 App 当前股票和目标日期；按市场交易日历确定回放起止边界，在 ready 前准备目标日可靠价格序列，维护下一根实际 K 的时间，按实际序列播放、暂停、单步与定位；不读取或维护成交 |
 | Clock Port | 向处理管线提供“当前时刻”；实现系统时钟与可控模拟时钟 |
 | Market Input Port | 向处理管线提供标准行情序列；实现实时与历史输入 |
 | Bounded Computation Executor | 有界调度 Live/Replay 计算任务，Live 优先，同一管线实例串行推进，并取消或隔离过期 Replay 任务 |
@@ -288,7 +288,7 @@ Session 负责编排而不复制指标或 CZSC 算法。Replay 向后定位必�
 
 | 模块 | 职责 | 复用位置 |
 | --- | --- | --- |
-| Provider 标准化 | 统一代码、时区、OHLCV/成交额字段，完成基础校验、排序去重并输出标准行情 | `packages/marketdata/` |
+| Provider 标准化 | 统一代码、时区和 K 线字段；保证时间戳与 OHLC 的价格契约，保留无法获得的 `volume` / `amount` 为 `null`；完成基础校验、排序去重并输出标准行情，来源与质量诊断保留在内部 `ProviderIssue`、仓储元数据和日志中 | `packages/marketdata/` |
 | 交易时段与序列接入 | 按证券市场和目标交易日的交易日历确定回放边界并解释标准行情，跨午休且不补虚假 K；数据缺失不能改写收盘时间 | `packages/t0assistant/runtime/` |
 | 动态与正式 5 分钟 K | 1m 只形成尚未闭合的动态 5m；取得正式闭合 5m 后替换动态 K | `packages/t0assistant/runtime/` |
 | 动态日 K 与快照 | 从当日已发生行情形成日 K；组合目标时点可用的行情字段 | `packages/t0assistant/runtime/` |
@@ -296,7 +296,7 @@ Session 负责编排而不复制指标或 CZSC 算法。Replay 向后定位必�
 | CZSC Adapter | 把闭合 5m 输入 `packages/chantheory/`，输出稳定的笔、笔中枢和买卖点 | `packages/chantheory/` |
 | Workbench Projection | 将同一 Session 时点的结果组合成前端可消费快照 | `packages/t0assistant/runtime/` |
 
-VWAP 必须使用累计成交额除以累计成交量；CZSC 不接收动态未闭合 5 分钟 K；正式 5 分钟 K 来自 Market Data Service 输出的已闭合 5 分钟行情；回放 Projection 不得用目标时点之后的快照字段补空值。
+K 线管线的最低可用输入是合法的 `timestamp + OHLC`。`volume` 和 `amount` 是可空的观测能力，不是价格 K 线或 Replay Session 的就绪门槛；未知值保持 `null`，不得以零值或推算值填充。Live 与 Replay 共用严格空值传播：动态 5 分钟 K、动态日 K 和由分钟生成的 quote 累计字段，只要组成范围内任意对应量额未知，聚合字段即为 `null`；VOL MA 窗口内任意值未知则该点为 `null`，不得跳过；VWAP 从开盘累计，第一次遇到未知依赖后当日后续保持 `null`，直至数据补齐并从开盘重算。CZSC、BOLL 和 MACD 等只依赖价格的模块继续运行。CZSC 不接收动态未闭合 5 分钟 K；正式 5 分钟 K 来自 Market Data Service 输出的已闭合 5 分钟价格行情；正式 5 分钟 K 替换动态值后，5m 派生指标和 warning 立即重算，但不得回填 1m 或移除 1m warning。Provider 权威 Quote 在证券、交易日和行情时间有效时可由行情栏独立优先使用，仍不得回填分钟序列；回放 Projection 不得使用目标时点之后的 Quote 或其他快照字段补空值。公共快照不增加独立量额 evidence 对象，以 bar 的 `null` 和按当前已发布前缀重算的 warning 表达可用性。旧缓存 `amount=0` 在 `volume=0` 时保留真零，在 `volume>0` 且无明确零值来源或 `volume=null` 时必须幂等写回 SQL `NULL`，Repository 读取保留同规则兜底。
 
 指标与 CZSC 模块接收完整已加载的跨交易日 5 分钟历史并连续计算，Workbench Projection 输出完整可浏览 K 线及对齐的指标、笔和中枢绘图结果。前端 5 分钟图表组再根据实际绘图区宽度选择最近 N 根作为默认视口；这一视口裁剪不得回传为分析输入。横坐标由实际 K 线序号形成，非交易时段不创建占位数据。
 
@@ -461,6 +461,10 @@ packages/
 13. 5 分钟指标和 CZSC 先基于完整已加载历史连续计算，前端可见 N 根仅是渲染视口，不能成为分析截断边界。
 14. 5 分钟默认视口以最新或模拟时点为右边界，按绘图区宽度跨交易日满轴显示实际 K 线；Replay 不得为填满视口读取未来数据。
 15. 分时默认视口固定为目标日完整交易分钟轴（`09:30→15:00`），已发生行情从左向右填充；不得套用 5 分钟右对齐跟随，也不得因实盘/回放追加而整体左移。
+16. K 线和 Replay 的可用性由时间戳与 OHLC 决定；`volume` / `amount` 缺失只影响直接依赖能力，不得阻止价格图、改变 Replay 粒度或伪装为服务不可用。
+17. 错误分类必须对应实际失败边界；数据缺失、数据校验、计算、Session 与 Python 服务生命周期不得共用一个兜底 `service_unavailable`。
+18. Live 与 Replay 的量额空值传播和 warning 语义一致；动态聚合不只加已知值，VOL MA 不跳过未知值，VWAP 不在缺口后重新累计。
+19. 公共快照以 bar `null` 和 warning 表达量额可用性；不新增独立 evidence 对象，内部来源与诊断留在 marketdata 边界。
 
 ## 9. 模块级测试边界
 
@@ -469,6 +473,11 @@ packages/
 - 行情 provider、时钟和仓储均可替换为确定性 fake；
 - 处理管线可在无 Electron、无网络环境下输入固定 K 线测试；
 - Live 与 Replay 可对同一输入前缀做结果一致性测试；
+- Market Data → Replay 集成测试必须覆盖目标日 OHLC 可用但 `volume`、`amount` 分别或同时为 `null` 的真实 Provider 数据形状，并验证 Replay 成功、warning 准确、依赖指标为 `null`；
+- Pipeline 测试必须覆盖动态 5m、动态日 K、quote、VOL MA 和 VWAP 的严格空值传播，并验证 Live/Replay 对相同输入前缀输出一致；
+- Replay 可靠性测试必须覆盖非法 bar 不静默丢弃、1m 到 5m 降级，以及 `replay_data_invalid` 与 `replay_price_data_unavailable` 的分流；
+- Repository 迁移测试必须覆盖旧数据 `amount=0` 的三种边界：`volume=0` 保留真零，`volume>0` 且无明确零值来源时写回 `NULL`，`volume IS NULL` 时写回 `NULL`；重复迁移结果不变，兼容读取产生相同规范化结果；
+- Quote/聚合测试必须覆盖时间有效的 Provider 权威 Quote 可供行情栏独立显示，但不回填缺失分钟或消除 1m warning；正式 5m 替换动态 K 后只重算 5m 指标和 warning，1m warning 独立保留；
 - Replay 可验证向后定位后无未来数据残留；
 - Provider 请求队列可验证 Live 优先、相同请求合并、容量边界和失效请求不更新旧 Session；
 - 计算执行边界可验证同一实例串行、Replay 任务取消和过期结果隔离；
@@ -477,6 +486,7 @@ packages/
 - React 回放面板可验证控件状态由 Session 状态、当前时间、下一根实际 K 的时间、市场结束时间和回放粒度正确推导；Python API 可验证 `next_bar_time` 指向下一根实际 K、在序列尾部为 `null`，且无效命令仍由后端拒绝或按约定幂等处理；
 - React 5 分钟图表组可用不同绘图区宽度测试跟随最新时最近 N 根跨日满轴显示、非交易时段无空槽，以及手工浏览后布局变化不跳回最新端；
 - React 分时图表组可验证全日交易轴左锚（`09:30→15:00`）、追加 1 分钟后可见范围仍满轴且不贴右/不整体左移；
+- React 图表组可验证 1m/5m VOL 按当前视口切换整幅 `N/A`、分时未来轴槽不参与判定、部分缺失时不补零且十字光标显示 `N/A`，价格图和不依赖量额的指标仍正常显示；所有 `N/A` 值或区域具有包含字段名和数据不可用状态的可访问名称；
 - Electron 可用假 Python 服务测试生命周期和异常恢复；
 - Repository 可独立测试迁移、事务、幂等 upsert、永久删除、文件不可写和只读行为；
 - 可通过故障注入验证 Provider、指标、CZSC、本地数据文件、Session 和 Python 进程失败只影响对应功能。

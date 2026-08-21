@@ -19,6 +19,7 @@ from packages.marketdata.repositories.kline_store import KLineStore
 from packages.marketdata.services.kline_data_service import KLineDataService
 from packages.marketdata.services.market_context_service import MarketContextService
 from packages.t0assistant.runtime.replay_data import (
+    ReplayDataInvalidError,
     ReplayDataPreparator,
     ReplayDataTimeoutError,
     ReplayDataUnavailableError,
@@ -298,7 +299,10 @@ class PreheatTests(unittest.TestCase):
         )
 
         self.assertEqual(len(prepared.preheat_5m_bars), 3)
-        self.assertTrue(all(bar["amount"] == 0 for bar in prepared.preheat_5m_bars))
+        self.assertTrue(all(bar["amount"] is None for bar in prepared.preheat_5m_bars))
+        self.assertTrue(
+            all(isinstance(bar["volume"], (int, float)) for bar in prepared.preheat_5m_bars)
+        )
 
     def test_preheat_loads_across_multiple_trading_days_until_count_reached(self) -> None:
         fixture = one_minute_replay()
@@ -671,7 +675,7 @@ class NormalisationTests(_PreparatorTestBase):
         self.assertEqual(timestamps, sorted(timestamps))
         self.assertEqual(len(timestamps), len(set(timestamps)))
 
-    def test_invalid_bar_raises(self) -> None:
+    def test_invalid_1m_bar_degrades_to_legal_5m(self) -> None:
         fixture = one_minute_replay()
         port = FakeMarketDataPort()
         _populate_from_fixture(port, fixture)
@@ -680,8 +684,12 @@ class NormalisationTests(_PreparatorTestBase):
         bad["high"] = -1.0  # negative high is invalid
         port.store[("1m", TRADE_DATE.isoformat())][0] = bad
         preparator = self._preparator(port)
-        with self.assertRaises(Exception):
-            preparator.prepare(SYMBOL, TRADE_DATE, config=ReplayPreparationConfig())
+        prepared = preparator.prepare(
+            SYMBOL, TRADE_DATE, config=ReplayPreparationConfig()
+        )
+        self.assertEqual(prepared.granularity, "five_minute")
+        self.assertEqual(prepared.bars_1m, ())
+        self.assertGreater(len(prepared.official_5m_bars), 0)
 
 
 class MarketInputPortTests(_PreparatorTestBase):

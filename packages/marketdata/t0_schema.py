@@ -150,20 +150,19 @@ def standardize_bar(
     *,
     closed: bool | None = None,
 ) -> dict[str, Any]:
-    """Map one field-complete provider/store row to the T0-002 ``bar`` shape.
+    """Map one provider/store row to the T0 ``bar`` shape.
 
-    ``amount`` is intentionally required because deriving it from close and
-    volume would change the market-data meaning.  ``closed`` may come from the
-    row or from an explicit caller decision; it is never inferred from the
-    current wall clock.  T0-008/T0-009 are responsible for making current
-    Provider/Store rows field-complete; this function does not mask that gap.
+    Price availability requires ``timestamp + OHLC``. ``volume`` and ``amount``
+    are nullable observations: a missing key and an explicit ``null`` both
+    become ``null`` in the output, and the fields are always present. Unknown
+    quantity must never be fabricated as ``0`` or derived from OHLC.
+    ``closed`` may come from the row or an explicit caller decision; it is
+    never inferred from the current wall clock.
     """
 
     timestamp = row.get("timestamp", row.get("date"))
     if not isinstance(timestamp, str) or len(timestamp) < 10:
         raise MarketDataSchemaError("bar timestamp/date must be a non-empty market timestamp")
-    if "amount" not in row:
-        raise MarketDataSchemaError("bar amount is required and must come from the provider")
 
     resolved_closed = row.get("closed", closed)
     if not isinstance(resolved_closed, bool):
@@ -175,8 +174,8 @@ def standardize_bar(
         "high": _non_negative_number(row, "high"),
         "low": _non_negative_number(row, "low"),
         "close": _non_negative_number(row, "close"),
-        "volume": _non_negative_number(row, "volume"),
-        "amount": _non_negative_number(row, "amount"),
+        "volume": _optional_non_negative_number(row, "volume"),
+        "amount": _optional_non_negative_number(row, "amount"),
         "closed": resolved_closed,
     }
     if bar["high"] < max(bar["open"], bar["low"], bar["close"]):
@@ -226,8 +225,8 @@ def standardize_quote(row: Mapping[str, Any]) -> dict[str, Any]:
         "previous_close": _non_negative_number(
             row, "previous_close", fallback="pre_close"
         ),
-        "volume": _non_negative_number(row, "volume"),
-        "amount": _non_negative_number(row, "amount"),
+        "volume": _optional_non_negative_number(row, "volume"),
+        "amount": _optional_non_negative_number(row, "amount"),
         "volume_ratio": _optional_number(row, "volume_ratio"),
         "order_imbalance": _optional_number(row, "order_imbalance"),
         "turnover_rate": _optional_number(row, "turnover_rate"),
@@ -304,4 +303,22 @@ def _optional_number(row: Mapping[str, Any], key: str) -> float | int | None:
         raise MarketDataSchemaError(f"{key} must be numeric or null")
     if not math.isfinite(value):
         raise MarketDataSchemaError(f"{key} must be finite or null")
+    return value
+
+
+def _optional_non_negative_number(
+    row: Mapping[str, Any],
+    key: str,
+) -> float | int | None:
+    """Return a non-negative number, or ``null`` when the key is absent/null.
+
+    Missing keys and explicit ``null`` are equivalent unknown values. The
+    output always retains the field so consumers never treat absence as zero.
+    """
+
+    if key not in row or row[key] is None:
+        return None
+    value = _number(row, key)
+    if value < 0:
+        raise MarketDataSchemaError(f"{key} must be non-negative")
     return value

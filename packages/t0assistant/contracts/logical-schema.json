@@ -27,8 +27,8 @@
         "high": {"type": "number", "minimum": 0},
         "low": {"type": "number", "minimum": 0},
         "close": {"type": "number", "minimum": 0},
-        "volume": {"type": "number", "minimum": 0},
-        "amount": {"type": "number", "minimum": 0},
+        "volume": {"type": ["number", "null"], "minimum": 0},
+        "amount": {"type": ["number", "null"], "minimum": 0},
         "closed": {"type": "boolean"}
       }
     },
@@ -44,8 +44,8 @@
         "high": {"type": "number", "minimum": 0},
         "low": {"type": "number", "minimum": 0},
         "previous_close": {"type": "number", "minimum": 0},
-        "volume": {"type": "number", "minimum": 0},
-        "amount": {"type": "number", "minimum": 0},
+        "volume": {"type": ["number", "null"], "minimum": 0},
+        "amount": {"type": ["number", "null"], "minimum": 0},
         "volume_ratio": {"type": ["number", "null"]},
         "order_imbalance": {"type": ["number", "null"]},
         "turnover_rate": {"type": ["number", "null"]}

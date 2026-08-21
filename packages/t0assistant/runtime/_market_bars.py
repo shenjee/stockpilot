@@ -143,7 +143,28 @@ def aggregate_ohlcva(
         "high": max(bar["high"] for bar in bars),
         "low": min(bar["low"] for bar in bars),
         "close": bars[-1]["close"],
-        "volume": sum(bar["volume"] for bar in bars),
-        "amount": sum(bar["amount"] for bar in bars),
+        "volume": _sum_nullable_quantity(bars, "volume"),
+        "amount": _sum_nullable_quantity(bars, "amount"),
         "closed": closed,
     }
+
+
+def _sum_nullable_quantity(
+    bars: Sequence[Mapping[str, Any]],
+    field: str,
+) -> float | int | None:
+    """Sum one quantity field with strict unknown propagation.
+
+    Any constituent ``null`` makes the aggregate ``null``. Known zeros still
+    sum normally. Values are never skipped, fabricated, or estimated.
+    """
+
+    total = 0
+    for bar in bars:
+        value = bar.get(field)
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise RuntimeMarketDataError(f"{field} must be numeric or null")
+        total += value
+    return total

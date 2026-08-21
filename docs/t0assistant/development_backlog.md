@@ -7,22 +7,25 @@
 | 产品 | StockPilot 盘中 T+0 助手 |
 | 文档类型 | 可执行开发 Backlog 与依赖基线 |
 | 状态 | 待创建 GitHub Epic / Issue |
-| 版本 | v1.8 |
+| 版本 | v1.11 |
 | 更新日期 | 2026-08-21 |
-| 上位需求 | [`t0_assistant_prd.md`](./t0_assistant_prd.md) v0.46 |
+| 上位需求 | [`t0_assistant_prd.md`](./t0_assistant_prd.md) v0.49 |
 | 架构基线 | [`architecture.md`](./architecture.md) |
 | 模块基线 | [`module_design.md`](./module_design.md) |
 | UI 基线 | [`ui_layout_spec.md`](./ui_layout_spec.md) |
-| Replay 基线 | [`replay_interface_and_behavior.md`](./replay_interface_and_behavior.md) v1.0 |
+| Replay 基线 | [`replay_interface_and_behavior.md`](./replay_interface_and_behavior.md) v1.1 |
 | ADR | [`../adr/README.md`](../adr/README.md) 中已接受的 T+0 相关决策 |
 
 本文把完整 PRD 拆成 **8 个 Epic、56 个开发 Issue**。Issue 编号 `T0-001` 至
 `T0-056` 是创建 GitHub Issue 前的稳定规划编号，不等同于 GitHub 自动生成的编号。
 
-本文不重新讨论已经冻结的产品、架构、模块和 Replay v1.0 契约。实施中如发现必须
+本文不重新讨论已经冻结的产品、架构、模块和 Replay v1.1 契约。实施中如发现必须
 改变公共契约、目录所有权或 PRD 边界，应单独提出变更 Issue，不能在普通功能 PR 中
-顺手修改。Replay v1.0 已由 T0-056 补齐 PRD 要求的 `1×/2×/5×/10×` 播放速率命令、
-权威状态、revision 和幂等/错误语义；T0-046 或 T0-049 不得自行扩展。
+顺手修改。Replay v1.0 已由 T0-056 补齐 PRD 要求的 `1×/2×/5×/10×` 播放速率命令；
+v1.1 进一步明确 OHLC 是回放门槛、`volume` / `amount` 可空、严格空值传播、局部
+`N/A`、warning 统计范围和准确错误分类。
+当前契约已经定义播放速率命令、权威状态、revision、量额降级和幂等/错误语义；
+T0-046 或 T0-049 不得自行扩展。
 
 `skills/` 不在本 Backlog 范围内。本阶段不读取、复用、迁移、修改或兼容现有
 skill 实现，也不要求 T+0 的指标参数、输出或测试与 skill 保持一致。skill 的公共逻辑
@@ -46,7 +49,7 @@ skill 实现，也不要求 T+0 的指标参数、输出或测试与 skill 保�
 | FR-04：自动刷新、旧数据保留、重试和日志 | 架构、ADR、Electron/Python spike 已覆盖 | 正式 App 未实现 | Epic B、D、E、H |
 | FR-05：真实成交、收费方案、历史成交和独立标记覆盖层 | PRD、模块边界已覆盖 | Issue #163 负责移除旧模拟成交并解耦 | Epic F、H / #163 |
 | FR-06：产品边界 | PRD 已冻结 | 需要贯穿全部实现与验收 | 通用 DoD、T0-054 |
-| FR-07：单日历史回放 | Replay v1.0 契约已冻结 | 未实现 | Epic G、H |
+| FR-07：单日历史回放 | Replay v1.1 契约已冻结 | 未实现 | Epic G、H |
 | Electron 桌面应用与 Python 生命周期 | ADR 0006/0007 和 spike 已验证 | 正式 App 已建立，仍按 Epic A、E 的生命周期与安全边界继续收口 | Epic A、E |
 | 行情缓存与证券主数据 | 已有部分 `marketdata` 基础 | 尚不满足 T+0 全部数据粒度和缺口补齐 | Epic B |
 | Live/Replay 共用处理管线 | 架构和模块设计已冻结 | 未实现 | Epic C、D、G |
@@ -76,6 +79,12 @@ skill 实现，也不要求 T+0 的指标参数、输出或测试与 skill 保�
 - 新增或变化行为有最小充分测试，相关测试在 `~/.venvs/czsc` 环境通过；
 - 不绕过 `marketdata`、`chantheory`、Repository 或 Safe Bridge 边界；
 - 错误不会用空值覆盖最后一次成功事实，内部异常只进入技术日志；
+- K 线可用性按时间戳与 OHLC 判断；`volume` / `amount` 缺失采用 nullable 字段、warning 和局部 `N/A`，不得阻断价格回放或伪造数值；
+- Live/Replay 共用严格空值传播：动态聚合和累计 quote 不只加已知量额，VOL MA 不跳过 `null`，VWAP 不在缺口后重新累计；
+- warning 按当前已发布前缀、粒度和字段分别重算；公共快照不新增独立量额 evidence 对象；
+- 旧缓存 `amount=0` 按 `volume=0` 保留真零、`volume>0` 且无来源或 `volume=null` 写回 `NULL`，并保留兼容读取兜底；
+- 无合法降级输入时非法价格事实优先于无覆盖，权威 Quote 可独立供行情栏显示但不回填分钟或消除 warning；
+- 数据、计算、Session 和 Python 服务生命周期错误准确分类，`service_unavailable` 不得作为未知异常兜底；重试动作必须对应实际失败阶段；
 - PR 描述列出覆盖的 FR、验证命令、已知限制和后续依赖；
 - 满足下方 FR-06 检查清单。
 
@@ -93,6 +102,8 @@ skill 实现，也不要求 T+0 的指标参数、输出或测试与 skill 保�
 - [ ] Replay 输出不读取目标时点之后的数据；
 - [ ] Replay Session 不拥有成交状态；回放只读展示按股票/日期查询的真实成交；
 - [ ] 缺失行情不生成虚假 K 线，也不改写市场规定的回放结束时间。
+- [ ] OHLC 可用而 `volume` / `amount` 缺失时仍允许回放，依赖区域显示 `N/A`；未知量额不补零、不估算。
+- [ ] 已有快照但字段不可用显示 `N/A`，尚无快照/尚未到达显示 `--`；量额 warning 不弹全局横幅或 toast。
 
 ## 4. 目录所有权和并行轨道
 
@@ -120,9 +131,9 @@ fixture 由集成负责人协调，避免多个并行 PR 同时修改。
 | ID | Issue | 主责/目录 | 覆盖 | 依赖 | 交付与验收 |
 | --- | --- | --- | --- | --- | --- |
 | T0-001 | 创建正式 Electron、React、Python Backend 工程骨架 | Trae + Claude / `apps/t0-assistant/` | 公共基础 | — | 指定一名集成协调人；Electron 能启动 Renderer 和假 Python 服务；目录与模块基线一致；不迁入 spike 源码；在 App README 记录复用 `~/.venvs/czsc` 的安装、校验和启动命令 |
-| T0-002 | 冻结跨进程逻辑 Schema | 集成负责人 / 契约文件 | FR-01/02/03/04 | — | 定义证券身份、K 线、快照、指标、CZSC、Session 和 warning 的逻辑结构；明确这不是 SQLite Schema |
-| T0-003 | 定义 Live、成交和偏好命令/事件契约 | 集成负责人 | FR-03/04/05 | T0-002 | 只补 Live/成交/偏好；直接引用 Replay v1.0，不重定义或降级 Replay 字段 |
-| T0-004 | 建立跨 Python/TypeScript 契约 Fixture、Fake Safe Bridge 和兼容性测试 | 集成负责人 | 全部 | T0-002, T0-003 | Python/TS 可消费同一 fixture；包含完整快照、增量、乱序和错误；Replay 示例使用已接受的 v1.0 |
+| T0-002 | 冻结跨进程逻辑 Schema | 集成负责人 / 契约文件 | FR-01/02/03/04 | — | 定义证券身份、K 线、快照、指标、CZSC、Session 和 warning 的逻辑结构；bar 保留 nullable `volume` / `amount`，明确 OHLC 是价格可用门槛；明确这不是 SQLite Schema |
+| T0-003 | 定义 Live、成交和偏好命令/事件契约 | 集成负责人 | FR-03/04/05 | T0-002 | 只补 Live/成交/偏好；直接引用 Replay v1.1，不重定义或降级 Replay 字段 |
+| T0-004 | 建立跨 Python/TypeScript 契约 Fixture、Fake Safe Bridge 和兼容性测试 | 集成负责人 | 全部 | T0-002, T0-003 | Python/TS 可消费同一 fixture；包含完整快照、nullable 量额、局部 warning、增量、乱序和准确错误；Replay 示例使用已接受的 v1.1 |
 | T0-005 | 建立 T+0 CI 与最小 smoke test | 集成负责人 | 全部 | T0-001 | 分别运行 Python、Renderer、Electron smoke 和契约测试；失败能定位到对应轨道 |
 
 T0-002 冻结的是跨进程逻辑契约。T0-009 和 T0-038 定义内部 SQLite 表与迁移，后者必须
@@ -154,7 +165,7 @@ Epic B 不是绿地开发。T+0 Assistant 必须复用和演进现有
 | T0-006 | 扩展现有行情输出为稳定的 T+0 标准 Schema | Codex / `marketdata` | FR-01/03/07 | T0-002 | 复用现有 Provider 输出和市场代码规则，补齐代码、市场、时区、OHLCV、成交额、闭合状态与行情时间；不得创建平行行情模型 |
 | T0-007 | 复用证券主数据完成正式搜索 Service/API | Codex / `marketdata` | FR-03 | T0-006 | 直接复用 `SecuritiesStore` 和 bundled master；只补标准证券身份映射及服务出口；股票与场内 ETF fixture 可按代码、名称和拼音搜索 |
 | T0-008 | 扩展现有腾讯 Provider 的 T+0 标准化能力 | Codex / `marketdata` | FR-01/03/04/07 | T0-006 | 在 `TencentStockDataProvider` 上补齐字段和映射；现有 K 线输出缺 `amount` 和 `closed`，实时输出缺标准 `timestamp` 且字段名尚未对齐 quote 契约，`market`/`timezone` 按 T0-006 在外层标准快照中补齐；复用 `MarketDataResult`/`ProviderIssue`；原始 payload 不越过适配层，不把请求完成时间当行情时间 |
-| T0-009 | 演进现有 KLineStore Schema、迁移和幂等 upsert | Codex / `marketdata` | FR-01/03/07 | T0-006 | 复用 `market_data.sqlite` 和 `KLineStore`；现有 `klines` 与 `daily_klines` 均缺 `amount`，迁移必须先检查列再幂等执行 `ALTER TABLE ... ADD COLUMN`，保留旧数据并同步演进两张表、upsert 和读取映射；补齐三种粒度且不得创建 T+0 专用行情数据库；内部 Schema 不改变公共 payload |
+| T0-009 | 演进现有 KLineStore Schema、迁移和幂等 upsert | Codex / `marketdata` | FR-01/03/07 | T0-006 | 复用 `market_data.sqlite` 和 `KLineStore`；现有 `klines` 与 `daily_klines` 均缺 `amount`，迁移必须先检查列再幂等执行 `ALTER TABLE ... ADD COLUMN`，保留旧数据并同步演进两张表、upsert 和读取映射；旧缓存 `amount=0` 时，`volume=0` 保留真零，`volume>0` 且无明确零值来源或 `volume IS NULL` 时幂等写回 SQL `NULL` 并记录计数，Repository 读取保留同规则兜底；补齐三种粒度且不得创建 T+0 专用行情数据库；内部 Schema 不改变公共 payload |
 | T0-010 | 强化现有 KLineDataService 的缺口识别与补齐 | Codex / `marketdata` | FR-01/03/07 | T0-008, T0-009 | 保留现有本地优先流程；完整缓存不联网，缺口只补缺失范围，失败保留已有数据，成功数据仍由现有仓储落库 |
 | T0-011 | 在现有 marketdata 中新增交易日历和市场边界 | Codex / `marketdata` | FR-03/04/07 | T0-006 | 这是现有代码缺失的新增模块，但必须归入 `packages/marketdata/`，不得另建独立 package；正确跨午休、周末、节假日和停牌；正常沪深交易日结束边界保持 15:00 |
 | T0-012 | 在现有 Provider 边界外增加共享有界请求队列 | Codex / `marketdata` | FR-04/07 | T0-008 | 继续复用现有 Provider 单次请求和错误模型；队列只负责 Live 优先、请求合并、容量、重试协调和失效 Session 隔离，不复制 Provider |
@@ -163,11 +174,11 @@ Epic B 不是绿地开发。T+0 Assistant 必须复用和演进现有
 
 | ID | Issue | 主责/目录 | 覆盖 | 依赖 | 交付与验收 |
 | --- | --- | --- | --- | --- | --- |
-| T0-013 | 创建通用指标 package：MA、BOLL、MACD、VOL MA | Codex / `packages/indicators/` | FR-01/02/03 | T0-006 | 仅以 T+0 PRD、跨进程逻辑 Schema 和 Replay 契约为输入，在 `packages/indicators/` 实现 MA5/10/20/30/60、BOLL 20/2σ、MACD 12/26/9 和 VOL MA5/10；MACD 柱缩放由契约测试固定；输出对齐的 `{"timestamp": ..., "value": ...}` 完整序列，预热不足用 `null`，视口后裁剪；固定测试数据的数值与长度对齐测试通过；本 Issue 不读取、修改或迁移 `skills/` 下的任何实现 |
-| T0-014 | 实现累计成交额/成交量 VWAP | Codex / `packages/indicators/` | FR-03/07 | T0-006 | 按当日累计成交额除以累计成交量；实盘/回放共用；零成交量有明确行为 |
+| T0-013 | 创建通用指标 package：MA、BOLL、MACD、VOL MA | Codex / `packages/indicators/` | FR-01/02/03 | T0-006 | 仅以 T+0 PRD、跨进程逻辑 Schema 和 Replay 契约为输入，在 `packages/indicators/` 实现 MA5/10/20/30/60、BOLL 20/2σ、MACD 12/26/9 和 VOL MA5/10；MACD 柱缩放由契约测试固定；输出对齐的 `{"timestamp": ..., "value": ...}` 完整序列，预热不足用 `null`，视口后裁剪；VOL MA 完整窗口内任一值未知则该点为 `null`，不跳过，整段未知时序列等长全 `null`；固定测试数据的数值与长度对齐测试通过；本 Issue 不读取、修改或迁移 `skills/` 下的任何实现 |
+| T0-014 | 实现累计成交额/成交量 VWAP | Codex / `packages/indicators/` | FR-03/07 | T0-006 | 按当日累计成交额除以累计成交量；实盘/回放共用；零成交量有明确行为；累计前缀首次出现未知量额后当日后续保持 `null`，不得缺口后重启，补齐后从开盘重算 |
 | T0-015 | 建立 `chantheory` 正式接入就绪门禁 | Codex / `chantheory` | FR-01/07 | T0-006 | 复用 `spikes/0008-czsc-update-and-rebuild-strategy/` 的确定性 548 根 5m 数据、比较器、基准脚本和已有结果；已记录冷启 500 根单次约 895ms、预热后 500 根全量重建 p95 约 69ms、向后重建 p95 约 70ms，但该记录使用隔离 Python 运行时；本 Issue 只在修复后的 `~/.venvs/czsc` 中用既有脚本复现、记录环境差异，并验证 5m 稳定 API 及逐步输入/重建一致性，不重新设计基准；门禁失败时另建有独立估算的适配/性能 Issue，本 Issue 不修改 API、缓存或重建策略 |
-| T0-016 | 实现动态 5m 聚合与正式闭合 K 替换 | Claude / `t0assistant/runtime` | FR-01/04/07 | T0-006, T0-011 | 1m 只形成动态 K；正式 5m 到来后替换；午休不补 K；动态 K 不进入 CZSC |
-| T0-017 | 实现动态日 K 和目标时点行情投影 | Claude / `t0assistant/runtime` | FR-03/07 | T0-006, T0-011 | 日 K 随已发生 1m 更新；Replay 缺失字段显示空值且不读取未来快照 |
+| T0-016 | 实现动态 5m 聚合与正式闭合 K 替换 | Claude / `t0assistant/runtime` | FR-01/04/07 | T0-006, T0-011 | 1m 只形成动态 K；桶内任一对应量额未知则动态量额为 `null`，不只加已知值；正式 5m 到来后替换，并在同一快照重算 5m VOL/指标/warning，不回填 1m 或消除 1m warning；午休不补 K；动态 K 不进入 CZSC |
+| T0-017 | 实现动态日 K 和目标时点行情投影 | Claude / `t0assistant/runtime` | FR-03/07 | T0-006, T0-011 | 日 K 随已发生 1m 更新，量额严格传播未知；由分钟形成的 quote 累计字段同规则；证券/交易日/时间匹配的权威 Provider Quote 可由行情栏优先使用并保留来源，但不回填分钟或消除 warning；Replay 缺失字段显示空值且不读取未来快照 |
 | T0-018 | 实现 Live/Replay 共用 Workbench Pipeline | Claude / `t0assistant/runtime` | FR-01/02/03/07 | T0-013～T0-017 | 通过行情/时钟端口驱动；Live/Replay 使用相同实现和独立实例；相同输入前缀结果一致 |
 | T0-019 | 实现完整 Workbench Projection | Claude / `t0assistant/runtime` | FR-01/02/03/07 | T0-002, T0-018 | 原子组合行情、指标和完整 CZSC 结构；输出完整可浏览序列，不按前端视口重算 |
 | T0-020 | 实现有界计算执行器 | Claude / `t0assistant/runtime` | FR-04/07 | T0-018 | Live 优先、同实例串行、旧 Replay 定位可取消/隔离；过期结果不得发布 |
@@ -197,7 +208,7 @@ T0-013～T0-015 是 Codex 轨道；T0-016～T0-020 是 Claude 轨道。Epic 名�
 | T0-030 | 实现 5m 价格、VOL、MACD 图表组和逻辑时间轴 | Trae / `renderer` | FR-01/02 | T0-004, T0-013 | 参考 `spikes/0005-t0-chart-engine-and-logical-time-axis/src/charts/five-minute-chart-group.ts` 的 Lightweight Charts 组内同步和逻辑时间轴证据，但只消费 T0-004/T0-013 契约数据而不复制 spike 内指标计算；三图组内联动；跨非交易时段无空槽；跨日刻度可识别；可用固定测试数据独立开发 |
 | T0-031 | 实现 MA/BOLL/笔/中枢/CZSC/动态 K 图层 | Trae / `renderer` | FR-01 | T0-004, T0-015, T0-030 | 完整 CZSC 图层原子替换；动态 K 半透明；五条 MA 开关和笔/中枢开关只控制显示 |
 | T0-032 | 实现分时、VWAP、1m VOL/MACD 图表组 | Trae / `renderer` | FR-03 | T0-004, T0-014, T0-029 | 参考 `spikes/0005-t0-chart-engine-and-logical-time-axis/src/charts/time-sharing-chart-group.ts` 的三图组同步与组间隔离证据；spike 中 VWAP 为占位实现，正式图表必须只消费 T0-014 结果，不在 Renderer 重算；时间轴固定当日完整交易分钟（`09:30→15:00`），已发生数据从左向右填充，不套用 5 分钟右对齐跟随；三行组内时间/十字光标对齐；与 5m 图表组交互互不联动 |
-| T0-033 | 实现顶部工具栏、股票搜索和行情侧栏 | Trae / `renderer` | FR-03 | T0-004, T0-007, T0-029 | 顶部只含股票选择、名称和模式；侧栏固定字段，缺失值显示 `--` 且不改变布局 |
+| T0-033 | 实现顶部工具栏、股票搜索和行情侧栏 | Trae / `renderer` | FR-03 | T0-004, T0-007, T0-029 | 顶部只含股票选择、名称和模式；侧栏固定字段，已有快照但不可用显示 `N/A`，尚无快照/尚未到达显示 `--`，且不改变布局 |
 | T0-034 | 实现视口、十字光标和 follow/manual 状态机 | Trae / `renderer` | FR-01/02/03 | T0-030, T0-032 | 参考 `spikes/0005-t0-chart-engine-and-logical-time-axis/src/models/chart-group-state.ts` 的逻辑索引映射、following/manual 转换和回放截断证据，在正式 Renderer 状态层重新实现；**follow/manual 与宽度驱动 N 仅用于 5 分钟组**；分时固定全日交易轴左锚（见 UI §6.2.0），不套用右对齐跟随；5 分钟宽度变化时 following 重算 N，manual 保留逻辑范围；刷新和布局不强制跳回最新 |
 | T0-035 | 实现前端偏好状态和异步持久化集成 | Trae / `renderer` | FR-01/03 | T0-004, T0-022, T0-029 | React 是当前 UI 状态权威；持久化只保存副本；模式/布局切换不重置图层或视口 |
 | T0-036 | 实现 Loading、空态、错误反馈、重试和 Log Review | Trae / `electron,renderer` | FR-03/04 | T0-004, T0-028, T0-029 | 后台失败非阻塞且保留旧数据；主动失败弹窗；Help 菜单打开只读轮转日志窗口 |
@@ -221,13 +232,13 @@ T0-029～T0-036 优先使用 T0-004 的 fixture 和 Fake Safe Bridge，不等待
 
 | ID | Issue | 主责/目录 | 覆盖 | 依赖 | 交付与验收 |
 | --- | --- | --- | --- | --- | --- |
-| T0-056 | 补充并冻结 Replay 播放速率契约 | 集成负责人 / Replay 契约与固定测试数据 | FR-07 | — | 以 PRD 和既有 Replay 基线为输入，定义四档播放速率命令、权威状态、revision 和幂等/错误语义；冻结 Replay v1.0，并更新跨语言固定测试数据及所有版本引用；不实现播放逻辑或 UI |
-| T0-044 | 按 Replay v1.0 实现 API 和错误交付映射 | Claude / Backend | FR-07 | T0-004, T0-021, T0-056 | 实现 v1.0 全部命令，包括播放速率命令；提供完整的“错误码→默认同步/异步通道”表和测试；单次失败不重复交付；不得自行改变 v1.0 Schema |
-| T0-045 | 实现 Replay 数据准备、历史预热和粒度降级 | Claude / `t0assistant/runtime` | FR-07 | T0-010～T0-012, T0-018 | ready 前一次性准备完整 1m 或正式 5m；无可靠数据明确失败；播放后不逐根联网 |
-| T0-046 | 实现模拟时钟、播放、暂停、单步和倍速 | Claude / `t0assistant/runtime` | FR-07 | T0-020, T0-045, T0-056 | 按实际 K 推进；按 Replay v1.0 支持 1×/2×/5×/10×；末端单步无效；市场结束时间不由数据尾部决定；不得在实现中再发明速率字段 |
+| T0-056 | 补充并冻结 Replay 播放速率契约 | 集成负责人 / Replay 契约与固定测试数据 | FR-07 | — | 以 PRD 和既有 Replay 基线为输入，定义四档播放速率命令、权威状态、revision 和幂等/错误语义；当时冻结 Replay v1.0；当前实现以其后的 v1.1 数据可用性修订为准；不实现播放逻辑或 UI |
+| T0-044 | 按 Replay v1.1 实现 API 和错误交付映射 | Claude / Backend | FR-07 | T0-004, T0-021, T0-056 | 实现 v1.1 全部命令和准确错误分类，包括播放速率命令；单次失败不重复交付；`service_unavailable` 只用于真实服务状态；不得自行改变 v1.1 Schema |
+| T0-045 | 实现 Replay 数据准备、历史预热和粒度降级 | Claude / `t0assistant/runtime` | FR-07 | T0-010～T0-012, T0-018 | ready 前一次性准备 1m 或正式 5m 可靠价格 K 线；沿用 `identify_missing_ranges` 的覆盖证据且不使用缺失比例阈值，任意已返回非法价格 bar 使该粒度无效；最终无合法降级输入时，任一非法粒度优先映射 `replay_data_invalid`，仅纯无数据/覆盖不足映射 `replay_price_data_unavailable`；量额缺失不降级，warning 按当前已发布前缀、粒度和字段分别重算；播放后不逐根联网 |
+| T0-046 | 实现模拟时钟、播放、暂停、单步和倍速 | Claude / `t0assistant/runtime` | FR-07 | T0-020, T0-045, T0-056 | 按实际 K 推进；按 Replay v1.1 支持 1×/2×/5×/10×；末端单步无效；市场结束时间不由数据尾部决定；不得在实现中再发明速率字段 |
 | T0-047 | 实现前后定位、向后重建和未来数据隔离 | Claude / `t0assistant/runtime` | FR-07 | T0-046 | 向前顺序推进；向后从预热状态重建；相同输入和命令序列输出确定；无未来数据残留 |
 | T0-048 | 实现 Live/Replay 并存、切换和一次性生命周期 | Claude / `t0assistant/runtime` | FR-03/04/07 | T0-024, T0-026, T0-046 | 回放期间 Live 继续更新；退出销毁 Replay 画面/日期/进度；返回实盘立即展示最新状态 |
-| T0-049 | 基于 Replay v1.0 和 Fake Safe Bridge 实现 Replay 面板 | Trae / `renderer` | FR-07 | T0-004, T0-029, T0-056 | 可提前并行；日期、开始、播放/暂停、进度、单步、四档倍速和 5m 降级 UI 符合 Replay v1.0；不得自行扩展速率字段 |
+| T0-049 | 基于 Replay v1.1 和 Fake Safe Bridge 实现 Replay 面板 | Trae / `renderer` | FR-07 | T0-004, T0-029, T0-056 | 可提前并行；日期、开始、播放/暂停、进度、单步、四档倍速、5m 降级和量额 `N/A` UI 符合 Replay v1.1；不得自行扩展字段 |
 | T0-050 | ~~实现 Session 内存模拟成交及 UI 集成~~ | — | — | — | **已由 #163 产品决策废弃**；删除现有实现与相关合同路径，Replay 改为只读展示 SQLite 真实成交 |
 
 ### Epic H：集成、产品边界与发布验收
@@ -236,7 +247,7 @@ T0-029～T0-036 优先使用 T0-004 的 fixture 和 Fake Safe Bridge，不等待
 | --- | --- | --- | --- | --- | --- |
 | T0-051 | Live 端到端验收：启动、选股、加载、刷新与故障恢复 | 集成负责人 | FR-01～04 | T0-027, T0-031～T0-036 | 使用确定性 fake 和故障注入覆盖完整链路；刷新失败不丢最后成功图表 |
 | T0-052 | 成交端到端验收：收费、CRUD、标记与重启恢复 | 集成负责人 | FR-05 | T0-041～T0-043 | 真实成交重启后存在；收费方案修改不影响历史费用；永久删除和失败恢复正确 |
-| T0-053 | Replay 端到端与确定性验收 | 集成负责人 | FR-07 | T0-044～T0-049, #163 | 覆盖 1m、5m 降级、拖动重建、事件乱序、Live 并存、真实成交游标过滤和同输入同输出 |
+| T0-053 | Replay 端到端与确定性验收 | 集成负责人 | FR-07 | T0-044～T0-049, #163 | 覆盖 1m、5m 降级、nullable 量额与 `N/A`、准确错误/重试、拖动重建、事件乱序、Live 并存、真实成交游标过滤和同输入同输出 |
 | T0-054 | FR-06、图表交互和目标设备验收 | 产品 + 集成负责人 | FR-01～07 | T0-051～T0-053 | 完成 FR-06 清单；在目标 13/14 英寸视口验证布局、缩放、十字光标、状态保持和无横向滚动 |
 | T0-055 | 打包、迁移、首次启动、异常重启和退出验收 | 集成负责人 | 公共基础 | T0-051～T0-054 | 可安装桌面包；运行时数据不写源码；数据库迁移可重复；Python 崩溃/重启/退出符合 ADR |
 
@@ -494,7 +505,7 @@ T0-044～T0-049 + #163 → T0-053 → T0-054 → T0-055
 
 ### 8.3 公共契约变更规则
 
-1. Replay v1.0 是当前冻结开发输入；普通 Replay 实现 Issue 不得自行修改已接受的
+1. Replay v1.1 是当前冻结开发输入；普通 Replay 实现 Issue 不得自行修改已接受的
    播放速率命令、状态、revision 或幂等/错误语义。
 2. 公共逻辑 Schema 只能由独立 contract Issue 修改，并由集成负责人批准。
 3. SQLite 内部字段、索引和迁移不属于公共 payload；不得把数据库行直接传给 Renderer。
@@ -513,4 +524,4 @@ T0-044～T0-049 + #163 → T0-053 → T0-054 → T0-055
 - [ ] 已约定共享依赖文件和 lockfile 的修改窗口；
 - [ ] 初始只启动 T0-001、T0-002 和 T0-056，随后按 Ready Queue 拉取；
 - [ ] Spike 代码只作参考，不直接复制到正式模块；
-- [ ] 所有执行者已阅读 PRD、架构、模块设计、UI 规格、Replay v1.0 和相关 ADR。
+- [ ] 所有执行者已阅读 PRD、架构、模块设计、UI 规格、Replay v1.1 和相关 ADR。
