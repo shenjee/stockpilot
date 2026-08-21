@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from pathlib import Path
 import tempfile
+from threading import Event, Lock, Thread
+import time
 import unittest
 
 from packages.t0assistant.preferences import PreferenceCapability
@@ -43,9 +46,30 @@ class _CapturingPublisher:
 
     def __init__(self) -> None:
         self.events: list[dict] = []
+        self._lock = Lock()
 
     def publish_trades_changed(self, **payload) -> None:
-        self.events.append(payload)
+        with self._lock:
+            self.events.append(payload)
+
+
+class _GatedPublisher(_CapturingPublisher):
+    """Publisher that can block inside publish to widen concurrency windows.
+
+    Used to prove revision allocation + snapshot + publish stay ordered even
+    when another ThreadingHTTPServer-style handler races the API lock.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = Event()
+        self.release = Event()
+        self.release.set()  # default: do not block
+
+    def publish_trades_changed(self, **payload) -> None:
+        self.entered.set()
+        self.release.wait(timeout=5)
+        super().publish_trades_changed(**payload)
 
 
 class _ScriptedRepository:
@@ -314,6 +338,121 @@ class TradeCommandApiTests(unittest.TestCase):
         self.assertEqual(len(new_event["trades"]), 1)
         self.assertEqual(new_event["trades"][0]["trade_id"], trade_id)
         self.assertEqual(new_event["trade_revision"], 3)
+
+    def test_concurrent_creates_publish_monotonic_revisions(self) -> None:
+        """ThreadingHTTPServer-style concurrency must not reorder trade_revision."""
+
+        with self._api() as api:
+            def create_one(index: int) -> None:
+                result = api.dispatch(
+                    "create_trade",
+                    _request(
+                        "create_trade",
+                        {
+                            "trade": _draft(
+                                executed_at=f"2026-07-24 10:{index:02d}:00",
+                                note=f"n{index}",
+                            )
+                        },
+                        rid=f"c-{index}",
+                    ),
+                )
+                self.assertTrue(result["accepted"], result)
+
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                futures = [pool.submit(create_one, i) for i in range(12)]
+                for future in as_completed(futures):
+                    future.result()
+
+        revisions = [event["trade_revision"] for event in self.publisher.events]
+        self.assertEqual(revisions, sorted(revisions))
+        self.assertEqual(len(revisions), len(set(revisions)))
+        self.assertEqual(revisions, list(range(1, 13)))
+
+    def test_cross_scope_update_not_overtaken_by_concurrent_create(self) -> None:
+        """A gated publish proves revision/snapshot/publish share one serial order.
+
+        Without holding the API lock through publish, a concurrent create could
+        publish revision N+2 before the cross-scope pair finishes N/N+1.
+        """
+
+        gated = _GatedPublisher()
+        self.publisher = gated
+        with self._api() as api:
+            api.dispatch(
+                "create_trade",
+                _request("create_trade", {"trade": _draft()}),
+            )
+            trade_id = gated.events[-1]["trades"][0]["trade_id"]
+            gated.events.clear()
+            gated.entered.clear()
+            gated.release.clear()
+
+            def cross_scope_update() -> None:
+                result = api.dispatch(
+                    "update_trade",
+                    _request(
+                        "update_trade",
+                        {
+                            "trade_id": trade_id,
+                            "trade": _draft(
+                                symbol="sz.000001",
+                                executed_at="2026-07-25 14:10:00",
+                                side="sell",
+                            ),
+                        },
+                        rid="cross",
+                    ),
+                )
+                self.assertTrue(result["accepted"], result)
+
+            updater = Thread(target=cross_scope_update)
+            updater.start()
+            self.assertTrue(gated.entered.wait(timeout=2))
+
+            # While the first publish of the cross-scope pair is gated, another
+            # mutation must block on the API lock rather than publish ahead.
+            create_started = Event()
+            create_finished = Event()
+
+            def concurrent_create() -> None:
+                create_started.set()
+                result = api.dispatch(
+                    "create_trade",
+                    _request(
+                        "create_trade",
+                        {
+                            "trade": _draft(
+                                symbol="sh.600000",
+                                executed_at="2026-07-24 11:00:00",
+                            )
+                        },
+                        rid="race",
+                    ),
+                )
+                self.assertTrue(result["accepted"], result)
+                create_finished.set()
+
+            racer = Thread(target=concurrent_create)
+            racer.start()
+            self.assertTrue(create_started.wait(timeout=2))
+            # Give the racer a chance to contend; it must still be blocked.
+            time.sleep(0.05)
+            self.assertFalse(create_finished.is_set())
+            self.assertEqual(len(gated.events), 0)
+
+            gated.release.set()
+            updater.join(timeout=5)
+            racer.join(timeout=5)
+            self.assertFalse(updater.is_alive())
+            self.assertFalse(racer.is_alive())
+
+        revisions = [event["trade_revision"] for event in gated.events]
+        self.assertEqual(revisions, [2, 3, 4])
+        self.assertEqual(gated.events[0]["symbol"], "sh.600584")
+        self.assertEqual(gated.events[0]["trades"], [])
+        self.assertEqual(gated.events[1]["symbol"], "sz.000001")
+        self.assertEqual(gated.events[2]["symbol"], "sh.600000")
 
     def test_delete_is_hard_and_publishes_empty_scoped_snapshot(self) -> None:
         with self._api() as api:

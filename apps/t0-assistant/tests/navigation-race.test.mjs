@@ -32,59 +32,22 @@ test("a later security selection invalidates an in-flight historical request", a
   assert.deepEqual(applied, ["selection-applied"]);
 });
 
-test("enter-today shares one navigation sequence with performSecuritySelection", async () => {
-  // Regression for #164: handleEnterDayChart.begin() then a nested
-  // performSecuritySelection.begin() would invalidate the outer sequence so
-  // isCurrent(outer) is always false after await, blocking Replay→Live.
+test("consecutive security selections invalidate all but the latest", async () => {
   const navigationRequests = createLatestRequestTracker();
-  const steps = [];
+  const applied = [];
 
-  async function enterTodayChart() {
-    const requestSequence = navigationRequests.begin();
-    steps.push("enter-begin");
-    await Promise.resolve();
-    if (!navigationRequests.isCurrent(requestSequence)) {
-      steps.push("enter-stale-before-select");
-      return;
-    }
-    const liveReady = await selectSecurityShared(requestSequence);
-    if (!navigationRequests.isCurrent(requestSequence)) {
-      steps.push("enter-stale-after-select");
-      return;
-    }
-    if (liveReady) steps.push("switched-to-live");
+  async function selectSecurity(id) {
+    const selectionSequence = navigationRequests.begin();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    if (!navigationRequests.isCurrent(selectionSequence)) return;
+    applied.push(id);
   }
 
-  async function selectSecurityShared(navigationSequence) {
-    const selectionSequence = navigationSequence;
-    await Promise.resolve();
-    if (!navigationRequests.isCurrent(selectionSequence)) return false;
-    steps.push("select-accepted");
-    return true;
-  }
-
-  await enterTodayChart();
-  assert.deepEqual(steps, [
-    "enter-begin",
-    "select-accepted",
-    "switched-to-live",
+  await Promise.all([
+    selectSecurity("first"),
+    selectSecurity("second"),
+    selectSecurity("third"),
   ]);
-});
 
-test("a nested begin inside enter-today would block the Live switch", async () => {
-  const navigationRequests = createLatestRequestTracker();
-  let switched = false;
-
-  async function brokenEnterToday() {
-    const requestSequence = navigationRequests.begin();
-    await Promise.resolve();
-    // Bug: nested begin invalidates requestSequence.
-    navigationRequests.begin();
-    const liveReady = true;
-    if (!navigationRequests.isCurrent(requestSequence)) return;
-    if (liveReady) switched = true;
-  }
-
-  await brokenEnterToday();
-  assert.equal(switched, false);
+  assert.deepEqual(applied, ["third"]);
 });

@@ -1,9 +1,11 @@
 """Transport-independent trade domain values.
 
-The same values are used by persisted real trades and Replay-only simulated
-trades.  Persistence and Session ownership are deliberately outside this
-module; this layer only owns validation, timestamp normalization, and the
-deterministic five-minute chart bucket.
+These values are used by persisted real trades. ``TradeScope.SIMULATED`` is
+retained only as a legacy wire/enum compatibility value; Issue #163 removed
+Replay Session ownership of simulated trades and the runtime command API
+rejects simulated scope. Persistence ownership stays outside this module; this
+layer only owns validation, timestamp normalization, and the deterministic
+five-minute chart bucket.
 """
 
 from __future__ import annotations

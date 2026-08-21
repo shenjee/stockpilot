@@ -29,6 +29,10 @@ Contract obligations enforced here (see ``contracts/README.md``):
 * Mutations publish scoped facts only. An update that moves a trade between
   ``(symbol, trade_date)`` scopes bumps and publishes the old scope (without
   the moved trade) then the new scope, each with a newer ``trade_revision``.
+  Revision allocation, the authoritative scoped snapshot, and
+  ``trades_changed`` publication share one critical section so concurrent
+  HTTP handlers cannot publish a higher revision between (or ahead of) an
+  in-flight fact.
 * ``trade_scope: simulated`` is rejected with ``unsupported_trade_scope``.
 * Create/update eligibility failures map to ``trade_not_allowed``.
 * ``trade_revision`` is monotonic within one ``service_generation`` and starts
@@ -256,7 +260,10 @@ class TradeCommandApi:
             else:
                 trades = self._scoped_snapshot(symbol, trade_date)
             revision = self._trade_revision
-        self._publish(revision, trades, symbol=symbol, trade_date=trade_date)
+            # Publish under the same lock so ThreadingHTTPServer concurrency
+            # cannot interleave another mutation's higher revision ahead of
+            # this fact (Issue #163 / #164 review).
+            self._publish(revision, trades, symbol=symbol, trade_date=trade_date)
         return self._accepted(request_id)
 
     def _list_trade_history(
@@ -295,7 +302,7 @@ class TradeCommandApi:
             trade_date = self._trade_date_of(record)
             trades = self._scoped_snapshot(symbol, trade_date)
             revision = self._trade_revision
-        self._publish(revision, trades, symbol=symbol, trade_date=trade_date)
+            self._publish(revision, trades, symbol=symbol, trade_date=trade_date)
         return self._accepted(request_id)
 
     def _update_trade(self, request_id: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -322,7 +329,6 @@ class TradeCommandApi:
         )
         if rejected is not None:
             return rejected
-        publishes: list[tuple[int, list[dict[str, Any]], str, str]] = []
         with self._lock:
             old = self._service.get_trade(trade_id)
             if old is None:
@@ -332,37 +338,32 @@ class TradeCommandApi:
             updated = self._service.update_trade(trade_id, trade_payload)
             new_symbol = updated.trade.symbol
             new_date = self._trade_date_of(updated)
+            # Revision bump, scoped snapshot, and publish stay in one critical
+            # section so a concurrent mutation cannot publish a higher revision
+            # between a cross-scope pair (or before a single-scope fact).
             if (old_symbol, old_date) != (new_symbol, new_date):
                 self._trade_revision += 1
-                publishes.append(
-                    (
-                        self._trade_revision,
-                        self._scoped_snapshot(old_symbol, old_date),
-                        old_symbol,
-                        old_date,
-                    )
+                self._publish(
+                    self._trade_revision,
+                    self._scoped_snapshot(old_symbol, old_date),
+                    symbol=old_symbol,
+                    trade_date=old_date,
                 )
                 self._trade_revision += 1
-                publishes.append(
-                    (
-                        self._trade_revision,
-                        self._scoped_snapshot(new_symbol, new_date),
-                        new_symbol,
-                        new_date,
-                    )
+                self._publish(
+                    self._trade_revision,
+                    self._scoped_snapshot(new_symbol, new_date),
+                    symbol=new_symbol,
+                    trade_date=new_date,
                 )
             else:
                 self._trade_revision += 1
-                publishes.append(
-                    (
-                        self._trade_revision,
-                        self._scoped_snapshot(new_symbol, new_date),
-                        new_symbol,
-                        new_date,
-                    )
+                self._publish(
+                    self._trade_revision,
+                    self._scoped_snapshot(new_symbol, new_date),
+                    symbol=new_symbol,
+                    trade_date=new_date,
                 )
-        for revision, trades, symbol, trade_date in publishes:
-            self._publish(revision, trades, symbol=symbol, trade_date=trade_date)
         return self._accepted(request_id)
 
     def _delete_trade(self, request_id: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -390,7 +391,7 @@ class TradeCommandApi:
             self._trade_revision += 1
             trades = self._scoped_snapshot(symbol, trade_date)
             revision = self._trade_revision
-        self._publish(revision, trades, symbol=symbol, trade_date=trade_date)
+            self._publish(revision, trades, symbol=symbol, trade_date=trade_date)
         return self._accepted(request_id)
 
     # -- Helpers ---------------------------------------------------------

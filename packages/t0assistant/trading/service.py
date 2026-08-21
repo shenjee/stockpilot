@@ -7,12 +7,13 @@ create/update/delete can therefore never leave the caller with a "memory
 success" that was never written to disk - the repository exception propagates
 and nothing is cached.
 
-Scope boundary: only real trades are persisted here. Replay-simulated trades
-are owned by the Replay Session (see ``module_design.md`` §5.6) and must never
-reach this service or the real-trade repository. Fee calculation belongs to
-``fee_policy`` and the caller; this service persists the fee the user confirmed
-and never recomputes it, so changing a fee plan never retroactively alters a
-historical trade.
+Scope boundary: only real trades are persisted here. ``trade_scope: simulated``
+remains a legacy schema/enum value for wire recognition only; Issue #163
+removed Replay Session ownership of simulated trades, and the command API
+rejects simulated scope at runtime. Fee calculation belongs to ``fee_policy``
+and the caller; this service persists the fee the user confirmed and never
+recomputes it, so changing a fee plan never retroactively alters a historical
+trade.
 """
 
 from __future__ import annotations

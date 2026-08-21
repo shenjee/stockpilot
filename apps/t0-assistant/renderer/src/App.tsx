@@ -29,6 +29,8 @@ import {
 import { LiveProjectionController } from "./charts/live-projection-controller.mjs";
 import { waitForLiveProjectionReady } from "./charts/wait-live-projection-ready.mjs";
 import { ReplaySessionController } from "./charts/replay-session-controller.mjs";
+import { enterTodayChart } from "./trading/enter-today-chart.mjs";
+import { resolveTradeUiPolicy } from "./trading/trade-ui-policy.mjs";
 import { replayEventEnvelope } from "./replay-event-envelope.mjs";
 import {
   applyWorkbenchPreferences,
@@ -1221,32 +1223,36 @@ export function App() {
   // When opened from Replay, exit Replay only after the target chart is ready
   // so identity/snapshot failures keep the Replay session and projection.
   async function handleEnterDayChart(symbol: string, tradeDate: string) {
-    const requestSequence = navigationRequests.current.begin();
     const today = localToday();
     // Resolve identity before entering today's Live chart or loading a
     // historical snapshot. Identity lookup itself never changes Live state.
     if (tradeDate === today) {
       setDayChartNotice(null);
-      const identity = await resolveSecurity(symbol);
-      if (!identity || !navigationRequests.current.isCurrent(requestSequence)) {
-        setDayChartNotice("证券身份解析失败，无法进入当天图形。");
-        return;
-      }
-      // Share requestSequence so performSecuritySelection does not begin()
-      // again and invalidate this gate. Only leave Replay after Live is ready.
-      const liveReady = await performSecuritySelection(identity, false, {
-        navigationSequence: requestSequence,
+      const result = await enterTodayChart({
+        symbol,
+        beginNavigation: () => navigationRequests.current.begin(),
+        isCurrent: (sequence) => navigationRequests.current.isCurrent(sequence),
+        resolveSecurity,
+        performSecuritySelection: (identity, restoring, options) =>
+          performSecuritySelection(
+            identity as SecurityIdentity,
+            restoring,
+            options,
+          ),
+        isReplayMode: () => modeRef.current === WorkbenchMode.REPLAY,
+        selectLiveMode: () => selectMode(WorkbenchMode.LIVE),
       });
-      if (!navigationRequests.current.isCurrent(requestSequence)) return;
-      if (!liveReady) {
-        setDayChartNotice("当天图形加载失败，已保留当前图形。");
-        return;
-      }
-      if (modeRef.current === WorkbenchMode.REPLAY) {
-        selectMode(WorkbenchMode.LIVE);
+      if (!result.ok) {
+        if (result.reason === "identity") {
+          setDayChartNotice("证券身份解析失败，无法进入当天图形。");
+        } else if (result.reason === "live_not_ready") {
+          setDayChartNotice("当天图形加载失败，已保留当前图形。");
+        }
       }
       return;
     }
+
+    const requestSequence = navigationRequests.current.begin();
 
     if (!window.stockpilot) {
       if (!navigationRequests.current.isCurrent(requestSequence)) return;
@@ -1601,17 +1607,19 @@ export function App() {
   // not the search-box selection. In Replay the user may pick another code
   // before beginning a new session; workbench.security then diverges from the
   // still-visible Replay projection.
-  const visibleSymbol = snapshot.session?.symbol ?? null;
-  const visibleTradeDate = snapshot.session?.trade_date ?? localToday();
-  const visibleSecurity =
-    workbench.security != null &&
-    workbench.security.symbol === visibleSymbol
-      ? workbench.security
-      : null;
-  const isTradableSecurity =
-    visibleSecurity != null && visibleSecurity.instrument_type !== "index";
-  const isKnownNonTradableVisible =
-    visibleSecurity != null && visibleSecurity.instrument_type === "index";
+  const tradeUi = resolveTradeUiPolicy({
+    session: snapshot.session,
+    workbenchSecurity: workbench.security,
+    mode: workbench.mode,
+    today: localToday(),
+  });
+  const {
+    visibleSymbol,
+    visibleTradeDate,
+    isTradableSecurity,
+    isKnownNonTradableVisible,
+    tradeDrawerReadOnly,
+  } = tradeUi;
   const serviceReady =
     status.state === "connected" || status.state === "ready";
 
@@ -1813,11 +1821,6 @@ export function App() {
   const dailyBars = latestDailyBars(snapshot);
 
   const replayMode = workbench.mode === WorkbenchMode.REPLAY;
-  // Historical day charts share Live mode but must stay read-only: CRUD belongs
-  // to the Live drawer / history dialog, not the restored day view (#163).
-  const historicalChartVisible =
-    snapshot.session?.session_type === "historical";
-  const tradeDrawerReadOnly = replayMode || historicalChartVisible;
   const fiveMinuteFallback =
     replayMode && replayFacts?.granularity === "five_minute";
 
