@@ -257,7 +257,7 @@ def map_replay_prepare_error_to_replay_error(
         )
     if isinstance(error, ReplayApiError):
         return error, DEFAULT_ERROR_DELIVERY[error.error_code]
-    logger.exception(
+    logger.error(
         "replay preparation failed with unexpected error",
         exc_info=error,
     )

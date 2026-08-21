@@ -227,7 +227,11 @@ class ReplayDataPreparator:
         )
 
         # ---- target-day 1m and official 5m --------------------------------
-        assessment_1m = self._assess_granularity(
+        # Illegal OHLC invalidates only that granularity. Prefer 1m when
+        # reliable; otherwise degrade to legal official 5m. Raise
+        # ReplayDataInvalidError only when no legal input remains and at
+        # least one attempted granularity already returned illegal bars.
+        probe_1m = self._assess_granularity(
             code=code,
             market=market,
             instrument_type=instrument_type,
@@ -236,7 +240,7 @@ class ReplayDataPreparator:
             config=config,
             session_validator=session_validator,
         )
-        assessment_5m = self._assess_granularity(
+        probe_5m = self._assess_granularity(
             code=code,
             market=market,
             instrument_type=instrument_type,
@@ -247,7 +251,7 @@ class ReplayDataPreparator:
         )
 
         bars_1m: tuple[Mapping[str, Any], ...]
-        if assessment_1m.is_reliable:
+        if probe_1m.assessment.is_reliable:
             bars_1m = self._load_target_day_bars(
                 code=code,
                 market=market,
@@ -257,34 +261,39 @@ class ReplayDataPreparator:
                 config=config,
                 session_validator=session_validator,
             )
-            granularity = "one_minute"
         else:
             bars_1m = ()
 
-        official_5m = self._load_target_day_bars(
-            code=code,
-            market=market,
-            instrument_type=instrument_type,
-            session=session,
-            timeframe="5m",
-            config=config,
-            session_validator=session_validator,
-        )
+        if probe_5m.assessment.is_reliable:
+            official_5m = self._load_target_day_bars(
+                code=code,
+                market=market,
+                instrument_type=instrument_type,
+                session=session,
+                timeframe="5m",
+                config=config,
+                session_validator=session_validator,
+            )
+        else:
+            official_5m = ()
         assessment_5m = ReplayReliabilityAssessment(
             granularity="five_minute",
-            is_reliable=assessment_5m.is_reliable and len(official_5m) > 0,
+            is_reliable=probe_5m.assessment.is_reliable and len(official_5m) > 0,
             bar_count=len(official_5m),
-            covered_missing_ranges=assessment_5m.covered_missing_ranges,
-            uncovered_missing_ranges=assessment_5m.uncovered_missing_ranges,
+            covered_missing_ranges=probe_5m.assessment.covered_missing_ranges,
+            uncovered_missing_ranges=probe_5m.assessment.uncovered_missing_ranges,
         )
 
-        if assessment_1m.is_reliable:
+        if probe_1m.assessment.is_reliable:
             granularity = "one_minute"
             warnings: tuple[Mapping[str, Any], ...] = ()
         elif assessment_5m.is_reliable:
             granularity = "five_minute"
             warnings = (_ONE_MINUTE_DATA_UNAVAILABLE_WARNING,)
         else:
+            invalid = probe_1m.invalid_error or probe_5m.invalid_error
+            if invalid is not None:
+                raise invalid
             raise ReplayDataUnavailableError(
                 "neither 1m nor official 5m data can form a reliable Replay"
             )
@@ -354,7 +363,7 @@ class ReplayDataPreparator:
             previous_close=previous_close,
             warnings=frozen_warnings,
             market_input_port=market_input_port,
-            assessment_1m=assessment_1m,
+            assessment_1m=probe_1m.assessment,
             assessment_5m=assessment_5m,
         )
 
@@ -492,8 +501,12 @@ class ReplayDataPreparator:
         timeframe: str,
         config: ReplayPreparationConfig,
         session_validator: Callable[[], bool] | None,
-    ) -> ReplayReliabilityAssessment:
-        """Assess whether one granularity can form a reliable Replay."""
+    ) -> _GranularityProbe:
+        """Assess whether one granularity can form a reliable Replay.
+
+        Illegal price bars invalidate this granularity only; the caller may
+        still degrade to another legal granularity.
+        """
 
         self._check_deadline(config)
         trade_date_str = session.trade_date.isoformat()
@@ -524,7 +537,19 @@ class ReplayDataPreparator:
                 _extract_rows(result),
                 self._market_data,
             )
-            normalized = _normalize_target_day_bars(rows, session=session)
+            try:
+                normalized = _normalize_target_day_bars(
+                    rows, session=session, timeframe=timeframe
+                )
+            except ReplayDataInvalidError as exc:
+                return _GranularityProbe(
+                    assessment=ReplayReliabilityAssessment(
+                        granularity=_timeframe_to_granularity(timeframe),
+                        is_reliable=False,
+                        bar_count=0,
+                    ),
+                    invalid_error=exc,
+                )
             is_reliable = _assess_local_intraday_reliability(
                 result=result,
                 market_data=self._market_data,
@@ -535,12 +560,14 @@ class ReplayDataPreparator:
                 bars=normalized,
                 session=session,
             )
-            return ReplayReliabilityAssessment(
-                granularity=_timeframe_to_granularity(timeframe),
-                is_reliable=is_reliable,
-                bar_count=len(normalized),
-                covered_missing_ranges=(),
-                uncovered_missing_ranges=(),
+            return _GranularityProbe(
+                assessment=ReplayReliabilityAssessment(
+                    granularity=_timeframe_to_granularity(timeframe),
+                    is_reliable=is_reliable,
+                    bar_count=len(normalized),
+                    covered_missing_ranges=(),
+                    uncovered_missing_ranges=(),
+                )
             )
         # There are missing ranges.  Try to backfill through the shared queue.
         # The get_klines_result call already triggers backfill internally via
@@ -581,7 +608,23 @@ class ReplayDataPreparator:
             _extract_rows(result),
             self._market_data,
         )
-        normalized = _normalize_target_day_bars(rows, session=session)
+        try:
+            normalized = _normalize_target_day_bars(
+                rows, session=session, timeframe=timeframe
+            )
+        except ReplayDataInvalidError as exc:
+            return _GranularityProbe(
+                assessment=ReplayReliabilityAssessment(
+                    granularity=_timeframe_to_granularity(timeframe),
+                    is_reliable=False,
+                    bar_count=0,
+                    covered_missing_ranges=tuple(
+                        _covered_ranges(missing, missing_after)
+                    ),
+                    uncovered_missing_ranges=tuple(missing_after),
+                ),
+                invalid_error=exc,
+            )
         is_reliable = not missing_after and _assess_local_intraday_reliability(
             result=result,
             market_data=self._market_data,
@@ -592,18 +635,20 @@ class ReplayDataPreparator:
             bars=normalized,
             session=session,
         )
-        return ReplayReliabilityAssessment(
-            granularity=_timeframe_to_granularity(timeframe),
-            is_reliable=is_reliable,
-            bar_count=len(normalized),
-            covered_missing_ranges=tuple(_covered_ranges(missing, missing_after)),
-            uncovered_missing_ranges=tuple(missing_after),
+        return _GranularityProbe(
+            assessment=ReplayReliabilityAssessment(
+                granularity=_timeframe_to_granularity(timeframe),
+                is_reliable=is_reliable,
+                bar_count=len(normalized),
+                covered_missing_ranges=tuple(_covered_ranges(missing, missing_after)),
+                uncovered_missing_ranges=tuple(missing_after),
+            )
         )
 
     def _load_target_day_bars(
         self,
         *,
- code: str,
+        code: str,
         market: str,
         instrument_type: str | None,
         session: MarketSession,
@@ -629,7 +674,9 @@ class ReplayDataPreparator:
             _extract_rows(result),
             self._market_data,
         )
-        return _normalize_target_day_bars(rows, session=session)
+        return _normalize_target_day_bars(
+            rows, session=session, timeframe=timeframe
+        )
 
     def _load_daily_history(
         self,
@@ -750,15 +797,25 @@ def _normalize_preheat_bars(
     return tuple(parsed[key] for key in sorted(parsed))
 
 
+@dataclass(frozen=True, slots=True)
+class _GranularityProbe:
+    """Per-granularity reliability probe, including any illegal-bar fact."""
+
+    assessment: ReplayReliabilityAssessment
+    invalid_error: ReplayDataInvalidError | None = None
+
+
 def _normalize_target_day_bars(
     rows: Sequence[Mapping[str, Any]],
     *,
     session: MarketSession,
+    timeframe: str = "target_day",
 ) -> tuple[dict[str, Any], ...]:
     """Sort, deduplicate and validate target-day bars inside the session.
 
-    Bars outside the trading session are dropped.  Invalid bars raise so the
-    preparator fails loudly rather than silently corrupting the Replay cursor.
+    Bars outside the trading session are dropped.  Invalid bars raise so this
+    granularity is marked unusable rather than silently discarding illegal
+    price facts; the preparator may still degrade to another legal granularity.
     """
 
     parsed: dict[datetime, dict[str, Any]] = {}
@@ -774,7 +831,7 @@ def _normalize_target_day_bars(
             raise ReplayDataInvalidError(
                 f"invalid bar at {timestamp.strftime(MARKET_TIMESTAMP_FORMAT)}: {exc}",
                 details={
-                    "timeframe": "target_day",
+                    "timeframe": timeframe,
                     "timestamp": timestamp.strftime(MARKET_TIMESTAMP_FORMAT),
                     "reason": str(exc),
                 },
@@ -783,7 +840,7 @@ def _normalize_target_day_bars(
             raise ReplayDataInvalidError(
                 f"invalid bar at {timestamp.strftime(MARKET_TIMESTAMP_FORMAT)}: expected a closed bar",
                 details={
-                    "timeframe": "target_day",
+                    "timeframe": timeframe,
                     "timestamp": timestamp.strftime(MARKET_TIMESTAMP_FORMAT),
                     "reason": "expected a closed bar",
                 },

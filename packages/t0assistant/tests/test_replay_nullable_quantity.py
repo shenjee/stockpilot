@@ -83,7 +83,7 @@ class NullableQuantityReplayTests(unittest.TestCase):
         self.assertIsNone(result.quote["volume"])
         self.assertIsNone(result.quote["amount"])
 
-    def test_invalid_target_day_ohlc_raises_replay_data_invalid(self) -> None:
+    def test_invalid_1m_with_legal_5m_degrades(self) -> None:
         fixture = one_minute_replay()
         port = FakeMarketDataPort()
         _populate_from_fixture(port, fixture)
@@ -91,7 +91,53 @@ class NullableQuantityReplayTests(unittest.TestCase):
         bad["high"] = bad["low"] - 1
         port.store[("1m", TRADE_DATE.isoformat())][0] = bad
 
-        with self.assertRaises(ReplayDataInvalidError):
+        prepared = ReplayDataPreparator(port, self.context).prepare(
+            SYMBOL, TRADE_DATE, config=ReplayPreparationConfig()
+        )
+        self.assertEqual(prepared.granularity, "five_minute")
+        self.assertEqual(prepared.bars_1m, ())
+        self.assertGreater(len(prepared.official_5m_bars), 0)
+
+    def test_invalid_1m_without_reliable_5m_raises_replay_data_invalid(self) -> None:
+        fixture = one_minute_replay()
+        port = FakeMarketDataPort()
+        _populate_from_fixture(port, fixture)
+        bad = dict(port.store[("1m", TRADE_DATE.isoformat())][0])
+        bad["high"] = bad["low"] - 1
+        port.store[("1m", TRADE_DATE.isoformat())][0] = bad
+        port.store[("5m", TRADE_DATE.isoformat())] = []
+        port.missing_overrides[("5m", TRADE_DATE.isoformat())] = [
+            (TRADE_DATE.isoformat(), TRADE_DATE.isoformat())
+        ]
+
+        with self.assertRaises(ReplayDataInvalidError) as raised:
+            ReplayDataPreparator(port, self.context).prepare(
+                SYMBOL, TRADE_DATE, config=ReplayPreparationConfig()
+            )
+        self.assertEqual(raised.exception.details["timeframe"], "1m")
+
+    def test_both_granularities_invalid_raises_replay_data_invalid(self) -> None:
+        fixture = one_minute_replay()
+        port = FakeMarketDataPort()
+        _populate_from_fixture(port, fixture)
+        for timeframe in ("1m", "5m"):
+            bad = dict(port.store[(timeframe, TRADE_DATE.isoformat())][0])
+            bad["high"] = bad["low"] - 1
+            port.store[(timeframe, TRADE_DATE.isoformat())][0] = bad
+
+        with self.assertRaises(ReplayDataInvalidError) as raised:
+            ReplayDataPreparator(port, self.context).prepare(
+                SYMBOL, TRADE_DATE, config=ReplayPreparationConfig()
+            )
+        self.assertEqual(raised.exception.details["timeframe"], "1m")
+
+    def test_both_granularities_missing_raises_price_unavailable(self) -> None:
+        port = FakeMarketDataPort()
+        for timeframe in ("1m", "5m"):
+            port.missing_overrides[(timeframe, TRADE_DATE.isoformat())] = [
+                (TRADE_DATE.isoformat(), TRADE_DATE.isoformat())
+            ]
+        with self.assertRaises(ReplayDataUnavailableError):
             ReplayDataPreparator(port, self.context).prepare(
                 SYMBOL, TRADE_DATE, config=ReplayPreparationConfig()
             )

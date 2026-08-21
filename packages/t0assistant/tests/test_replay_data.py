@@ -675,7 +675,7 @@ class NormalisationTests(_PreparatorTestBase):
         self.assertEqual(timestamps, sorted(timestamps))
         self.assertEqual(len(timestamps), len(set(timestamps)))
 
-    def test_invalid_bar_raises(self) -> None:
+    def test_invalid_1m_bar_degrades_to_legal_5m(self) -> None:
         fixture = one_minute_replay()
         port = FakeMarketDataPort()
         _populate_from_fixture(port, fixture)
@@ -684,8 +684,12 @@ class NormalisationTests(_PreparatorTestBase):
         bad["high"] = -1.0  # negative high is invalid
         port.store[("1m", TRADE_DATE.isoformat())][0] = bad
         preparator = self._preparator(port)
-        with self.assertRaises(Exception):
-            preparator.prepare(SYMBOL, TRADE_DATE, config=ReplayPreparationConfig())
+        prepared = preparator.prepare(
+            SYMBOL, TRADE_DATE, config=ReplayPreparationConfig()
+        )
+        self.assertEqual(prepared.granularity, "five_minute")
+        self.assertEqual(prepared.bars_1m, ())
+        self.assertGreater(len(prepared.official_5m_bars), 0)
 
 
 class MarketInputPortTests(_PreparatorTestBase):
