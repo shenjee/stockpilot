@@ -27,6 +27,7 @@ import {
   type ChartProjection,
 } from "./charts/chart-projection.mjs";
 import { LiveProjectionController } from "./charts/live-projection-controller.mjs";
+import { waitForLiveProjectionReady } from "./charts/wait-live-projection-ready.mjs";
 import { ReplaySessionController } from "./charts/replay-session-controller.mjs";
 import { replayEventEnvelope } from "./replay-event-envelope.mjs";
 import {
@@ -1000,8 +1001,12 @@ export function App() {
   async function performSecuritySelection(
     security: SecurityIdentity,
     restoring = false,
+    options?: { navigationSequence?: number },
   ): Promise<boolean> {
-    const selectionSequence = navigationRequests.current.begin();
+    // Share the caller's navigation sequence when provided (e.g. enter-today
+    // from Replay) so an outer begin() is not invalidated by a nested begin().
+    const selectionSequence =
+      options?.navigationSequence ?? navigationRequests.current.begin();
     cancelStartupRestoreTracking(
       restoreInFlight.current,
       activeOperations.current,
@@ -1116,7 +1121,7 @@ export function App() {
       setSearchMessage("");
       // Recover the authoritative baseline when it raced ahead of the command
       // response or the event channel. A cold load may not be ready yet; in
-      // that normal case the later workbench_snapshot event remains the owner.
+      // that normal case wait for the later workbench_snapshot / status event.
       if (sessionId) {
         const snapshotResponse = await window.stockpilot.getLiveSnapshot(
           appRequest("get_live_snapshot", sessionId, {}),
@@ -1136,7 +1141,34 @@ export function App() {
           activeOperations.current.delete(operationId ?? "");
         }
       }
-      return liveProjectionReadyForSymbol(resolvedSecurity.symbol);
+      if (
+        liveProjectionReadyForSymbol(resolvedSecurity.symbol, sessionId)
+      ) {
+        if (modeRef.current !== WorkbenchMode.REPLAY) {
+          setLoading(false);
+        }
+        return true;
+      }
+      const liveController = liveProjectionController.current;
+      if (!liveController) return false;
+      const becameReady = await waitForLiveProjectionReady({
+        getProjection: () => liveProjectionController.current?.projection,
+        subscribe: (listener) => liveController.subscribe(listener),
+        symbol: resolvedSecurity.symbol,
+        sessionId,
+        serviceGeneration: status.service_generation,
+        isCurrent: () => navigationRequests.current.isCurrent(selectionSequence),
+      });
+      if (
+        becameReady &&
+        navigationRequests.current.isCurrent(selectionSequence) &&
+        modeRef.current !== WorkbenchMode.REPLAY
+      ) {
+        setLoading(false);
+      }
+      return (
+        becameReady && navigationRequests.current.isCurrent(selectionSequence)
+      );
     } catch (error) {
       if (!navigationRequests.current.isCurrent(selectionSequence)) return false;
       const failure = clientError(error, "symbol_selection");
@@ -1165,13 +1197,17 @@ export function App() {
       return false;
     }
 
-    function liveProjectionReadyForSymbol(symbol: string): boolean {
+    function liveProjectionReadyForSymbol(
+      symbol: string,
+      sessionId?: string | null,
+    ): boolean {
       const projection = liveProjectionController.current?.projection;
       return Boolean(
         projection &&
           projection.serviceGeneration === status.service_generation &&
           projection.snapshot.session?.symbol === symbol &&
-          projection.snapshot.session?.state === "ready",
+          projection.snapshot.session?.state === "ready" &&
+          (sessionId == null || projection.sessionId === sessionId),
       );
     }
   }
@@ -1196,9 +1232,11 @@ export function App() {
         setDayChartNotice("证券身份解析失败，无法进入当天图形。");
         return;
       }
-      // Prepare Live while Replay still owns the view; only leave Replay after
-      // the Live projection is ready for this symbol.
-      const liveReady = await performSecuritySelection(identity);
+      // Share requestSequence so performSecuritySelection does not begin()
+      // again and invalidate this gate. Only leave Replay after Live is ready.
+      const liveReady = await performSecuritySelection(identity, false, {
+        navigationSequence: requestSequence,
+      });
       if (!navigationRequests.current.isCurrent(requestSequence)) return;
       if (!liveReady) {
         setDayChartNotice("当天图形加载失败，已保留当前图形。");
