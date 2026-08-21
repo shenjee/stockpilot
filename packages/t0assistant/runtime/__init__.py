@@ -113,6 +113,7 @@ from .replay_clock import (
 )
 from .replay_data import (
     ReplayDataError,
+    ReplayDataInvalidError,
     ReplayDataPreparator,
     ReplayDataTimeoutError,
     ReplayDataUnavailableError,
@@ -201,6 +202,7 @@ __all__ = [
     "PipelineResult",
     "PreparedReplayData",
     "ReplayDataError",
+    "ReplayDataInvalidError",
     "ReplayDataPreparator",
     "ReplayDataTimeoutError",
     "ReplayDataUnavailableError",

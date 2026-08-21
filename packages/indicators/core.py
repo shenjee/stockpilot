@@ -138,14 +138,21 @@ def calculate_volume_indicators(
     *,
     ma_periods: Sequence[int] = VOLUME_MA_PERIODS,
 ) -> dict[str, list[IndicatorPoint]]:
-    """Return raw volume points and requested simple volume averages."""
+    """Return raw volume points and requested simple volume averages.
 
-    timestamps, volumes = _extract_series(bars, "volume", non_negative=True)
+    Unknown volumes stay ``None``. A rolling window that contains any unknown
+    volume yields ``None`` for that MA point; unknown values are never skipped
+    or treated as zero.
+    """
+
+    timestamps, volumes = _extract_series(
+        bars, "volume", non_negative=True, allow_null=True
+    )
     result = {"values": _points(timestamps, volumes)}
     for period in ma_periods:
         result[f"ma{period}"] = _points(
             timestamps,
-            _simple_moving_average(volumes, period),
+            _nullable_simple_moving_average(volumes, period),
         )
     return result
 
@@ -158,27 +165,40 @@ def calculate_intraday_vwap(bars: Sequence[Bar]) -> list[IndicatorPoint]:
     cumulative VWAP. A zero-volume bar with positive amount is rejected as
     inconsistent market data. Reported bar ``amount`` is used directly;
     close-price approximation is intentionally not supported.
+
+    Unknown volume or amount freezes the remainder of that trade date at
+    ``None``; the series does not resume after a gap within the same day.
     """
 
-    timestamps, volumes = _extract_series(bars, "volume", non_negative=True)
-    _, amounts = _extract_series(bars, "amount", non_negative=True)
+    timestamps, volumes = _extract_series(
+        bars, "volume", non_negative=True, allow_null=True
+    )
+    _, amounts = _extract_series(
+        bars, "amount", non_negative=True, allow_null=True
+    )
     values: list[float | None] = []
     current_date: str | None = None
     cumulative_volume = 0.0
     cumulative_amount = 0.0
+    quantity_unavailable = False
 
     for timestamp, volume, amount in zip(
         timestamps, volumes, amounts, strict=True
     ):
-        if volume == 0 and amount != 0:
-            raise IndicatorInputError(
-                f"bar {timestamp} amount must be zero when volume is zero"
-            )
         trade_date = timestamp[:10]
         if trade_date != current_date:
             current_date = trade_date
             cumulative_volume = 0.0
             cumulative_amount = 0.0
+            quantity_unavailable = False
+        if quantity_unavailable or volume is None or amount is None:
+            quantity_unavailable = True
+            values.append(None)
+            continue
+        if volume == 0 and amount != 0:
+            raise IndicatorInputError(
+                f"bar {timestamp} amount must be zero when volume is zero"
+            )
         cumulative_volume += volume
         cumulative_amount += amount
         values.append(
@@ -208,7 +228,9 @@ def calculate_one_minute_indicators(bars: Sequence[Bar]) -> dict[str, Any]:
     """Build the frozen logical-schema one-minute indicator object."""
 
     _validate_timestamps(bars)
-    timestamps, volumes = _extract_series(bars, "volume", non_negative=True)
+    timestamps, volumes = _extract_series(
+        bars, "volume", non_negative=True, allow_null=True
+    )
     return {
         "vwap": calculate_intraday_vwap(bars),
         "volume": {"values": _points(timestamps, volumes)},
@@ -221,13 +243,22 @@ def _extract_series(
     field: str,
     *,
     non_negative: bool = False,
-) -> tuple[list[str], list[float]]:
+    allow_null: bool = False,
+) -> tuple[list[str], list[float | None]]:
     timestamps = _validate_timestamps(bars)
-    values: list[float] = []
+    values: list[float | None] = []
     for index, bar in enumerate(bars):
         if field not in bar:
+            if allow_null:
+                values.append(None)
+                continue
             raise IndicatorInputError(f"bar {index} is missing {field}")
         value = bar[field]
+        if value is None:
+            if allow_null:
+                values.append(None)
+                continue
+            raise IndicatorInputError(f"bar {index} {field} must be a finite number")
         if (
             isinstance(value, bool)
             or not isinstance(value, (int, float))
@@ -288,6 +319,28 @@ def _simple_moving_average(
         else None
         for index in range(len(values))
     ]
+
+
+def _nullable_simple_moving_average(
+    values: Sequence[float | None],
+    period: int,
+) -> list[float | None]:
+    """SMA that yields ``None`` when the window still warms or contains null."""
+
+    if isinstance(period, bool) or not isinstance(period, int) or period <= 0:
+        raise IndicatorInputError("moving-average period must be a positive integer")
+    result: list[float | None] = []
+    for index in range(len(values)):
+        if index < period - 1:
+            result.append(None)
+            continue
+        window = values[index - period + 1 : index + 1]
+        if any(value is None for value in window):
+            result.append(None)
+            continue
+        known = [float(value) for value in window if value is not None]
+        result.append(math.fsum(known) / period)
+    return result
 
 
 def _recursive_ema(values: Sequence[float], period: int) -> list[float]:

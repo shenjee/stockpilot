@@ -8,6 +8,7 @@ loading, playback, stepping, seeking, and snapshot construction remain behind
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -21,6 +22,7 @@ from packages.t0assistant.runtime.computation_contract import (
     ComputationStatus,
 )
 from packages.t0assistant.runtime.replay_data import (
+    ReplayDataInvalidError,
     ReplayDataTimeoutError,
     ReplayDataUnavailableError,
 )
@@ -28,6 +30,7 @@ from packages.t0assistant.runtime.replay_data import (
 from .validation import validate_replay_snapshot
 
 
+logger = logging.getLogger(__name__)
 REPLAY_SCHEMA_VERSION = "t0_replay_v2"
 REPLAY_COMMANDS = frozenset(
     {
@@ -70,8 +73,19 @@ _ERRORS: dict[str, _ErrorDefinition] = {
     "invalid_trade_date": _ErrorDefinition(
         "validation", "replay", False, ReplayDeliveryChannel.SYNCHRONOUS, "回放日期无效"
     ),
-    "replay_data_unavailable": _ErrorDefinition(
-        "data", "replay", True, ReplayDeliveryChannel.ASYNCHRONOUS, "没有可用的历史行情，无法开始回放"
+    "replay_price_data_unavailable": _ErrorDefinition(
+        "data",
+        "replay",
+        True,
+        ReplayDeliveryChannel.ASYNCHRONOUS,
+        "目标日没有可用的价格 K 线，无法开始回放",
+    ),
+    "replay_data_invalid": _ErrorDefinition(
+        "data",
+        "replay",
+        True,
+        ReplayDeliveryChannel.ASYNCHRONOUS,
+        "回放价格数据非法，无法开始回放",
     ),
     "session_not_found": _ErrorDefinition(
         "session", "replay", False, ReplayDeliveryChannel.SYNCHRONOUS, "回放会话不存在"
@@ -104,7 +118,8 @@ _HTTP_STATUS_BY_ERROR = {
     "invalid_request": 400,
     "invalid_trade_date": 400,
     "symbol_not_found": 404,
-    "replay_data_unavailable": 503,
+    "replay_price_data_unavailable": 503,
+    "replay_data_invalid": 422,
     "session_not_found": 404,
     "session_retired": 409,
     "invalid_replay_state": 409,
@@ -219,21 +234,40 @@ def map_computation_outcome_to_replay_error(
 def map_replay_prepare_error_to_replay_error(
     error: Exception,
 ) -> tuple[ReplayApiError, ReplayDeliveryChannel]:
-    """Map Replay preparation failures onto stable Replay errors."""
+    """Map Replay preparation failures onto stable Replay errors.
 
-    if isinstance(error, ReplayDataUnavailableError):
+    Quantity gaps are never preparation failures. Invalid OHLC facts map to
+    ``replay_data_invalid``. Missing coverage, timeouts, and other unknown
+    preparation failures map to ``replay_price_data_unavailable``. Only a real
+    Python process / local-transport outage may use ``service_unavailable``.
+    """
+
+    if isinstance(error, ReplayDataInvalidError):
         return (
-            ReplayApiError("replay_data_unavailable"),
+            ReplayApiError(
+                "replay_data_invalid",
+                details=error.details,
+            ),
             ReplayDeliveryChannel.ASYNCHRONOUS,
         )
-    if isinstance(error, ReplayDataTimeoutError):
+    if isinstance(error, (ReplayDataUnavailableError, ReplayDataTimeoutError)):
         return (
-            ReplayApiError("service_unavailable"),
+            ReplayApiError("replay_price_data_unavailable"),
             ReplayDeliveryChannel.ASYNCHRONOUS,
         )
     if isinstance(error, ReplayApiError):
         return error, DEFAULT_ERROR_DELIVERY[error.error_code]
-    return ReplayApiError("service_unavailable"), ReplayDeliveryChannel.ASYNCHRONOUS
+    logger.exception(
+        "replay preparation failed with unexpected error",
+        exc_info=error,
+    )
+    return (
+        ReplayApiError(
+            "replay_price_data_unavailable",
+            details={"prepare_failed": True},
+        ),
+        ReplayDeliveryChannel.ASYNCHRONOUS,
+    )
 
 
 @dataclass(slots=True)

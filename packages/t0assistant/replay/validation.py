@@ -104,8 +104,11 @@ def _bar(value: object, path: str) -> None:
     )
     if not isinstance(bar["timestamp"], str) or len(bar["timestamp"]) < 10:
         raise TypeError(f"{path}.timestamp is invalid")
-    for field in ("open", "high", "low", "close", "volume", "amount"):
+    for field in ("open", "high", "low", "close"):
         _number(bar[field], f"{path}.{field}", minimum=0)
+    for field in ("volume", "amount"):
+        if bar[field] is not None:
+            _number(bar[field], f"{path}.{field}", minimum=0)
     if type(bar["closed"]) is not bool:
         raise TypeError(f"{path}.closed must be boolean")
 
@@ -121,10 +124,11 @@ def _quote(value: object, path: str) -> None:
         },
     )
     _datetime(quote["timestamp"], f"{path}.timestamp", "%Y-%m-%d %H:%M:%S")
-    for field in (
-        "latest_price", "open", "high", "low", "previous_close", "volume", "amount"
-    ):
+    for field in ("latest_price", "open", "high", "low", "previous_close"):
         _number(quote[field], f"{path}.{field}", minimum=0)
+    for field in ("volume", "amount"):
+        if quote[field] is not None:
+            _number(quote[field], f"{path}.{field}", minimum=0)
     _number(quote["change_percent"], f"{path}.change_percent")
     for field in ("volume_ratio", "order_imbalance", "turnover_rate"):
         if quote[field] is not None:

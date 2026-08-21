@@ -19,6 +19,7 @@ from packages.marketdata.repositories.kline_store import KLineStore
 from packages.marketdata.services.kline_data_service import KLineDataService
 from packages.marketdata.services.market_context_service import MarketContextService
 from packages.t0assistant.runtime.replay_data import (
+    ReplayDataInvalidError,
     ReplayDataPreparator,
     ReplayDataTimeoutError,
     ReplayDataUnavailableError,
@@ -298,7 +299,10 @@ class PreheatTests(unittest.TestCase):
         )
 
         self.assertEqual(len(prepared.preheat_5m_bars), 3)
-        self.assertTrue(all(bar["amount"] == 0 for bar in prepared.preheat_5m_bars))
+        self.assertTrue(all(bar["amount"] is None for bar in prepared.preheat_5m_bars))
+        self.assertTrue(
+            all(isinstance(bar["volume"], (int, float)) for bar in prepared.preheat_5m_bars)
+        )
 
     def test_preheat_loads_across_multiple_trading_days_until_count_reached(self) -> None:
         fixture = one_minute_replay()

@@ -76,9 +76,26 @@ class ReplayDataError(RuntimeMarketDataError):
 class ReplayDataUnavailableError(ReplayDataError):
     """Raised when neither 1m nor official-5m can form a reliable Replay.
 
-    Maps onto ``ReplayApiError("replay_data_unavailable")`` at the API
-    boundary.
+    Maps onto ``ReplayApiError("replay_price_data_unavailable")`` at the API
+    boundary. The historical class name is retained for call-site stability;
+    the public error code is the v1.1 name.
     """
+
+
+class ReplayDataInvalidError(ReplayDataError):
+    """Raised when returned price bars contain illegal OHLC or field values.
+
+    Maps onto ``ReplayApiError("replay_data_invalid")`` at the API boundary.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        details: Mapping[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.details = dict(details or {})
 
 
 class ReplayDataTimeoutError(ReplayDataError):
@@ -719,16 +736,9 @@ def _normalize_preheat_bars(
             # strictly historical.
             continue
         try:
-            # Tencent's paged historical 5m endpoint omits turnover amount on
-            # older pages. Preheat calculations consume OHLCV only; keep the
-            # frozen public bar shape unchanged and use the contract's zero
-            # sentinel for this provider-confirmed unavailable field.
-            candidate = (
-                {**row, "amount": 0}
-                if row.get("amount") is None
-                else row
-            )
-            bar = standardize_bar(candidate, closed=True)
+            # Missing/null amount is a valid unknown observation under the
+            # OHLC-only readiness contract; do not fabricate a zero sentinel.
+            bar = standardize_bar(row, closed=True)
         except (TypeError, ValueError):
             # Invalid bars are skipped, not fatal, for preheat history.
             logger.debug("skipping invalid preheat bar at %s", timestamp)
@@ -761,12 +771,22 @@ def _normalize_target_day_bars(
         try:
             bar = standardize_bar(row, closed=True)
         except (TypeError, ValueError) as exc:
-            raise ReplayDataError(
-                f"invalid bar at {timestamp.strftime(MARKET_TIMESTAMP_FORMAT)}: {exc}"
+            raise ReplayDataInvalidError(
+                f"invalid bar at {timestamp.strftime(MARKET_TIMESTAMP_FORMAT)}: {exc}",
+                details={
+                    "timeframe": "target_day",
+                    "timestamp": timestamp.strftime(MARKET_TIMESTAMP_FORMAT),
+                    "reason": str(exc),
+                },
             ) from exc
         if bar.get("closed") is not True:
-            raise ReplayDataError(
-                f"invalid bar at {timestamp.strftime(MARKET_TIMESTAMP_FORMAT)}: expected a closed bar"
+            raise ReplayDataInvalidError(
+                f"invalid bar at {timestamp.strftime(MARKET_TIMESTAMP_FORMAT)}: expected a closed bar",
+                details={
+                    "timeframe": "target_day",
+                    "timestamp": timestamp.strftime(MARKET_TIMESTAMP_FORMAT),
+                    "reason": "expected a closed bar",
+                },
             )
         parsed[timestamp] = bar
     return tuple(parsed[key] for key in sorted(parsed))
@@ -1037,6 +1057,7 @@ def _prefix_at(
 
 __all__ = [
     "ReplayDataError",
+    "ReplayDataInvalidError",
     "ReplayDataPreparator",
     "ReplayDataTimeoutError",
     "ReplayDataUnavailableError",

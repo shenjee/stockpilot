@@ -70,8 +70,8 @@ def _bar(
     high: float,
     low: float,
     close: float,
-    volume: int,
-    amount: float,
+    volume: int | float | None,
+    amount: float | None,
     closed: bool = True,
 ) -> dict[str, Any]:
     return {
@@ -276,6 +276,86 @@ def five_minute_fallback() -> PreparedFixture:
     )
 
 
+def _with_quantity(
+    bars: list[dict[str, Any]],
+    *,
+    volume: int | float | None | object = ...,
+    amount: float | None | object = ...,
+) -> list[dict[str, Any]]:
+    rewritten: list[dict[str, Any]] = []
+    for bar in bars:
+        row = dict(bar)
+        if volume is not ...:
+            row["volume"] = volume
+        if amount is not ...:
+            row["amount"] = amount
+        rewritten.append(row)
+    return rewritten
+
+
+def volume_unavailable_replay() -> PreparedFixture:
+    """OHLC-complete target day with every volume set to null."""
+
+    return PreparedFixture(
+        name="volume_unavailable_replay",
+        symbol=SYMBOL,
+        market=MARKET,
+        trade_date=TRADE_DATE.isoformat(),
+        preheat_5m_bars=tuple(_with_quantity(_preheat_5m_bars(), volume=None)),
+        target_day_1m_bars=tuple(_with_quantity(_target_day_1m_bars(), volume=None)),
+        target_day_5m_bars=tuple(_with_quantity(_target_day_5m_bars(), volume=None)),
+        daily_bars_history=tuple(_daily_bars_history()),
+        quote_snapshots=tuple(_quote_snapshots()),
+        previous_close=9.80,
+        expected_granularity="one_minute",
+        expected_1m_reliable=True,
+        expected_5m_reliable=True,
+    )
+
+
+def amount_unavailable_replay() -> PreparedFixture:
+    """OHLC-complete target day with every amount set to null."""
+
+    return PreparedFixture(
+        name="amount_unavailable_replay",
+        symbol=SYMBOL,
+        market=MARKET,
+        trade_date=TRADE_DATE.isoformat(),
+        preheat_5m_bars=tuple(_with_quantity(_preheat_5m_bars(), amount=None)),
+        target_day_1m_bars=tuple(_with_quantity(_target_day_1m_bars(), amount=None)),
+        target_day_5m_bars=tuple(_with_quantity(_target_day_5m_bars(), amount=None)),
+        daily_bars_history=tuple(_daily_bars_history()),
+        quote_snapshots=tuple(_quote_snapshots()),
+        previous_close=9.80,
+        expected_granularity="one_minute",
+        expected_1m_reliable=True,
+        expected_5m_reliable=True,
+    )
+
+
+def partial_quantity_gap_replay() -> PreparedFixture:
+    """OHLC-complete day with a mid-session volume/amount null gap."""
+
+    bars_1m = _target_day_1m_bars()
+    gap_index = max(len(bars_1m) // 2, 1)
+    bars_1m[gap_index] = {**bars_1m[gap_index], "volume": None, "amount": None}
+    return PreparedFixture(
+        name="partial_quantity_gap_replay",
+        symbol=SYMBOL,
+        market=MARKET,
+        trade_date=TRADE_DATE.isoformat(),
+        preheat_5m_bars=tuple(_preheat_5m_bars()),
+        target_day_1m_bars=tuple(bars_1m),
+        target_day_5m_bars=tuple(_target_day_5m_bars()),
+        daily_bars_history=tuple(_daily_bars_history()),
+        quote_snapshots=tuple(_quote_snapshots()),
+        previous_close=9.80,
+        expected_granularity="one_minute",
+        expected_1m_reliable=True,
+        expected_5m_reliable=True,
+    )
+
+
 def market_context_service() -> MarketContextService:
     """Return the shared :class:`MarketContextService` used by fixtures."""
 
@@ -303,9 +383,12 @@ __all__ = [
     "SYMBOL",
     "TRADE_DATE",
     "PREVIOUS_TRADE_DATE",
+    "amount_unavailable_replay",
     "five_minute_fallback",
     "market_context_service",
     "market_session",
     "one_minute_replay",
+    "partial_quantity_gap_replay",
     "security_identity",
+    "volume_unavailable_replay",
 ]

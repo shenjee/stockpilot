@@ -55,7 +55,7 @@ class T0MarketSchemaTests(unittest.TestCase):
             {"timestamp", "open", "high", "low", "close", "volume", "amount", "closed"},
         )
 
-    def test_amount_and_closed_cannot_be_fabricated(self):
+    def test_amount_and_volume_may_be_null_without_fabrication(self):
         incomplete = {
             "date": "2026-07-22 09:35:00",
             "open": 10.0,
@@ -64,12 +64,40 @@ class T0MarketSchemaTests(unittest.TestCase):
             "close": 10.1,
             "volume": 100,
         }
-        with self.assertRaisesRegex(MarketDataSchemaError, "amount"):
-            standardize_bar(incomplete, closed=True)
-        with self.assertRaisesRegex(MarketDataSchemaError, "amount"):
-            standardize_bar({**incomplete, "amount": None, "closed": True})
+        missing_amount = standardize_bar(incomplete, closed=True)
+        self.assertEqual(missing_amount["volume"], 100)
+        self.assertIsNone(missing_amount["amount"])
+
+        explicit_null = standardize_bar(
+            {**incomplete, "volume": None, "amount": None, "closed": True}
+        )
+        self.assertIsNone(explicit_null["volume"])
+        self.assertIsNone(explicit_null["amount"])
+
         with self.assertRaisesRegex(MarketDataSchemaError, "closed"):
             standardize_bar({**incomplete, "amount": 1005.0})
+
+    def test_quote_quantity_may_be_null(self):
+        payload = standardize_quote_snapshot(
+            "000001",
+            {
+                "timestamp": "2026-07-22 10:15:03",
+                "price": 12.3,
+                "change_pct": 1.2,
+                "open": 12.1,
+                "high": 12.4,
+                "low": 12.0,
+                "pre_close": 12.15,
+                "volume": None,
+                "amount": None,
+                "volume_ratio": None,
+                "order_imbalance": None,
+                "turnover_rate": None,
+            },
+            market="sz",
+        )
+        self.assertIsNone(payload["quote"]["volume"])
+        self.assertIsNone(payload["quote"]["amount"])
 
     def test_quote_snapshot_maps_legacy_names_and_keeps_market_time(self):
         payload = standardize_quote_snapshot(

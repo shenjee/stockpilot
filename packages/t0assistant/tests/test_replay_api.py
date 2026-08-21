@@ -24,6 +24,7 @@ from packages.t0assistant.runtime.computation_contract import (
     ComputationStatus,
 )
 from packages.t0assistant.runtime.replay_data import (
+    ReplayDataInvalidError,
     ReplayDataTimeoutError,
     ReplayDataUnavailableError,
 )
@@ -385,7 +386,8 @@ class ReplayCommandApiTests(unittest.TestCase):
                 "invalid_request": ReplayDeliveryChannel.SYNCHRONOUS,
                 "symbol_not_found": ReplayDeliveryChannel.SYNCHRONOUS,
                 "invalid_trade_date": ReplayDeliveryChannel.SYNCHRONOUS,
-                "replay_data_unavailable": ReplayDeliveryChannel.ASYNCHRONOUS,
+                "replay_price_data_unavailable": ReplayDeliveryChannel.ASYNCHRONOUS,
+                "replay_data_invalid": ReplayDeliveryChannel.ASYNCHRONOUS,
                 "session_not_found": ReplayDeliveryChannel.SYNCHRONOUS,
                 "session_retired": ReplayDeliveryChannel.SYNCHRONOUS,
                 "invalid_replay_state": ReplayDeliveryChannel.SYNCHRONOUS,
@@ -401,7 +403,8 @@ class ReplayCommandApiTests(unittest.TestCase):
             "invalid_request": 400,
             "symbol_not_found": 404,
             "invalid_trade_date": 400,
-            "replay_data_unavailable": 503,
+            "replay_price_data_unavailable": 503,
+            "replay_data_invalid": 422,
             "session_not_found": 404,
             "session_retired": 409,
             "invalid_replay_state": 409,
@@ -485,14 +488,33 @@ class ReplayCommandApiTests(unittest.TestCase):
                 ReplayDataUnavailableError("no bars")
             )
         )
-        self.assertEqual(unavailable_error.error_code, "replay_data_unavailable")
+        self.assertEqual(
+            unavailable_error.error_code, "replay_price_data_unavailable"
+        )
         self.assertEqual(unavailable_channel, ReplayDeliveryChannel.ASYNCHRONOUS)
+
+        invalid_error, invalid_channel = map_replay_prepare_error_to_replay_error(
+            ReplayDataInvalidError(
+                "bad ohlc",
+                details={"timeframe": "1m", "reason": "high below close"},
+            )
+        )
+        self.assertEqual(invalid_error.error_code, "replay_data_invalid")
+        self.assertEqual(invalid_error.details["timeframe"], "1m")
+        self.assertEqual(invalid_channel, ReplayDeliveryChannel.ASYNCHRONOUS)
 
         timeout_error, timeout_channel = map_replay_prepare_error_to_replay_error(
             ReplayDataTimeoutError("deadline")
         )
-        self.assertEqual(timeout_error.error_code, "service_unavailable")
+        self.assertEqual(timeout_error.error_code, "replay_price_data_unavailable")
         self.assertEqual(timeout_channel, ReplayDeliveryChannel.ASYNCHRONOUS)
+
+        unknown_error, unknown_channel = map_replay_prepare_error_to_replay_error(
+            RuntimeError("boom")
+        )
+        self.assertEqual(unknown_error.error_code, "replay_price_data_unavailable")
+        self.assertEqual(unknown_error.details, {"prepare_failed": True})
+        self.assertEqual(unknown_channel, ReplayDeliveryChannel.ASYNCHRONOUS)
 
 
 if __name__ == "__main__":

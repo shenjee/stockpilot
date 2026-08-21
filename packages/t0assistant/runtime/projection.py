@@ -12,6 +12,7 @@ from packages.marketdata.t0_schema import standardize_quote
 
 from ._market_bars import (
     RuntimeMarketDataError,
+    _sum_nullable_quantity,
     aggregate_ohlcva,
     eligible_closed_bars,
     parse_market_timestamp,
@@ -127,8 +128,8 @@ def project_quote_at(
         "high": max(bar["high"] for bar in bars),
         "low": min(bar["low"] for bar in bars),
         "previous_close": resolved_previous_close,
-        "volume": sum(bar["volume"] for bar in bars),
-        "amount": sum(bar["amount"] for bar in bars),
+        "volume": _sum_nullable_quantity(bars, "volume"),
+        "amount": _sum_nullable_quantity(bars, "amount"),
         "volume_ratio": optional_source.get("volume_ratio"),
         "order_imbalance": optional_source.get("order_imbalance"),
         "turnover_rate": optional_source.get("turnover_rate"),
