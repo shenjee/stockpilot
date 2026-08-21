@@ -114,6 +114,12 @@ export function applicationErrorFrom(
 export function quoteRows(
   quote: unknown,
 ): Array<[label: string, value: string]>;
+export function quoteSummary(quote: unknown): {
+  price: string;
+  difference: string;
+  changePercent: string;
+  direction: "rise" | "fall" | "flat";
+};
 export function quoteDataCutoffText(quote: unknown): string;
 export function latestDailyBars(
   snapshot: WorkbenchChartSnapshot,

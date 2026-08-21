@@ -14,6 +14,7 @@ import {
   operationMatchesEnvelope,
   quoteDataCutoffText,
   quoteRows,
+  quoteSummary,
   restoredSecurityFromResponse,
   securitiesFromSearchResponse,
   securityCategoryLabel,
@@ -298,9 +299,7 @@ test("the quote sidebar keeps every field and renders missing values in place", 
   const rows = quoteRows(quote);
 
   assert.deepEqual(rows.map(([label]) => label), [
-    "最新价",
-    "涨跌幅",
-    "今日开盘",
+    "今开",
     "最高",
     "最低",
     "昨收",
@@ -312,7 +311,29 @@ test("the quote sidebar keeps every field and renders missing values in place", 
   ]);
   assert.equal(rows.find(([label]) => label === "量比")[1], "--");
   assert.equal(rows.find(([label]) => label === "委比")[1], "--");
-  assert.equal(rows.find(([label]) => label === "涨跌幅")[1], "+0.80%");
+  assert.equal(rows.find(([label]) => label === "今开")[1], "10.00");
+  assert.equal(rows.find(([label]) => label === "最高")[1], "10.12");
+  assert.equal(rows.find(([label]) => label === "成交额")[1], "51.32 万");
+  assert.deepEqual(quoteSummary(quote), {
+    price: "10.08",
+    difference: "+0.08",
+    changePercent: "+0.80%",
+    direction: "rise",
+  });
+  assert.equal(
+    quoteSummary({ latest_price: 78.77, previous_close: 79.48, change_percent: -0.89 }).direction,
+    "fall",
+  );
+  assert.deepEqual(
+    quoteSummary({ latest_price: 79.48, previous_close: 79.48, change_percent: 0 }),
+    { price: "79.48", difference: "0.00", changePercent: "0.00%", direction: "flat" },
+  );
+  assert.deepEqual(quoteSummary(undefined), {
+    price: "--",
+    difference: "--",
+    changePercent: "--",
+    direction: "flat",
+  });
   assert.equal(quoteDataCutoffText(quote), "数据截止  07-22 09:35:03");
   assert.equal(quoteDataCutoffText({}), "数据截止  --");
 });

@@ -224,10 +224,8 @@ export function applicationErrorFrom(candidate) {
 
 export function quoteRows(quote) {
   return [
-    ["最新价", formatNumber(quote?.latest_price)],
-    ["涨跌幅", formatPercent(quote?.change_percent)],
-    ["今日开盘", formatNumber(quote?.open)],
-    ["最高", formatNumber(quote?.high)],
+    ["今开", formatPrice(quote?.open)],
+    ["最高", formatPrice(quote?.high)],
     ["最低", formatNumber(quote?.low)],
     ["昨收", formatNumber(quote?.previous_close)],
     ["成交量", formatCompact(quote?.volume)],
@@ -236,6 +234,32 @@ export function quoteRows(quote) {
     ["实时换手率", formatPercent(quote?.turnover_rate)],
     ["委比", formatPercent(quote?.order_imbalance)],
   ];
+}
+
+export function quoteSummary(quote) {
+  const latestPrice = finite(quote?.latest_price);
+  const previousClose = finite(quote?.previous_close);
+  const changePercent = finite(quote?.change_percent);
+  const changePercentValue = quote?.change_percent;
+  const difference = latestPrice && previousClose
+    ? quote.latest_price - quote.previous_close
+    : null;
+  const direction = difference === null || difference === 0
+    ? "flat"
+    : difference > 0
+      ? "rise"
+      : "fall";
+
+  return {
+    price: latestPrice ? formatPrice(quote.latest_price) : "--",
+    difference: difference === null ? "--" : formatSignedNumber(difference),
+    changePercent: changePercent
+      ? formatPercent(quote.change_percent)
+      : changePercentValue === 0
+        ? "0.00%"
+        : "--",
+    direction,
+  };
 }
 
 /** Quote-panel as-of line; not a quote field row. */
@@ -271,6 +295,14 @@ function formatNumber(value) {
     : "--";
 }
 
+function formatPrice(value) {
+  return finite(value) ? value.toFixed(2) : "--";
+}
+
+function formatSignedNumber(value) {
+  return `${value > 0 ? "+" : ""}${value.toFixed(2)}`;
+}
+
 function formatPercent(value) {
   if (!finite(value)) return "--";
   const sign = value > 0 ? "+" : "";
@@ -285,8 +317,7 @@ function formatCompact(value) {
 }
 
 function formatCurrency(value) {
-  const formatted = formatCompact(value);
-  return formatted === "--" ? formatted : `¥${formatted}`;
+  return formatCompact(value);
 }
 
 function formatTimestamp(value) {

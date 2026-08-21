@@ -58,6 +58,7 @@ import {
   operationMatchesEnvelope,
   quoteDataCutoffText,
   quoteRows,
+  quoteSummary,
   restoredSecurityFromResponse,
   securitiesFromSearchResponse,
   securityCategoryLabel,
@@ -2371,6 +2372,16 @@ function MarketSidebar({
       </section>
       <section className="quote-panel">
         <h2>行情数据</h2>
+        {(() => {
+          const summary = quoteSummary(quote);
+          return (
+            <div className={`quote-summary quote-${summary.direction}`}>
+              <span aria-label="最新价">{summary.price}</span>
+              <span aria-label="与昨日收盘价的差价">{summary.difference}</span>
+              <span aria-label="相比昨日收盘的涨跌幅">{summary.changePercent}</span>
+            </div>
+          );
+        })()}
         <dl>
           {quoteRows(quote).map(([label, value]) => (
             <div

@@ -422,6 +422,20 @@ button { color: inherit; }
   margin: 8px 0 0;
   font-size: 12px;
 }
+.quote-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin: 8px 0 2px;
+  color: #cbd5e1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.quote-summary span:first-child { font-size: 24px; }
+.quote-summary span:not(:first-child) { font-size: 14px; }
+.quote-rise { color: #ef6a6a; }
+.quote-fall { color: #56c596; }
+.quote-flat { color: #111827; }
 .quote-panel dl div {
   display: flex;
   justify-content: space-between;
