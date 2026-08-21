@@ -5,7 +5,7 @@
 | 项目 | 内容 |
 | --- | --- |
 | 状态 | 历史行情回放开发基线 |
-| 版本 | v1.0 |
+| 版本 | v1.1 |
 | 更新日期 | 2026-08-21 |
 | 范围 | 单只股票、单个交易日、只读 Replay |
 | 上位需求 | [`t0_assistant_prd.md`](./t0_assistant_prd.md) |
@@ -29,8 +29,9 @@ main/preload 和 React 可以独立实现并用同一组确定性 fixture 验收
 - 通过完整快照建立或替换前端状态；
 - 验证向后定位和并发定位不会泄漏未来数据。
 
-本功能暂不包含实时行情、真实成交、收费方案、偏好持久化、后台预取和生产级
-增量事件。后续能力只能扩展本契约，不能绕过 Session、revision
+本文不定义实时行情的 Session/传输协议，也不包含真实成交、收费方案、偏好持久化、
+后台预取和生产级增量事件；但第 6.4 节的 nullable、聚合和 warning 语义是
+Live/Replay 共用管线的规范。后续能力只能扩展本契约，不能绕过 Session、revision
 或完整快照规则。
 
 ## 3. 通用约定
@@ -404,8 +405,8 @@ main/preload 和 React 可以独立实现并用同一组确定性 fixture 验收
   "high": 10.28,
   "low": 10.18,
   "close": 10.25,
-  "volume": 125000.0,
-  "amount": 1280000.0,
+  "volume": null,
+  "amount": null,
   "closed": true
 }
 ```
@@ -419,13 +420,19 @@ Bar 字段说明：
 | `high` | number | 是 | 本周期截至当前的最高价。 |
 | `low` | number | 是 | 本周期截至当前的最低价。 |
 | `close` | number | 是 | 本周期最后一笔成交对应的收盘价或当前价。 |
-| `volume` | number | 是 | 本周期累计成交量。 |
-| `amount` | number | 是 | 本周期累计成交额。 |
+| `volume` | number 或 null | 是 | 本周期累计成交量；Provider 无法提供时为 `null`。 |
+| `amount` | number 或 null | 是 | 本周期累计成交额；Provider 无法提供时为 `null`。 |
 | `closed` | boolean | 是 | `true` 表示周期已经正式闭合，`false` 表示仍在形成中的动态 K 线。 |
 
-`timestamp` 是标准闭合时刻；OHLC、`volume` 和 `amount` 必须为非负 JSON number，
-并满足正常 OHLC 包含关系。只有当前动态 5 分钟 K 可以使用 `closed: false`；
+`timestamp` 是标准闭合时刻；OHLC 必须为非负 JSON number 并满足正常 OHLC 包含关系，
+是价格 K 线能否进入 Replay 的最低数据门槛。`volume` 和 `amount` 字段必须保留，
+有值时必须为非负 JSON number，无法获得时使用 `null`；不得用 `0`、OHLCV 推算值或
+未来数据表达未知。只有当前动态 5 分钟 K 可以使用 `closed: false`；
 `bars_1m` 和历史/正式 5 分钟 K 均为 `true`。
+
+Replay 粒度可靠性只按时间覆盖和 OHLC 合法性判断。缺少 `volume` 或 `amount` 不得让
+1 分钟 Replay 降级到 5 分钟，也不得导致 Replay 加载失败；它只使依赖字段的指标点
+为 `null`，并产生第 6.3 节定义的非阻塞 warning。
 
 `daily_bars` 使用相同 OHLCVA 字段，但 `timestamp` 为 `YYYY-MM-DD`；目标日动态日 K
 使用 `closed: false`，历史日 K 使用 `true`。
@@ -460,8 +467,8 @@ Quote 字段说明：
 | `high` | number | 是 | 目标交易日截至该时刻的最高价。 |
 | `low` | number | 是 | 目标交易日截至该时刻的最低价。 |
 | `previous_close` | number | 是 | 上一个交易日的正式收盘价。 |
-| `volume` | number | 是 | 目标交易日截至该时刻的累计成交量。 |
-| `amount` | number | 是 | 目标交易日截至该时刻的累计成交额。 |
+| `volume` | number 或 null | 是 | 目标交易日截至该时刻的累计成交量；无法形成时为 `null`。 |
+| `amount` | number 或 null | 是 | 目标交易日截至该时刻的累计成交额；无法形成时为 `null`。 |
 | `volume_ratio` | number 或 null | 是 | 量比；当前时点无法可靠计算时为 `null`。 |
 | `order_imbalance` | number 或 null | 是 | 委买委卖不平衡指标；数据源不提供或无法计算时为 `null`。 |
 | `turnover_rate` | number 或 null | 是 | 换手率百分比；缺少流通股本等必要数据时为 `null`。 |
@@ -519,6 +526,15 @@ Quote 字段不可获得时保留字段并使用 `null`。Replay quote 只能由
   `market.bars_5m`，不混入正式指标序列。
 - `one_minute.vwap` 按目标日截至各分钟的累计成交额除以累计成交量计算；预热数据
   不进入该序列。
+- 成交量未知时，对应 `volume.values`、`volume.ma5` 和 `volume.ma10` point 保留时间戳
+  并使用 `value: null`；VOL MA 使用严格滚动窗口，窗口内任意一个成交量为 `null`，
+  该 MA point 就为 `null`，不得跳过未知值只平均已知 bar。整段成交量未知时，
+  `values`、`ma5`、`ma10` 仍与对应 bar 序列等长，且全部 point 为 `null`。
+- VWAP 所需的成交量或成交额未知时，对应 `one_minute.vwap` point 使用
+  `value: null`。VWAP 是从当日开盘开始的累计指标：输入前缀第一次出现未知成交量或
+  成交额后，当日后续 point 一律为 `null`，不得跨过缺口继续累计，也不得从缺口后
+  重新起算一段名称仍为 VWAP 的曲线。只有缺失数据补齐并从当日开盘重算完整输入前缀
+  后，后续 VWAP 才能恢复。
 - 5 分钟 MA、BOLL、VOL MA 和 MACD 只基于正式闭合 5 分钟 K 更新；1 分钟指标只
   包含目标日 `current_time` 及以前的数据。
 
@@ -549,6 +565,64 @@ Warning 字段说明：
 | `details` | object | 是 | 供程序诊断或补充展示的结构化信息，默认 `{}`，不得包含异常栈或 Provider 原始响应。 |
 
 无法形成可用快照的情况必须使用 `operation_failed`，不得只写 warning。
+
+量额缺失使用以下稳定 warning；两者可同时存在：
+
+| `warning_code` | `affected_capability` | `affected_field` | 含义 |
+| --- | --- | --- | --- |
+| `volume_data_unavailable` | `intraday_chart` 或 `five_minute_chart` | `market.bars_1m[].volume` 或 `market.bars_5m[].volume` | 价格 K 线可用，但全部或部分成交量无法获得；Replay 继续。 |
+| `amount_data_unavailable` | `intraday_chart` 或 `five_minute_chart` | `market.bars_1m[].amount` 或 `market.bars_5m[].amount` | 价格 K 线可用，但全部或部分成交额无法获得；Replay 继续，VWAP 等依赖项不可用。 |
+
+量额 warning 按当前成功快照实际发布的数据前缀逐次重算，不是 Session 常量，也不得
+统计尚未到达的未来 bar。`bars_1m` 的范围是目标日截至 `current_time` 的已发布 bar；
+`bars_5m` 的范围是当前快照中的全部已发布 bar，包含预热 5 分钟 bar 和目标日截至
+`current_time` 的 bar。`missing_count >= 1` 即发布 warning，不设比例门槛。
+
+`details` 必须包含 `scope: "published_prefix"`、`as_of`、`timeframe`、
+`missing_count` 和 `total_count`；`as_of` 等于当前快照的 `current_time`。
+每个 `timeframe + field` 独立产生一条 warning：1m 与 5m 同时缺成交量时发布两条
+`volume_data_unavailable`，成交量与成交额同时缺失时也分别发布，不使用通配字面路径
+合并。warning 描述的是数据能力降级，不得映射为 `service_unavailable`，也不得包含
+Provider 原始响应。
+
+正式闭合 5m 替换同一时间桶的动态 5m 后，`bars_5m`、
+`indicators.five_minute.volume` 以及 5m 的 warning 必须在同一新快照中按正式序列重算；
+正式 5m 有量时，该桶不再计入 5m `missing_count`。构成该桶的 1m 仍为 `null` 时，1m
+warning 继续保留并按 1m 前缀计数，不得被正式 5m 的权威值反向回填或抵消。
+
+### 6.4 空值传播与聚合规则
+
+量额的 `null` 表示未知，不是零成交。所有从 bar 派生的量额字段都遵守“未知传播”规则：
+
+| 派生结果 | 规则 |
+| --- | --- |
+| 动态 5 分钟 K | OHLC 按已发生的 1m 正常聚合；桶内任意 1m 的 `volume` 为 `null`，动态 5m `volume` 为 `null`，`amount` 同理独立判断，不得只累加已知分钟。正式闭合 5m 到达后可用其权威字段整体替换动态值。 |
+| 动态日 K / `daily_bars` | 日 K 的 `volume`、`amount` 同样可为 `null`；当日截至当前的组成 bar 任一对应字段未知，动态日 K 的该字段为 `null`。正式日 K 可用其权威字段替换动态值。 |
+| `quote.volume` / `quote.amount` | 从分钟 bar 累加时，只要输入前缀任一对应字段未知，累计字段即为 `null`，不得只加已知分钟。Provider 直接给出的权威累计快照可以独立使用并在行情栏优先于分钟派生值，但必须同时满足同一证券、同一交易日且 `quote.timestamp <= snapshot.current_time`，并保留来源和行情时间，不能冒充由分钟序列计算的结果。权威 Quote 不回填分钟 bar，也不消除分钟 warning；Replay 不得采用目标时点之后的 Quote。 |
+| VOL MA | 完整窗口内任意值未知则该点为 `null`；不跳过未知值。 |
+| VWAP | 当日累计前缀任一成交量或成交额未知，则该点及后续点为 `null`，直至补齐后从开盘完整重算。 |
+
+仓储边界对旧缓存的 `amount=0` 使用确定性规范化：`volume=0` 时保留真实零；
+`volume>0` 且没有 Provider 明确零值来源，或 `volume=null` 时输出 `amount=null`。
+T0-009 必须幂等写回 SQL `NULL` 并记录迁移数量，Repository 读取映射同时保留该规则，
+以覆盖迁移前、只读或尚未完成迁移的旧库；不得仅在 Renderer 展示时替换。
+
+上述 nullable、空值传播和 warning 规则属于 Live/Replay 共用标准行情与 Workbench
+Pipeline 的契约，不是 Replay 特例。Live 快照与 Replay 快照都应对各自当前已发布前缀
+生成相同结构的 warning；Replay 仍额外遵守不读取未来数据的限制。公共快照以 bar 的
+`null` 和 warning 作为可用性事实，不新增独立的公共 evidence 对象；ProviderIssue、
+来源和迁移诊断保留在标准化/仓储内部元数据与技术日志中。
+
+展示层不得按组件类型发明两套缺失语义：已有当前快照但字段为 `null` 或指标 point
+不可计算时显示 `N/A`；尚无快照、正在加载或游标尚未到达该点时显示 `--`。图表与行情
+侧栏可以使用不同布局，但占位符语义必须相同。量额 warning 默认不显示全局横幅或
+toast，只驱动受影响区域的 `N/A`、无障碍说明和诊断日志；首期每个显示 `N/A` 的值或
+图表区域必须提供包含字段名、`N/A` 和“数据不可用”的可访问名称，例如
+`aria-label="成交量：N/A（数据不可用）"`，不能仅写诊断日志。只有价格回放无法开始或真实
+服务/操作失败才使用全局错误反馈。1m 与 5m VOL 都以当前渲染视口判断整幅 `N/A`：
+视口内至少有一个有效成交量时绘制有效柱并保留缺口，缩放只改变显示，不改变 warning。
+分时虽固定展示全日时间轴，这一判断只检查当前快照已经发布的 1m bar；未来尚未发生或
+Replay 尚未推进到的轴槽不计入分母，也不据此触发 `N/A`。
 
 行情范围与计算约束：
 
@@ -598,13 +672,15 @@ created/loading/ready/playing/paused/failed ──────→ retired
 
 - `begin_replay` 每次创建新 Session；不得恢复上一次 Replay 的日期、进度或派生状态。
 - Session 创建后绑定 `symbol + trade_date`，不能在原实例上切换股票或日期。
-- Session 进入 `ready` 前必须从本地 SQLite 和必要的网络补数准备好目标日完整输入
-  序列，并保存在本次回放可直接读取的内存状态中；进入 `ready` 后，播放、单步和定位
-  不按下一根 K 逐次请求网络。
-- `end_time` 之前应有而缺失的行情必须在进入 `ready` 前先尝试补齐。1 分钟数据不能
-  形成可靠回放、但正式 5 分钟数据可用时降级为 5 分钟回放；两种粒度都不能形成
-  可靠回放时返回 `replay_data_unavailable`，不得缩短 `end_time` 或生成虚假 K 线。
-- `ready` 表示目标日完整输入序列已经准备完成、尚未开始播放或执行游标操作的初始
+- Session 进入 `ready` 前必须从本地 SQLite 和必要的网络补数准备好目标日价格输入
+  序列，并保存在本次回放可直接读取的内存状态中；量额可用性由 bar 的 `null` 和
+  当前快照 warning 表达。进入 `ready`
+  后，播放、单步和定位不按下一根 K 逐次请求网络。
+- `end_time` 之前应有而缺失的价格 K 线必须在进入 `ready` 前先尝试补齐。1 分钟价格
+  K 线不能形成可靠回放、但正式 5 分钟价格 K 线可用时降级为 5 分钟回放；两种粒度
+  都不能形成可靠价格回放时返回 `replay_price_data_unavailable`，不得缩短 `end_time`
+  或生成虚假 K 线。`volume` / `amount` 缺失只发布 warning，不改变粒度或 Session 状态。
+- `ready` 表示目标日价格输入序列已经准备完成、尚未开始播放或执行游标操作的初始
   静止状态；
   `paused` 表示用户暂停，或单步/定位完成后的静止状态。两者都允许开始播放、单步和
   定位，但不是同一个状态值。
@@ -664,12 +740,12 @@ created/loading/ready/playing/paused/failed ──────→ retired
 
 ```json
 {
-  "error_code": "replay_data_unavailable",
+  "error_code": "replay_price_data_unavailable",
   "category": "data",
   "severity": "error",
   "retryable": true,
   "affected_capability": "replay",
-  "message": "没有可用的历史行情，无法开始回放",
+  "message": "目标日没有可用的价格 K 线，无法开始回放",
   "request_id": "opaque-request-id",
   "operation_id": "opaque-operation-id",
   "details": {}
@@ -711,7 +787,8 @@ API 实现使用下表作为“错误码 → 默认交付通道”映射。具�
 | `invalid_request` | `validation` | `error` | `symbol_selection` 或 `replay` | 字段、类型或时间格式无效 | 否 | 同步拒绝 |
 | `symbol_not_found` | `data` | `error` | `symbol_selection` | 无法解析标准证券 | 是 | 同步拒绝 |
 | `invalid_trade_date` | `validation` | `error` | `replay` | 日期不是可接受的回放目标 | 否 | 同步拒绝 |
-| `replay_data_unavailable` | `data` | `error` | `replay` | 1m 与正式 5m 数据都无法形成覆盖市场回放要求的可靠输入 | 是 | `operation_failed` |
+| `replay_price_data_unavailable` | `data` | `error` | `replay` | 1m 与正式 5m 都因无数据、缺口或覆盖无法证明而不能形成可靠价格输入，且所有尝试粒度均未发现非法 bar | 是 | `operation_failed` |
+| `replay_data_invalid` | `data` | `error` | `replay` | 最终无合法降级输入，且至少一个尝试粒度已取得字段或 OHLC 关系非法的价格 K 线；`details` 指明粒度、字段和数量 | 视数据能否重新获取而定 | `operation_failed` |
 | `session_not_found` | `session` | `error` | `replay` | Session 不存在或不属于当前 generation | 否 | 同步拒绝 |
 | `session_retired` | `session` | `error` | `replay` | Session 已结束 | 否 | 同步拒绝 |
 | `invalid_replay_state` | `session` | `error` | `replay` | 当前 Session 状态不允许所请求的控制命令 | 是 | 同步拒绝 |
@@ -720,16 +797,48 @@ API 实现使用下表作为“错误码 → 默认交付通道”映射。具�
 | `calculation_failed` | `calculation` | `error` | `five_minute_chart` 或 `chan_analysis` | 指标或 CZSC 重建失败 | 是 | `operation_failed` |
 | `service_unavailable` | `service` | `error` | `service` | Python 服务未就绪或正在重启 | 是 | 同步拒绝 |
 
-内部异常栈、凭据、文件路径和上游原始响应只写入脱敏技术日志，不进入错误 payload。
+价格可靠性和非法数据的判定固定如下：
+
+- 不采用“允许缺失 N 根”或缺失比例阈值。某粒度可靠，要求查询范围已有明确的覆盖结果，
+  目标日至少有一根价格 bar，时间戳有序、唯一、位于交易时段，且每根返回 bar 的
+  OHLC 均合法。交易时段内未返回的分钟不得伪造；只有 Provider/仓储的覆盖结果能够
+  明确说明该范围已经完整查询时，未出现的分钟才可作为无成交/停牌事实跨过。
+- 缺口判断沿用并强化 `identify_missing_ranges` 的范围覆盖证据，不以预期固定 bar 数量
+  推断完整。1m 不可靠时尝试正式 5m；5m 也不可靠时失败。
+- 已返回的任意价格 bar 存在非法字段或 OHLC 包含关系时，该粒度整体无效，不得静默
+  丢弃非法 bar 后继续。1m 非法但正式 5m 合法时仍可降级。若最终没有合法降级输入，
+  只要任一尝试粒度已取得非法价格 bar，就优先使用 `replay_data_invalid`；因此“1m 非法
+  + 5m 无数据或覆盖不足”也属于 `replay_data_invalid`。只有所有失败粒度都未发现非法
+  bar、只是没有价格输入或无法证明覆盖可靠时，才使用 `replay_price_data_unavailable`。
+- 旧错误码 `replay_data_unavailable` 在 v1.1 正式废弃，新实现和新事件不得再发出；
+  兼容边界可以临时读取旧码并映射为上述两个准确错误之一。
+
+`service_unavailable` 只表示 Python 服务进程未启动、已经退出、正在重启，或本地传输
+确实无法到达服务；不得用它兜底包装 Provider 数据缺失、bar 校验失败、Replay 准备
+失败或指标计算失败。未知内部异常必须写入脱敏技术日志，并映射到最接近的稳定领域
+错误；若尚无准确错误码，应先扩展错误契约，不得返回虚假的服务状态。
+
+重试动作按错误归属执行：`service_unavailable` 才允许重启或重连本地服务；价格数据
+错误重新获取并准备 Replay；计算错误重建相应计算。点击重试不得只执行与原失败无关
+的服务重连，也不得在服务已经 ready 时假装问题已恢复。
 
 ## 9. 确定性 Fixture 和验收门槛
 
-历史行情回放功能至少准备两组仓库内 fixture：
+历史行情回放功能至少准备六组仓库内 fixture：
 
 1. `one_minute_replay`：跨多个交易日的 5 分钟预热数据，加一个完整目标交易日的
    1 分钟和正式 5 分钟数据；
 2. `five_minute_fallback`：相同类型标的和交易日，但目标日缺少 1 分钟数据，只提供
-   正式闭合 5 分钟数据。
+   正式闭合 5 分钟数据；
+3. `volume_unavailable_replay`：目标日价格 K 线完整，但全部或部分 `volume: null`，
+   验证 Replay 不降级、不失败，VOL 输出为 `null` 并携带准确 warning；
+4. `amount_unavailable_replay`：目标日价格 K 线完整，但全部或部分 `amount: null`，
+   验证 Replay 不降级、不失败，VWAP 输出为 `null` 并携带准确 warning；
+5. `partial_quantity_gap_replay`：量额缺口前后都有有效值，验证严格 VOL MA 窗口、
+   VWAP 缺口后永久停算、动态 5m/日 K/quote 空值传播和按游标重算 warning；
+6. `invalid_price_replay`：分别提供非法 1m + 合法正式 5m、非法 1m + 5m 无可靠覆盖、
+   两粒度均非法、两粒度均无可靠覆盖四种场景，验证降级、非法优先级与两个价格错误码，
+   不允许静默丢 bar。
 
 fixture 不访问网络，时间戳严格递增，覆盖上午、午休、下午和跨日边界。验收测试必须
 证明：
@@ -750,6 +859,7 @@ fixture 不访问网络，时间戳严格递增，覆盖上午、午休、下午
    协议不依赖后端缺口通知事件；
 7. 服务 generation 改变后旧 Session 和旧事件失效；
 8. 1 分钟缺失时正确进入 5 分钟降级模式；两种粒度都不会为午休生成虚假步骤；
+   单独缺少成交量或成交额不触发粒度降级或 Replay 失败；
 9. 快照替换是原子的，React 不展示部分计算结果；
 10. `select_symbol`、指标 point、warning、行情 bar/quote 和错误枚举通过 Schema
     合约测试；
@@ -758,18 +868,36 @@ fixture 不访问网络，时间戳严格递增，覆盖上午、午休、下午
     第 7 节；
 13. 同步拒绝不创建 `operation_id` 或事件，异步失败只通过一个带原
     `operation_id` 的 `operation_failed` 事件交付；
-14. 各类事件严格按第 5 节规则携带或省略 `operation_id`。
-15. `session_status.reason` 只使用登记值。
-16. 任意可结束状态都能进入 `retired`。
-17. 已处于 `ready` 或 `paused` 时重复暂停不增加 revision，也不发布事件。
-18. `end_time` 来自证券市场和目标交易日的交易日历；行情缺失不会缩短该时间。
-19. `next_bar_time` 始终指向当前粒度的下一根实际 K，或在序列尾部为 `null`。
-20. React 不依赖 Python 按钮开关字段，也能从事实状态推导回放控件状态。
-21. `set_replay_speed` 只接受 `1/2/5/10`，默认 `1`；合法变更增加一次 revision 并
+14. 各类事件严格按第 5 节规则携带或省略 `operation_id`；
+15. 数据、计算、Session 与服务进程错误分别映射到准确错误码；Provider 返回
+    `volume: null` / `amount: null` 时不得出现 `service_unavailable`，服务已经 ready 时
+    数据重试不得退化成仅重连服务；
+16. `session_status.reason` 只使用登记值；
+17. 任意可结束状态都能进入 `retired`；
+18. 已处于 `ready` 或 `paused` 时重复暂停不增加 revision，也不发布事件；
+19. `end_time` 来自证券市场和目标交易日的交易日历；行情缺失不会缩短该时间；
+20. `next_bar_time` 始终指向当前粒度的下一根实际 K，或在序列尾部为 `null`；
+21. React 不依赖 Python 按钮开关字段，也能从事实状态推导回放控件状态；
+22. `set_replay_speed` 只接受 `1/2/5/10`，默认 `1`；合法变更增加一次 revision 并
     发布一个不带 `operation_id` 的 `playback_speed_changed` 状态事件，相同值为不增加
-    revision 的幂等 no-op。
-22. 速率切换前后的相同输入前缀产生等价业务快照；速率不影响单步、定位、输入顺序或
-    最终结果，1 分钟和 5 分钟降级模式都按各自实际 K 的数量解释倍速。
+    revision 的幂等 no-op；
+23. 速率切换前后的相同输入前缀产生等价业务快照；速率不影响单步、定位、输入顺序或
+    最终结果，1 分钟和 5 分钟降级模式都按各自实际 K 的数量解释倍速；
+24. warning 的统计只使用当前已发布前缀，游标变化后重算；1m/5m 与 volume/amount
+    分别产生 warning，任一缺失点即可触发，计数、路径和 `as_of` 准确；
+25. VOL MA 窗口不跳过 `null`，VWAP 缺口后不重新累计；动态 5m、动态日 K 和由分钟
+    形成的 quote 不只累加已知量额；
+26. 已返回非法 bar 不会被静默丢弃；1m/5m 降级与
+    `replay_data_invalid` / `replay_price_data_unavailable` 分类符合第 8 节，且新事件不
+    出现旧码 `replay_data_unavailable`；
+27. 1m/5m VOL 的整幅 `N/A` 随渲染视口变化，但快照 warning 不随视口变化；量额 warning
+    不产生全局横幅或 toast；
+28. Live 与 Replay 对相同标准行情输入前缀产生相同 nullable 派生结果和量额 warning。
+29. 分时 VOL 的整幅 `N/A` 只检查已发布 1m bar，不把全日轴上的未来空槽计为缺失；
+    正式 5m 替换动态值后 5m 指标和 warning 立即重算，1m warning 独立保留。
+30. 同时存在权威 Quote 和缺量分钟时，行情栏使用时间有效的权威 Quote，分钟派生结果
+    仍为 `null` 且 warning 保留；Replay 不读取游标之后的 Quote。
+31. `N/A` 值和图表区域具有包含字段名、`N/A` 与“数据不可用”的可访问名称。
 
 等价快照比较只允许忽略以下运行身份字段：事件信封中的 `service_generation`、
 `operation_id`，以及 payload 中的 `session.session_id`。`request_id` 不进入工作台快照。
