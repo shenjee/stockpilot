@@ -1170,13 +1170,9 @@ export function App() {
   // TradeDrawer already scopes). A historical trading day loads a complete,
   // static workbench snapshot via get_historical_snapshot and replaces the
   // current projection with it.
-  // When opened from Replay, exit Replay first so Live/historical projection
-  // becomes the visible workbench (selectActiveWorkbenchProjection otherwise
-  // keeps showing the Replay chart).
+  // When opened from Replay, exit Replay only after the target chart is ready
+  // so identity/snapshot failures keep the Replay session and projection.
   async function handleEnterDayChart(symbol: string, tradeDate: string) {
-    if (modeRef.current === WorkbenchMode.REPLAY) {
-      selectMode(WorkbenchMode.LIVE);
-    }
     const requestSequence = navigationRequests.current.begin();
     const today = localToday();
     // Resolve identity before entering today's Live chart or loading a
@@ -1187,6 +1183,9 @@ export function App() {
       if (!identity || !navigationRequests.current.isCurrent(requestSequence)) {
         setDayChartNotice("证券身份解析失败，无法进入当天图形。");
         return;
+      }
+      if (modeRef.current === WorkbenchMode.REPLAY) {
+        selectMode(WorkbenchMode.LIVE);
       }
       void performSecuritySelection(identity);
       return;
@@ -1253,6 +1252,8 @@ export function App() {
         return;
       }
       const snapshot = inspected.snapshot;
+      // Install the historical projection on Live first, then leave Replay so
+      // the visible switch lands on the prepared day chart (not a stale Live).
       setWorkbench((current) => selectWorkbenchSecurity(current, identity));
       setQuery(identity.code);
       liveProjectionController.current?.replace(
@@ -1262,6 +1263,9 @@ export function App() {
           revision: session.revision,
         }),
       );
+      if (modeRef.current === WorkbenchMode.REPLAY) {
+        selectMode(WorkbenchMode.LIVE);
+      }
       setLoading(false);
     } catch (error) {
       if (!navigationRequests.current.isCurrent(requestSequence)) return;
@@ -1752,6 +1756,11 @@ export function App() {
   const dailyBars = latestDailyBars(snapshot);
 
   const replayMode = workbench.mode === WorkbenchMode.REPLAY;
+  // Historical day charts share Live mode but must stay read-only: CRUD belongs
+  // to the Live drawer / history dialog, not the restored day view (#163).
+  const historicalChartVisible =
+    snapshot.session?.session_type === "historical";
+  const tradeDrawerReadOnly = replayMode || historicalChartVisible;
   const fiveMinuteFallback =
     replayMode && replayFacts?.granularity === "five_minute";
 
@@ -1963,11 +1972,11 @@ export function App() {
         />
       )}
 
-      {!replayMode && isTradableSecurity && (
+      {isTradableSecurity && (
         <TradeDrawer
           security={workbench.security}
           tradeClient={tradeClient}
-          feePlanClient={feePlanClient}
+          feePlanClient={tradeDrawerReadOnly ? null : feePlanClient}
           feeAdvisor={feeAdvisor}
           serviceReady={serviceReady}
           subscribeAppEvent={subscribeAppEvent}
@@ -1975,24 +1984,9 @@ export function App() {
           tradeOpController={tradeOpController.current as TradeOperationController}
           onEnterDayChart={handleEnterDayChart}
           resolveSecurity={resolveSecurity}
-        />
-      )}
-
-      {replayMode && isTradableSecurity && (
-        <TradeDrawer
-          security={workbench.security}
-          tradeClient={tradeClient}
-          feePlanClient={null}
-          feeAdvisor={feeAdvisor}
-          serviceReady={serviceReady}
-          subscribeAppEvent={subscribeAppEvent}
-          serviceGeneration={status.service_generation}
-          tradeOpController={tradeOpController.current as TradeOperationController}
-          onEnterDayChart={handleEnterDayChart}
-          resolveSecurity={resolveSecurity}
-          readOnly
-          dayTrades={chartTrades}
-          tradeDate={visibleTradeDate}
+          readOnly={tradeDrawerReadOnly}
+          dayTrades={tradeDrawerReadOnly ? chartTrades : undefined}
+          tradeDate={tradeDrawerReadOnly ? visibleTradeDate : undefined}
         />
       )}
 
