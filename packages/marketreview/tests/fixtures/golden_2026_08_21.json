@@ -1,0 +1,93 @@
+{
+  "previous_trade_date": "2026-08-20",
+  "trade_date": "2026-08-21",
+  "previous_atoms": {
+    "effective_limit_up": 40
+  },
+  "atoms": {
+    "effective_limit_up": 52,
+    "limit_up_20pct": 8,
+    "opened_limit_down": 3,
+    "closed_limit_down": 15,
+    "limit_up_failed": 12,
+    "pullback_count": 100,
+    "median_change_pct": 0.0045,
+    "advancing_count": 2500,
+    "declining_count": 2300,
+    "margin_balance_sh": 950000000000.0,
+    "margin_balance_sz": 880000000000.0,
+    "margin_balance_bj": 12000000000.0,
+    "sh_index_close": 3200.5,
+    "sh_index_prev_close": 3180.25,
+    "sz_index_close": 10250.75,
+    "sz_index_prev_close": 10100.0,
+    "cy_index_close": 2105.4,
+    "cy_index_prev_close": 2080.0,
+    "turnover_amount_sh": 843216000000.0,
+    "turnover_amount_sz": 1123456000000.0,
+    "turnover_amount_cy": 345678000000.0,
+    "turnover_amount_bj": 51234000000.0,
+    "total_market_cap": 90000000000000.0,
+    "float_market_cap": 70000000000000.0,
+    "pe_sh": 17.0,
+    "pe_sz": 30.67,
+    "pe_cy": 45.12,
+    "pe_all": 22.35,
+    "avg_stock_price": 18.56
+  },
+  "ladder_stocks": [
+    {
+      "market": "sh",
+      "code": "600519",
+      "name": "贵州茅台",
+      "streak_height": 2,
+      "is_st": false
+    },
+    {
+      "market": "sz",
+      "code": "000001",
+      "name": "平安银行",
+      "streak_height": 3,
+      "is_st": false
+    },
+    {
+      "market": "sh",
+      "code": "600036",
+      "name": "招商银行",
+      "streak_height": 2,
+      "is_st": false
+    },
+    {
+      "market": "bj",
+      "code": "830799",
+      "name": "艾融软件",
+      "streak_height": 11,
+      "is_st": false
+    }
+  ],
+  "expected_computed": {
+    "limit_up_failure_rate": 0.1875,
+    "limit_up_down_ratio": "3.47:1",
+    "margin_balance_total": 1842000000000.0,
+    "turnover_amount_total": 2017906000000.0,
+    "sh_index_change_points": 20.25,
+    "sh_index_change_pct": 0.01,
+    "sz_index_change_points": 150.75,
+    "sz_index_change_pct": 0.01,
+    "cy_index_change_points": 25.4,
+    "cy_index_change_pct": 0.01,
+    "streak_count": 4,
+    "streak_rate": 0.1,
+    "highest_board": 11,
+    "board_2": 2,
+    "board_3": 1,
+    "board_4": 0,
+    "board_5": 0,
+    "board_6": 0,
+    "board_7": 0,
+    "board_8": 0,
+    "board_9": 0,
+    "board_10": 0,
+    "board_11_plus": 1
+  }
+}
