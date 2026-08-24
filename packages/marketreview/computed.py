@@ -37,7 +37,7 @@ def _index_change(close: float | None, prev_close: float | None) -> tuple[float 
     points = _round2(close - prev_close)
     if prev_close == 0:
         return points, None
-    pct = _round2(points / prev_close)
+    pct = _round4((close - prev_close) / prev_close)
     return points, pct
 
 

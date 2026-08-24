@@ -43,6 +43,26 @@ class TestComputedMetrics(unittest.TestCase):
             with self.subTest(metric=key):
                 self.assertEqual(computed[key], value)
 
+    def test_index_change_pct_uses_raw_ratio_not_rounded_points(self) -> None:
+        atoms = DailyMarketReviewAtoms(
+            trade_date="2026-08-21",
+            sh_index_close=100.44,
+            sh_index_prev_close=100.0,
+        )
+        computed = compute_review_metrics(atoms, [], previous_effective_limit_up=None)
+        self.assertEqual(computed["sh_index_change_points"], 0.44)
+        self.assertEqual(computed["sh_index_change_pct"], 0.0044)
+
+    def test_index_change_negative_pct(self) -> None:
+        atoms = DailyMarketReviewAtoms(
+            trade_date="2026-08-21",
+            sz_index_close=99.25,
+            sz_index_prev_close=100.0,
+        )
+        computed = compute_review_metrics(atoms, [], previous_effective_limit_up=None)
+        self.assertEqual(computed["sz_index_change_points"], -0.75)
+        self.assertEqual(computed["sz_index_change_pct"], -0.0075)
+
     def test_missing_ladder_status_leaves_streak_empty(self) -> None:
         atoms = DailyMarketReviewAtoms(
             trade_date=self.fixture["trade_date"],

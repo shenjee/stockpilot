@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from dataclasses import asdict
+from datetime import datetime
 from typing import Any, Iterable, Mapping
 
 from packages.marketdata.trading_calendar import TradingCalendar
 
 from .computed import compute_review_metrics
+from .db import review_transaction
 from .errors import (
+    InvalidFieldValueError,
+    InvalidTradeDateError,
     LadderInvalidTransitionError,
     LadderSnapshotRequiredError,
     LadderStNotAllowedError,
@@ -29,12 +32,15 @@ from .schema import (
     MetricProvenance,
 )
 from .sqlite_schema import connect, init_db, utc_now_iso
+from .validation import assert_writable_trade_date, validate_atomic_field, validate_ladder_stock_input
 
 _CODE_PATTERN = re.compile(r"^\d{6}$")
 _LADDER_SNAPSHOT_METRIC = "ladder_snapshot"
 
 
 def _normalize_code(code: str) -> str:
+    if type(code) is not str:
+        raise LadderInvalidTransitionError(f"股票代码必须为字符串：{code!r}")
     normalized = code.strip()
     if not _CODE_PATTERN.fullmatch(normalized):
         raise LadderInvalidTransitionError(f"股票代码必须为 6 位数字：{code!r}")
@@ -42,6 +48,8 @@ def _normalize_code(code: str) -> str:
 
 
 def _validate_market(market: str) -> str:
+    if type(market) is not str:
+        raise LadderInvalidTransitionError(f"不支持的市场：{market!r}")
     if market not in {"sh", "sz", "bj"}:
         raise LadderInvalidTransitionError(f"不支持的市场：{market!r}")
     return market
@@ -55,18 +63,16 @@ def _row_to_atoms(row: sqlite3.Row) -> DailyMarketReviewAtoms:
 def _collect_st_violations(stocks: Iterable[LadderStockInput]) -> list[tuple[str, str]]:
     violations: list[tuple[str, str]] = []
     for stock in stocks:
+        validate_ladder_stock_input(stock)
         if stock.is_st:
             violations.append((stock.market, _normalize_code(stock.code)))
     return violations
 
 
 def _to_ladder_record(trade_date: str, stock: LadderStockInput) -> LadderStockRecord:
+    validate_ladder_stock_input(stock)
     market = _validate_market(stock.market)
     code = _normalize_code(stock.code)
-    if stock.streak_height < 2:
-        raise LadderInvalidTransitionError(
-            f"连板高度必须 >= 2：{market}.{code} streak_height={stock.streak_height}"
-        )
     if stock.is_st:
         raise LadderInvalidTransitionError(f"ST 股票不得写入连板明细：{market}.{code}")
     return LadderStockRecord(
@@ -108,26 +114,41 @@ class MarketReviewRepository:
         *,
         provenance: Mapping[str, MetricProvenance] | None = None,
         ladder_operation: LadderOperation | None = None,
+        now: datetime | None = None,
     ) -> None:
+        writable_date = assert_writable_trade_date(trade_date, self._calendar, now=now)
         payload = dict(fields or {})
         unknown = set(payload) - ATOMIC_FIELD_NAMES
         if unknown:
             raise LadderInvalidTransitionError(f"未知字段：{', '.join(sorted(unknown))}")
 
-        try:
-            self._conn.execute("BEGIN")
-            self._ensure_review_row(trade_date)
+        provenance_payload = dict(provenance or {})
+        extra_provenance = set(provenance_payload) - set(payload)
+        if extra_provenance:
+            raise InvalidFieldValueError(
+                "未写入字段不得单独提交血缘："
+                + ", ".join(sorted(extra_provenance))
+            )
+        cleared_with_provenance = sorted(
+            key for key, value in payload.items() if value is None and key in provenance_payload
+        )
+        if cleared_with_provenance:
+            raise InvalidFieldValueError(
+                "清空字段不得提交血缘：" + ", ".join(cleared_with_provenance)
+            )
+
+        with review_transaction(self._conn):
+            self._ensure_review_row(writable_date)
             if payload:
-                self._apply_field_patch(trade_date, payload)
-            if provenance:
-                self._upsert_provenance(trade_date, provenance)
+                self._apply_field_patch(writable_date, payload)
+                for key, value in payload.items():
+                    if value is not None and key not in provenance_payload:
+                        self._delete_provenance(writable_date, key)
+            if provenance_payload:
+                self._upsert_provenance(writable_date, provenance_payload)
             if ladder_operation is not None:
-                self._apply_ladder_operation(trade_date, ladder_operation)
-            self._touch_review(trade_date)
-            self._conn.commit()
-        except Exception:
-            self._conn.rollback()
-            raise
+                self._apply_ladder_operation(writable_date, ladder_operation)
+            self._touch_review(writable_date)
 
     def get_review(self, trade_date: str) -> DailyMarketReviewView | None:
         row = self._conn.execute(
@@ -152,6 +173,19 @@ class MarketReviewRepository:
             provenance=provenance,
         )
 
+    def list_reviews(
+        self,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> list[DailyMarketReviewView]:
+        dates = self.list_trade_dates(start_date, end_date)
+        views: list[DailyMarketReviewView] = []
+        for trade_date in dates:
+            view = self.get_review(trade_date)
+            if view is not None:
+                views.append(view)
+        return views
+
     def delete_review(self, trade_date: str) -> bool:
         row = self._conn.execute(
             "SELECT 1 FROM daily_market_review WHERE trade_date = ?",
@@ -159,13 +193,8 @@ class MarketReviewRepository:
         ).fetchone()
         if row is None:
             return False
-        self._conn.execute("DELETE FROM daily_ladder_stock WHERE trade_date = ?", (trade_date,))
-        self._conn.execute(
-            "DELETE FROM market_review_metric_provenance WHERE trade_date = ?",
-            (trade_date,),
-        )
-        self._conn.execute("DELETE FROM daily_market_review WHERE trade_date = ?", (trade_date,))
-        self._conn.commit()
+        with review_transaction(self._conn):
+            self._conn.execute("DELETE FROM daily_market_review WHERE trade_date = ?", (trade_date,))
         return True
 
     def list_trade_dates(self, start_date: str | None = None, end_date: str | None = None) -> list[str]:
@@ -201,20 +230,11 @@ class MarketReviewRepository:
         for key, value in fields.items():
             if key not in ATOMIC_FIELD_NAMES:
                 continue
-            if value is not None and key in {
-                "effective_limit_up",
-                "limit_up_20pct",
-                "opened_limit_down",
-                "closed_limit_down",
-                "limit_up_failed",
-                "pullback_count",
-                "advancing_count",
-                "declining_count",
-            }:
-                if not isinstance(value, int) or value < 0:
-                    raise LadderInvalidTransitionError(f"{key} 必须为非负整数")
+            normalized = validate_atomic_field(key, value)
             assignments.append(f"{key} = ?")
-            values.append(value)
+            values.append(normalized)
+            if normalized is None:
+                self._delete_provenance(trade_date, key)
         if not assignments:
             return
         values.append(trade_date)
@@ -322,13 +342,7 @@ class MarketReviewRepository:
 
     def _reset_missing(self, trade_date: str) -> None:
         self._conn.execute("DELETE FROM daily_ladder_stock WHERE trade_date = ?", (trade_date,))
-        self._conn.execute(
-            """
-            DELETE FROM market_review_metric_provenance
-            WHERE trade_date = ? AND metric_name = ?
-            """,
-            (trade_date, _LADDER_SNAPSHOT_METRIC),
-        )
+        self._delete_provenance(trade_date, _LADDER_SNAPSHOT_METRIC)
         self._conn.execute(
             "UPDATE daily_market_review SET ladder_status = 'missing' WHERE trade_date = ?",
             (trade_date,),
@@ -417,6 +431,15 @@ class MarketReviewRepository:
                     record.acquisition_mode,
                 ),
             )
+
+    def _delete_provenance(self, trade_date: str, metric_name: str) -> None:
+        self._conn.execute(
+            """
+            DELETE FROM market_review_metric_provenance
+            WHERE trade_date = ? AND metric_name = ?
+            """,
+            (trade_date, metric_name),
+        )
 
     def _previous_effective_limit_up(self, trade_date: str) -> int | None:
         previous_day = self._calendar.previous_trading_day(trade_date, "sh")
