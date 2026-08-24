@@ -37,11 +37,14 @@ metadata:
 
 ## 使用方式
 
-```bash
-cd <workspace-dir>
-python3 <skill-dir>/scripts/cli.py show --date 2026-08-21
-python3 <skill-dir>/scripts/cli.py patch --file review_patch.yaml
-```
+Agent 直接调用 `packages/marketreview.MarketReviewRepository` 完成读写与展示，不经过独立 CLI。
+
+典型流程：
+
+1. 解析用户指定的交易日（或落到最近已收盘交易日）
+2. 自动拉取三只指数日 K（通过 `packages/marketdata`）
+3. 一次性列出缺失的手工指标，收集 YAML/表格补数
+4. 调用 `patch_review()` 写入，`get_review()` 读取并按 PRD 八类表格展示
 
 补数 YAML 示例见 PRD `docs/marketreview/daily_market_review_skill_prd.md` 第 5.2 节。
 
