@@ -12,6 +12,9 @@ Daily market review persistence, patch semantics, and read-time metrics.
 
 ## Public entry points
 
+- `resolve_review_trade_date` — resolve or validate a writable trade date.
+- `auto_patch_indices` — fetch and patch the three index atom pairs.
+- `missing_atomic_fields` — list fields still missing for a trade date.
 - `MarketReviewRepository` — patch/get/delete reviews and ladder snapshots.
 - `compute_review_metrics` — pure read-time derivations for tests and callers.
 - `default_market_review_db_path` — `<workspace>/stockpilot/db/market_review.sqlite3`.

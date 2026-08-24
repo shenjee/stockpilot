@@ -29,6 +29,9 @@ source ~/.venvs/czsc/bin/activate
 - `packages/indicators/` owns reusable, timestamp-aligned technical indicators.
 - `packages/fundamentalscreener/` owns screening calculations, scoring,
   valuation, repositories, sync, lineage, and data-quality rules.
+- `packages/marketreview/` owns daily market review persistence, patch
+  semantics, read-time metrics, ladder snapshots, and V1 index auto-fetch
+  orchestration.
 - `packages/t0assistant/` owns reusable T+0 domain logic, contracts, replay,
   runtime, preferences, repositories, and trading abstractions.
 - Preserve public schemas and package contracts unless the task explicitly
@@ -41,6 +44,8 @@ source ~/.venvs/czsc/bin/activate
   trading instructions.
 - Fundamental Screener is for measurable screening and comparison. Do not turn
   it into a research-report generator, investment adviser, or sector predictor.
+- Daily Market Review is a factual daily ledger for market-wide metrics. Do not
+  turn it into trading advice, sector forecasts, or a research-report generator.
 - Keep Live and Replay consumers aligned with shared market-data, indicator, and
   T+0 contracts rather than creating parallel calculations in an app.
 
@@ -66,6 +71,8 @@ Read documentation only when the task touches that area:
 - Chan Theory: `packages/chantheory/README.md` and `docs/chan_theory_v0.1.md`
 - Fundamental Screener: `docs/fundamental_screener_*.md` and
   `apps/fundamental-screener/README.md`
+- Daily Market Review: `docs/marketreview/` and
+  `packages/marketreview/README.md`
 - Indicators: `packages/indicators/README.md`
 - T+0 Assistant: `docs/t0assistant/` and `apps/t0-assistant/README.md`
 - Area-specific guidance: the nearest nested `AGENTS.md`

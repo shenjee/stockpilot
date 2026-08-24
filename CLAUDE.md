@@ -18,6 +18,7 @@ Run tests (each area is an independent `unittest` suite — run the one covering
 ```bash
 python -m unittest discover -s packages/chantheory/tests -p 'test_*.py'          # adapter layer
 python -m unittest discover -s packages/fundamentalscreener/tests -p 'test_*.py' # fundamental screener core
+python -m unittest discover -s packages/marketreview/tests -p 'test_*.py'     # daily market review core
 python -m unittest discover -s apps/chan-viewer/tests -p 'test_*.py'          # debug app
 python -m unittest discover -s apps/fundamental-screener/tests -p 'test_*.py'    # screener app
 python -m unittest discover -s skills/china-stock-analysis/tests -p 'test_*.py'  # skill scripts
@@ -80,6 +81,16 @@ The core for quantitative fundamental screening. It answers "which sectors and c
 - `cli.py` — stable JSON-first entry point: `python -m packages.fundamentalscreener.cli <command> ...`.
 
 The screener core should remain UI-neutral and skill-neutral. Use fixtures for deterministic tests; real-market AkShare access belongs in the data source/sync layer and should not be copied into apps.
+
+### `packages/marketreview/` — Daily market review core
+The core for the daily market review ledger. It answers "what happened in the market on a closed trading day" through measurable atoms and read-time derived metrics only. It does **not** generate trading advice or sector forecasts.
+- `repository.py` / `sqlite_schema.py` — SQLite persistence, field-level patch, ladder snapshot modes, provenance.
+- `computed.py` — read-time derived metrics (failure rate, streak aggregates, index change, totals).
+- `validation.py` — trade-date guards, atomic field validation, ladder input checks.
+- `service.py` — V1 orchestration: resolve trade date, auto-fetch three indices, list missing fields.
+- `paths.py` — default DB path under `<workspace>/stockpilot/db/market_review.sqlite3`.
+
+Skills call `packages/marketreview` service/repository APIs; market data comes from `packages/marketdata`. Presentation formatting stays outside the package in V1.
 
 ### `skills/china-stock-analysis/` — installable agent skill
 Generates factual (no buy/sell advice) China A-share daily market reports. Installed by copying the directory into a client's skills dir; **runtime data must live outside the install dir** under a configurable `runtime_dir` (default `stockpilot/`) with `config/`, `db/`, `reports/` subdirs.

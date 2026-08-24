@@ -120,6 +120,7 @@ Common targeted tests:
 python -m unittest discover -s packages/chantheory/tests -p 'test_*.py'
 python -m unittest discover -s packages/fundamentalscreener/tests -p 'test_*.py'
 python -m unittest discover -s packages/marketdata/tests -p 'test_*.py'
+python -m unittest discover -s packages/marketreview/tests -p 'test_*.py'
 python -m unittest discover -s packages/indicators/tests -p 'test_*.py'
 python -m unittest discover -s apps/chan-viewer/tests -p 'test_*.py'
 python -m unittest discover -s apps/fundamental-screener/tests -p 'test_*.py'

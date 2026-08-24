@@ -37,14 +37,18 @@ metadata:
 
 ## 使用方式
 
-Agent 直接调用 `packages/marketreview.MarketReviewRepository` 完成读写与展示，不经过独立 CLI。
+Agent 调用 `packages/marketreview` 的稳定入口，不经过独立 CLI，也不直接请求外部数据源。
 
 典型流程：
 
-1. 解析用户指定的交易日（或落到最近已收盘交易日）
-2. 自动拉取三只指数日 K（通过 `packages/marketdata`）
-3. 一次性列出缺失的手工指标，收集 YAML/表格补数
-4. 调用 `patch_review()` 写入，`get_review()` 读取并按 PRD 八类表格展示
+1. 用 `resolve_review_trade_date(calendar, requested=...)` 解析可写入交易日
+2. 打开 `MarketReviewRepository(default_market_review_db_path())`
+3. 用 `auto_patch_indices(repository, marketdata_provider, calendar, trade_date)` 自动拉取三只指数；部分失败时保留已有值
+4. 用 `missing_atomic_fields(repository, trade_date)` 一次性列出仍需手工补充的指标
+5. 收集 YAML/表格补数后，调用 `repository.patch_review(...)` 写入
+6. 用 `repository.get_review(trade_date)` 或 `list_reviews(...)` 读取，并按 PRD 八类表格展示
+
+展示层自行完成单位换算：元→亿元/万亿元，小数比率→百分数。package 只返回原始原子值和读时派生指标。
 
 补数 YAML 示例见 PRD `docs/marketreview/daily_market_review_skill_prd.md` 第 5.2 节。
 
