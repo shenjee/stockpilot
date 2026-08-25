@@ -49,6 +49,7 @@ class TestMarketReviewRepository(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.repo.close()
+        self.conn.close()
 
     def _seed_previous_day(self) -> None:
         self.repo.patch_review(
@@ -314,6 +315,7 @@ class TestMarketReviewRepository(unittest.TestCase):
         with self.assertRaises(ForeignKeysUnavailableError):
             MarketReviewRepository(conn)
         conn.rollback()
+        conn.close()
 
     def test_provenance_without_field_patch_rejected(self) -> None:
         with self.assertRaises(InvalidFieldValueError):
@@ -375,6 +377,7 @@ class TestMarketReviewRepository(unittest.TestCase):
         conn.rollback()
         row = conn.execute("SELECT value FROM outer_data").fetchone()
         self.assertEqual(row[0], 7)
+        conn.close()
 
     def test_delete_review_cascades(self) -> None:
         self.repo.patch_review(
@@ -435,6 +438,7 @@ class TestSqliteSchemaConstraints(unittest.TestCase):
             "SELECT COUNT(*) FROM daily_ladder_stock WHERE trade_date = '2026-08-21'"
         ).fetchone()[0]
         self.assertEqual(remaining, 0)
+        conn.close()
 
     def test_legacy_schema_migrates_to_foreign_keys(self) -> None:
         conn = configure_connection(sqlite3.connect(":memory:"))
@@ -484,6 +488,7 @@ class TestSqliteSchemaConstraints(unittest.TestCase):
         ).fetchone()[0]
         self.assertEqual(ladder_count, 0)
         self.assertEqual(provenance_count, 0)
+        conn.close()
 
 
 if __name__ == "__main__":
