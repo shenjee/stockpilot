@@ -20,7 +20,6 @@ class TestComputedMetrics(unittest.TestCase):
     def test_golden_fixture_metrics(self) -> None:
         atoms = DailyMarketReviewAtoms(
             trade_date=self.fixture["trade_date"],
-            ladder_status="complete",
             **self.fixture["atoms"],
         )
         ladder_stocks = [
@@ -63,27 +62,48 @@ class TestComputedMetrics(unittest.TestCase):
         self.assertEqual(computed["sz_index_change_points"], -0.75)
         self.assertEqual(computed["sz_index_change_pct"], -0.0075)
 
-    def test_missing_ladder_status_leaves_streak_empty(self) -> None:
+    def test_empty_ladder_aggregates_to_zero(self) -> None:
         atoms = DailyMarketReviewAtoms(
             trade_date=self.fixture["trade_date"],
-            ladder_status="missing",
-            effective_limit_up=52,
-        )
-        computed = compute_review_metrics(atoms, [], previous_effective_limit_up=40)
-        self.assertIsNone(computed["streak_count"])
-        self.assertIsNone(computed["streak_rate"])
-        self.assertIsNone(computed["highest_board"])
-
-    def test_complete_zero_ladder(self) -> None:
-        atoms = DailyMarketReviewAtoms(
-            trade_date=self.fixture["trade_date"],
-            ladder_status="complete",
             effective_limit_up=52,
         )
         computed = compute_review_metrics(atoms, [], previous_effective_limit_up=40)
         self.assertEqual(computed["streak_count"], 0)
         self.assertEqual(computed["highest_board"], 0)
+        self.assertEqual(computed["highest_board_representatives"], [])
         self.assertEqual(computed["streak_rate"], 0.0)
+        for height in range(2, 11):
+            self.assertEqual(computed[f"board_{height}"], 0)
+        self.assertEqual(computed["board_11_plus"], 0)
+        self.assertEqual(computed["board_counts"], {})
+
+    def test_highest_board_representatives_includes_all_tied_stocks(self) -> None:
+        atoms = DailyMarketReviewAtoms(trade_date="2026-08-21")
+        ladder_stocks = [
+            LadderStockRecord("2026-08-21", "sh", "600000", "浦发银行", 5),
+            LadderStockRecord("2026-08-21", "sz", "000001", "平安银行", 3),
+            LadderStockRecord("2026-08-21", "sz", "000002", "万科A", 5),
+        ]
+        computed = compute_review_metrics(
+            atoms,
+            ladder_stocks,
+            previous_effective_limit_up=10,
+        )
+        self.assertEqual(computed["highest_board"], 5)
+        representatives = computed["highest_board_representatives"]
+        self.assertEqual(len(representatives), 2)
+        self.assertEqual(
+            {(item["market"], item["code"], item["name"], item["streak_height"]) for item in representatives},
+            {("sh", "600000", "浦发银行", 5), ("sz", "000002", "万科A", 5)},
+        )
+
+    def test_streak_rate_empty_when_previous_denominator_missing(self) -> None:
+        atoms = DailyMarketReviewAtoms(trade_date=self.fixture["trade_date"])
+        computed = compute_review_metrics(atoms, [], previous_effective_limit_up=None)
+        self.assertEqual(computed["streak_count"], 0)
+        self.assertIsNone(computed["streak_rate"])
+        computed_zero_denom = compute_review_metrics(atoms, [], previous_effective_limit_up=0)
+        self.assertIsNone(computed_zero_denom["streak_rate"])
 
 
 if __name__ == "__main__":

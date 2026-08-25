@@ -7,27 +7,26 @@ import sqlite3
 import unittest
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 from packages.marketreview.errors import (
     ForeignKeysUnavailableError,
     InvalidFieldValueError,
     InvalidTradeDateError,
-    LadderInvalidTransitionError,
-    LadderSnapshotRequiredError,
     LadderStNotAllowedError,
 )
 from packages.marketreview.repository import MarketReviewRepository
 from packages.marketreview.schema import (
     LadderItemPatch,
-    LadderResetMissing,
     LadderSnapshotReplace,
     LadderStockInput,
-    MetricProvenance,
 )
 from packages.marketreview.sqlite_schema import (
     LEGACY_LADDER_DDL,
     LEGACY_PROVENANCE_DDL,
+    _ddl_daily_ladder_stock,
+    _ddl_daily_market_review,
     configure_connection,
     init_db,
     migrate_legacy_schema,
@@ -78,7 +77,6 @@ class TestMarketReviewRepository(unittest.TestCase):
         )
         view = self.repo.get_review(self.fixture["trade_date"])
         assert view is not None
-        self.assertEqual(view.atoms.ladder_status, "complete")
         for key, value in self.fixture["atoms"].items():
             with self.subTest(atom=key):
                 self.assertEqual(getattr(view.atoms, key), value)
@@ -119,6 +117,26 @@ class TestMarketReviewRepository(unittest.TestCase):
         view = self.repo.get_review(self.fixture["trade_date"])
         self.assertIsNone(view)
 
+    def test_st_record_rolls_back_existing_review_patch(self) -> None:
+        self.repo.patch_review(
+            self.fixture["trade_date"],
+            fields={"effective_limit_up": 10},
+        )
+        with self.assertRaises(LadderStNotAllowedError):
+            self.repo.patch_review(
+                self.fixture["trade_date"],
+                fields={"effective_limit_up": 99},
+                ladder_operation=LadderItemPatch(
+                    upserts=[
+                        LadderStockInput("sh", "600519", "ST测试", 2, True),
+                    ]
+                ),
+            )
+        view = self.repo.get_review(self.fixture["trade_date"])
+        assert view is not None
+        self.assertEqual(view.atoms.effective_limit_up, 10)
+        self.assertEqual(view.ladder_stocks, [])
+
     def test_multiple_st_records_reported_together(self) -> None:
         self._seed_previous_day()
         with self.assertRaises(LadderStNotAllowedError) as ctx:
@@ -133,24 +151,188 @@ class TestMarketReviewRepository(unittest.TestCase):
             )
         self.assertEqual(ctx.exception.problem_codes, ("sh.600519", "sz.000001"))
 
-    def test_item_patch_requires_complete_snapshot(self) -> None:
-        with self.assertRaises(LadderSnapshotRequiredError):
+    def test_st_records_reported_before_other_invalid_ladder_input(self) -> None:
+        self.repo.patch_review(
+            self.fixture["trade_date"],
+            fields={"effective_limit_up": 10},
+        )
+        with self.assertRaises(LadderStNotAllowedError) as ctx:
             self.repo.patch_review(
                 self.fixture["trade_date"],
-                ladder_operation=LadderItemPatch(
-                    upserts=[
-                        LadderStockInput(
-                            market="sh",
-                            code="600519",
-                            name="贵州茅台",
-                            streak_height=2,
-                            is_st=False,
-                        )
+                fields={"effective_limit_up": 99},
+                ladder_operation=LadderSnapshotReplace(
+                    stocks=[
+                        LadderStockInput("sh", "600519", "坏高度", 1, False),
+                        LadderStockInput("sz", "000001", "ST测试", 2, True),
                     ]
                 ),
             )
+        self.assertEqual(ctx.exception.problem_codes, ("sz.000001",))
+        view = self.repo.get_review(self.fixture["trade_date"])
+        assert view is not None
+        self.assertEqual(view.atoms.effective_limit_up, 10)
 
-    def test_snapshot_replace_then_item_patch_and_reset(self) -> None:
+    def test_st_invalid_code_still_reported_as_st(self) -> None:
+        with self.assertRaises(LadderStNotAllowedError) as ctx:
+            self.repo.patch_review(
+                self.fixture["trade_date"],
+                fields={"effective_limit_up": 99},
+                ladder_operation=LadderSnapshotReplace(
+                    stocks=[
+                        LadderStockInput("sh", "ST1", "ST测试", 2, True),
+                    ]
+                ),
+            )
+        self.assertEqual(ctx.exception.problem_codes, ("sh.ST1",))
+        self.assertIsNone(self.repo.get_review(self.fixture["trade_date"]))
+
+    def test_duplicate_snapshot_identity_rolls_back(self) -> None:
+        self.repo.patch_review(
+            self.fixture["trade_date"],
+            fields={"effective_limit_up": 10},
+        )
+        with self.assertRaises(InvalidFieldValueError) as ctx:
+            self.repo.patch_review(
+                self.fixture["trade_date"],
+                fields={"effective_limit_up": 99},
+                ladder_operation=LadderSnapshotReplace(
+                    stocks=[
+                        LadderStockInput("sh", "600519", "贵州茅台", 2, False),
+                        LadderStockInput("sh", "600519", "茅台", 3, False),
+                    ]
+                ),
+            )
+        self.assertIn("重复股票", str(ctx.exception))
+        view = self.repo.get_review(self.fixture["trade_date"])
+        assert view is not None
+        self.assertEqual(view.atoms.effective_limit_up, 10)
+        self.assertEqual(view.ladder_stocks, [])
+
+    def test_invalid_ladder_height_rolls_back_field_patch(self) -> None:
+        self.repo.patch_review(
+            self.fixture["trade_date"],
+            fields={"effective_limit_up": 10},
+        )
+        with self.assertRaises(InvalidFieldValueError):
+            self.repo.patch_review(
+                self.fixture["trade_date"],
+                fields={"effective_limit_up": 99},
+                ladder_operation=LadderSnapshotReplace(
+                    stocks=[
+                        LadderStockInput("sh", "600519", "测试", 1, False),
+                    ]
+                ),
+            )
+        view = self.repo.get_review(self.fixture["trade_date"])
+        assert view is not None
+        self.assertEqual(view.atoms.effective_limit_up, 10)
+        self.assertEqual(view.ladder_stocks, [])
+
+    def test_invalid_ladder_market_rolls_back_field_patch(self) -> None:
+        self.repo.patch_review(
+            self.fixture["trade_date"],
+            fields={"effective_limit_up": 10},
+        )
+        with self.assertRaises(InvalidFieldValueError):
+            self.repo.patch_review(
+                self.fixture["trade_date"],
+                fields={"effective_limit_up": 99},
+                ladder_operation=LadderSnapshotReplace(
+                    stocks=[
+                        LadderStockInput("hk", "600519", "测试", 2, False),  # type: ignore[arg-type]
+                    ]
+                ),
+            )
+        view = self.repo.get_review(self.fixture["trade_date"])
+        assert view is not None
+        self.assertEqual(view.atoms.effective_limit_up, 10)
+        self.assertEqual(view.ladder_stocks, [])
+
+    def test_empty_snapshot_replace_is_zero_ladder(self) -> None:
+        self._seed_previous_day()
+        self.repo.patch_review(
+            self.fixture["trade_date"],
+            fields={"effective_limit_up": 52},
+            ladder_operation=LadderSnapshotReplace(stocks=self._ladder_inputs()),
+        )
+        self.repo.patch_review(
+            self.fixture["trade_date"],
+            ladder_operation=LadderSnapshotReplace(stocks=[]),
+        )
+        view = self.repo.get_review(self.fixture["trade_date"])
+        assert view is not None
+        self.assertEqual(view.ladder_stocks, [])
+        self.assertEqual(view.computed["streak_count"], 0)
+        self.assertEqual(view.computed["highest_board"], 0)
+        self.assertEqual(view.computed["highest_board_representatives"], [])
+        self.assertEqual(view.computed["board_2"], 0)
+        self.assertEqual(view.computed["board_11_plus"], 0)
+        self.assertEqual(view.computed["streak_rate"], 0.0)
+
+    def test_new_review_without_ladder_input_aggregates_to_zero(self) -> None:
+        self.repo.patch_review(
+            self.fixture["trade_date"],
+            fields={"effective_limit_up": 52},
+        )
+        view = self.repo.get_review(self.fixture["trade_date"])
+        assert view is not None
+        self.assertEqual(view.computed["streak_count"], 0)
+        self.assertEqual(view.computed["highest_board"], 0)
+        self.assertEqual(view.computed["highest_board_representatives"], [])
+
+    def test_item_patch_without_prior_snapshot(self) -> None:
+        self.repo.patch_review(
+            self.fixture["trade_date"],
+            ladder_operation=LadderItemPatch(
+                upserts=[
+                    LadderStockInput(
+                        market="sh",
+                        code="600519",
+                        name="贵州茅台",
+                        streak_height=2,
+                        is_st=False,
+                    )
+                ]
+            ),
+        )
+        view = self.repo.get_review(self.fixture["trade_date"])
+        assert view is not None
+        self.assertEqual(view.computed["streak_count"], 1)
+        self.assertEqual(view.ladder_stocks[0].name, "贵州茅台")
+        self.assertEqual(view.ladder_stocks[0].streak_height, 2)
+
+        self.repo.patch_review(
+            self.fixture["trade_date"],
+            ladder_operation=LadderItemPatch(
+                upserts=[
+                    LadderStockInput(
+                        market="sh",
+                        code="600519",
+                        name="茅台",
+                        streak_height=3,
+                        is_st=False,
+                    )
+                ]
+            ),
+        )
+        view = self.repo.get_review(self.fixture["trade_date"])
+        assert view is not None
+        self.assertEqual(view.computed["streak_count"], 1)
+        self.assertEqual(view.ladder_stocks[0].name, "茅台")
+        self.assertEqual(view.ladder_stocks[0].streak_height, 3)
+        self.assertEqual(view.computed["highest_board"], 3)
+
+        self.repo.patch_review(
+            self.fixture["trade_date"],
+            ladder_operation=LadderItemPatch(deletes=[("sh", "600519")]),
+        )
+        view = self.repo.get_review(self.fixture["trade_date"])
+        assert view is not None
+        self.assertEqual(view.ladder_stocks, [])
+        self.assertEqual(view.computed["streak_count"], 0)
+        self.assertEqual(view.computed["highest_board"], 0)
+
+    def test_snapshot_replace_then_item_patch(self) -> None:
         self._seed_previous_day()
         self.repo.patch_review(
             self.fixture["trade_date"],
@@ -166,16 +348,6 @@ class TestMarketReviewRepository(unittest.TestCase):
         view = self.repo.get_review(self.fixture["trade_date"])
         assert view is not None
         self.assertEqual(view.computed["streak_count"], 3)
-        self.repo.patch_review(
-            self.fixture["trade_date"],
-            ladder_operation=LadderResetMissing(),
-        )
-        view = self.repo.get_review(self.fixture["trade_date"])
-        assert view is not None
-        self.assertEqual(view.atoms.ladder_status, "missing")
-        self.assertIsNone(view.computed["streak_count"])
-        self.assertEqual(view.ladder_stocks, [])
-        self.assertNotIn("ladder_snapshot", view.provenance)
 
     def test_field_patch_preserves_unmentioned_fields(self) -> None:
         self.repo.patch_review(
@@ -191,18 +363,10 @@ class TestMarketReviewRepository(unittest.TestCase):
         self.assertEqual(view.atoms.effective_limit_up, 10)
         self.assertEqual(view.atoms.closed_limit_down, 5)
 
-    def test_explicit_null_clears_field_and_provenance(self) -> None:
+    def test_explicit_null_clears_field(self) -> None:
         self.repo.patch_review(
             self.fixture["trade_date"],
             fields={"pe_sh": 17.0},
-            provenance={
-                "pe_sh": MetricProvenance(
-                    source="manual",
-                    source_as_of=self.fixture["trade_date"],
-                    retrieved_at="2026-08-21T08:00:00+00:00",
-                    acquisition_mode="manual",
-                )
-            },
         )
         self.repo.patch_review(
             self.fixture["trade_date"],
@@ -211,29 +375,6 @@ class TestMarketReviewRepository(unittest.TestCase):
         view = self.repo.get_review(self.fixture["trade_date"])
         assert view is not None
         self.assertIsNone(view.atoms.pe_sh)
-        self.assertNotIn("pe_sh", view.provenance)
-
-    def test_field_update_without_provenance_clears_stale_lineage(self) -> None:
-        self.repo.patch_review(
-            self.fixture["trade_date"],
-            fields={"pe_sh": 17.0},
-            provenance={
-                "pe_sh": MetricProvenance(
-                    source="manual",
-                    source_as_of=self.fixture["trade_date"],
-                    retrieved_at="2026-08-21T08:00:00+00:00",
-                    acquisition_mode="manual",
-                )
-            },
-        )
-        self.repo.patch_review(
-            self.fixture["trade_date"],
-            fields={"pe_sh": 18.0},
-        )
-        view = self.repo.get_review(self.fixture["trade_date"])
-        assert view is not None
-        self.assertEqual(view.atoms.pe_sh, 18.0)
-        self.assertNotIn("pe_sh", view.provenance)
 
     def test_rejects_today_before_close_with_injected_now(self) -> None:
         with self.assertRaises(InvalidTradeDateError) as ctx:
@@ -263,24 +404,8 @@ class TestMarketReviewRepository(unittest.TestCase):
         self.assertIn("不是交易日", str(ctx.exception))
         self.assertNotIn("尚未收盘", str(ctx.exception))
 
-    def test_null_field_with_provenance_rejected(self) -> None:
-        with self.assertRaises(InvalidFieldValueError) as ctx:
-            self.repo.patch_review(
-                self.fixture["trade_date"],
-                fields={"pe_sh": None},
-                provenance={
-                    "pe_sh": MetricProvenance(
-                        source="manual",
-                        source_as_of=self.fixture["trade_date"],
-                        retrieved_at="2026-08-21T08:00:00+00:00",
-                        acquisition_mode="manual",
-                    )
-                },
-            )
-        self.assertIn("清空字段不得提交血缘", str(ctx.exception))
-
     def test_rejects_non_string_ladder_identity(self) -> None:
-        with self.assertRaises(LadderInvalidTransitionError):
+        with self.assertRaises(InvalidFieldValueError):
             self.repo.patch_review(
                 self.fixture["trade_date"],
                 ladder_operation=LadderSnapshotReplace(
@@ -289,7 +414,7 @@ class TestMarketReviewRepository(unittest.TestCase):
                     ]
                 ),
             )
-        with self.assertRaises(LadderInvalidTransitionError):
+        with self.assertRaises(InvalidFieldValueError):
             self.repo.patch_review(
                 self.fixture["trade_date"],
                 ladder_operation=LadderSnapshotReplace(
@@ -316,20 +441,6 @@ class TestMarketReviewRepository(unittest.TestCase):
             MarketReviewRepository(conn)
         conn.rollback()
         conn.close()
-
-    def test_provenance_without_field_patch_rejected(self) -> None:
-        with self.assertRaises(InvalidFieldValueError):
-            self.repo.patch_review(
-                self.fixture["trade_date"],
-                provenance={
-                    "pe_sh": MetricProvenance(
-                        source="manual",
-                        source_as_of=self.fixture["trade_date"],
-                        retrieved_at="2026-08-21T08:00:00+00:00",
-                        acquisition_mode="manual",
-                    )
-                },
-            )
 
     def test_rejects_invalid_runtime_types(self) -> None:
         with self.assertRaises(InvalidFieldValueError):
@@ -391,12 +502,7 @@ class TestMarketReviewRepository(unittest.TestCase):
             "SELECT COUNT(*) FROM daily_ladder_stock WHERE trade_date = ?",
             (self.fixture["trade_date"],),
         ).fetchone()[0]
-        provenance_count = self.conn.execute(
-            "SELECT COUNT(*) FROM market_review_metric_provenance WHERE trade_date = ?",
-            (self.fixture["trade_date"],),
-        ).fetchone()[0]
         self.assertEqual(ladder_count, 0)
-        self.assertEqual(provenance_count, 0)
 
     def test_list_reviews_returns_range_views(self) -> None:
         self._seed_previous_day()
@@ -413,17 +519,46 @@ class TestMarketReviewRepository(unittest.TestCase):
         self.assertEqual(views[1].atoms.trade_date, self.fixture["trade_date"])
 
 
+def _user_tables(conn: sqlite3.Connection) -> set[str]:
+    return {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+        )
+    }
+
+
+def _assert_ladder_delete_cascade(test: unittest.TestCase, conn: sqlite3.Connection) -> None:
+    rows = conn.execute("PRAGMA foreign_key_list(daily_ladder_stock)").fetchall()
+    matches = [
+        row
+        for row in rows
+        if row[2] == "daily_market_review"
+        and row[3] == "trade_date"
+        and row[4] == "trade_date"
+        and str(row[6]).upper() == "CASCADE"
+    ]
+    test.assertTrue(matches, f"expected trade_date ON DELETE CASCADE, got {list(rows)}")
+
+
 class TestSqliteSchemaConstraints(unittest.TestCase):
+    def test_init_db_creates_only_review_and_ladder_tables(self) -> None:
+        conn = sqlite3.connect(":memory:")
+        init_db(conn)
+        self.assertEqual(_user_tables(conn), {"daily_market_review", "daily_ladder_stock"})
+        conn.close()
+
     def test_foreign_keys_enabled_and_cascade(self) -> None:
         conn = sqlite3.connect(":memory:")
         init_db(conn)
         row = conn.execute("PRAGMA foreign_keys").fetchone()
         self.assertEqual(row[0], 1)
+        _assert_ladder_delete_cascade(self, conn)
         conn.execute(
             """
             INSERT INTO daily_market_review (
-                trade_date, ladder_status, created_at, updated_at
-            ) VALUES ('2026-08-21', 'missing', 't', 't')
+                trade_date, created_at, updated_at
+            ) VALUES ('2026-08-21', 't', 't')
             """
         )
         conn.execute(
@@ -440,13 +575,15 @@ class TestSqliteSchemaConstraints(unittest.TestCase):
         self.assertEqual(remaining, 0)
         conn.close()
 
-    def test_legacy_schema_migrates_to_foreign_keys(self) -> None:
+    def test_legacy_schema_drops_provenance_and_ladder_status(self) -> None:
         conn = configure_connection(sqlite3.connect(":memory:"))
         conn.execute(
             """
             CREATE TABLE daily_market_review (
                 trade_date TEXT NOT NULL PRIMARY KEY,
                 ladder_status TEXT NOT NULL DEFAULT 'missing',
+                effective_limit_up INTEGER,
+                pe_sh REAL,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
@@ -457,8 +594,8 @@ class TestSqliteSchemaConstraints(unittest.TestCase):
         conn.execute(
             """
             INSERT INTO daily_market_review (
-                trade_date, ladder_status, created_at, updated_at
-            ) VALUES ('2026-08-21', 'missing', 't', 't')
+                trade_date, ladder_status, effective_limit_up, pe_sh, created_at, updated_at
+            ) VALUES ('2026-08-21', 'missing', 52, 17.0, 't', 't')
             """
         )
         conn.execute(
@@ -477,17 +614,237 @@ class TestSqliteSchemaConstraints(unittest.TestCase):
         )
         migrate_legacy_schema(conn)
         conn.commit()
-        fk_rows = conn.execute("PRAGMA foreign_key_list(daily_ladder_stock)").fetchall()
-        self.assertTrue(fk_rows)
+
+        provenance_tables = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'market_review_metric_provenance'"
+        ).fetchall()
+        self.assertEqual(provenance_tables, [])
+        review_columns = {row[1] for row in conn.execute("PRAGMA table_info(daily_market_review)").fetchall()}
+        self.assertNotIn("ladder_status", review_columns)
+        review = conn.execute(
+            "SELECT effective_limit_up, pe_sh FROM daily_market_review WHERE trade_date = '2026-08-21'"
+        ).fetchone()
+        self.assertEqual(review["effective_limit_up"], 52)
+        self.assertEqual(review["pe_sh"], 17.0)
+        ladder = conn.execute(
+            "SELECT code, streak_height FROM daily_ladder_stock WHERE trade_date = '2026-08-21'"
+        ).fetchall()
+        self.assertEqual(len(ladder), 1)
+        self.assertEqual(ladder[0]["code"], "600519")
+        _assert_ladder_delete_cascade(self, conn)
+
+        migrate_legacy_schema(conn)
+        conn.commit()
+        review_again = conn.execute(
+            "SELECT effective_limit_up FROM daily_market_review WHERE trade_date = '2026-08-21'"
+        ).fetchone()
+        self.assertEqual(review_again["effective_limit_up"], 52)
+
+        repo = MarketReviewRepository(conn)
+        view = repo.get_review("2026-08-21")
+        assert view is not None
+        self.assertEqual(view.computed["streak_count"], 1)
+        self.assertEqual(view.computed["highest_board"], 2)
         conn.execute("DELETE FROM daily_market_review WHERE trade_date = '2026-08-21'")
-        ladder_count = conn.execute(
+        remaining = conn.execute(
             "SELECT COUNT(*) FROM daily_ladder_stock WHERE trade_date = '2026-08-21'"
         ).fetchone()[0]
-        provenance_count = conn.execute(
-            "SELECT COUNT(*) FROM market_review_metric_provenance WHERE trade_date = '2026-08-21'"
+        self.assertEqual(remaining, 0)
+        leftover = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('daily_market_review_new', 'daily_ladder_stock_new')"
+        ).fetchall()
+        self.assertEqual(leftover, [])
+        conn.close()
+
+    def test_legacy_no_action_fk_is_rebuilt_to_cascade(self) -> None:
+        conn = configure_connection(sqlite3.connect(":memory:"))
+        conn.execute(
+            """
+            CREATE TABLE daily_market_review (
+                trade_date TEXT NOT NULL PRIMARY KEY,
+                effective_limit_up INTEGER,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE daily_ladder_stock (
+                trade_date TEXT NOT NULL,
+                market TEXT NOT NULL CHECK (market IN ('sh', 'sz', 'bj')),
+                code TEXT NOT NULL,
+                name TEXT NOT NULL,
+                streak_height INTEGER NOT NULL CHECK (streak_height >= 2),
+                is_st INTEGER NOT NULL CHECK (is_st = 0),
+                PRIMARY KEY (trade_date, market, code),
+                FOREIGN KEY (trade_date) REFERENCES daily_market_review(trade_date)
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO daily_market_review (
+                trade_date, effective_limit_up, created_at, updated_at
+            ) VALUES ('2026-08-21', 52, 't', 't')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO daily_ladder_stock (
+                trade_date, market, code, name, streak_height, is_st
+            ) VALUES ('2026-08-21', 'sh', '600519', '贵州茅台', 2, 0)
+            """
+        )
+        conn.commit()
+        fk_before = conn.execute("PRAGMA foreign_key_list(daily_ladder_stock)").fetchone()
+        self.assertEqual(str(fk_before[6]).upper(), "NO ACTION")
+
+        init_db(conn)
+        _assert_ladder_delete_cascade(self, conn)
+        ladder = conn.execute(
+            "SELECT code FROM daily_ladder_stock WHERE trade_date = '2026-08-21'"
+        ).fetchall()
+        self.assertEqual(len(ladder), 1)
+        conn.execute("DELETE FROM daily_market_review WHERE trade_date = '2026-08-21'")
+        remaining = conn.execute(
+            "SELECT COUNT(*) FROM daily_ladder_stock WHERE trade_date = '2026-08-21'"
         ).fetchone()[0]
-        self.assertEqual(ladder_count, 0)
-        self.assertEqual(provenance_count, 0)
+        self.assertEqual(remaining, 0)
+        conn.close()
+
+    def test_interrupted_rebuild_keeps_ladder_new_rows(self) -> None:
+        conn = configure_connection(sqlite3.connect(":memory:"))
+        conn.execute(
+            """
+            CREATE TABLE daily_market_review (
+                trade_date TEXT NOT NULL PRIMARY KEY,
+                ladder_status TEXT NOT NULL DEFAULT 'missing',
+                effective_limit_up INTEGER,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO daily_market_review (
+                trade_date, ladder_status, effective_limit_up, created_at, updated_at
+            ) VALUES ('2026-08-21', 'missing', 52, 't', 't')
+            """
+        )
+        conn.execute(_ddl_daily_market_review("daily_market_review_new"))
+        conn.execute(
+            """
+            INSERT INTO daily_market_review_new (
+                trade_date, effective_limit_up, created_at, updated_at
+            ) VALUES ('2026-08-21', 52, 't', 't')
+            """
+        )
+        conn.execute(
+            _ddl_daily_ladder_stock(
+                "daily_ladder_stock_new",
+                parent_table="daily_market_review_new",
+            )
+        )
+        conn.execute(
+            """
+            INSERT INTO daily_ladder_stock_new (
+                trade_date, market, code, name, streak_height, is_st
+            ) VALUES ('2026-08-21', 'sh', '600519', '贵州茅台', 2, 0)
+            """
+        )
+        conn.commit()
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) FROM daily_ladder_stock_new").fetchone()[0],
+            1,
+        )
+
+        init_db(conn)
+        self.assertEqual(_user_tables(conn), {"daily_market_review", "daily_ladder_stock"})
+        _assert_ladder_delete_cascade(self, conn)
+        review = conn.execute(
+            "SELECT effective_limit_up FROM daily_market_review WHERE trade_date = '2026-08-21'"
+        ).fetchone()
+        self.assertEqual(review["effective_limit_up"], 52)
+        review_columns = {row[1] for row in conn.execute("PRAGMA table_info(daily_market_review)").fetchall()}
+        self.assertNotIn("ladder_status", review_columns)
+        ladder = conn.execute(
+            "SELECT code, streak_height FROM daily_ladder_stock WHERE trade_date = '2026-08-21'"
+        ).fetchall()
+        self.assertEqual(len(ladder), 1)
+        self.assertEqual(ladder[0]["code"], "600519")
+        conn.execute("DELETE FROM daily_market_review WHERE trade_date = '2026-08-21'")
+        remaining = conn.execute(
+            "SELECT COUNT(*) FROM daily_ladder_stock WHERE trade_date = '2026-08-21'"
+        ).fetchone()[0]
+        self.assertEqual(remaining, 0)
+        conn.close()
+
+    def test_legacy_rebuild_keeps_old_data_if_copy_fails(self) -> None:
+        conn = configure_connection(sqlite3.connect(":memory:"))
+        conn.execute(
+            """
+            CREATE TABLE daily_market_review (
+                trade_date TEXT NOT NULL PRIMARY KEY,
+                ladder_status TEXT NOT NULL DEFAULT 'missing',
+                effective_limit_up INTEGER,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(LEGACY_LADDER_DDL)
+        conn.execute(
+            """
+            INSERT INTO daily_market_review (
+                trade_date, ladder_status, effective_limit_up, created_at, updated_at
+            ) VALUES ('2026-08-21', 'missing', 52, 't', 't')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO daily_ladder_stock (
+                trade_date, market, code, name, streak_height, is_st
+            ) VALUES ('2026-08-21', 'sh', '600519', '贵州茅台', 2, 0)
+            """
+        )
+        conn.commit()
+        with patch(
+            "packages.marketreview.sqlite_schema._copy_matching_columns",
+            side_effect=RuntimeError("copy failed"),
+        ):
+            with self.assertRaises(RuntimeError):
+                migrate_legacy_schema(conn)
+        review = conn.execute(
+            "SELECT effective_limit_up, ladder_status FROM daily_market_review WHERE trade_date = '2026-08-21'"
+        ).fetchone()
+        self.assertEqual(review["effective_limit_up"], 52)
+        self.assertEqual(review["ladder_status"], "missing")
+        ladder_count = conn.execute("SELECT COUNT(*) FROM daily_ladder_stock").fetchone()[0]
+        self.assertEqual(ladder_count, 1)
+        leftover = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('daily_market_review_new', 'daily_ladder_stock_new')"
+        ).fetchall()
+        self.assertEqual(leftover, [])
+        conn.close()
+
+    def test_init_db_is_idempotent_on_current_schema(self) -> None:
+        conn = sqlite3.connect(":memory:")
+        init_db(conn)
+        conn.execute(
+            """
+            INSERT INTO daily_market_review (trade_date, effective_limit_up, created_at, updated_at)
+            VALUES ('2026-08-21', 52, 't', 't')
+            """
+        )
+        init_db(conn)
+        row = conn.execute(
+            "SELECT effective_limit_up FROM daily_market_review WHERE trade_date = '2026-08-21'"
+        ).fetchone()
+        self.assertEqual(row["effective_limit_up"], 52)
+        columns = {item[1] for item in conn.execute("PRAGMA table_info(daily_market_review)").fetchall()}
+        self.assertNotIn("ladder_status", columns)
         conn.close()
 
 

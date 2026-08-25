@@ -13,9 +13,6 @@ from .computed import compute_review_metrics
 from .db import review_transaction
 from .errors import (
     InvalidFieldValueError,
-    InvalidTradeDateError,
-    LadderInvalidTransitionError,
-    LadderSnapshotRequiredError,
     LadderStNotAllowedError,
 )
 from .schema import (
@@ -24,34 +21,30 @@ from .schema import (
     DailyMarketReviewView,
     LadderItemPatch,
     LadderOperation,
-    LadderResetMissing,
     LadderSnapshotReplace,
-    LadderStatus,
     LadderStockInput,
     LadderStockRecord,
-    MetricProvenance,
 )
 from .sqlite_schema import connect, init_db, utc_now_iso
 from .validation import assert_writable_trade_date, validate_atomic_field, validate_ladder_stock_input
 
 _CODE_PATTERN = re.compile(r"^\d{6}$")
-_LADDER_SNAPSHOT_METRIC = "ladder_snapshot"
 
 
 def _normalize_code(code: str) -> str:
     if type(code) is not str:
-        raise LadderInvalidTransitionError(f"股票代码必须为字符串：{code!r}")
+        raise InvalidFieldValueError(f"股票代码必须为字符串：{code!r}")
     normalized = code.strip()
     if not _CODE_PATTERN.fullmatch(normalized):
-        raise LadderInvalidTransitionError(f"股票代码必须为 6 位数字：{code!r}")
+        raise InvalidFieldValueError(f"股票代码必须为 6 位数字：{code!r}")
     return normalized
 
 
 def _validate_market(market: str) -> str:
     if type(market) is not str:
-        raise LadderInvalidTransitionError(f"不支持的市场：{market!r}")
+        raise InvalidFieldValueError(f"不支持的市场：{market!r}")
     if market not in {"sh", "sz", "bj"}:
-        raise LadderInvalidTransitionError(f"不支持的市场：{market!r}")
+        raise InvalidFieldValueError(f"不支持的市场：{market!r}")
     return market
 
 
@@ -60,13 +53,31 @@ def _row_to_atoms(row: sqlite3.Row) -> DailyMarketReviewAtoms:
     return DailyMarketReviewAtoms(**payload)
 
 
+def _st_problem_identity(stock: LadderStockInput) -> tuple[str, str]:
+    market = stock.market if type(stock.market) is str else str(stock.market)
+    code = stock.code.strip() if type(stock.code) is str else str(stock.code)
+    return market, code
+
+
 def _collect_st_violations(stocks: Iterable[LadderStockInput]) -> list[tuple[str, str]]:
-    violations: list[tuple[str, str]] = []
+    return [
+        _st_problem_identity(stock)
+        for stock in stocks
+        if type(stock.is_st) is bool and stock.is_st
+    ]
+
+
+def _snapshot_records(trade_date: str, stocks: Iterable[LadderStockInput]) -> list[LadderStockRecord]:
+    records: list[LadderStockRecord] = []
+    seen: set[tuple[str, str]] = set()
     for stock in stocks:
-        validate_ladder_stock_input(stock)
-        if stock.is_st:
-            violations.append((stock.market, _normalize_code(stock.code)))
-    return violations
+        record = _to_ladder_record(trade_date, stock)
+        key = (record.market, record.code)
+        if key in seen:
+            raise InvalidFieldValueError(f"连板名单存在重复股票：{record.market}.{record.code}")
+        seen.add(key)
+        records.append(record)
+    return records
 
 
 def _to_ladder_record(trade_date: str, stock: LadderStockInput) -> LadderStockRecord:
@@ -74,7 +85,7 @@ def _to_ladder_record(trade_date: str, stock: LadderStockInput) -> LadderStockRe
     market = _validate_market(stock.market)
     code = _normalize_code(stock.code)
     if stock.is_st:
-        raise LadderInvalidTransitionError(f"ST 股票不得写入连板明细：{market}.{code}")
+        raise LadderStNotAllowedError([(market, code)])
     return LadderStockRecord(
         trade_date=trade_date,
         market=market,  # type: ignore[arg-type]
@@ -112,7 +123,6 @@ class MarketReviewRepository:
         trade_date: str,
         fields: Mapping[str, Any] | None = None,
         *,
-        provenance: Mapping[str, MetricProvenance] | None = None,
         ladder_operation: LadderOperation | None = None,
         now: datetime | None = None,
     ) -> None:
@@ -120,32 +130,12 @@ class MarketReviewRepository:
         payload = dict(fields or {})
         unknown = set(payload) - ATOMIC_FIELD_NAMES
         if unknown:
-            raise LadderInvalidTransitionError(f"未知字段：{', '.join(sorted(unknown))}")
-
-        provenance_payload = dict(provenance or {})
-        extra_provenance = set(provenance_payload) - set(payload)
-        if extra_provenance:
-            raise InvalidFieldValueError(
-                "未写入字段不得单独提交血缘："
-                + ", ".join(sorted(extra_provenance))
-            )
-        cleared_with_provenance = sorted(
-            key for key, value in payload.items() if value is None and key in provenance_payload
-        )
-        if cleared_with_provenance:
-            raise InvalidFieldValueError(
-                "清空字段不得提交血缘：" + ", ".join(cleared_with_provenance)
-            )
+            raise InvalidFieldValueError(f"未知字段：{', '.join(sorted(unknown))}")
 
         with review_transaction(self._conn):
             self._ensure_review_row(writable_date)
             if payload:
                 self._apply_field_patch(writable_date, payload)
-                for key, value in payload.items():
-                    if value is not None and key not in provenance_payload:
-                        self._delete_provenance(writable_date, key)
-            if provenance_payload:
-                self._upsert_provenance(writable_date, provenance_payload)
             if ladder_operation is not None:
                 self._apply_ladder_operation(writable_date, ladder_operation)
             self._touch_review(writable_date)
@@ -165,12 +155,10 @@ class MarketReviewRepository:
             ladder_stocks,
             previous_effective_limit_up=previous_effective_limit_up,
         )
-        provenance = self._load_provenance(trade_date)
         return DailyMarketReviewView(
             atoms=atoms,
             ladder_stocks=ladder_stocks,
             computed=computed,
-            provenance=provenance,
         )
 
     def list_reviews(
@@ -217,8 +205,8 @@ class MarketReviewRepository:
         now = utc_now_iso()
         self._conn.execute(
             """
-            INSERT INTO daily_market_review (trade_date, ladder_status, created_at, updated_at)
-            VALUES (?, 'missing', ?, ?)
+            INSERT INTO daily_market_review (trade_date, created_at, updated_at)
+            VALUES (?, ?, ?)
             ON CONFLICT(trade_date) DO NOTHING
             """,
             (trade_date, now, now),
@@ -233,8 +221,6 @@ class MarketReviewRepository:
             normalized = validate_atomic_field(key, value)
             assignments.append(f"{key} = ?")
             values.append(normalized)
-            if normalized is None:
-                self._delete_provenance(trade_date, key)
         if not assignments:
             return
         values.append(trade_date)
@@ -254,49 +240,19 @@ class MarketReviewRepository:
             self._snapshot_replace(trade_date, operation)
         elif isinstance(operation, LadderItemPatch):
             self._item_patch(trade_date, operation)
-        elif isinstance(operation, LadderResetMissing):
-            self._reset_missing(trade_date)
         else:
-            raise LadderInvalidTransitionError(f"未知连板写入模式：{operation!r}")
-
-    def _current_ladder_status(self, trade_date: str) -> LadderStatus:
-        row = self._conn.execute(
-            "SELECT ladder_status FROM daily_market_review WHERE trade_date = ?",
-            (trade_date,),
-        ).fetchone()
-        if row is None:
-            return "missing"
-        return row["ladder_status"]
+            raise InvalidFieldValueError(f"未知连板写入模式：{operation!r}")
 
     def _snapshot_replace(self, trade_date: str, operation: LadderSnapshotReplace) -> None:
-        if operation.ladder_status != "complete":
-            raise LadderInvalidTransitionError("snapshot_replace 必须提交 ladder_status=complete")
         violations = _collect_st_violations(operation.stocks)
         if violations:
             raise LadderStNotAllowedError(violations)
-        records = [_to_ladder_record(trade_date, stock) for stock in operation.stocks]
+        records = _snapshot_records(trade_date, operation.stocks)
         self._conn.execute("DELETE FROM daily_ladder_stock WHERE trade_date = ?", (trade_date,))
         for record in records:
             self._insert_ladder_record(record)
-        self._conn.execute(
-            "UPDATE daily_market_review SET ladder_status = 'complete' WHERE trade_date = ?",
-            (trade_date,),
-        )
-        self._upsert_provenance(
-            trade_date,
-            {
-                _LADDER_SNAPSHOT_METRIC: MetricProvenance(
-                    source="manual_batch",
-                    source_as_of=trade_date,
-                    retrieved_at=utc_now_iso(),
-                    acquisition_mode="manual",
-                )
-            },
-        )
 
     def _item_patch(self, trade_date: str, operation: LadderItemPatch) -> None:
-        if self._current_ladder_status(trade_date) != "complete":
-            raise LadderSnapshotRequiredError()
         violations = _collect_st_violations(operation.upserts)
         if violations:
             raise LadderStNotAllowedError(violations)
@@ -328,25 +284,6 @@ class MarketReviewRepository:
                 """,
                 (trade_date, _validate_market(market), _normalize_code(code)),
             )
-        self._upsert_provenance(
-            trade_date,
-            {
-                _LADDER_SNAPSHOT_METRIC: MetricProvenance(
-                    source="manual_item_patch",
-                    source_as_of=trade_date,
-                    retrieved_at=utc_now_iso(),
-                    acquisition_mode="manual",
-                )
-            },
-        )
-
-    def _reset_missing(self, trade_date: str) -> None:
-        self._conn.execute("DELETE FROM daily_ladder_stock WHERE trade_date = ?", (trade_date,))
-        self._delete_provenance(trade_date, _LADDER_SNAPSHOT_METRIC)
-        self._conn.execute(
-            "UPDATE daily_market_review SET ladder_status = 'missing' WHERE trade_date = ?",
-            (trade_date,),
-        )
 
     def _insert_ladder_record(self, record: LadderStockRecord) -> None:
         self._conn.execute(
@@ -385,61 +322,6 @@ class MarketReviewRepository:
             )
             for row in rows
         ]
-
-    def _load_provenance(self, trade_date: str) -> dict[str, MetricProvenance]:
-        rows = self._conn.execute(
-            """
-            SELECT metric_name, source, source_as_of, retrieved_at, acquisition_mode
-            FROM market_review_metric_provenance
-            WHERE trade_date = ?
-            """,
-            (trade_date,),
-        ).fetchall()
-        return {
-            row["metric_name"]: MetricProvenance(
-                source=row["source"],
-                source_as_of=row["source_as_of"],
-                retrieved_at=row["retrieved_at"],
-                acquisition_mode=row["acquisition_mode"],
-            )
-            for row in rows
-        }
-
-    def _upsert_provenance(
-        self,
-        trade_date: str,
-        provenance: Mapping[str, MetricProvenance],
-    ) -> None:
-        for metric_name, record in provenance.items():
-            self._conn.execute(
-                """
-                INSERT INTO market_review_metric_provenance (
-                    trade_date, metric_name, source, source_as_of, retrieved_at, acquisition_mode
-                ) VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(trade_date, metric_name) DO UPDATE SET
-                    source = excluded.source,
-                    source_as_of = excluded.source_as_of,
-                    retrieved_at = excluded.retrieved_at,
-                    acquisition_mode = excluded.acquisition_mode
-                """,
-                (
-                    trade_date,
-                    metric_name,
-                    record.source,
-                    record.source_as_of,
-                    record.retrieved_at,
-                    record.acquisition_mode,
-                ),
-            )
-
-    def _delete_provenance(self, trade_date: str, metric_name: str) -> None:
-        self._conn.execute(
-            """
-            DELETE FROM market_review_metric_provenance
-            WHERE trade_date = ? AND metric_name = ?
-            """,
-            (trade_date, metric_name),
-        )
 
     def _previous_effective_limit_up(self, trade_date: str) -> int | None:
         previous_day = self._calendar.previous_trading_day(trade_date, "sh")

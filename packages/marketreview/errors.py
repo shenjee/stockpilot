@@ -55,19 +55,3 @@ class LadderStNotAllowedError(MarketReviewError):
             ),
             problem_codes=codes,
         )
-
-
-class LadderSnapshotRequiredError(MarketReviewError):
-    def __init__(self) -> None:
-        super().__init__(
-            code="LADDER_SNAPSHOT_REQUIRED",
-            message="当前连板快照未完成，请先提交完整快照（ladder_status=complete）。",
-        )
-
-
-class LadderInvalidTransitionError(MarketReviewError):
-    def __init__(self, detail: str) -> None:
-        super().__init__(
-            code="LADDER_INVALID_TRANSITION",
-            message=f"连板写入请求不合法，本次未写入任何数据：{detail}",
-        )

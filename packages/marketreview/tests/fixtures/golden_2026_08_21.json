@@ -79,6 +79,14 @@
     "streak_count": 4,
     "streak_rate": 0.1,
     "highest_board": 11,
+    "highest_board_representatives": [
+      {
+        "market": "bj",
+        "code": "830799",
+        "name": "艾融软件",
+        "streak_height": 11
+      }
+    ],
     "board_2": 2,
     "board_3": 1,
     "board_4": 0,

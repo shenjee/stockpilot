@@ -25,28 +25,32 @@ metadata:
 - 生成今天的总体复盘
 - 生成 2026-08-21 的总体复盘
 - 查看已保存的历史总体复盘
-- 一次性补充缺失的手工指标或连板名单
+- 一次性补充尚未取得的指标或连板名单
 
 ## 架构
 
 - 数据与计算：`packages/marketreview`
 - 交易日历与指数日 K：`packages/marketdata`
-- 本 Skill 只负责理解请求、收集补数、调用 package、展示表格
+- 本 Skill 负责理解请求，通过 API、网络查询、询问用户或其他可用方式取得数据，调用 package 写入并展示表格
 
 默认数据库：`<workspace>/stockpilot/db/market_review.sqlite3`
 
 ## 使用方式
 
-Agent 调用 `packages/marketreview` 的稳定入口，不经过独立 CLI，也不直接请求外部数据源。
+Agent 可以请求外部数据源，但必须调用 `packages/marketreview` 的稳定入口读写复盘数据，不经过独立 CLI，也不直接操作 SQLite。
 
-典型流程：
+写入操作：
 
-1. 用 `resolve_review_trade_date(calendar, requested=...)` 解析可写入交易日
-2. 打开 `MarketReviewRepository(default_market_review_db_path())`
-3. 用 `auto_patch_indices(repository, marketdata_provider, calendar, trade_date)` 自动拉取三只指数；部分失败时保留已有值
-4. 用 `missing_atomic_fields(repository, trade_date)` 一次性列出仍需手工补充的指标
-5. 收集 YAML/表格补数后，调用 `repository.patch_review(...)` 写入
-6. 用 `repository.get_review(trade_date)` 或 `list_reviews(...)` 读取，并按 PRD 八类表格展示
+1. 用 `resolve_review_trade_date(calendar, requested=...)` 解析可写入交易日。
+2. 根据用户请求，通过 `packages/marketdata`、API、网络查询或询问用户取得数据。本次没有取得的内容可一次性列出，用户可以跳过。
+3. 打开 `MarketReviewRepository(default_market_review_db_path())`，将本次已经取得或由用户提供的数据调用 `repository.patch_review(...)` 写入。
+4. 未提供字段保留原值，具体值包括 `0` 会更新，显式 `null` 会清空。不要求所有指标齐全，不记录采集状态。
+
+显示操作：
+
+1. 用 `repository.get_review(trade_date)` 或 `list_reviews(...)` 读取数据。
+2. 按 PRD 八类表格格式化展示。原子字段为 `null` 时留空；没有当日复盘记录时显示无数据。
+3. 显示时不自动取数、不追问缺失数据、不判断完整性、不修改数据库。
 
 展示层自行完成单位换算：元→亿元/万亿元，小数比率→百分数。package 只返回原始原子值和读时派生指标。
 
@@ -54,6 +58,7 @@ Agent 调用 `packages/marketreview` 的稳定入口，不经过独立 CLI，也
 
 ## 边界
 
-- V1 自动获取仅三只指数日 K
-- 涨跌停基础数量、连板名单、两融、成交额等其余字段为手工录入
+- 写入和显示是两个独立操作；只有用户要求写入时才修改数据库
+- V1 可自动获取三只指数日 K；`packages/marketreview` 不提供指数采集编排接口
+- 涨跌停基础数量、连板名单、两融、成交额等其余字段可由 Skill 通过 API、网络查询或询问用户取得
 - 连板名单含 `is_st=true` 时整次 patch 回滚

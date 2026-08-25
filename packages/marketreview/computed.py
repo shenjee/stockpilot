@@ -6,7 +6,7 @@ from dataclasses import asdict
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
-from .schema import DailyMarketReviewAtoms, LadderStockRecord, LadderStatus
+from .schema import DailyMarketReviewAtoms, LadderStockRecord
 
 
 def _round2(value: float) -> float:
@@ -60,26 +60,12 @@ def _limit_up_failure_rate(failed: int | None, effective: int | None) -> float |
     return _round4(failed / denominator)
 
 
-def _ladder_board_counts(stocks: list[LadderStockRecord]) -> dict[str, int | None]:
-    if not stocks:
-        return {
-            "board_counts": {},
-            "board_2": 0,
-            "board_3": 0,
-            "board_4": 0,
-            "board_5": 0,
-            "board_6": 0,
-            "board_7": 0,
-            "board_8": 0,
-            "board_9": 0,
-            "board_10": 0,
-            "board_11_plus": 0,
-        }
+def _ladder_board_counts(stocks: list[LadderStockRecord]) -> dict[str, Any]:
     counts: dict[int, int] = {}
     for stock in stocks:
         counts[stock.streak_height] = counts.get(stock.streak_height, 0) + 1
     board_counts = {str(height): count for height, count in sorted(counts.items())}
-    result: dict[str, int | None] = {"board_counts": board_counts}  # type: ignore[assignment]
+    result: dict[str, Any] = {"board_counts": board_counts}
     for height in range(2, 11):
         result[f"board_{height}"] = counts.get(height, 0)
     result["board_11_plus"] = sum(count for height, count in counts.items() if height >= 11)
@@ -100,41 +86,26 @@ def compute_review_metrics(
     if atoms.effective_limit_up is not None and atoms.closed_limit_down is not None:
         limit_ratio = _format_ratio(atoms.effective_limit_up, atoms.closed_limit_down)
 
-    ladder_status: LadderStatus = atoms.ladder_status
-    ladder_count: int | None = None
-    highest_board: int | None = None
-    highest_board_representatives: list[dict[str, str]] | None = None
-    board_fields: dict[str, Any] = {
-        f"board_{height}": None for height in range(2, 11)
-    }
-    board_fields["board_11_plus"] = None
-    board_fields["board_counts"] = None
-    streak_rate: float | None = None
+    ladder_count = len(ladder_stocks)
+    if ladder_stocks:
+        highest_board = max(stock.streak_height for stock in ladder_stocks)
+        highest_board_representatives = [
+            {
+                "market": stock.market,
+                "code": stock.code,
+                "name": stock.name,
+                "streak_height": stock.streak_height,
+            }
+            for stock in ladder_stocks
+            if stock.streak_height == highest_board
+        ]
+    else:
+        highest_board = 0
+        highest_board_representatives = []
 
-    if ladder_status == "complete":
-        ladder_count = len(ladder_stocks)
-        if ladder_stocks:
-            highest_board = max(stock.streak_height for stock in ladder_stocks)
-            highest_board_representatives = [
-                {
-                    "market": stock.market,
-                    "code": stock.code,
-                    "name": stock.name,
-                    "streak_height": stock.streak_height,
-                }
-                for stock in ladder_stocks
-                if stock.streak_height == highest_board
-            ]
-        else:
-            highest_board = 0
-            highest_board_representatives = []
-        board_fields = _ladder_board_counts(ladder_stocks)
-        if (
-            previous_effective_limit_up is not None
-            and previous_effective_limit_up > 0
-            and ladder_count is not None
-        ):
-            streak_rate = _round4(ladder_count / previous_effective_limit_up)
+    streak_rate: float | None = None
+    if previous_effective_limit_up is not None and previous_effective_limit_up > 0:
+        streak_rate = _round4(ladder_count / previous_effective_limit_up)
 
     return {
         "limit_up_failure_rate": _limit_up_failure_rate(
@@ -162,6 +133,6 @@ def compute_review_metrics(
         "streak_rate": streak_rate,
         "highest_board": highest_board,
         "highest_board_representatives": highest_board_representatives,
-        **board_fields,
+        **_ladder_board_counts(ladder_stocks),
         "atoms": asdict(atoms),
     }

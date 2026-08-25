@@ -5,10 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-LadderStatus = Literal["missing", "complete"]
-LadderWriteMode = Literal["snapshot_replace", "item_patch", "reset_missing"]
+LadderWriteMode = Literal["snapshot_replace", "item_patch"]
 MarketCode = Literal["sh", "sz", "bj"]
-AcquisitionMode = Literal["auto", "manual"]
 
 ATOMIC_FIELD_NAMES: frozenset[str] = frozenset(
     {
@@ -46,14 +44,6 @@ ATOMIC_FIELD_NAMES: frozenset[str] = frozenset(
 
 
 @dataclass(frozen=True)
-class MetricProvenance:
-    source: str
-    source_as_of: str | None
-    retrieved_at: str
-    acquisition_mode: AcquisitionMode
-
-
-@dataclass(frozen=True)
 class LadderStockInput:
     market: MarketCode
     code: str
@@ -79,7 +69,6 @@ class LadderStockRecord:
 @dataclass
 class LadderSnapshotReplace:
     mode: Literal["snapshot_replace"] = "snapshot_replace"
-    ladder_status: Literal["complete"] = "complete"
     stocks: list[LadderStockInput] = field(default_factory=list)
 
 
@@ -90,18 +79,12 @@ class LadderItemPatch:
     deletes: list[tuple[MarketCode, str]] = field(default_factory=list)
 
 
-@dataclass
-class LadderResetMissing:
-    mode: Literal["reset_missing"] = "reset_missing"
-
-
-LadderOperation = LadderSnapshotReplace | LadderItemPatch | LadderResetMissing
+LadderOperation = LadderSnapshotReplace | LadderItemPatch
 
 
 @dataclass
 class DailyMarketReviewAtoms:
     trade_date: str
-    ladder_status: LadderStatus = "missing"
     effective_limit_up: int | None = None
     limit_up_20pct: int | None = None
     opened_limit_down: int | None = None
@@ -138,4 +121,3 @@ class DailyMarketReviewView:
     atoms: DailyMarketReviewAtoms
     ladder_stocks: list[LadderStockRecord]
     computed: dict[str, Any]
-    provenance: dict[str, MetricProvenance]

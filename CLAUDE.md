@@ -84,13 +84,13 @@ The screener core should remain UI-neutral and skill-neutral. Use fixtures for d
 
 ### `packages/marketreview/` — Daily market review core
 The core for the daily market review ledger. It answers "what happened in the market on a closed trading day" through measurable atoms and read-time derived metrics only. It does **not** generate trading advice or sector forecasts.
-- `repository.py` / `sqlite_schema.py` — SQLite persistence, field-level patch, ladder snapshot modes, provenance.
+- `repository.py` / `sqlite_schema.py` — SQLite persistence, field-level patch, and ladder writes.
 - `computed.py` — read-time derived metrics (failure rate, streak aggregates, index change, totals).
 - `validation.py` — trade-date guards, atomic field validation, ladder input checks.
-- `service.py` — V1 orchestration: resolve trade date, auto-fetch three indices, list missing fields.
+- `service.py` — resolve trade date and list null atomic fields.
 - `paths.py` — default DB path under `<workspace>/stockpilot/db/market_review.sqlite3`.
 
-Skills call `packages/marketreview` service/repository APIs; market data comes from `packages/marketdata`. Presentation formatting stays outside the package in V1.
+Skills acquire data (API, network search, or user input) and call `packages/marketreview` to persist and query it. Presentation formatting stays outside the package in V1.
 
 ### `skills/china-stock-analysis/` — installable agent skill
 Generates factual (no buy/sell advice) China A-share daily market reports. Installed by copying the directory into a client's skills dir; **runtime data must live outside the install dir** under a configurable `runtime_dir` (default `stockpilot/`) with `config/`, `db/`, `reports/` subdirs.
