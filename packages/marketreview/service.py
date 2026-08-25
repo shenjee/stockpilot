@@ -64,6 +64,7 @@ class IndexKlineProvider(Protocol):
         *,
         ktype: str = "day",
         market: str | None = None,
+        security_type: str | None = None,
     ) -> list[dict[str, Any]]: ...
 
 
@@ -119,6 +120,7 @@ def fetch_index_atoms(
                 trade_date,
                 ktype="day",
                 market=market,
+                security_type="index",
             )
             prev_rows = provider.get_kline(
                 code,
@@ -126,6 +128,7 @@ def fetch_index_atoms(
                 previous_day.isoformat(),
                 ktype="day",
                 market=market,
+                security_type="index",
             )
         except Exception as exc:
             failures.append(f"{close_field}: {exc}")

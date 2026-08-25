@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import unittest
 from datetime import datetime
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
+from packages.marketdata.market_data import TencentStockDataProvider
 from packages.marketdata.trading_calendar import TradingCalendar
 
 from packages.marketreview.repository import MarketReviewRepository
@@ -23,7 +26,7 @@ _CHINA = ZoneInfo("Asia/Shanghai")
 class FakeIndexProvider:
     def __init__(self, rows: dict[tuple[str, str], list[dict]]) -> None:
         self.rows = rows
-        self.calls: list[tuple[str, str, str]] = []
+        self.calls: list[tuple[str, str, str, str | None]] = []
 
     def get_kline(
         self,
@@ -33,8 +36,9 @@ class FakeIndexProvider:
         *,
         ktype: str = "day",
         market: str | None = None,
+        security_type: str | None = None,
     ) -> list[dict]:
-        self.calls.append((code, start_date, end_date))
+        self.calls.append((code, start_date, end_date, security_type))
         return self.rows.get((code, start_date), [])
 
 
@@ -74,6 +78,45 @@ class TestMarketReviewService(unittest.TestCase):
         self.assertEqual(result.fields["sh_index_prev_close"], 3180.25)
         self.assertEqual(result.failures, ())
         self.assertIn("sh_index_close", result.provenance)
+        self.assertEqual(len(provider.calls), 6)
+        self.assertTrue(all(call[3] == "index" for call in provider.calls))
+
+    def test_fetch_index_atoms_with_tencent_provider_uses_index_security_type(self) -> None:
+        index_closes = {
+            ("sh000001", "2026-08-21"): 3200.5,
+            ("sh000001", "2026-08-20"): 3180.25,
+            ("sz399001", "2026-08-21"): 10250.75,
+            ("sz399001", "2026-08-20"): 10100.0,
+            ("sz399006", "2026-08-21"): 2105.4,
+            ("sz399006", "2026-08-20"): 2080.0,
+        }
+
+        def mock_fetch(url: str, decode: str = "utf-8") -> str:
+            symbol, _, start_date, end_date, _, autype = url.split("param=")[1].split(",")
+            close = index_closes[(symbol, start_date)]
+            row = [start_date, str(close - 5), str(close), str(close + 5), str(close - 10), "100", {}, "0.1", "30000.00"]
+            return json.dumps({"code": 0, "data": {symbol: {"day": [row]}}})
+
+        with patch.object(
+            TencentStockDataProvider,
+            "_fetch_with_retry",
+            side_effect=mock_fetch,
+        ) as fetch:
+            result = fetch_index_atoms(
+                TencentStockDataProvider,
+                self.calendar,
+                "2026-08-21",
+            )
+
+        self.assertEqual(result.failures, ())
+        self.assertEqual(result.fields["sh_index_close"], 3200.5)
+        self.assertEqual(result.fields["sh_index_prev_close"], 3180.25)
+        self.assertEqual(result.fields["sz_index_close"], 10250.75)
+        self.assertEqual(result.fields["cy_index_close"], 2105.4)
+        self.assertEqual(len(fetch.call_args_list), 6)
+        for call in fetch.call_args_list:
+            url = call.args[0]
+            self.assertNotIn("qfq", url)
 
     def test_auto_patch_indices_preserves_existing_on_partial_failure(self) -> None:
         repo = MarketReviewRepository(":memory:")
