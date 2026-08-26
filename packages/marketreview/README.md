@@ -14,7 +14,9 @@ owned by callers such as the daily-market-review Skill.
 V1 target contract:
 
 - atomic field storage
-- date/direction replacement and unrestricted event-level `item_patch`
+- date/direction `direction_replace` and unrestricted event-level `item_patch`;
+  replacement is an event-list operation and does not create a completeness
+  snapshot
 - one event for every eligible stock that touched an upper or lower price limit
 - optional `streak_height_anchor` on an effective limit-up event, representing
   that stock's actual streak height on the event date
@@ -44,6 +46,11 @@ Skills and apps acquire data through `packages/marketdata`, APIs, network
 search, user input, or other available means, then write through this package.
 They must not access the market-review SQLite database directly. This package
 does not expose `auto_patch_indices`, `fetch_index_atoms`, or `IndexFetchResult`.
+
+Conceptually, callers may view event storage as
+`limit[trade_date][direction][market + code]`. SQLite stores that structure as
+one flat `daily_price_limit_event` row per date, stock, and touched direction;
+there is no separate snapshot or completeness row.
 
 ## Documentation
 
