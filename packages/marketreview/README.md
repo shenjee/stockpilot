@@ -3,21 +3,25 @@
 Daily market review persistence, patch semantics, and read-time metrics for
 Stock Pilot.
 
-This package is the single source of truth for the daily market review ledger.
-It stores atomic fields in SQLite, applies field-level patch semantics, manages
-ladder writes, and computes derived metrics at read time. Data acquisition is
+This package is the single source of truth for the daily market review ledger
+and daily price-limit events. It stores atomic review fields plus complete
+per-direction event snapshots, applies patch semantics, and derives limit-up,
+limit-down, first-board, and streak metrics at read time. Data acquisition is
 owned by callers such as the daily-market-review Skill.
 
 ## Status
 
-V1 core is implemented:
+V1 target contract:
 
 - atomic field storage
-- ladder write modes: `snapshot_replace`, `item_patch`
-- read-time derived metrics (limit-up failure rate, streak aggregates, index
-  change, margin/turnover totals)
+- complete `up` and `down` price-limit snapshots with `snapshot_replace` and
+  guarded `item_patch`
+- one event for every eligible stock that touched an upper or lower price limit
+- read-time limit-up/down counts, failure rate, first-board and streak
+  aggregates, index change, and margin/turnover totals
 - trading-day and market-close validation
-- transactional persistence and safe migration of the previous schema
+- transactional persistence; the pre-launch database may be recreated and does
+  not require migration compatibility
 
 V1 does **not** include presentation formatting (yuan to 亿元, ratio to percent).
 Skills and apps format `DailyMarketReviewView` for display.
@@ -31,7 +35,8 @@ Preferred V1 entry points:
 
 Repository and pure helpers:
 
-- `MarketReviewRepository` — patch/get/delete reviews and ladder snapshots
+- `MarketReviewRepository` — patch/get/delete reviews and complete price-limit
+  snapshots
 - `compute_review_metrics(...)` — read-time derivations without SQLite
 - `default_market_review_db_path()` — `<workspace>/stockpilot/db/market_review.sqlite3`
 

@@ -25,7 +25,7 @@ metadata:
 - 生成今天的总体复盘
 - 生成 2026-08-21 的总体复盘
 - 查看已保存的历史总体复盘
-- 一次性补充尚未取得的指标或连板名单
+- 一次性补充尚未取得的指标或完整涨跌停事件快照
 
 ## 架构
 
@@ -43,8 +43,9 @@ Agent 可以请求外部数据源，但必须调用 `packages/marketreview` 的�
 
 1. 用 `resolve_review_trade_date(calendar, requested=...)` 解析可写入交易日。
 2. 根据用户请求，通过 `packages/marketdata`、API、网络查询或询问用户取得数据。本次没有取得的内容可一次性列出，用户可以跳过。
-3. 打开 `MarketReviewRepository(default_market_review_db_path())`，将本次已经取得或由用户提供的数据调用 `repository.patch_review(...)` 写入。
-4. 未提供字段保留原值，具体值包括 `0` 会更新，显式 `null` 会清空。不要求所有指标齐全，不记录采集状态。
+3. 打开 `MarketReviewRepository(default_market_review_db_path())`，将本次已经取得或由用户提供的数据调用稳定 repository 接口写入。
+4. 复盘原子字段未提供时保留原值，具体值包括 `0` 会更新，显式 `null` 会清空。
+5. 涨停和跌停按方向分别提交完整事件快照；未取得完整名单时不提交该方向。完整空快照表示已确认零触板，无快照表示未知。
 
 显示操作：
 
@@ -52,13 +53,14 @@ Agent 可以请求外部数据源，但必须调用 `packages/marketreview` 的�
 2. 按 PRD 八类表格格式化展示。原子字段为 `null` 时留空；没有当日复盘记录时显示无数据。
 3. 显示时不自动取数、不追问缺失数据、不判断完整性、不修改数据库。
 
-展示层自行完成单位换算：元→亿元/万亿元，小数比率→百分数。package 只返回原始原子值和读时派生指标。
+展示层自行完成单位换算：元→亿元/万亿元，小数比率→百分数。package 返回原始原子值、每日涨跌停事件和读时派生指标。
 
-补数 YAML 示例见 PRD `docs/marketreview/daily_market_review_skill_prd.md` 第 5.2 节。
+涨跌停事件 YAML 示例见 PRD `docs/marketreview/daily_market_review_skill_prd.md` 第 5.2 节。
 
 ## 边界
 
 - 写入和显示是两个独立操作；只有用户要求写入时才修改数据库
 - V1 可自动获取三只指数日 K；`packages/marketreview` 不提供指数采集编排接口
-- 涨跌停基础数量、连板名单、两融、成交额等其余字段可由 Skill 通过 API、网络查询或询问用户取得
-- 连板名单含 `is_st=true` 时整次 patch 回滚
+- 涨跌停事件完整快照、两融、成交额等其余数据可由 Skill 通过 API、网络查询或询问用户取得
+- 有效涨停、涨停炸板、打开跌停、收盘跌停、首板和连板均由事件快照派生，不接受重复的板数标签或聚合值
+- 任一非法事件会使同次复盘写入整体回滚
