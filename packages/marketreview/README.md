@@ -15,8 +15,8 @@ V1 target contract:
 - atomic field storage
 - simple save/update/delete/query operations for price-limit event rows
 - one event for every eligible stock that touched an upper or lower price limit
-- optional `streak_height_anchor` on an effective limit-up event, representing
-  that stock's actual streak height on the event date
+- required `streak_height` on every event: the event-date streak count for an
+  effective limit-up, otherwise `0`
 - structural persistence constraints only: types/nullability, required row
   identity, uniqueness, and transaction safety
 - the pre-launch database may be recreated and does not require migration
@@ -24,9 +24,11 @@ V1 target contract:
 
 The package does not judge whether submitted market facts are correct. The
 Skill validates market, code, trading date, security universe, price-limit
-rate, and other acquisition rules before writing. SQLite does not repeat those
-checks. Skills and apps read stored rows, calculate the required summaries, and
-format them for display.
+rate, and other acquisition rules before writing. If the user supplies a streak
+count, the Skill uses it; otherwise the Skill calculates it from the previous
+trading day's stored event before writing. SQLite does not repeat those checks
+or calculate streak height. Skills and apps read stored rows, calculate the
+required summaries, and format them for display.
 
 ## Public API
 

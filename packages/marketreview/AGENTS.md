@@ -16,7 +16,7 @@ Daily market review persistence and queries.
 - Database constraints should remain structural: column types/nullability,
   required row identity, uniqueness, and transaction safety. Do not duplicate
   Skill-level market, security-universe, trading-date, price-limit-rate, or
-  streak-consistency checks in the repository.
+  streak-height calculation in the repository.
 
 ## Public entry points
 
