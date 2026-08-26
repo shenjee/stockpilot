@@ -83,14 +83,13 @@ The core for quantitative fundamental screening. It answers "which sectors and c
 The screener core should remain UI-neutral and skill-neutral. Use fixtures for deterministic tests; real-market AkShare access belongs in the data source/sync layer and should not be copied into apps.
 
 ### `packages/marketreview/` — Daily market review core
-The core for the daily market review ledger. It answers "what happened in the market on a closed trading day" through measurable atoms and read-time derived metrics only. It does **not** generate trading advice or sector forecasts.
-- `repository.py` / `sqlite_schema.py` — SQLite persistence, field-level patch, and ladder writes.
-- `computed.py` — read-time derived metrics (failure rate, streak aggregates, index change, totals).
-- `validation.py` — trade-date guards, atomic field validation, ladder input checks.
-- `service.py` — resolve trade date and list null atomic fields.
+The core for the daily market review ledger. It stores atomic review fields and daily price-limit events. It does **not** generate trading advice, sector forecasts, or display statistics.
+- `repository.py` / `sqlite_schema.py` — SQLite persistence and simple save/get/delete/query.
+- `validation.py` — structural type and date-format checks only.
+- `service.py` — list null atomic fields.
 - `paths.py` — default DB path under `<workspace>/stockpilot/db/market_review.sqlite3`.
 
-Skills acquire data (API, network search, or user input) and call `packages/marketreview` to persist and query it. Presentation formatting stays outside the package in V1.
+Skills acquire and validate data, then call `packages/marketreview` to persist and query it. Statistics and presentation stay outside the package.
 
 ### `skills/china-stock-analysis/` — installable agent skill
 Generates factual (no buy/sell advice) China A-share daily market reports. Installed by copying the directory into a client's skills dir; **runtime data must live outside the install dir** under a configurable `runtime_dir` (default `stockpilot/`) with `config/`, `db/`, `reports/` subdirs.

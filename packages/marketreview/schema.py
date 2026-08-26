@@ -1,20 +1,12 @@
-"""Public shapes for daily market review."""
+"""Public shapes for daily market review persistence."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Literal
-
-LadderWriteMode = Literal["snapshot_replace", "item_patch"]
-MarketCode = Literal["sh", "sz", "bj"]
+from dataclasses import dataclass
+from typing import Any, Mapping
 
 ATOMIC_FIELD_NAMES: frozenset[str] = frozenset(
     {
-        "effective_limit_up",
-        "limit_up_20pct",
-        "opened_limit_down",
-        "closed_limit_down",
-        "limit_up_failed",
         "pullback_count",
         "median_change_pct",
         "advancing_count",
@@ -42,54 +34,52 @@ ATOMIC_FIELD_NAMES: frozenset[str] = frozenset(
     }
 )
 
+PRICE_LIMIT_EVENT_FIELD_NAMES: frozenset[str] = frozenset(
+    {
+        "market",
+        "code",
+        "name",
+        "direction",
+        "closed_at_limit",
+        "limit_rate_bp",
+        "streak_height",
+    }
+)
+PRICE_LIMIT_EVENT_IGNORED_FIELDS: frozenset[str] = frozenset(
+    {"trade_date", "created_at", "updated_at"}
+)
+REVIEW_SELECT_COLUMNS: tuple[str, ...] = (
+    "trade_date",
+    *sorted(ATOMIC_FIELD_NAMES),
+)
+
 
 @dataclass(frozen=True)
-class LadderStockInput:
-    market: MarketCode
+class PriceLimitEventInput:
+    market: str
     code: str
     name: str
+    direction: str
+    closed_at_limit: bool
+    limit_rate_bp: int
     streak_height: int
-    is_st: bool
 
 
 @dataclass(frozen=True)
-class LadderStockRecord:
+class PriceLimitEventRecord:
     trade_date: str
-    market: MarketCode
+    market: str
     code: str
     name: str
+    direction: str
+    closed_at_limit: bool
+    limit_rate_bp: int
     streak_height: int
-    is_st: bool = False
-
-    @property
-    def identity(self) -> str:
-        return f"{self.market}.{self.code}"
-
-
-@dataclass
-class LadderSnapshotReplace:
-    mode: Literal["snapshot_replace"] = "snapshot_replace"
-    stocks: list[LadderStockInput] = field(default_factory=list)
-
-
-@dataclass
-class LadderItemPatch:
-    mode: Literal["item_patch"] = "item_patch"
-    upserts: list[LadderStockInput] = field(default_factory=list)
-    deletes: list[tuple[MarketCode, str]] = field(default_factory=list)
-
-
-LadderOperation = LadderSnapshotReplace | LadderItemPatch
 
 
 @dataclass
 class DailyMarketReviewAtoms:
     trade_date: str
-    effective_limit_up: int | None = None
-    limit_up_20pct: int | None = None
-    opened_limit_down: int | None = None
-    closed_limit_down: int | None = None
-    limit_up_failed: int | None = None
     pullback_count: int | None = None
     median_change_pct: float | None = None
     advancing_count: int | None = None
@@ -116,8 +106,4 @@ class DailyMarketReviewAtoms:
     avg_stock_price: float | None = None
 
 
-@dataclass
-class DailyMarketReviewView:
-    atoms: DailyMarketReviewAtoms
-    ladder_stocks: list[LadderStockRecord]
-    computed: dict[str, Any]
+PriceLimitEventLike = PriceLimitEventInput | PriceLimitEventRecord | Mapping[str, Any]

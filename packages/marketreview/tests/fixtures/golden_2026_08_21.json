@@ -1,15 +1,6 @@
 {
-  "previous_trade_date": "2026-08-20",
   "trade_date": "2026-08-21",
-  "previous_atoms": {
-    "effective_limit_up": 40
-  },
   "atoms": {
-    "effective_limit_up": 52,
-    "limit_up_20pct": 8,
-    "opened_limit_down": 3,
-    "closed_limit_down": 15,
-    "limit_up_failed": 12,
     "pullback_count": 0,
     "median_change_pct": null,
     "advancing_count": 2500,
@@ -35,67 +26,51 @@
     "pe_all": null,
     "avg_stock_price": 18.56
   },
-  "ladder_stocks": [
+  "price_limit_events": [
     {
       "market": "sh",
       "code": "600519",
       "name": "贵州茅台",
-      "streak_height": 2,
-      "is_st": false
+      "direction": "up",
+      "closed_at_limit": true,
+      "limit_rate_bp": 1000,
+      "streak_height": 4
     },
     {
       "market": "sz",
-      "code": "000001",
-      "name": "平安银行",
-      "streak_height": 3,
-      "is_st": false
+      "code": "300001",
+      "name": "示例科技",
+      "direction": "up",
+      "closed_at_limit": false,
+      "limit_rate_bp": 2000,
+      "streak_height": 0
     },
     {
       "market": "sh",
-      "code": "600036",
-      "name": "招商银行",
-      "streak_height": 2,
-      "is_st": false
+      "code": "600002",
+      "name": "示例实业",
+      "direction": "down",
+      "closed_at_limit": true,
+      "limit_rate_bp": 1000,
+      "streak_height": 0
     },
     {
       "market": "bj",
       "code": "830799",
       "name": "艾融软件",
-      "streak_height": 11,
-      "is_st": false
+      "direction": "up",
+      "closed_at_limit": true,
+      "limit_rate_bp": 3000,
+      "streak_height": 1
+    },
+    {
+      "market": "sh",
+      "code": "600519",
+      "name": "贵州茅台",
+      "direction": "down",
+      "closed_at_limit": false,
+      "limit_rate_bp": 1000,
+      "streak_height": 0
     }
-  ],
-  "expected_computed": {
-    "limit_up_failure_rate": 0.1875,
-    "limit_up_down_ratio": "3.47:1",
-    "margin_balance_total": null,
-    "turnover_amount_total": 2017906000000.0,
-    "sh_index_change_points": 20.25,
-    "sh_index_change_pct": 0.0064,
-    "sz_index_change_points": 150.75,
-    "sz_index_change_pct": 0.0149,
-    "cy_index_change_points": 25.4,
-    "cy_index_change_pct": 0.0122,
-    "streak_count": 4,
-    "streak_rate": 0.1,
-    "highest_board": 11,
-    "highest_board_representatives": [
-      {
-        "market": "bj",
-        "code": "830799",
-        "name": "艾融软件",
-        "streak_height": 11
-      }
-    ],
-    "board_2": 2,
-    "board_3": 1,
-    "board_4": 0,
-    "board_5": 0,
-    "board_6": 0,
-    "board_7": 0,
-    "board_8": 0,
-    "board_9": 0,
-    "board_10": 0,
-    "board_11_plus": 1
-  }
+  ]
 }

@@ -27,7 +27,7 @@
 - Skill 负责取得和校验复盘数据，也负责读取后的统计与展示，但不直接操作 SQLite。
 - Skill 和未来应用统一调用 `packages/marketreview` 的接口读写复盘数据。
 - 行情类数据优先复用 `packages/marketdata` 的稳定接口；`packages/marketreview` 不负责外部数据采集或复盘采集编排。
-- `packages/marketreview` 将调用方提交的数据视为待保存内容，不重复判断市场事实是否正确。SQLite 只承担字段类型、可空性、行身份唯一性和事务安全等结构性职责。
+- `packages/marketreview` 将调用方提交的数据视为待保存内容，按原样存取，不重复判断市场事实是否正确，也不改写提交的数值。SQLite 使用 STRICT 表承担字段类型、可空性、行身份唯一性和事务安全等结构性职责。
 - 数据可能录错；用户在查看时发现问题后，可以让 Skill 修订或覆盖。数据库不承担事实核验职责。
 - 腾讯指数 K 线里的 `amount` 暂不等同于交易所全市场成交额。在没有专门 provider 和对照测试前，不将成交额列为自动项。
 

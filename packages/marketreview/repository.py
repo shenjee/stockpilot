@@ -2,50 +2,24 @@
 
 from __future__ import annotations
 
-import re
 import sqlite3
-from datetime import datetime
-from typing import Any, Iterable, Mapping
+from datetime import date
+from typing import Any, Mapping, Sequence
 
-from packages.marketdata.trading_calendar import TradingCalendar
-
-from .computed import compute_review_metrics
 from .db import review_transaction
-from .errors import (
-    InvalidFieldValueError,
-    LadderStNotAllowedError,
-)
+from .errors import InvalidFieldValueError
 from .schema import (
     ATOMIC_FIELD_NAMES,
+    PRICE_LIMIT_EVENT_FIELD_NAMES,
+    PRICE_LIMIT_EVENT_IGNORED_FIELDS,
+    REVIEW_SELECT_COLUMNS,
     DailyMarketReviewAtoms,
-    DailyMarketReviewView,
-    LadderItemPatch,
-    LadderOperation,
-    LadderSnapshotReplace,
-    LadderStockInput,
-    LadderStockRecord,
+    PriceLimitEventInput,
+    PriceLimitEventLike,
+    PriceLimitEventRecord,
 )
-from .sqlite_schema import connect, init_db, utc_now_iso
-from .validation import assert_writable_trade_date, validate_atomic_field, validate_ladder_stock_input
-
-_CODE_PATTERN = re.compile(r"^\d{6}$")
-
-
-def _normalize_code(code: str) -> str:
-    if type(code) is not str:
-        raise InvalidFieldValueError(f"股票代码必须为字符串：{code!r}")
-    normalized = code.strip()
-    if not _CODE_PATTERN.fullmatch(normalized):
-        raise InvalidFieldValueError(f"股票代码必须为 6 位数字：{code!r}")
-    return normalized
-
-
-def _validate_market(market: str) -> str:
-    if type(market) is not str:
-        raise InvalidFieldValueError(f"不支持的市场：{market!r}")
-    if market not in {"sh", "sz", "bj"}:
-        raise InvalidFieldValueError(f"不支持的市场：{market!r}")
-    return market
+from .sqlite_schema import PathLike, connect, init_db, utc_now_iso
+from .validation import normalize_trade_date, validate_atomic_field
 
 
 def _row_to_atoms(row: sqlite3.Row) -> DailyMarketReviewAtoms:
@@ -53,60 +27,85 @@ def _row_to_atoms(row: sqlite3.Row) -> DailyMarketReviewAtoms:
     return DailyMarketReviewAtoms(**payload)
 
 
-def _st_problem_identity(stock: LadderStockInput) -> tuple[str, str]:
-    market = stock.market if type(stock.market) is str else str(stock.market)
-    code = stock.code.strip() if type(stock.code) is str else str(stock.code)
-    return market, code
+def _row_to_event(row: sqlite3.Row) -> PriceLimitEventRecord:
+    return PriceLimitEventRecord(
+        trade_date=row["trade_date"],
+        market=row["market"],
+        code=row["code"],
+        name=row["name"],
+        direction=row["direction"],
+        closed_at_limit=bool(row["closed_at_limit"]),
+        limit_rate_bp=row["limit_rate_bp"],
+        streak_height=row["streak_height"],
+    )
 
 
-def _collect_st_violations(stocks: Iterable[LadderStockInput]) -> list[tuple[str, str]]:
-    return [
-        _st_problem_identity(stock)
-        for stock in stocks
-        if type(stock.is_st) is bool and stock.is_st
-    ]
+def _require_str(field_name: str, value: Any) -> str:
+    if type(value) is not str:
+        raise InvalidFieldValueError(f"{field_name} 必须为字符串：{value!r}")
+    return value
 
 
-def _snapshot_records(trade_date: str, stocks: Iterable[LadderStockInput]) -> list[LadderStockRecord]:
-    records: list[LadderStockRecord] = []
-    seen: set[tuple[str, str]] = set()
-    for stock in stocks:
-        record = _to_ladder_record(trade_date, stock)
-        key = (record.market, record.code)
+def _require_int(field_name: str, value: Any) -> int:
+    if type(value) is not int:
+        raise InvalidFieldValueError(f"{field_name} 必须为整数：{value!r}")
+    return value
+
+
+def _require_bool(field_name: str, value: Any) -> bool:
+    if type(value) is not bool:
+        raise InvalidFieldValueError(f"{field_name} 必须为布尔值：{value!r}")
+    return value
+
+
+def _event_mapping(event: PriceLimitEventLike) -> dict[str, Any]:
+    if isinstance(event, (PriceLimitEventInput, PriceLimitEventRecord)):
+        return {name: getattr(event, name) for name in PRICE_LIMIT_EVENT_FIELD_NAMES}
+    if isinstance(event, Mapping):
+        extra = set(event) - PRICE_LIMIT_EVENT_FIELD_NAMES - PRICE_LIMIT_EVENT_IGNORED_FIELDS
+        if extra:
+            raise InvalidFieldValueError(f"未知字段：{', '.join(sorted(extra))}")
+        missing = PRICE_LIMIT_EVENT_FIELD_NAMES - set(event)
+        if missing:
+            raise InvalidFieldValueError(f"缺少字段：{', '.join(sorted(missing))}")
+        return {name: event[name] for name in PRICE_LIMIT_EVENT_FIELD_NAMES}
+    raise InvalidFieldValueError(
+        "事件必须为映射、PriceLimitEventInput 或 PriceLimitEventRecord："
+        f"{event!r}"
+    )
+
+
+def _reject_duplicate_event_identities(records: Sequence[PriceLimitEventRecord]) -> None:
+    seen: set[tuple[str, str, str]] = set()
+    for record in records:
+        key = (record.market, record.code, record.direction)
         if key in seen:
-            raise InvalidFieldValueError(f"连板名单存在重复股票：{record.market}.{record.code}")
+            raise InvalidFieldValueError(
+                "同一批写入存在重复事件："
+                f"{record.market}.{record.code} {record.direction}"
+            )
         seen.add(key)
-        records.append(record)
-    return records
 
 
-def _to_ladder_record(trade_date: str, stock: LadderStockInput) -> LadderStockRecord:
-    validate_ladder_stock_input(stock)
-    market = _validate_market(stock.market)
-    code = _normalize_code(stock.code)
-    if stock.is_st:
-        raise LadderStNotAllowedError([(market, code)])
-    return LadderStockRecord(
+def _normalize_event(trade_date: str, event: PriceLimitEventLike) -> PriceLimitEventRecord:
+    payload = _event_mapping(event)
+    return PriceLimitEventRecord(
         trade_date=trade_date,
-        market=market,  # type: ignore[arg-type]
-        code=code,
-        name=stock.name.strip(),
-        streak_height=stock.streak_height,
-        is_st=False,
+        market=_require_str("market", payload["market"]),
+        code=_require_str("code", payload["code"]),
+        name=_require_str("name", payload["name"]),
+        direction=_require_str("direction", payload["direction"]),
+        closed_at_limit=_require_bool("closed_at_limit", payload["closed_at_limit"]),
+        limit_rate_bp=_require_int("limit_rate_bp", payload["limit_rate_bp"]),
+        streak_height=_require_int("streak_height", payload["streak_height"]),
     )
 
 
 class MarketReviewRepository:
-    def __init__(
-        self,
-        db_path: str | sqlite3.Connection,
-        *,
-        calendar: TradingCalendar | None = None,
-    ) -> None:
+    def __init__(self, db_path: PathLike) -> None:
         self._owns_connection = not isinstance(db_path, sqlite3.Connection)
         self._conn = connect(db_path) if self._owns_connection else db_path
         init_db(self._conn)
-        self._calendar = calendar or TradingCalendar()
 
     def close(self) -> None:
         if self._owns_connection:
@@ -118,88 +117,145 @@ class MarketReviewRepository:
     def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
 
-    def patch_review(
-        self,
-        trade_date: str,
-        fields: Mapping[str, Any] | None = None,
-        *,
-        ladder_operation: LadderOperation | None = None,
-        now: datetime | None = None,
-    ) -> None:
-        writable_date = assert_writable_trade_date(trade_date, self._calendar, now=now)
+    def save_review(self, trade_date: str | date, fields: Mapping[str, Any] | None = None) -> None:
+        normalized_date = normalize_trade_date(trade_date)
         payload = dict(fields or {})
+        if not payload:
+            return
         unknown = set(payload) - ATOMIC_FIELD_NAMES
         if unknown:
             raise InvalidFieldValueError(f"未知字段：{', '.join(sorted(unknown))}")
-
+        normalized_fields = {
+            key: validate_atomic_field(key, value) for key, value in payload.items()
+        }
         with review_transaction(self._conn):
-            self._ensure_review_row(writable_date)
-            if payload:
-                self._apply_field_patch(writable_date, payload)
-            if ladder_operation is not None:
-                self._apply_ladder_operation(writable_date, ladder_operation)
-            self._touch_review(writable_date)
+            self._ensure_review_row(normalized_date)
+            self._apply_field_patch(normalized_date, normalized_fields)
+            self._touch_review(normalized_date)
 
-    def get_review(self, trade_date: str) -> DailyMarketReviewView | None:
+    def get_review(self, trade_date: str | date) -> DailyMarketReviewAtoms | None:
+        normalized_date = normalize_trade_date(trade_date)
+        columns = ", ".join(REVIEW_SELECT_COLUMNS)
         row = self._conn.execute(
-            "SELECT * FROM daily_market_review WHERE trade_date = ?",
-            (trade_date,),
+            f"SELECT {columns} FROM daily_market_review WHERE trade_date = ?",
+            (normalized_date,),
         ).fetchone()
         if row is None:
             return None
-        atoms = _row_to_atoms(row)
-        ladder_stocks = self._load_ladder_stocks(trade_date)
-        previous_effective_limit_up = self._previous_effective_limit_up(trade_date)
-        computed = compute_review_metrics(
-            atoms,
-            ladder_stocks,
-            previous_effective_limit_up=previous_effective_limit_up,
-        )
-        return DailyMarketReviewView(
-            atoms=atoms,
-            ladder_stocks=ladder_stocks,
-            computed=computed,
-        )
+        return _row_to_atoms(row)
 
     def list_reviews(
         self,
-        start_date: str | None = None,
-        end_date: str | None = None,
-    ) -> list[DailyMarketReviewView]:
+        start_date: str | date | None = None,
+        end_date: str | date | None = None,
+    ) -> list[DailyMarketReviewAtoms]:
         dates = self.list_trade_dates(start_date, end_date)
-        views: list[DailyMarketReviewView] = []
+        reviews: list[DailyMarketReviewAtoms] = []
         for trade_date in dates:
-            view = self.get_review(trade_date)
-            if view is not None:
-                views.append(view)
-        return views
+            review = self.get_review(trade_date)
+            if review is not None:
+                reviews.append(review)
+        return reviews
 
-    def delete_review(self, trade_date: str) -> bool:
-        row = self._conn.execute(
-            "SELECT 1 FROM daily_market_review WHERE trade_date = ?",
-            (trade_date,),
-        ).fetchone()
-        if row is None:
-            return False
+    def delete_review(self, trade_date: str | date) -> None:
+        normalized_date = normalize_trade_date(trade_date)
         with review_transaction(self._conn):
-            self._conn.execute("DELETE FROM daily_market_review WHERE trade_date = ?", (trade_date,))
-        return True
+            self._conn.execute(
+                "DELETE FROM daily_market_review WHERE trade_date = ?",
+                (normalized_date,),
+            )
 
-    def list_trade_dates(self, start_date: str | None = None, end_date: str | None = None) -> list[str]:
+    def list_trade_dates(
+        self,
+        start_date: str | date | None = None,
+        end_date: str | date | None = None,
+    ) -> list[str]:
         query = "SELECT trade_date FROM daily_market_review"
         params: list[str] = []
         clauses: list[str] = []
-        if start_date:
+        if start_date is not None:
             clauses.append("trade_date >= ?")
-            params.append(start_date)
-        if end_date:
+            params.append(normalize_trade_date(start_date))
+        if end_date is not None:
             clauses.append("trade_date <= ?")
-            params.append(end_date)
+            params.append(normalize_trade_date(end_date))
         if clauses:
             query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY trade_date"
         rows = self._conn.execute(query, params).fetchall()
         return [row["trade_date"] for row in rows]
+
+    def save_price_limit_events(
+        self,
+        trade_date: str | date,
+        events: Sequence[PriceLimitEventLike],
+    ) -> None:
+        normalized_date = normalize_trade_date(trade_date)
+        if not events:
+            return
+        records = [_normalize_event(normalized_date, event) for event in events]
+        _reject_duplicate_event_identities(records)
+        now = utc_now_iso()
+        with review_transaction(self._conn):
+            for record in records:
+                self._upsert_event(record, now=now)
+
+    def get_price_limit_events(self, trade_date: str | date) -> list[PriceLimitEventRecord]:
+        return self.list_price_limit_events(start_date=trade_date, end_date=trade_date)
+
+    def list_price_limit_events(
+        self,
+        start_date: str | date | None = None,
+        end_date: str | date | None = None,
+    ) -> list[PriceLimitEventRecord]:
+        query = """
+            SELECT trade_date, market, code, name, direction,
+                   closed_at_limit, limit_rate_bp, streak_height
+            FROM daily_price_limit_event
+        """
+        params: list[str] = []
+        clauses: list[str] = []
+        if start_date is not None:
+            clauses.append("trade_date >= ?")
+            params.append(normalize_trade_date(start_date))
+        if end_date is not None:
+            clauses.append("trade_date <= ?")
+            params.append(normalize_trade_date(end_date))
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY trade_date, market, code, direction"
+        rows = self._conn.execute(query, params).fetchall()
+        return [_row_to_event(row) for row in rows]
+
+    def delete_price_limit_events(self, trade_date: str | date) -> None:
+        normalized_date = normalize_trade_date(trade_date)
+        with review_transaction(self._conn):
+            self._conn.execute(
+                "DELETE FROM daily_price_limit_event WHERE trade_date = ?",
+                (normalized_date,),
+            )
+
+    def delete_price_limit_event(
+        self,
+        trade_date: str | date,
+        market: str,
+        code: str,
+        direction: str,
+    ) -> None:
+        normalized_date = normalize_trade_date(trade_date)
+        with review_transaction(self._conn):
+            self._conn.execute(
+                """
+                DELETE FROM daily_price_limit_event
+                WHERE trade_date = ? AND market = ? AND code = ? AND direction = ?
+                """,
+                (
+                    normalized_date,
+                    _require_str("market", market),
+                    _require_str("code", code),
+                    _require_str("direction", direction),
+                ),
+            )
 
     def _ensure_review_row(self, trade_date: str) -> None:
         now = utc_now_iso()
@@ -213,16 +269,8 @@ class MarketReviewRepository:
         )
 
     def _apply_field_patch(self, trade_date: str, fields: Mapping[str, Any]) -> None:
-        assignments: list[str] = []
-        values: list[Any] = []
-        for key, value in fields.items():
-            if key not in ATOMIC_FIELD_NAMES:
-                continue
-            normalized = validate_atomic_field(key, value)
-            assignments.append(f"{key} = ?")
-            values.append(normalized)
-        if not assignments:
-            return
+        assignments = [f"{key} = ?" for key in fields]
+        values: list[Any] = list(fields.values())
         values.append(trade_date)
         self._conn.execute(
             f"UPDATE daily_market_review SET {', '.join(assignments)} WHERE trade_date = ?",
@@ -235,102 +283,31 @@ class MarketReviewRepository:
             (utc_now_iso(), trade_date),
         )
 
-    def _apply_ladder_operation(self, trade_date: str, operation: LadderOperation) -> None:
-        if isinstance(operation, LadderSnapshotReplace):
-            self._snapshot_replace(trade_date, operation)
-        elif isinstance(operation, LadderItemPatch):
-            self._item_patch(trade_date, operation)
-        else:
-            raise InvalidFieldValueError(f"未知连板写入模式：{operation!r}")
-
-    def _snapshot_replace(self, trade_date: str, operation: LadderSnapshotReplace) -> None:
-        violations = _collect_st_violations(operation.stocks)
-        if violations:
-            raise LadderStNotAllowedError(violations)
-        records = _snapshot_records(trade_date, operation.stocks)
-        self._conn.execute("DELETE FROM daily_ladder_stock WHERE trade_date = ?", (trade_date,))
-        for record in records:
-            self._insert_ladder_record(record)
-
-    def _item_patch(self, trade_date: str, operation: LadderItemPatch) -> None:
-        violations = _collect_st_violations(operation.upserts)
-        if violations:
-            raise LadderStNotAllowedError(violations)
-        for stock in operation.upserts:
-            record = _to_ladder_record(trade_date, stock)
-            self._conn.execute(
-                """
-                INSERT INTO daily_ladder_stock (
-                    trade_date, market, code, name, streak_height, is_st
-                ) VALUES (?, ?, ?, ?, ?, 0)
-                ON CONFLICT(trade_date, market, code) DO UPDATE SET
-                    name = excluded.name,
-                    streak_height = excluded.streak_height,
-                    is_st = excluded.is_st
-                """,
-                (
-                    record.trade_date,
-                    record.market,
-                    record.code,
-                    record.name,
-                    record.streak_height,
-                ),
-            )
-        for market, code in operation.deletes:
-            self._conn.execute(
-                """
-                DELETE FROM daily_ladder_stock
-                WHERE trade_date = ? AND market = ? AND code = ?
-                """,
-                (trade_date, _validate_market(market), _normalize_code(code)),
-            )
-
-    def _insert_ladder_record(self, record: LadderStockRecord) -> None:
+    def _upsert_event(self, record: PriceLimitEventRecord, *, now: str) -> None:
         self._conn.execute(
             """
-            INSERT INTO daily_ladder_stock (
-                trade_date, market, code, name, streak_height, is_st
-            ) VALUES (?, ?, ?, ?, ?, 0)
+            INSERT INTO daily_price_limit_event (
+                trade_date, market, code, name, direction,
+                closed_at_limit, limit_rate_bp, streak_height,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(trade_date, market, code, direction) DO UPDATE SET
+                name = excluded.name,
+                closed_at_limit = excluded.closed_at_limit,
+                limit_rate_bp = excluded.limit_rate_bp,
+                streak_height = excluded.streak_height,
+                updated_at = excluded.updated_at
             """,
             (
                 record.trade_date,
                 record.market,
                 record.code,
                 record.name,
+                record.direction,
+                int(record.closed_at_limit),
+                record.limit_rate_bp,
                 record.streak_height,
+                now,
+                now,
             ),
         )
-
-    def _load_ladder_stocks(self, trade_date: str) -> list[LadderStockRecord]:
-        rows = self._conn.execute(
-            """
-            SELECT trade_date, market, code, name, streak_height, is_st
-            FROM daily_ladder_stock
-            WHERE trade_date = ?
-            ORDER BY streak_height DESC, market, code
-            """,
-            (trade_date,),
-        ).fetchall()
-        return [
-            LadderStockRecord(
-                trade_date=row["trade_date"],
-                market=row["market"],
-                code=row["code"],
-                name=row["name"],
-                streak_height=row["streak_height"],
-                is_st=bool(row["is_st"]),
-            )
-            for row in rows
-        ]
-
-    def _previous_effective_limit_up(self, trade_date: str) -> int | None:
-        previous_day = self._calendar.previous_trading_day(trade_date, "sh")
-        if previous_day is None:
-            return None
-        row = self._conn.execute(
-            "SELECT effective_limit_up FROM daily_market_review WHERE trade_date = ?",
-            (previous_day.isoformat(),),
-        ).fetchone()
-        if row is None:
-            return None
-        return row["effective_limit_up"]

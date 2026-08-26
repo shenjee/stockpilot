@@ -1,59 +1,46 @@
-"""Tests for market review helpers."""
+"""Tests for persistence helpers."""
 
 from __future__ import annotations
 
+import sqlite3
 import unittest
-from datetime import datetime
-from zoneinfo import ZoneInfo
-
-from packages.marketdata.trading_calendar import TradingCalendar
 
 from packages.marketreview.repository import MarketReviewRepository
-from packages.marketreview.service import (
-    missing_atomic_fields,
-    resolve_review_trade_date,
-)
-from packages.marketreview.validation import resolve_trade_date
-
-_CHINA = ZoneInfo("Asia/Shanghai")
+from packages.marketreview.service import missing_atomic_fields
 
 
-class TestMarketReviewService(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls) -> None:
-        cls.calendar = TradingCalendar()
+class TestMissingAtomicFields(unittest.TestCase):
+    def setUp(self) -> None:
+        self.conn = sqlite3.connect(":memory:")
+        self.repo = MarketReviewRepository(self.conn)
 
-    def test_resolve_review_trade_date_defaults_to_latest_closed(self) -> None:
-        resolved = resolve_review_trade_date(
-            self.calendar,
-            now=datetime(2026, 8, 24, 16, 0, tzinfo=_CHINA),
-        )
-        self.assertEqual(resolved, "2026-08-24")
+    def tearDown(self) -> None:
+        self.repo.close()
+        self.conn.close()
 
-    def test_resolve_review_trade_date_rejects_weekend(self) -> None:
-        with self.assertRaises(Exception):
-            resolve_trade_date(
-                self.calendar,
-                requested="2026-08-22",
-                now=datetime(2026, 8, 24, 16, 0, tzinfo=_CHINA),
-            )
-
-    def test_missing_atomic_fields_includes_index_fields(self) -> None:
-        repo = MarketReviewRepository(":memory:")
-        missing = missing_atomic_fields(repo, "2026-08-21")
+    def test_missing_atomic_fields_when_review_absent(self) -> None:
+        missing = missing_atomic_fields(self.repo, "2026-08-21")
         self.assertIn("sh_index_close", missing)
-        self.assertIn("cy_index_prev_close", missing)
-        self.assertNotIn("ladder_snapshot", missing)
-        repo.close()
-
-    def test_missing_atomic_fields_ignores_ladder_table(self) -> None:
-        repo = MarketReviewRepository(":memory:")
-        repo.patch_review("2026-08-21", fields={"effective_limit_up": 10})
-        missing = missing_atomic_fields(repo, "2026-08-21")
-        self.assertIn("closed_limit_down", missing)
+        self.assertIn("pe_sh", missing)
         self.assertNotIn("effective_limit_up", missing)
         self.assertNotIn("ladder_snapshot", missing)
-        repo.close()
+
+    def test_missing_atomic_fields_omits_saved_values(self) -> None:
+        self.repo.save_review("2026-08-21", fields={"pe_sh": 17.0})
+        missing = missing_atomic_fields(self.repo, "2026-08-21")
+        self.assertNotIn("pe_sh", missing)
+        self.assertIn("pe_sz", missing)
+
+    def test_missing_atomic_fields_when_only_events_exist(self) -> None:
+        from packages.marketreview.schema import PriceLimitEventInput
+
+        self.repo.save_price_limit_events(
+            "2026-08-21",
+            [PriceLimitEventInput("sh", "600519", "贵州茅台", "up", True, 1000, 1)],
+        )
+        missing = missing_atomic_fields(self.repo, "2026-08-21")
+        self.assertIn("pe_sh", missing)
+        self.assertIn("sh_index_close", missing)
 
 
 if __name__ == "__main__":

@@ -6,27 +6,27 @@ Daily market review persistence and queries.
 
 - Owns the SQLite schema plus simple save, update, delete, and query operations
   for atomic review fields and daily price-limit events.
-- Persists caller-provided values as data. It does not verify whether a stock
+- Persists caller-provided values as data. Do not rewrite submitted numbers
+  (for example, do not round money fields). It does not verify whether a stock
   really touched a price limit, whether a streak height is factually correct,
   or whether caller-provided events are complete.
 - Does not own external data acquisition, business validation, acquisition
   orchestration, derived presentation metrics, or Skill presentation copy.
   The Skill validates acquired data before writing and formats stored data
   after reading.
-- Database constraints should remain structural: column types/nullability,
-  required row identity, uniqueness, and transaction safety. Do not duplicate
-  Skill-level market, security-universe, trading-date, price-limit-rate, or
-  streak-height calculation in the repository.
+- Database constraints should remain structural: STRICT column types,
+  nullability, required row identity, uniqueness, and transaction safety. Do
+  not add business `CHECK` constraints for market, direction, limit-rate,
+  trading day, ST status, or streak-height calculation.
 
 ## Public entry points
 
-- `missing_atomic_fields` — list fields still missing for a trade date.
-- `MarketReviewRepository` — patch/get/delete reviews and price-limit events.
+- `MarketReviewRepository` — save/get/delete reviews and price-limit events.
+- `missing_atomic_fields` — list atomic fields still stored as `None`.
 - `default_market_review_db_path` — `<workspace>/stockpilot/db/market_review.sqlite3`.
 
-Do not add `auto_patch_indices`, `fetch_index_atoms`, `IndexFetchResult`, or
-other fetch-and-persist orchestration to this package. Index fetch failures are
-handled by callers omitting failed fields from the field-level patch.
+Do not add `auto_patch_indices`, `fetch_index_atoms`, `IndexFetchResult`,
+`compute_review_metrics`, or other fetch/stat orchestration to this package.
 
 ## Tests
 
