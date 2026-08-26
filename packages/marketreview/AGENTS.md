@@ -21,7 +21,9 @@ Daily market review persistence and queries.
 
 ## Public entry points
 
-- `MarketReviewRepository` — save/get/delete reviews and price-limit events.
+- `MarketReviewRepository` — save/get/delete reviews and price-limit events,
+  including atomic direction replacement via
+  `replace_price_limit_event_direction`.
 - `missing_atomic_fields` — list atomic fields still stored as `None`.
 - `default_market_review_db_path` — `<workspace>/stockpilot/db/market_review.sqlite3`.
 

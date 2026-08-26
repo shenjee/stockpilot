@@ -320,6 +320,69 @@ class TestMarketReviewRepository(unittest.TestCase):
         self.assertEqual(remaining[0].code, "300001")
         self.repo.delete_price_limit_event("2026-08-21", "sh", "600519", "up")
 
+    def test_replace_price_limit_event_direction_is_atomic(self) -> None:
+        self.repo.save_price_limit_events(
+            "2026-08-21",
+            [PriceLimitEventInput("sh", "600519", "贵州茅台", "up", True, 1000, 4)],
+        )
+        self.repo.replace_price_limit_event_direction(
+            "2026-08-21",
+            "sh",
+            "600519",
+            "up",
+            PriceLimitEventInput("sh", "600519", "贵州茅台", "down", True, 1000, 0),
+        )
+        events = self.repo.get_price_limit_events("2026-08-21")
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].direction, "down")
+        self.assertEqual(events[0].closed_at_limit, True)
+        self.assertEqual(events[0].streak_height, 0)
+
+    def test_replace_direction_rolls_back_when_save_fails(self) -> None:
+        self.repo.save_price_limit_events(
+            "2026-08-21",
+            [PriceLimitEventInput("sh", "600519", "贵州茅台", "up", True, 1000, 4)],
+        )
+        original = self.repo._upsert_event
+
+        def boom(record, *, now):
+            raise RuntimeError("boom")
+
+        self.repo._upsert_event = boom  # type: ignore[method-assign]
+        with self.assertRaises(RuntimeError):
+            self.repo.replace_price_limit_event_direction(
+                "2026-08-21",
+                "sh",
+                "600519",
+                "up",
+                PriceLimitEventInput("sh", "600519", "贵州茅台", "down", True, 1000, 0),
+            )
+        self.repo._upsert_event = original  # type: ignore[method-assign]
+        events = self.repo.get_price_limit_events("2026-08-21")
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].direction, "up")
+        self.assertEqual(events[0].streak_height, 4)
+
+    def test_replace_direction_rejects_same_direction(self) -> None:
+        with self.assertRaises(InvalidFieldValueError):
+            self.repo.replace_price_limit_event_direction(
+                "2026-08-21",
+                "sh",
+                "600519",
+                "up",
+                PriceLimitEventInput("sh", "600519", "贵州茅台", "up", True, 1000, 4),
+            )
+
+    def test_replace_direction_rejects_market_code_mismatch(self) -> None:
+        with self.assertRaises(InvalidFieldValueError):
+            self.repo.replace_price_limit_event_direction(
+                "2026-08-21",
+                "sh",
+                "600519",
+                "up",
+                PriceLimitEventInput("sz", "000001", "平安银行", "down", True, 1000, 0),
+            )
+
     def test_repository_accepts_path_object(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "market_review.sqlite3"

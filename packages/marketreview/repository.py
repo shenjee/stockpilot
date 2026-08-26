@@ -244,18 +244,64 @@ class MarketReviewRepository:
     ) -> None:
         normalized_date = normalize_trade_date(trade_date)
         with review_transaction(self._conn):
-            self._conn.execute(
-                """
-                DELETE FROM daily_price_limit_event
-                WHERE trade_date = ? AND market = ? AND code = ? AND direction = ?
-                """,
-                (
-                    normalized_date,
-                    _require_str("market", market),
-                    _require_str("code", code),
-                    _require_str("direction", direction),
-                ),
+            self._delete_event_row(
+                normalized_date,
+                _require_str("market", market),
+                _require_str("code", code),
+                _require_str("direction", direction),
             )
+
+    def replace_price_limit_event_direction(
+        self,
+        trade_date: str | date,
+        market: str,
+        code: str,
+        old_direction: str,
+        event: PriceLimitEventLike,
+    ) -> None:
+        """Atomically delete one event identity and save a replacement event.
+
+        Use when direction must change. Separate delete-then-save is unsafe
+        because a failed save would leave the old identity permanently gone.
+        """
+        normalized_date = normalize_trade_date(trade_date)
+        market_value = _require_str("market", market)
+        code_value = _require_str("code", code)
+        old_direction_value = _require_str("old_direction", old_direction)
+        record = _normalize_event(normalized_date, event)
+        if record.market != market_value or record.code != code_value:
+            raise InvalidFieldValueError(
+                "替换事件的 market/code 必须与删除目标一致："
+                f"{market_value}.{code_value}"
+            )
+        if record.direction == old_direction_value:
+            raise InvalidFieldValueError(
+                "方向未变化时请使用 save_price_limit_events，不要调用方向替换"
+            )
+        now = utc_now_iso()
+        with review_transaction(self._conn):
+            self._delete_event_row(
+                normalized_date,
+                market_value,
+                code_value,
+                old_direction_value,
+            )
+            self._upsert_event(record, now=now)
+
+    def _delete_event_row(
+        self,
+        trade_date: str,
+        market: str,
+        code: str,
+        direction: str,
+    ) -> None:
+        self._conn.execute(
+            """
+            DELETE FROM daily_price_limit_event
+            WHERE trade_date = ? AND market = ? AND code = ? AND direction = ?
+            """,
+            (trade_date, market, code, direction),
+        )
 
     def _ensure_review_row(self, trade_date: str) -> None:
         now = utc_now_iso()

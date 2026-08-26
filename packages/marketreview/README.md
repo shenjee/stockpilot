@@ -39,6 +39,7 @@ direction, or limit-rate enumerations.
 - `MarketReviewRepository.list_price_limit_events(start, end)`
 - `MarketReviewRepository.delete_price_limit_events(trade_date)`
 - `MarketReviewRepository.delete_price_limit_event(trade_date, market, code, direction)`
+- `MarketReviewRepository.replace_price_limit_event_direction(trade_date, market, code, old_direction, event)`
 - `missing_atomic_fields(...)` — list atomic fields still stored as `None`
 - `default_market_review_db_path()` — `<workspace>/stockpilot/db/market_review.sqlite3`
 
@@ -51,6 +52,8 @@ deletes succeed. Same-identity saves overwrite. Records returned by
 `trade_date` on an event mapping is ignored in favor of the call argument.
 Duplicate identities in one batch are rejected. Batch saves run in one
 transaction so a failure cannot leave a partial batch.
+`replace_price_limit_event_direction` deletes the old direction and saves the
+replacement event in one transaction; use it when direction must change.
 
 Skills and apps must not access the market-review SQLite database directly.
 This package does not expose `auto_patch_indices`, `fetch_index_atoms`,
