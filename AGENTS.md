@@ -30,9 +30,9 @@ source ~/.venvs/czsc/bin/activate
 - `packages/fundamentalscreener/` owns screening calculations, scoring,
   valuation, repositories, sync, lineage, and data-quality rules.
 - `packages/marketreview/` owns daily market review persistence, patch
-  semantics, complete daily price-limit event snapshots, first-board/streak
-  derivation, and read-time metrics. Callers acquire data and write it through
-  this package.
+  semantics, daily price-limit events, optional streak-height anchors,
+  first-board/streak derivation, and read-time metrics. Callers acquire data and
+  write it through this package.
 - `packages/t0assistant/` owns reusable T+0 domain logic, contracts, replay,
   runtime, preferences, repositories, and trading abstractions.
 - Preserve public schemas and package contracts unless the task explicitly

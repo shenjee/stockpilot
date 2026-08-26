@@ -4,9 +4,9 @@ Daily market review persistence, patch semantics, and read-time metrics for
 Stock Pilot.
 
 This package is the single source of truth for the daily market review ledger
-and daily price-limit events. It stores atomic review fields plus complete
-per-direction event snapshots, applies patch semantics, and derives limit-up,
-limit-down, first-board, and streak metrics at read time. Data acquisition is
+and daily price-limit events. It stores atomic review fields plus the currently
+known events, applies patch semantics, and derives limit-up, limit-down,
+first-board, and streak metrics from the stored timeline. Data acquisition is
 owned by callers such as the daily-market-review Skill.
 
 ## Status
@@ -14,9 +14,10 @@ owned by callers such as the daily-market-review Skill.
 V1 target contract:
 
 - atomic field storage
-- complete `up` and `down` price-limit snapshots with `snapshot_replace` and
-  guarded `item_patch`
+- date/direction replacement and unrestricted event-level `item_patch`
 - one event for every eligible stock that touched an upper or lower price limit
+- optional `streak_height_anchor` on an effective limit-up event, representing
+  that stock's actual streak height on the event date
 - read-time limit-up/down counts, failure rate, first-board and streak
   aggregates, index change, and margin/turnover totals
 - trading-day and market-close validation
@@ -35,8 +36,7 @@ Preferred V1 entry points:
 
 Repository and pure helpers:
 
-- `MarketReviewRepository` — patch/get/delete reviews and complete price-limit
-  snapshots
+- `MarketReviewRepository` — patch/get/delete reviews and price-limit events
 - `compute_review_metrics(...)` — read-time derivations without SQLite
 - `default_market_review_db_path()` — `<workspace>/stockpilot/db/market_review.sqlite3`
 
