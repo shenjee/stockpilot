@@ -139,12 +139,16 @@ def aggregate_ohlcva(
         raise RuntimeMarketDataError("cannot aggregate an empty bar sequence")
     return {
         "timestamp": timestamp,
-        "open": bars[0]["open"],
-        "high": max(bar["high"] for bar in bars),
-        "low": min(bar["low"] for bar in bars),
-        "close": bars[-1]["close"],
+        "open": round(bars[0]["open"], 2),
+        "high": round(max(bar["high"] for bar in bars), 2),
+        "low": round(min(bar["low"] for bar in bars), 2),
+        "close": round(bars[-1]["close"], 2),
         "volume": _sum_nullable_quantity(bars, "volume"),
-        "amount": _sum_nullable_quantity(bars, "amount"),
+        "amount": (
+            round(total, 2)
+            if (total := _sum_nullable_quantity(bars, "amount")) is not None
+            else None
+        ),
         "closed": closed,
     }
 

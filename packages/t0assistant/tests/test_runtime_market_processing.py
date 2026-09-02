@@ -40,7 +40,7 @@ def quote(timestamp, latest_price, *, volume_ratio=1.2):
     return {
         "timestamp": timestamp,
         "latest_price": latest_price,
-        "change_percent": (latest_price - 10) * 10,
+        "change_percent": round((latest_price - 10) * 10, 2),
         "open": 10.0,
         "high": max(10.0, latest_price),
         "low": min(10.0, latest_price),
@@ -282,7 +282,7 @@ class TargetTimeProjectionTests(unittest.TestCase):
 
         self.assertEqual(projected["timestamp"], "2026-07-24 09:32:00")
         self.assertEqual(projected["latest_price"], 10.4)
-        self.assertAlmostEqual(projected["change_percent"], (10.4 - 9.8) / 9.8 * 100)
+        self.assertAlmostEqual(projected["change_percent"], round((10.4 - 9.8) / 9.8 * 100, 2))
         self.assertEqual(projected["volume"], 300)
         self.assertEqual(projected["amount"], 3_050)
         self.assertIsNone(projected["volume_ratio"])

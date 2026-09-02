@@ -400,22 +400,26 @@ class TencentStockDataProvider(MarketDataProvider):
                         "name": parts[1],
                         "code": parts[2],
                         "timestamp": timestamp,
-                        "latest_price": price,
-                        "previous_close": pre_close,
+                        "latest_price": round(price, 2),
+                        "previous_close": round(pre_close, 2),
                         "change_percent": round(change_pct, 2),
-                        "price": price,
-                        "pre_close": pre_close,
-                        "open": float(parts[5]),
-                        "high": float(parts[33]),
-                        "low": float(parts[34]),
+                        "price": round(price, 2),
+                        "pre_close": round(pre_close, 2),
+                        "open": round(float(parts[5]), 2),
+                        "high": round(float(parts[33]), 2),
+                        "low": round(float(parts[34]), 2),
                         "volume": int(float(parts[6])),
-                        "amount": float(parts[37]),
+                        "amount": round(float(parts[37]), 2),
                         "volume_ratio": (
-                            float(parts[49]) if len(parts) > 49 and parts[49] else None
+                            round(float(parts[49]), 2)
+                            if len(parts) > 49 and parts[49]
+                            else None
                         ),
                         "order_imbalance": None,
                         "turnover_rate": (
-                            float(parts[38]) if len(parts) > 38 and parts[38] else None
+                            round(float(parts[38]), 2)
+                            if len(parts) > 38 and parts[38]
+                            else None
                         ),
                         "change": round(change, 2),
                         "change_pct": round(change_pct, 2),

@@ -314,6 +314,10 @@ test("the quote sidebar keeps every field and renders missing values in place", 
   assert.equal(rows.find(([label]) => label === "今开")[1], "10.00");
   assert.equal(rows.find(([label]) => label === "最高")[1], "10.12");
   assert.equal(rows.find(([label]) => label === "成交额")[1], "51.32 万");
+  // Regression: trailing zeros must be preserved (e.g. 70.1 -> "70.10").
+  assert.equal(quoteRows({ low: 70.1 }).find(([l]) => l === "最低")[1], "70.10");
+  assert.equal(quoteRows({ previous_close: 70.1 }).find(([l]) => l === "昨收")[1], "70.10");
+  assert.equal(quoteRows({ volume_ratio: 1.5 }).find(([l]) => l === "量比")[1], "1.50");
   assert.deepEqual(quoteSummary(quote), {
     price: "10.08",
     difference: "+0.08",

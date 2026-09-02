@@ -122,14 +122,18 @@ def project_quote_at(
     )
     return {
         "timestamp": latest_time.strftime("%Y-%m-%d %H:%M:%S"),
-        "latest_price": latest_price,
-        "change_percent": change_percent,
-        "open": bars[0]["open"],
-        "high": max(bar["high"] for bar in bars),
-        "low": min(bar["low"] for bar in bars),
-        "previous_close": resolved_previous_close,
+        "latest_price": round(latest_price, 2),
+        "change_percent": round(change_percent, 2),
+        "open": round(bars[0]["open"], 2),
+        "high": round(max(bar["high"] for bar in bars), 2),
+        "low": round(min(bar["low"] for bar in bars), 2),
+        "previous_close": round(resolved_previous_close, 2),
         "volume": _sum_nullable_quantity(bars, "volume"),
-        "amount": _sum_nullable_quantity(bars, "amount"),
+        "amount": (
+            round(total, 2)
+            if (total := _sum_nullable_quantity(bars, "amount")) is not None
+            else None
+        ),
         "volume_ratio": optional_source.get("volume_ratio"),
         "order_imbalance": optional_source.get("order_imbalance"),
         "turnover_rate": optional_source.get("turnover_rate"),

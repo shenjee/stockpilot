@@ -226,11 +226,11 @@ export function quoteRows(quote) {
   return [
     ["今开", formatPrice(quote?.open)],
     ["最高", formatPrice(quote?.high)],
-    ["最低", formatNumber(quote?.low)],
-    ["昨收", formatNumber(quote?.previous_close)],
+    ["最低", formatPrice(quote?.low)],
+    ["昨收", formatPrice(quote?.previous_close)],
     ["成交量", formatCompact(quote?.volume)],
     ["成交额", formatCurrency(quote?.amount)],
-    ["量比", formatNumber(quote?.volume_ratio)],
+    ["量比", formatPrice(quote?.volume_ratio)],
     ["实时换手率", formatPercent(quote?.turnover_rate)],
     ["委比", formatPercent(quote?.order_imbalance)],
   ];
@@ -287,12 +287,6 @@ function standardSecurity(security) {
         security.instrument_type === "etf" ||
         security.instrument_type === "index"),
   );
-}
-
-function formatNumber(value) {
-  return finite(value)
-    ? value.toLocaleString("zh-CN", { maximumFractionDigits: 3 })
-    : "--";
 }
 
 function formatPrice(value) {

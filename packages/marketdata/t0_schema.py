@@ -170,12 +170,14 @@ def standardize_bar(
 
     bar = {
         "timestamp": timestamp,
-        "open": _non_negative_number(row, "open"),
-        "high": _non_negative_number(row, "high"),
-        "low": _non_negative_number(row, "low"),
-        "close": _non_negative_number(row, "close"),
+        "open": round(_non_negative_number(row, "open"), 2),
+        "high": round(_non_negative_number(row, "high"), 2),
+        "low": round(_non_negative_number(row, "low"), 2),
+        "close": round(_non_negative_number(row, "close"), 2),
         "volume": _optional_non_negative_number(row, "volume"),
-        "amount": _optional_non_negative_number(row, "amount"),
+        "amount": _round_optional(
+            _optional_non_negative_number(row, "amount"), 2
+        ),
         "closed": resolved_closed,
     }
     if bar["high"] < max(bar["open"], bar["low"], bar["close"]):
@@ -217,19 +219,31 @@ def standardize_quote(row: Mapping[str, Any]) -> dict[str, Any]:
 
     return {
         "timestamp": timestamp,
-        "latest_price": _non_negative_number(row, "latest_price", fallback="price"),
-        "change_percent": _number(row, "change_percent", fallback="change_pct"),
-        "open": _non_negative_number(row, "open"),
-        "high": _non_negative_number(row, "high"),
-        "low": _non_negative_number(row, "low"),
-        "previous_close": _non_negative_number(
-            row, "previous_close", fallback="pre_close"
+        "latest_price": round(
+            _non_negative_number(row, "latest_price", fallback="price"), 2
         ),
+        "change_percent": round(
+            _number(row, "change_percent", fallback="change_pct"), 2
+        ),
+        "open": round(_non_negative_number(row, "open"), 2),
+        "high": round(_non_negative_number(row, "high"), 2),
+        "low": round(_non_negative_number(row, "low"), 2),
+        "previous_close": round(_non_negative_number(
+            row, "previous_close", fallback="pre_close"
+        ), 2),
         "volume": _optional_non_negative_number(row, "volume"),
-        "amount": _optional_non_negative_number(row, "amount"),
-        "volume_ratio": _optional_number(row, "volume_ratio"),
-        "order_imbalance": _optional_number(row, "order_imbalance"),
-        "turnover_rate": _optional_number(row, "turnover_rate"),
+        "amount": _round_optional(
+            _optional_non_negative_number(row, "amount"), 2
+        ),
+        "volume_ratio": _round_optional(
+            _optional_number(row, "volume_ratio"), 2
+        ),
+        "order_imbalance": _round_optional(
+            _optional_number(row, "order_imbalance"), 2
+        ),
+        "turnover_rate": _round_optional(
+            _optional_number(row, "turnover_rate"), 2
+        ),
     }
 
 
@@ -322,3 +336,10 @@ def _optional_non_negative_number(
     if value < 0:
         raise MarketDataSchemaError(f"{key} must be non-negative")
     return value
+
+
+def _round_optional(value: float | int | None, ndigits: int) -> float | int | None:
+    """Round an optional numeric value to *ndigits* decimal places."""
+    if value is None:
+        return None
+    return round(value, ndigits)
