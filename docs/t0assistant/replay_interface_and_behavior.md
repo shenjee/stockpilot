@@ -6,7 +6,7 @@
 | --- | --- |
 | 状态 | 历史行情回放开发基线 |
 | 版本 | v1.1 |
-| 更新日期 | 2026-08-21 |
+| 更新日期 | 2026-09-03 |
 | 范围 | 单只股票、单个交易日、只读 Replay |
 | 上位需求 | [`t0_assistant_prd.md`](./t0_assistant_prd.md) |
 | 架构 | [`architecture.md`](./architecture.md) |
@@ -25,7 +25,7 @@ main/preload 和 React 可以独立实现并用同一组确定性 fixture 验收
 - 创建一次性 Replay Session；
 - 加载开盘前预热数据和目标日行情；
 - 开始、暂停、单步、前后定位和结束回放；
-- 生成 5 分钟价格/VOL/MACD、1 分钟分时/VOL/MACD、动态日 K 和 CZSC；
+- 生成 5 分钟价格/VOL/MACD、1 分钟分时/VOL/MACD、30 分钟价格/VOL/MACD、动态日 K 和 CZSC；
 - 通过完整快照建立或替换前端状态；
 - 验证向后定位和并发定位不会泄漏未来数据。
 
@@ -293,6 +293,7 @@ Live/Replay 共用管线的规范。后续能力只能扩展本契约，不能�
   "market": {
     "bars_1m": [],
     "bars_5m": [],
+    "bars_30m": [],
     "daily_bars": [],
     "quote": null
   },
@@ -300,6 +301,35 @@ Live/Replay 共用管线的规范。后续能力只能扩展本契约，不能�
     "five_minute": {
       "ma": {
         "ma5": [{"timestamp": "2026-07-01 10:20:00", "value": 10.25}],
+        "ma10": [],
+        "ma20": [],
+        "ma30": [],
+        "ma60": []
+      },
+      "boll": {
+        "period": 20,
+        "stddev": 2.0,
+        "upper": [],
+        "middle": [],
+        "lower": []
+      },
+      "volume": {
+        "values": [],
+        "ma5": [],
+        "ma10": []
+      },
+      "macd": {
+        "fast_period": 12,
+        "slow_period": 26,
+        "signal_period": 9,
+        "dif": [],
+        "dea": [],
+        "histogram": []
+      }
+    },
+    "thirty_minute": {
+      "ma": {
+        "ma5": [],
         "ma10": [],
         "ma20": [],
         "ma30": [],
@@ -340,6 +370,7 @@ Live/Replay 共用管线的规范。后续能力只能扩展本契约，不能�
     }
   },
   "chan_analysis": {},
+  "chan_analysis_30m": {},
   "warnings": []
 }
 ```
@@ -354,6 +385,7 @@ Live/Replay 共用管线的规范。后续能力只能扩展本契约，不能�
 | `market` | object | 是 | 截至当前游标可见的行情数据。 |
 | `indicators` | object | 是 | 根据当前可见行情计算出的指标数据。 |
 | `chan_analysis` | object | 是 | 截至当前正式闭合 5 分钟 K 的缠论分析结果。 |
+| `chan_analysis_30m` | object | 是 | 截至当前正式闭合 30 分钟 K 的缠论分析结果；与 `chan_analysis` 同级，不改变 5 分钟含义。 |
 | `warnings` | array<object> | 是 | 不阻塞当前快照使用的提示或降级信息；没有时为空数组。 |
 
 `session` 字段说明：
@@ -386,6 +418,7 @@ Live/Replay 共用管线的规范。后续能力只能扩展本契约，不能�
 | --- | --- | --- | --- |
 | `market.bars_1m` | array<object> | 是 | 目标交易日截至当前时刻的 1 分钟 K 线；没有 1 分钟数据时为空数组。 |
 | `market.bars_5m` | array<object> | 是 | 预热历史和目标日截至当前时刻的 5 分钟 K 线。 |
+| `market.bars_30m` | array<object> | 是 | 预热历史和目标日截至当前时刻的 30 分钟 K 线；来自 `30m` 接口与当日 1 分钟形成的当前未完成 K，不由历史 5 分钟生成。 |
 | `market.daily_bars` | array<object> | 是 | 历史日 K 和目标日截至当前时刻形成的动态日 K。 |
 | `market.quote` | object 或 null | 是 | 截至当前时刻形成的行情摘要；无法形成时为 `null`。 |
 
@@ -396,7 +429,7 @@ Live/Replay 共用管线的规范。后续能力只能扩展本契约，不能�
 
 ### 6.1 行情结构
 
-`market.bars_1m` 和 `market.bars_5m` 使用同一 bar 结构：
+`market.bars_1m`、`market.bars_5m` 和 `market.bars_30m` 使用同一 bar 结构：
 
 ```json
 {
@@ -496,6 +529,7 @@ Quote 字段不可获得时保留字段并使用 `null`。Replay quote 只能由
 | 字段路径 | 类型 | 是否必填 | 含义 |
 | --- | --- | --- | --- |
 | `indicators.five_minute` | object | 是 | 基于正式闭合 5 分钟 K 计算的全部指标。 |
+| `indicators.thirty_minute` | object | 是 | 基于正式闭合 30 分钟 K 计算的全部指标；结构与 `five_minute` 相同。 |
 | `indicators.five_minute.ma` | object | 是 | 5、10、20、30、60 周期简单移动平均线集合。 |
 | `indicators.five_minute.ma.ma5/ma10/ma20/ma30/ma60` | array<point> | 是 | 对应周期的移动平均线序列。 |
 | `indicators.five_minute.boll` | object | 是 | 5 分钟布林带参数和三条结果序列。 |
@@ -560,7 +594,7 @@ Warning 字段说明：
 | `warning_code` | string | 是 | 稳定的机器可读提示代码，React 可据此选择展示方式。 |
 | `severity` | string | 是 | 提示级别，只允许 `info` 或 `warning`。 |
 | `message` | string | 是 | 可以直接展示给用户的简短说明。 |
-| `affected_capability` | string | 是 | 受影响的功能，只允许 `replay`、`intraday_chart`、`five_minute_chart` 或 `chan_analysis`。 |
+| `affected_capability` | string | 是 | 受影响的功能，只允许 `replay`、`intraday_chart`、`five_minute_chart`、`thirty_minute_chart` 或 `chan_analysis`。 |
 | `affected_field` | string | 是 | 受影响的快照字段路径，例如 `market.bars_1m`；没有具体字段时使用空字符串。 |
 | `details` | object | 是 | 供程序诊断或补充展示的结构化信息，默认 `{}`，不得包含异常栈或 Provider 原始响应。 |
 
@@ -572,6 +606,11 @@ Warning 字段说明：
 | --- | --- | --- | --- |
 | `volume_data_unavailable` | `intraday_chart` 或 `five_minute_chart` | `market.bars_1m[].volume` 或 `market.bars_5m[].volume` | 价格 K 线可用，但全部或部分成交量无法获得；Replay 继续。 |
 | `amount_data_unavailable` | `intraday_chart` 或 `five_minute_chart` | `market.bars_1m[].amount` 或 `market.bars_5m[].amount` | 价格 K 线可用，但全部或部分成交额无法获得；Replay 继续，VWAP 等依赖项不可用。 |
+| `thirty_minute_market_data_unavailable` | `thirty_minute_chart` | `market.bars_30m` | 30 分钟行情不可用；5 分钟与分时继续。Replay 不由 5 分钟生成 30 分钟 K。 |
+| `thirty_minute_indicators_unavailable` | `thirty_minute_chart` | `indicators.thirty_minute` | 30 分钟指标不可用，快照保留空指标结构。 |
+| `thirty_minute_chan_analysis_unavailable` | `thirty_minute_chart` | `chan_analysis_30m` | 30 分钟缠论不可用，快照保留空分析结果。 |
+
+Replay 不产生 `thirty_minute_official_delayed`；该 warning 仅适用于 Live 等待正式 30 分钟 K。
 
 量额 warning 按当前成功快照实际发布的数据前缀逐次重算，不是 Session 常量，也不得
 统计尚未到达的未来 bar。`bars_1m` 的范围是目标日截至 `current_time` 的已发布 bar；
@@ -597,6 +636,7 @@ warning 继续保留并按 1m 前缀计数，不得被正式 5m 的权威值反�
 | 派生结果 | 规则 |
 | --- | --- |
 | 动态 5 分钟 K | OHLC 按已发生的 1m 正常聚合；桶内任意 1m 的 `volume` 为 `null`，动态 5m `volume` 为 `null`，`amount` 同理独立判断，不得只累加已知分钟。正式闭合 5m 到达后可用其权威字段整体替换动态值。 |
+| 动态 30 分钟 K | 与动态 5 分钟相同的未知传播；正式 30 分钟 K 只替换结束时间相同的临时 K，不删除下一根正在形成的临时 K。历史已完成 30 分钟 K 来自 `30m` 接口，不由 5 分钟生成。 |
 | 动态日 K / `daily_bars` | 日 K 的 `volume`、`amount` 同样可为 `null`；当日截至当前的组成 bar 任一对应字段未知，动态日 K 的该字段为 `null`。正式日 K 可用其权威字段替换动态值。 |
 | `quote.volume` / `quote.amount` | 从分钟 bar 累加时，只要输入前缀任一对应字段未知，累计字段即为 `null`，不得只加已知分钟。Provider 直接给出的权威累计快照可以独立使用并在行情栏优先于分钟派生值，但必须同时满足同一证券、同一交易日且 `quote.timestamp <= snapshot.current_time`，并保留来源和行情时间，不能冒充由分钟序列计算的结果。权威 Quote 不回填分钟 bar，也不消除分钟 warning；Replay 不得采用目标时点之后的 Quote。 |
 | VOL MA | 完整窗口内任意值未知则该点为 `null`；不跳过未知值。 |
@@ -629,11 +669,16 @@ Replay 尚未推进到的轴槽不计入分母，也不据此触发 `N/A`。
 - `bars_1m` 只能包含目标日 `current_time` 及以前的真实分钟；预热数据不得混入分时图。
 - `bars_5m` 包含开盘前预热序列和目标日截至当前的正式闭合 5 分钟 K；当前动态
   5 分钟 K 必须以 `closed: false` 标记，且不得进入 CZSC。
+- `bars_30m` 包含开盘前正式 30 分钟预热和目标日截至当前的 30 分钟 K；当前未完成
+  30 分钟 K 必须以 `closed: false` 标记，且不得进入 30 分钟指标或缠论。仅有 5 分钟
+  输入时不得用 5 分钟生成任何 30 分钟 K。
 - `daily_bars` 包含历史日 K 和目标日截至当前的动态日 K；动态日 K 使用
   `closed: false`。
 - `indicators.five_minute` 基于完整已加载 5 分钟历史计算，不以可见窗口为输入。
+- `indicators.thirty_minute` 基于正式闭合 30 分钟 K 计算，不以可见窗口为输入。
 - `chan_analysis` 只使用截至当前已正式闭合的 5 分钟 K，并按 ADR 0008 执行 full
   project-level rebuild。
+- `chan_analysis_30m` 只使用截至当前已正式闭合的 30 分钟 K。
 - `granularity` 为 `one_minute` 或 `five_minute`。降级到 5 分钟回放时，
   `bars_1m` 为空、`step_seconds` 为 300；React 根据 `granularity` 显示“5 分钟回放”。
 

@@ -1,4 +1,4 @@
-export type ChartGroupKindValue = "five_minute" | "one_minute";
+export type ChartGroupKindValue = "five_minute" | "one_minute" | "thirty_minute";
 
 export interface MarketBar {
   timestamp: string;
@@ -48,6 +48,7 @@ export interface WorkbenchChartSnapshot {
   market: {
     bars_1m: MarketBar[];
     bars_5m: MarketBar[];
+    bars_30m?: MarketBar[];
     daily_bars?: MarketBar[];
     quote?: {
       timestamp: string;
@@ -66,6 +67,28 @@ export interface WorkbenchChartSnapshot {
   };
   indicators: {
     five_minute: {
+      ma?: {
+        ma5: IndicatorPoint[];
+        ma10: IndicatorPoint[];
+        ma20: IndicatorPoint[];
+        ma30: IndicatorPoint[];
+        ma60: IndicatorPoint[];
+      };
+      boll?: {
+        period: 20;
+        stddev: 2.0;
+        upper: IndicatorPoint[];
+        middle: IndicatorPoint[];
+        lower: IndicatorPoint[];
+      };
+      volume: {
+        values: IndicatorPoint[];
+        ma5: IndicatorPoint[];
+        ma10: IndicatorPoint[];
+      };
+      macd: MacdContract;
+    };
+    thirty_minute?: {
       ma?: {
         ma5: IndicatorPoint[];
         ma10: IndicatorPoint[];
@@ -128,6 +151,15 @@ export interface WorkbenchChartSnapshot {
       [key: string]: unknown;
     };
   };
+  warnings?: Array<{
+    warning_code: string;
+    severity?: string;
+    message: string;
+    affected_capability?: string;
+    affected_field?: string;
+    details?: Record<string, unknown>;
+  }>;
+  chan_analysis_30m?: WorkbenchChartSnapshot["chan_analysis"];
 }
 
 export interface Divergence {
@@ -258,7 +290,11 @@ export interface IntradayPriceRange {
 export const ChartGroupKind: Readonly<{
   FIVE_MINUTE: "five_minute";
   ONE_MINUTE: "one_minute";
+  THIRTY_MINUTE: "thirty_minute";
 }>;
+export function isCandleChartKind(
+  kind: ChartGroupKindValue | string,
+): boolean;
 
 export function parseMarketTimestamp(timestamp: string): number;
 export function formatMarketTick(

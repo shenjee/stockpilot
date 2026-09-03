@@ -437,16 +437,9 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "chart_split",
         "show_intraday"
       ],
       "properties": {
-        "chart_split": {
-          "enum": [
-            "64_36",
-            "50_50"
-          ]
-        },
         "show_intraday": {
           "type": "boolean"
         }

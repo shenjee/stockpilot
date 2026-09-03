@@ -103,6 +103,12 @@ export function applyLiveChartEvent(projection, event) {
   ) {
     snapshot = { ...snapshot, chan_analysis: event.payload };
   } else if (
+    event.event_type === "chan_analysis_30m_replaced" &&
+    event.payload &&
+    typeof event.payload === "object"
+  ) {
+    snapshot = { ...snapshot, chan_analysis_30m: event.payload };
+  } else if (
     event.event_type === "live_market_view_updated" &&
     event.payload &&
     typeof event.payload === "object"
@@ -137,12 +143,14 @@ function applyMarketUpdate(snapshot, payload) {
   }
   if (
     !Array.isArray(payload.bars) ||
-    !["bars_1m", "bars_5m", "daily_bars"].includes(payload.target)
+    !["bars_1m", "bars_5m", "bars_30m", "daily_bars"].includes(payload.target)
   ) return snapshot;
   const merged =
     payload.target === "bars_5m"
       ? mergeFiveMinuteBars(snapshot.market.bars_5m, payload.bars)
-      : mergeTimestampRows(snapshot.market[payload.target], payload.bars);
+      : payload.target === "bars_30m"
+        ? mergeTimestampRows(snapshot.market.bars_30m, payload.bars)
+        : mergeTimestampRows(snapshot.market[payload.target], payload.bars);
   return {
     ...snapshot,
     market: {
@@ -157,6 +165,13 @@ function applyIndicatorUpdate(snapshot, incoming) {
     return snapshot;
   }
   const current = snapshot.indicators;
+  const incomingThirty = incoming.thirty_minute;
+  const currentThirty = current.thirty_minute ?? {
+    ma: {},
+    boll: {},
+    volume: {},
+    macd: {},
+  };
   const merged = {
     ...current,
     five_minute: {
@@ -203,6 +218,49 @@ function applyIndicatorUpdate(snapshot, incoming) {
         incoming.five_minute.macd,
       ),
     },
+    thirty_minute: incomingThirty
+      ? {
+          ...currentThirty,
+          ma: mergePointGroup(
+            currentThirty.ma,
+            incomingThirty.ma,
+            ["ma5", "ma10", "ma20", "ma30", "ma60"],
+          ),
+          boll: {
+            ...currentThirty.boll,
+            ...incomingThirty.boll,
+            upper: mergeTimestampRows(
+              currentThirty.boll?.upper,
+              incomingThirty.boll?.upper,
+            ),
+            middle: mergeTimestampRows(
+              currentThirty.boll?.middle,
+              incomingThirty.boll?.middle,
+            ),
+            lower: mergeTimestampRows(
+              currentThirty.boll?.lower,
+              incomingThirty.boll?.lower,
+            ),
+          },
+          volume: {
+            ...currentThirty.volume,
+            ...incomingThirty.volume,
+            values: mergeTimestampRows(
+              currentThirty.volume?.values,
+              incomingThirty.volume?.values,
+            ),
+            ma5: mergeTimestampRows(
+              currentThirty.volume?.ma5,
+              incomingThirty.volume?.ma5,
+            ),
+            ma10: mergeTimestampRows(
+              currentThirty.volume?.ma10,
+              incomingThirty.volume?.ma10,
+            ),
+          },
+          macd: mergeMacd(currentThirty.macd ?? {}, incomingThirty.macd ?? {}),
+        }
+      : current.thirty_minute,
     one_minute: {
       ...current.one_minute,
       vwap: mergeTimestampRows(
@@ -226,6 +284,9 @@ function applyIndicatorUpdate(snapshot, incoming) {
   const fiveMinuteTimestamps = new Set(
     snapshot.market.bars_5m.map((bar) => bar.timestamp),
   );
+  const thirtyMinuteTimestamps = new Set(
+    (snapshot.market.bars_30m ?? []).map((bar) => bar.timestamp),
+  );
   const oneMinuteTimestamps = new Set(
     snapshot.market.bars_1m.map((bar) => bar.timestamp),
   );
@@ -237,6 +298,9 @@ function applyIndicatorUpdate(snapshot, incoming) {
         merged.five_minute,
         fiveMinuteTimestamps,
       ),
+      thirty_minute: merged.thirty_minute
+        ? alignIndicatorBranch(merged.thirty_minute, thirtyMinuteTimestamps)
+        : merged.thirty_minute,
       one_minute: alignIndicatorBranch(
         merged.one_minute,
         oneMinuteTimestamps,

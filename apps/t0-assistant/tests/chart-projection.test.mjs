@@ -354,3 +354,69 @@ test("workbench_snapshot events never advance Live revision as increments", () =
   assert.equal(ignored.revision, start.revision);
   assert.equal(ignored.snapshot, start.snapshot);
 });
+
+test("Live projection merges bars_30m increments independently of 5m", () => {
+  const event = {
+    event_type: "market_update",
+    service_generation: baselineProjection().serviceGeneration,
+    session_id: baselineProjection().sessionId,
+    revision: 2,
+    payload: {
+      target: "bars_30m",
+      bars: [
+        {
+          timestamp: "2026-07-22 10:00:00",
+          open: 10.0,
+          high: 10.2,
+          low: 9.9,
+          close: 10.1,
+          volume: 80000,
+          amount: 808000,
+          closed: true,
+        },
+      ],
+      quote: null,
+    },
+  };
+  const projected = applyLiveChartEvent(baselineProjection(), event);
+  assert.equal(projected.snapshot.market.bars_30m.length, 1);
+  assert.equal(projected.snapshot.market.bars_30m[0].timestamp, "2026-07-22 10:00:00");
+  assert.equal(projected.snapshot.market.bars_5m.length, baseline.market.bars_5m.length);
+});
+
+test("Live projection replaces chan_analysis_30m without touching 5m analysis", () => {
+  const replacement = {
+    symbol: "600000.SH",
+    timeframe: "30m",
+    source: "live",
+    engine: "czsc",
+    engine_version: "0.10.12",
+    parameters: {},
+    fractals: [],
+    strokes: [],
+    segments: [],
+    pivot_zones: [{ id: "30m-pivot" }],
+    divergences: [],
+    structure_alerts: [],
+    signal_series: [],
+    signal_events: [],
+    signal_snapshots: [],
+    candidate_point_events: [],
+    candidate_buy_points: [],
+    candidate_sell_points: [],
+    plot_primitives: [],
+    summary: [],
+    warnings: [],
+    meta: {},
+  };
+  const projected = applyLiveChartEvent(baselineProjection(), {
+    event_type: "chan_analysis_30m_replaced",
+    service_generation: baselineProjection().serviceGeneration,
+    session_id: baselineProjection().sessionId,
+    revision: 2,
+    payload: replacement,
+  });
+  assert.equal(projected.snapshot.chan_analysis_30m.timeframe, "30m");
+  assert.equal(projected.snapshot.chan_analysis_30m.pivot_zones[0].id, "30m-pivot");
+  assert.equal(projected.snapshot.chan_analysis.timeframe, "5m");
+});

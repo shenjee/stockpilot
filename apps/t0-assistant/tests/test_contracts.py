@@ -158,7 +158,7 @@ class ContractTest(unittest.TestCase):
                 "payload": {
                     "preferences": {
                         "last_symbol": "sh.600519",
-                        "layout": {"chart_split": "64_36", "show_intraday": True},
+                        "layout": {"show_intraday": True},
                         "layers": {
                             "ma5": False,
                             "ma10": False,

@@ -3,6 +3,11 @@ export const WorkbenchLayoutMode = Object.freeze({
   HIDE_INTRADAY: "hide_intraday",
 });
 
+export const WorkbenchSecondaryChart = Object.freeze({
+  INTRADAY: "intraday",
+  THIRTY_MINUTE: "thirty_minute",
+});
+
 export const WorkbenchMode = Object.freeze({
   LIVE: "live",
   REPLAY: "replay",
@@ -25,6 +30,7 @@ export function createWorkbenchState() {
     layout: {
       showIntraday: true,
     },
+    secondaryChart: WorkbenchSecondaryChart.INTRADAY,
     layers: {
       ma5: false,
       ma10: false,
@@ -63,6 +69,17 @@ export function workbenchLayoutMode(state) {
   return state.layout.showIntraday
     ? WorkbenchLayoutMode.SHOW_INTRADAY
     : WorkbenchLayoutMode.HIDE_INTRADAY;
+}
+
+export function selectWorkbenchSecondaryChart(state, secondaryChart) {
+  if (!Object.values(WorkbenchSecondaryChart).includes(secondaryChart)) {
+    throw new TypeError(`Unsupported secondary chart: ${secondaryChart}`);
+  }
+  return {
+    ...state,
+    secondaryChart,
+    layout: { ...state.layout, showIntraday: true },
+  };
 }
 
 export function selectWorkbenchMode(state, mode) {

@@ -188,6 +188,7 @@ LiveRefreshUpdateHandler = Callable[[LiveIncrementalUpdate], object]
 LiveRefreshFailureHandler = Callable[
     [LiveRefreshKind, BaseException, int | None], None
 ]
+LiveThirtyMinuteDelayedHandler = Callable[[bool], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,6 +264,7 @@ class LiveRefreshScheduler:
         | None = None,
         thirty_minute_boundary_provider: Callable[[datetime], datetime | None]
         | None = None,
+        on_thirty_minute_delayed: LiveThirtyMinuteDelayedHandler | None = None,
     ) -> None:
         if not isinstance(spec, SessionSpec):
             raise TypeError("spec must be a SessionSpec")
@@ -285,6 +287,11 @@ class LiveRefreshScheduler:
             and not callable(thirty_minute_boundary_provider)
         ):
             raise TypeError("thirty_minute_boundary_provider must be callable")
+        if (
+            on_thirty_minute_delayed is not None
+            and not callable(on_thirty_minute_delayed)
+        ):
+            raise TypeError("on_thirty_minute_delayed must be callable")
 
         self._spec = spec
         self._input_port = input_port
@@ -295,6 +302,7 @@ class LiveRefreshScheduler:
         self._clock = clock or datetime.now
         self._on_failure = on_failure
         self._thirty_minute_boundary_provider = thirty_minute_boundary_provider
+        self._on_thirty_minute_delayed = on_thirty_minute_delayed
         self._lock = RLock()
         self._publish_lock = Lock()
         self._retired = False
@@ -646,10 +654,16 @@ class LiveRefreshScheduler:
                 return False
         for update in result.updates:
             self._on_update(update)
+        delayed_changed: bool | None = None
         with self._lock:
             if self._retired:
                 return False
-            self._store_watermark(kind, observed_at, result)
+            delayed_changed = self._store_watermark(kind, observed_at, result)
+        if (
+            delayed_changed is not None
+            and self._on_thirty_minute_delayed is not None
+        ):
+            self._on_thirty_minute_delayed(delayed_changed)
         return True
 
     def _store_watermark(
@@ -657,7 +671,7 @@ class LiveRefreshScheduler:
         kind: LiveRefreshKind,
         observed_at: datetime,
         result: LiveRefreshResult,
-    ) -> None:
+    ) -> bool | None:
         state = self._states[kind]
         if result.data_time is not None:
             state.latest_data_time = result.data_time
@@ -665,11 +679,12 @@ class LiveRefreshScheduler:
         state.last_failure = None
         state.consecutive_failures = 0
         if kind is LiveRefreshKind.OFFICIAL_THIRTY_MINUTE:
-            self._advance_thirty_minute_schedule(
+            return self._advance_thirty_minute_schedule(
                 state,
                 observed_at,
                 data_received=result.data_time is not None,
             )
+        return None
 
     def _compute_next_due_at(
         self,
@@ -708,12 +723,16 @@ class LiveRefreshScheduler:
         observed_at: datetime,
         *,
         data_received: bool,
-    ) -> None:
+    ) -> bool | None:
         """Advance the 30m boundary-triggered schedule after a refresh result.
 
+        Returns ``True`` when the branch newly enters the delayed state,
+        ``False`` when it leaves that state, and ``None`` when the delayed
+        flag does not change.
+
         When official data is received, the watermark advances to the new
-        boundary and the next due time is the *next* 30m boundary + 5s.  When
-        no data is returned (the official bar is not yet available), the
+        boundary and the next due time is the *next* 30-minute boundary + 5s.
+        When no data is returned (the official bar is not yet available), the
         branch retries after the retry interval (15s active, 60s reduced).  If
         2 minutes have elapsed since the boundary's first attempt without
         receiving data, the branch enters the delayed state and switches to
@@ -721,7 +740,8 @@ class LiveRefreshScheduler:
         """
 
         if self._thirty_minute_boundary_provider is None:
-            return
+            return None
+        was_delayed = state.thirty_minute_delayed
         if data_received:
             state.thirty_minute_pending_boundary = None
             state.boundary_first_attempt_at = None
@@ -730,7 +750,9 @@ class LiveRefreshScheduler:
             if next_boundary is not None:
                 state.thirty_minute_pending_boundary = next_boundary
                 state.next_due_at = next_boundary + timedelta(seconds=5)
-            return
+            if was_delayed and not state.thirty_minute_delayed:
+                return False
+            return None
         # No data — the official bar is not yet available.  Track the boundary
         # we are waiting for and when we first tried.
         if state.thirty_minute_pending_boundary is None:
@@ -745,7 +767,7 @@ class LiveRefreshScheduler:
         ):
             state.boundary_first_attempt_at = observed_at
         if state.boundary_first_attempt_at is None:
-            return
+            return None
         # Check the 2-minute delay threshold.
         if (
             state.boundary_first_attempt_at is not None
@@ -756,6 +778,11 @@ class LiveRefreshScheduler:
             state.next_due_at = observed_at + self._intervals.reduced_official_thirty_minute
         else:
             state.next_due_at = observed_at + self._intervals.official_thirty_minute
+        if state.thirty_minute_delayed and not was_delayed:
+            return True
+        if was_delayed and not state.thirty_minute_delayed:
+            return False
+        return None
 
     def _validate_update(
         self,
@@ -789,7 +816,7 @@ class LiveRefreshScheduler:
             LiveRefreshKind.OFFICIAL_THIRTY_MINUTE: {
                 "market_update",
                 "indicators_updated",
-                "chan_analysis_replaced",
+                "chan_analysis_30m_replaced",
                 "live_market_view_updated",
             },
         }[kind]

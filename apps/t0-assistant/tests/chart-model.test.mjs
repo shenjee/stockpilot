@@ -74,6 +74,19 @@ test("5 minute model appends dynamic volume and pads MACD with empty slot", () =
   assert.equal(model.volumeMa10.at(-1).value, null);
 });
 
+test("30 minute model reuses candle overlays on bars_30m", () => {
+  const snapshot = structuredClone(fixture);
+  snapshot.market.bars_30m = snapshot.market.bars_5m.map((bar) => ({ ...bar }));
+  snapshot.indicators.thirty_minute = structuredClone(
+    snapshot.indicators.five_minute,
+  );
+  snapshot.chan_analysis_30m = structuredClone(snapshot.chan_analysis);
+  const model = createChartGroupModel(snapshot, ChartGroupKind.THIRTY_MINUTE);
+  assert.equal(model.kind, ChartGroupKind.THIRTY_MINUTE);
+  assert.equal(model.price.length, snapshot.market.bars_30m.length);
+  assert.equal(model.timestamps.length, snapshot.market.bars_30m.length);
+});
+
 test("fixture chan_analysis is complete and rendered in 5 minute model", () => {
   assert.ok(
     fixture.chan_analysis,

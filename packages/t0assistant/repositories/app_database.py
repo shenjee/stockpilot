@@ -27,7 +27,7 @@ from packages.t0assistant.preferences import (
 
 PathLike = str | Path
 _T = TypeVar("_T")
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 DDL_STATEMENTS = (
     """
@@ -42,7 +42,6 @@ DDL_STATEMENTS = (
         singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
         preference_revision INTEGER NOT NULL CHECK (preference_revision >= 0),
         last_symbol TEXT,
-        chart_split TEXT NOT NULL CHECK (chart_split IN ('64_36', '50_50')),
         show_intraday INTEGER NOT NULL CHECK (show_intraday IN (0, 1)),
         ma5 INTEGER NOT NULL CHECK (ma5 IN (0, 1)),
         ma10 INTEGER NOT NULL CHECK (ma10 IN (0, 1)),
@@ -118,7 +117,6 @@ _REQUIRED_COLUMNS = {
         "singleton_id",
         "preference_revision",
         "last_symbol",
-        "chart_split",
         "show_intraday",
         "ma5",
         "ma10",
@@ -262,6 +260,7 @@ def init_db(connection: sqlite3.Connection) -> None:
         if existing is not None and existing["schema_version"] not in (
             1,
             2,
+            3,
             SCHEMA_VERSION,
         ):
             raise AppDatabaseCompatibilityError(
@@ -275,7 +274,9 @@ def init_db(connection: sqlite3.Connection) -> None:
             """,
             (SCHEMA_VERSION, now),
         )
-        if existing is not None and existing["schema_version"] in (1, 2):
+        if existing is not None and existing["schema_version"] in (1, 2, 3):
+            if "chart_split" in _table_columns(connection, "preferences"):
+                connection.execute("ALTER TABLE preferences DROP COLUMN chart_split")
             connection.execute(
                 """
                 UPDATE app_schema
@@ -287,15 +288,14 @@ def init_db(connection: sqlite3.Connection) -> None:
         connection.execute(
             """
             INSERT INTO preferences(
-                singleton_id, preference_revision, last_symbol, chart_split,
+                singleton_id, preference_revision, last_symbol,
                 show_intraday, ma5, ma10, ma20, ma30, ma60, strokes,
                 pivot_zones, updated_at
-            ) VALUES (1, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (1, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(singleton_id) DO NOTHING
             """,
             (
                 defaults.last_symbol,
-                defaults.layout.chart_split,
                 int(defaults.layout.show_intraday),
                 int(defaults.layers.ma5),
                 int(defaults.layers.ma10),
@@ -482,7 +482,6 @@ class SqlitePreferenceRepository:
             preferences=PreferenceValues(
                 last_symbol=row["last_symbol"],
                 layout=LayoutPreference(
-                    chart_split=row["chart_split"],
                     show_intraday=bool(row["show_intraday"]),
                 ),
                 layers=LayerPreference(
@@ -518,7 +517,7 @@ class SqlitePreferenceRepository:
                 """
                 UPDATE preferences
                 SET preference_revision = preference_revision + 1,
-                    last_symbol = ?, chart_split = ?, show_intraday = ?,
+                    last_symbol = ?, show_intraday = ?,
                     ma5 = ?, ma10 = ?, ma20 = ?, ma30 = ?, ma60 = ?,
                     strokes = ?, pivot_zones = ?, updated_at = ?
                 WHERE singleton_id = ?
@@ -526,7 +525,6 @@ class SqlitePreferenceRepository:
                 """,
                 (
                     preferences.last_symbol,
-                    preferences.layout.chart_split,
                     int(preferences.layout.show_intraday),
                     int(preferences.layers.ma5),
                     int(preferences.layers.ma10),
@@ -578,14 +576,13 @@ class SqlitePreferenceRepository:
                 """
                 UPDATE preferences
                 SET preference_revision = preference_revision + 1,
-                    chart_split = ?, show_intraday = ?,
+                    show_intraday = ?,
                     ma5 = ?, ma10 = ?, ma20 = ?, ma30 = ?, ma60 = ?,
                     strokes = ?, pivot_zones = ?, updated_at = ?
                 WHERE singleton_id = ?
                   AND preference_revision = ?
                 """,
                 (
-                    preferences.layout.chart_split,
                     int(preferences.layout.show_intraday),
                     int(preferences.layers.ma5),
                     int(preferences.layers.ma10),

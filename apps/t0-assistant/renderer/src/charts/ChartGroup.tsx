@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import {
   ChartGroupKind,
+  isCandleChartKind,
   type ChartGroupModel,
   type TradeMarkerModel,
 } from "./chart-model.mjs";
@@ -76,7 +77,7 @@ export function ChartGroup({
     // 恢复时基于快照主动重新右对齐（following）或保持原范围（manual）。
     // 仅 5 分钟图需要恢复语义（分时图始终展示完整交易分钟，无 following/manual 区分）。
     let stopLifecycle: (() => void) | undefined;
-    if (model.kind === ChartGroupKind.FIVE_MINUTE && window.stockpilot?.onWindowLifecycle) {
+    if (isCandleChartKind(model.kind) && window.stockpilot?.onWindowLifecycle) {
       stopLifecycle = window.stockpilot.onWindowLifecycle(({ phase }) => {
         if (phase === "background") {
           controller.onBackgroundEnter();
@@ -124,7 +125,7 @@ export function ChartGroup({
             ref={priceRef}
             className="chart-canvas"
             aria-label={
-              isIntraday ? "1 分钟价格与 VWAP" : "5 分钟价格图"
+              isIntraday ? "1 分钟价格与 VWAP" : model.kind === ChartGroupKind.THIRTY_MINUTE ? "30 分钟价格图" : "5 分钟价格图"
             }
           />
         </div>
@@ -140,7 +141,7 @@ export function ChartGroup({
         <div
           ref={volumeRef}
           className="chart-canvas"
-          aria-label={isIntraday ? "1 分钟成交量" : "5 分钟成交量"}
+          aria-label={isIntraday ? "1 分钟成交量" : model.kind === ChartGroupKind.THIRTY_MINUTE ? "30 分钟成交量" : "5 分钟成交量"}
         />
       </section>
       <section className="chart-panel indicator-panel" data-testid="chart-panel">

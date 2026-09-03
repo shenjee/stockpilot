@@ -759,6 +759,7 @@ class LiveRuntimeSession:
             [LiveRefreshKind, BaseException, int | None], None
         ],
         on_state_change: Callable[[str, str], None] | None = None,
+        on_thirty_minute_delayed: Callable[[bool], None] | None = None,
         analyzer: CzscAnalyzerPort | None = None,
         intervals: LiveRefreshIntervals = LiveRefreshIntervals(),
         clock: Callable[[], datetime] | None = None,
@@ -772,6 +773,7 @@ class LiveRuntimeSession:
         self._external_candidate = on_snapshot_candidate
         self._on_incremental_update = on_incremental_update
         self._on_refresh_failure = on_refresh_failure
+        self._on_thirty_minute_delayed = on_thirty_minute_delayed
         self._intervals = intervals
         self._clock = clock or datetime.now
         self._poll_interval_seconds = poll_interval_seconds
@@ -886,6 +888,7 @@ class LiveRuntimeSession:
             thirty_minute_boundary_provider=_make_thirty_minute_boundary_provider(
                 self._input_port
             ),
+            on_thirty_minute_delayed=self._on_thirty_minute_delayed,
         )
         with self._lock:
             if self._retired.is_set():
@@ -1180,7 +1183,7 @@ def _branch_updates(
             ),
             LiveIncrementalUpdate(
                 **identity,
-                event_type="chan_analysis_replaced",
+                event_type="chan_analysis_30m_replaced",
                 payload=snapshot["chan_analysis_30m"],
             ),
             live_view_update,

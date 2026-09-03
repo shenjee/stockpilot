@@ -327,6 +327,46 @@ class LiveRefreshSchedulerTests(unittest.TestCase):
         self.assertTrue(state.thirty_minute_delayed)
         self.assertEqual(state.next_due_at, delayed_at + timedelta(seconds=60))
 
+    def test_thirty_minute_delayed_callback_fires_once_then_clears_on_data(
+        self,
+    ) -> None:
+        delayed_flags: list[bool] = []
+        boundary = self.t0 + timedelta(minutes=30)
+
+        def next_boundary(observed_at: datetime) -> datetime | None:
+            return boundary if observed_at < boundary else None
+
+        scheduler = LiveRefreshScheduler(
+            self.spec,
+            self.input,
+            self.executor,
+            on_update=self.updates.append,
+            intervals=self.intervals,
+            thirty_minute_boundary_provider=next_boundary,
+            on_thirty_minute_delayed=delayed_flags.append,
+        )
+        self.addCleanup(scheduler.retire)
+        self.input.queue(
+            LiveRefreshKind.OFFICIAL_THIRTY_MINUTE,
+            LiveRefreshResult.no_change(),
+            LiveRefreshResult.no_change(),
+            LiveRefreshResult.no_change(),
+            LiveRefreshResult(
+                boundary,
+                (_update(LiveRefreshKind.OFFICIAL_THIRTY_MINUTE),),
+            ),
+        )
+
+        scheduler.run_due(self.t0)
+        first_attempt = boundary + timedelta(seconds=5)
+        scheduler.run_due(first_attempt)
+        delayed_at = first_attempt + timedelta(minutes=2)
+        scheduler.run_due(delayed_at)
+        self.assertEqual(delayed_flags, [True])
+
+        scheduler.retry(LiveRefreshKind.OFFICIAL_THIRTY_MINUTE, delayed_at)
+        self.assertEqual(delayed_flags, [True, False])
+
     def test_failure_in_one_branch_does_not_block_other_due_branches(self) -> None:
         quote_failure = RuntimeError("quote unavailable")
         one_minute_time = self.t0 + timedelta(minutes=1)

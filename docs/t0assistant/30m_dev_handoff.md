@@ -64,15 +64,17 @@
 
 ## 三、实施顺序（设计稿 §15）
 
-1. 冻结 30m 时间/完成状态/缺失值/替换语义
-2. 设计评审公共快照契约（三个新字段 + warning）
-3. 接入 Provider `30m` 获取、存储、覆盖证据、历史读取
-4. 实现未完成 30m K + 正式数据替换合并
-5. 接入 30m 指标 + `timeframe="30m"` 缠论
-6. 打通 Live / Replay / Historical 完整快照
-7. Renderer 副图切换、独立视口、Tooltip、成交点
-8. 契约/管线/Renderer/Replay/Historical/端到端测试
-9. 更新 PRD、架构、模块设计、UI 布局、回放文档
+1. 冻结 30m 时间/完成状态/缺失值/替换语义 ✅
+2. 设计评审公共快照契约（三个新字段 + warning） ✅
+3. 接入 Provider `30m` 获取、存储、覆盖证据、历史读取 ✅
+4. 实现未完成 30m K + 正式数据替换合并 ✅
+5. 接入 30m 指标 + `timeframe="30m"` 缠论 ✅
+6. 打通 Live / Replay / Historical 完整快照 ✅
+7. Renderer 副图切换、独立视口、Tooltip、成交点 ✅
+8. 契约/管线/Renderer/Replay/Historical/端到端测试 ✅
+9. 更新 PRD、架构、模块设计、UI 布局、回放文档 ✅
+
+产品文档已按设计稿同步：`t0_assistant_prd.md`、`architecture.md`、`module_design.md`、`ui_layout_spec.md`、`replay_interface_and_behavior.md`。细节见 `30m_handoff_step6plus.md`。
 
 ## 四、关键落点文件
 

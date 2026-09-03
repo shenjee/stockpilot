@@ -215,7 +215,7 @@ class LiveDataPreparator(LiveInitialInputPort):
             minimum_preheat_30m=minimum_preheat_5m,
             session_validator=session_validator,
         )
-        official_30m = self._load_target_day_bars(
+        official_30m = self._load_target_day_bars_best_effort(
             code=code,
             market=market,
             trade_date=effective_session.trade_date.isoformat(),
@@ -782,6 +782,32 @@ class LiveDataPreparator(LiveInitialInputPort):
         ]
         session = self._calendar.require_session(trade_date, market)
         return _normalize_target_day_bars(rows, session=session)
+
+    def _load_target_day_bars_best_effort(
+        self,
+        *,
+        code: str,
+        market: str,
+        trade_date: str,
+        timeframe: str,
+        instrument_type: str | None,
+        session_validator: Callable[[], bool] | None,
+        observed_at: datetime,
+    ) -> tuple[Mapping[str, Any], ...]:
+        """Best-effort official bar load; 30m failures must not block Live."""
+
+        try:
+            return self._load_target_day_bars(
+                code=code,
+                market=market,
+                trade_date=trade_date,
+                timeframe=timeframe,
+                instrument_type=instrument_type,
+                session_validator=session_validator,
+                observed_at=observed_at,
+            )
+        except LiveDataError:
+            return ()
 
     def _load_daily_history(
         self,

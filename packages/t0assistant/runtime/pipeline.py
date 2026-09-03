@@ -43,6 +43,12 @@ from ._market_bars import (
 from .five_minute import DynamicFiveMinuteAggregator
 from .projection import project_market_at
 from .thirty_minute import DynamicThirtyMinuteAggregator
+from .thirty_minute_warnings import (
+    THIRTY_MINUTE_CHAN_ANALYSIS_UNAVAILABLE,
+    THIRTY_MINUTE_INDICATORS_UNAVAILABLE,
+    THIRTY_MINUTE_MARKET_DATA_UNAVAILABLE,
+    warning_dict,
+)
 
 
 class WorkbenchPipelineError(RuntimeMarketDataError):
@@ -432,11 +438,24 @@ class WorkbenchPipeline:
             if closed_5m
             else _empty_5m_indicators()
         )
-        indicators_30m = (
-            calculate_thirty_minute_indicators(closed_30m)
-            if closed_30m
-            else _empty_30m_indicators()
-        )
+        warnings: list[dict[str, Any]] = []
+        first_30m_close = min(self._session.bar_close_times(30), default=None)
+        if (
+            not bars_30m
+            and first_30m_close is not None
+            and resolved_target >= first_30m_close
+        ):
+            warnings.append(warning_dict(THIRTY_MINUTE_MARKET_DATA_UNAVAILABLE))
+
+        try:
+            indicators_30m = (
+                calculate_thirty_minute_indicators(closed_30m)
+                if closed_30m
+                else _empty_30m_indicators()
+            )
+        except Exception:
+            indicators_30m = _empty_30m_indicators()
+            warnings.append(warning_dict(THIRTY_MINUTE_INDICATORS_UNAVAILABLE))
 
         chan_analysis = self._analyzer(closed_5m, market_input.symbol)
         if not isinstance(chan_analysis, Mapping):
@@ -446,7 +465,11 @@ class WorkbenchPipeline:
                 f"got {type(chan_analysis).__name__}"
             )
 
-        chan_analysis_30m = _default_analyze_30m(closed_30m, market_input.symbol)
+        try:
+            chan_analysis_30m = _default_analyze_30m(closed_30m, market_input.symbol)
+        except Exception:
+            chan_analysis_30m = _empty_chan_analysis_30m(market_input.symbol)
+            warnings.append(warning_dict(THIRTY_MINUTE_CHAN_ANALYSIS_UNAVAILABLE))
 
         return PipelineResult(
             target_time=resolved_target,
@@ -461,7 +484,7 @@ class WorkbenchPipeline:
             indicators_1m=indicators_1m,
             indicators_5m=indicators_5m,
             chan_analysis=chan_analysis,
-            warnings=[],
+            warnings=warnings,
             bars_30m=tuple(bars_30m),
             closed_30m_prefix=tuple(closed_30m),
             indicators_30m=indicators_30m,

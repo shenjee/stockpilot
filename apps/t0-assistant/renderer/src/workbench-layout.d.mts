@@ -6,6 +6,14 @@ export const WorkbenchLayoutMode: Readonly<{
 export type WorkbenchLayoutModeValue =
   (typeof WorkbenchLayoutMode)[keyof typeof WorkbenchLayoutMode];
 
+export const WorkbenchSecondaryChart: Readonly<{
+  INTRADAY: "intraday";
+  THIRTY_MINUTE: "thirty_minute";
+}>;
+
+export type WorkbenchSecondaryChartValue =
+  (typeof WorkbenchSecondaryChart)[keyof typeof WorkbenchSecondaryChart];
+
 export const WorkbenchMode: Readonly<{ LIVE: "live"; REPLAY: "replay" }>;
 export const WorkbenchLayer: Readonly<{
   MA5: "ma5";
@@ -42,6 +50,7 @@ export interface WorkbenchState {
   layout: {
     showIntraday: boolean;
   };
+  secondaryChart: WorkbenchSecondaryChartValue;
   layers: {
     ma5: boolean;
     ma10: boolean;
@@ -66,6 +75,10 @@ export function selectWorkbenchLayout(
 export function workbenchLayoutMode(
   state: WorkbenchState,
 ): WorkbenchLayoutModeValue;
+export function selectWorkbenchSecondaryChart(
+  state: WorkbenchState,
+  secondaryChart: WorkbenchSecondaryChartValue,
+): WorkbenchState;
 export function selectWorkbenchMode(
   state: WorkbenchState,
   mode: "live" | "replay",

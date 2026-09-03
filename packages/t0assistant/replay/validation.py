@@ -286,7 +286,11 @@ def _warning(value: object, path: str) -> None:
     if warning["severity"] not in {"info", "warning"}:
         raise TypeError(f"{path}.severity is invalid")
     if warning["affected_capability"] not in {
-        "replay", "intraday_chart", "five_minute_chart", "chan_analysis"
+        "replay",
+        "intraday_chart",
+        "five_minute_chart",
+        "thirty_minute_chart",
+        "chan_analysis",
     }:
         raise TypeError(f"{path}.affected_capability is invalid")
     if not isinstance(warning["affected_field"], str):

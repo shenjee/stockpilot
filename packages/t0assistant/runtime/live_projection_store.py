@@ -33,7 +33,7 @@ from __future__ import annotations
 import copy
 from dataclasses import dataclass
 from threading import RLock
-from typing import Any, Protocol
+from typing import Any, Mapping, Protocol, Sequence
 
 from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
@@ -50,6 +50,7 @@ _INCREMENTAL_EVENT_TYPES = frozenset(
         "market_update",
         "indicators_updated",
         "chan_analysis_replaced",
+        "chan_analysis_30m_replaced",
         "live_market_view_updated",
     }
 )
@@ -411,6 +412,69 @@ class LiveProjectionStore:
             return None
         return event_box[0] if event_box else None
 
+    def sync_warnings(
+        self,
+        *,
+        session_id: str,
+        generation: int,
+        warnings: Sequence[Mapping[str, Any]],
+    ) -> LiveAcceptedEvent | None:
+        """Replace snapshot warnings when the code set actually changes.
+
+        Used for Live-only ``thirty_minute_official_delayed`` and to clear it
+        once the official 30m bar arrives.  No-ops when the warning codes
+        already match so 15s retries do not republish full snapshots.
+        """
+
+        if not session_id:
+            raise ValueError("session_id must be non-empty")
+        incoming = [copy.deepcopy(dict(item)) for item in warnings]
+        incoming_codes = [item["warning_code"] for item in incoming]
+        event_box: list[LiveAcceptedEvent] = []
+
+        def commit() -> None:
+            with self._lock:
+                session_key = (session_id, generation)
+                if (
+                    self._current_session != session_key
+                    or self._current_payload is None
+                    or self._current_revision is None
+                ):
+                    return
+                current_codes = [
+                    item.get("warning_code")
+                    for item in self._current_payload.get("warnings") or ()
+                ]
+                if current_codes == incoming_codes:
+                    return
+                revision = self._current_revision + 1
+                staged = copy.deepcopy(self._current_payload)
+                staged["session"]["revision"] = revision
+                staged["warnings"] = incoming
+                _LOGICAL_SNAPSHOT_VALIDATOR.validate(staged)
+                self._current_payload = staged
+                self._current_revision = revision
+                event_box.append(
+                    LiveAcceptedEvent(
+                        schema_version=SCHEMA_VERSION,
+                        service_generation=self._service_generation,
+                        session_id=session_id,
+                        revision=revision,
+                        event_type="workbench_snapshot",
+                        payload=copy.deepcopy(staged),
+                    )
+                )
+
+        accepted = self._coordinator.commit_if_accepted(
+            session_type=SessionType.LIVE,
+            session_id=session_id,
+            generation=generation,
+            commit=commit,
+        )
+        if not accepted:
+            return None
+        return event_box[0] if event_box else None
+
     def get_live_snapshot(
         self,
         *,
@@ -528,11 +592,10 @@ def _apply_incremental(
         _merge_indicators(target["indicators"], payload)
     elif event_type == "live_market_view_updated":
         target["live_market_view"] = copy.deepcopy(payload)
+    elif event_type == "chan_analysis_30m_replaced":
+        target["chan_analysis_30m"] = copy.deepcopy(payload)
     else:  # chan_analysis_replaced
-        if payload.get("timeframe") == "30m":
-            target["chan_analysis_30m"] = copy.deepcopy(payload)
-        else:
-            target["chan_analysis"] = copy.deepcopy(payload)
+        target["chan_analysis"] = copy.deepcopy(payload)
 
 
 def merge_five_minute_bars(
@@ -727,6 +790,9 @@ def _build_incremental_validators() -> dict[str, Draft202012Validator]:
             {"$ref": f"{logic_id}#/$defs/indicators"}, registry=registry
         ),
         "chan_analysis_replaced": Draft202012Validator(
+            {"$ref": f"{logic_id}#/$defs/chan_analysis"}, registry=registry
+        ),
+        "chan_analysis_30m_replaced": Draft202012Validator(
             {"$ref": f"{logic_id}#/$defs/chan_analysis"}, registry=registry
         ),
         "live_market_view_updated": Draft202012Validator(

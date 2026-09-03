@@ -323,25 +323,31 @@ class ReplayDataPreparator:
         # ---- preheat 30m (cross-trading-day, before session start) ----------
         # 30m preheat always comes from the official 30m provider interface,
         # never aggregated from 5m bars (design §10, §14.3).
-        preheat_30m = self._load_preheat_30m(
-            code=code,
-            market=market,
-            instrument_type=instrument_type,
-            session=session,
-            config=config,
-            session_validator=session_validator,
-        )
-
-        # ---- target-day official 30m -------------------------------------
-        official_30m = self._load_target_day_bars(
-            code=code,
-            market=market,
-            instrument_type=instrument_type,
-            session=session,
-            timeframe="30m",
-            config=config,
-            session_validator=session_validator,
-        )
+        preheat_30m: tuple[Mapping[str, Any], ...] = ()
+        official_30m: tuple[Mapping[str, Any], ...] = ()
+        try:
+            preheat_30m = self._load_preheat_30m(
+                code=code,
+                market=market,
+                instrument_type=instrument_type,
+                session=session,
+                config=config,
+                session_validator=session_validator,
+            )
+        except ReplayDataError:
+            preheat_30m = ()
+        try:
+            official_30m = self._load_target_day_bars(
+                code=code,
+                market=market,
+                instrument_type=instrument_type,
+                session=session,
+                timeframe="30m",
+                config=config,
+                session_validator=session_validator,
+            )
+        except ReplayDataError:
+            official_30m = ()
 
         actual_bar_times = _build_actual_bar_times(
             granularity=granularity,

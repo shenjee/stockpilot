@@ -238,8 +238,11 @@ class ReplayEndToEndAcceptanceTests(unittest.TestCase):
         self.assertEqual(prepared.granularity, "five_minute")
         self.assertEqual(first_snapshot["market"]["bars_1m"], [])
         self.assertEqual(
-            first_snapshot["warnings"][0]["warning_code"],
-            "one_minute_data_unavailable",
+            {item["warning_code"] for item in first_snapshot["warnings"]},
+            {
+                "one_minute_data_unavailable",
+                "thirty_minute_market_data_unavailable",
+            },
         )
         self.assertEqual(first_snapshot["replay"]["step_seconds"], 300)
         self.assertEqual(port.call_log, list(calls_at_ready))

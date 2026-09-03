@@ -226,47 +226,29 @@ Replay 快照使用 `PipelineMarketInput` → `WorkbenchPipeline` → `PipelineR
 
 ---
 
-### Step 7: Renderer（分时/30m 副图切换）
+### Step 6: Live/Replay/Historical 完整快照 ✅
 
-文件：
-- `apps/t0-assistant/renderer/src/workbench-layout.mjs`
-- `apps/t0-assistant/renderer/src/App.tsx`
-- `apps/t0-assistant/renderer/src/charts/chart-model.mjs`
-- `apps/t0-assistant/renderer/src/charts/chart-viewport.mjs`
+- `LiveRefreshKind.OFFICIAL_THIRTY_MINUTE`：结束时间 +5s 首次、15s 重试、2 分钟后降 60s
+- `thirty_minute_official_delayed` 仅 Live；延迟置位/清除时通过 `LiveProjectionStore.sync_warnings()` 发全量快照
+- 30m 缠论增量事件为 `chan_analysis_30m_replaced`（不是 `chan_analysis_replaced`）
+- Live/Replay 拉 30m 为 best-effort，失败不挡 5m/分时
+- 管线在目标时点已过首根 30m 结束时间且 `bars_30m` 仍为空时发布 `thirty_minute_market_data_unavailable`
 
-需要实现：
-- **直接删除** `layout.chart_split`、`"64_36"`/`"50_50"`、`MAIN_PRIORITY`/`EQUAL` 三态布局，无迁移代码
-- 布局只剩"显示/隐藏副图"；副图显示时固定 50/50
-- 副图内部 `[分时][30m]` 切换
-- 新增 `chartViews.thirtyMinute` 独立视口槽位；视口参数复用 5m（跟随≥72 / 手工≥48 / 上限 360）
-- 图层开关与 5m 共用一组偏好；成交标记沿用 `executed_at`，无新契约字段
-- 分时/30m 选择**不跨重启保存**
-- 30m 不可用时保留选择 + 空态 + warning，不自动切回分时
-- Tooltip：完全沿用 5 分钟 Tooltip 的字段和交互；当前未完成状态只用低透明度表达，不增加文字
+### Step 7: Renderer ✅
 
----
+- 已删除 `layout.chart_split`；偏好只保留 `show_intraday`；SQLite `SCHEMA_VERSION = 4`
+- 显示副图固定 50/50；副图会话内 `[分时][30m]` 切换，不跨重启保存
+- `chartViews.thirtyMinute` 独立视口；图层/Tooltip/成交点复用 5m 规则，成交按 `executed_at` 映射到 30m 结束时间
+- 30m 不可用时保留选择 + 空态 + warning；30m 模型失败不拖垮 5m/分时
 
-### Step 8: 测试
+### Step 8: 测试 ✅
 
-需要完成：
-- 契约测试：验证 30m 字段在所有快照中存在且 schema-valid
-- 管线测试：验证 30m bars/indicators/chan_analysis 正确计算
-- Renderer 测试：验证副图切换、视口独立、空态
-- Replay 测试：验证 30m 数据在 Replay 中正确展示，不展示未来数据
-- Historical 测试：验证 30m 数据在 Historical 快照中完整对齐
-- 端到端测试：验证 Live/Replay/Historical 完整流程
-- **30m 合并 fixture**（独立于 5m fixture）：测试"正式 K 只替换相同结束时间的临时 K，不删除下一根正在形成的临时 K"
+- 契约、管线、Replay 校验、Live 刷新 delayed 回调、Renderer 模型/投影/成交点/布局测试已覆盖 30m
+- Pre-existing failure：`test_live_dynamic_five_minute.py` 因 `SessionSpec` 缺 `instrument`，与 30m 无关
 
----
+### Step 9: 文档 ✅
 
-### Step 9: 文档更新
-
-需要更新：
-- PRD
-- 架构文档（`docs/architecture/`）
-- 模块设计
-- UI 布局文档
-- 回放文档
+已更新 PRD、架构、模块设计、UI 布局规格和回放文档。
 
 ---
 
@@ -285,15 +267,15 @@ Replay 快照使用 `PipelineMarketInput` → `WorkbenchPipeline` → `PipelineR
 | Live 预热 | `packages/t0assistant/runtime/live_data.py` | ✅ 已加载 30m preheat + official |
 | 计算契约 | `packages/t0assistant/runtime/computation_contract.py` | ✅ 已添加 30m 字段 |
 | 预热常量 | `packages/t0assistant/runtime/live_market_view.py` | ✅ `DEFAULT_CHART_PREHEAT_COUNT = 500` |
-| Live Session | `packages/t0assistant/runtime/live_session.py` | ✅ 常量已更新；❌ `build_projection()` 需传 30m |
-| Live 刷新 | `packages/t0assistant/runtime/live_refresh.py` | ❌ 需新增 `OFFICIAL_THIRTY_MINUTE` 分支 |
-| Live Runtime | `packages/t0assistant/runtime/live_runtime.py` | ❌ 需新增 30m refresh + branch_updates |
-| Live Market View | `packages/t0assistant/runtime/live_market_view.py` | ❌ `build_live_market_view()` 需新增 30m as-of 字段 |
+| Live Session | `packages/t0assistant/runtime/live_session.py` | ✅ 已传 30m |
+| Live 刷新 | `packages/t0assistant/runtime/live_refresh.py` | ✅ `OFFICIAL_THIRTY_MINUTE` 边界调度 |
+| Live Runtime | `packages/t0assistant/runtime/live_runtime.py` | ✅ 30m refresh + `chan_analysis_30m_replaced` |
+| Live Market View | `packages/t0assistant/runtime/live_market_view.py` | ✅ 30m as-of 字段 |
 | 指标 | `packages/indicators/core.py` | ✅ `calculate_thirty_minute_indicators` 已创建 |
 | 缠论 | `packages/chantheory/` | ✅ 已支持 `timeframe="30m"` → F30 |
 | 市场数据 | `packages/marketdata/` | ✅ `_SUPPORTED_BAR_MINUTES={1,5,30}`, `T0_TIMEFRAMES` 含 "30m" |
-| Renderer | `apps/t0-assistant/renderer/src/` | ❌ 需实现副图切换 |
-| 投影测试 | `packages/t0assistant/tests/test_workbench_projection.py` | ✅ 58 passed |
+| Renderer | `apps/t0-assistant/renderer/src/` | ✅ 副图切换、30m 图、独立视口 |
+| 投影测试 | `packages/t0assistant/tests/test_workbench_projection.py` | ✅ 已覆盖 30m |
 | 契约测试 | `apps/t0-assistant/tests/test_contracts.py` | ✅ 已修复 |
 | 计算契约测试 | `packages/t0assistant/tests/test_computation_contract.py` | ✅ 已修复 |
 
@@ -309,40 +291,8 @@ Replay 快照使用 `PipelineMarketInput` → `WorkbenchPipeline` → `PipelineR
 
 ---
 
-## 六、新 Thread 启动 Prompt
+## 六、状态
 
-将以下内容作为新 thread 的第一条消息：
+Step 1–9 已完成。后续若发现回归，以设计稿 `docs/t0assistant/30m_chart_feature_design.md` 为准，不必再从本文件的旧 Step 6 prompt 重新开工。
 
----
-
-我正在开发 stockpilot 项目的 30 分钟 K 线功能（Issue #168）。设计稿已冻结在 `docs/t0assistant/30m_chart_feature_design.md`（commit `886cce9`）。
-
-**环境**：
-- 仓库：`/Users/jishen/projects/stockpilot`
-- Python 环境：`source ~/.venvs/czsc/bin/activate`
-- 分支：`feature/issue-168-t0assistant-30m-chart`（已推送，与 origin 同步）
-
-**已完成**（Steps 1-5 + 3b + fixtures + validation + preheat loading）：
-- 契约 v2 增量：`market.bars_30m`、`indicators.thirty_minute`、`chan_analysis_30m`
-- `DynamicThirtyMinuteAggregator` + 8 个测试通过
-- `calculate_thirty_minute_indicators` + chantheory `timeframe="30m"`
-- Pipeline 集成：`PipelineMarketInput`/`PipelineResult` 30m 字段、`_compute_unlocked()` 构建 aggregator
-- Workbench projection 30m 字段
-- Replay validation 30m 字段
-- Fixtures（workbench-flow-v1.json + replay-speed-v1.json）30m 字段
-- 30m preheat loading：`DEFAULT_CHART_PREHEAT_COUNT=500`，`_load_preheat_30m()` in replay_data.py + live_data.py
-- `PreparedReplayData`/`_InMemoryMarketInputPort` 30m 字段
-- 测试：709 passed, 1 skipped（排除 pre-existing failure `test_live_dynamic_five_minute.py`）
-
-**下一步**：Step 6 — Live/Replay/Historical 完整快照打通
-
-需要修改的文件和具体位置详见 `docs/t0assistant/30m_handoff_step6plus.md` 第三节。核心任务：
-
-1. `live_refresh.py`：新增 `OFFICIAL_THIRTY_MINUTE` 到 `LiveRefreshKind`、`LiveRefreshIntervals`、`_KINDS`、`_validate_update`
-2. `live_runtime.py`：`BranchingLiveInput.refresh()` 新增 30m 分支，`_branch_updates()` 新增 30m updates，`_snapshot_branch_time()` 新增 30m case
-3. `live_market_view.py`：`build_live_market_view()` 新增 `bars_30m_as_of`、`thirty_minute_indicators_as_of`、`czsc_30m_as_of`
-4. `live_session.py`：`LiveSnapshotCandidate.build_projection()` 传递 30m 数据给 `build_live_market_view()`
-
-设计稿 §10 的核心规则：30m 结束时间 +5s 首次请求，15s 重试，2 分钟未达发 `thirty_minute_official_delayed` warning 并降为 60s，按结束时间推进 watermark，分支间故障隔离。
-
-请先阅读 `docs/t0assistant/30m_handoff_step6plus.md` 和 `docs/t0assistant/30m_chart_feature_design.md` 的 §10 和 §15，然后开始 Step 6 的实现。若没有问题，请开始开发。
+已知无关失败：`test_live_dynamic_five_minute.py` 因 `SessionSpec` 缺 `instrument`。

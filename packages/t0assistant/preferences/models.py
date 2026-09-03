@@ -8,7 +8,6 @@ from typing import Any, Mapping
 
 
 _SYMBOL_PATTERN = re.compile(r"^(sh|sz)\.[0-9]{6}$")
-_CHART_SPLITS = frozenset({"64_36", "50_50"})
 
 
 class PreferenceValidationError(ValueError):
@@ -38,25 +37,17 @@ def _require_exact_keys(
 
 @dataclass(frozen=True, slots=True)
 class LayoutPreference:
-    chart_split: str = "64_36"
     show_intraday: bool = True
 
     def __post_init__(self) -> None:
-        if self.chart_split not in _CHART_SPLITS:
-            raise PreferenceValidationError(
-                "layout.chart_split", "must be one of: 64_36, 50_50"
-            )
         _boolean(self.show_intraday, "layout.show_intraday")
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, Any]) -> LayoutPreference:
         if not isinstance(payload, Mapping):
             raise PreferenceValidationError("layout", "must be an object")
-        _require_exact_keys(
-            payload, {"chart_split", "show_intraday"}, "layout"
-        )
+        _require_exact_keys(payload, {"show_intraday"}, "layout")
         return cls(
-            chart_split=payload.get("chart_split"),
             show_intraday=_boolean(
                 payload.get("show_intraday"), "layout.show_intraday"
             ),
@@ -64,7 +55,6 @@ class LayoutPreference:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "chart_split": self.chart_split,
             "show_intraday": self.show_intraday,
         }
 

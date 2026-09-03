@@ -7,7 +7,7 @@
 | 产品 | StockPilot 盘中 T+0 助手 |
 | 文档类型 | 前端与 Python 模块设计 |
 | 状态 | 产品模块设计基线 |
-| 更新日期 | 2026-08-21 |
+| 更新日期 | 2026-09-03 |
 | 系统架构 | [`architecture.md`](./architecture.md) |
 | 上位需求 | [`t0_assistant_prd.md`](./t0_assistant_prd.md) |
 | UI/UX 基线 | [`ui_layout_spec.md`](./ui_layout_spec.md) |
@@ -91,6 +91,7 @@ flowchart TB
         Grid["Workbench Grid"]
         Five["5 分钟图表组"]
         Minute["1 分钟图表组"]
+        Thirty["30 分钟图表组"]
         Sidebar["日 K 与行情栏"]
         Replay["回放面板"]
         Trades["成交 Drawer 与历史入口"]
@@ -106,11 +107,13 @@ flowchart TB
     Shell --> Errors
     Grid --> Five
     Grid --> Minute
+    Grid --> Thirty
     Grid --> Sidebar
     Store --> Shell
     Store --> Grid
     Store --> Five
     Store --> Minute
+    Store --> Thirty
     Store --> Replay
     Store --> Trades
     Store --> SafeAPI
@@ -138,9 +141,10 @@ Electron 主进程模块之间可以共享基础日志与配置，但不得成�
 | Application Shell | 组合顶部、工作区、回放面板和底部 Drawer | 不保存领域状态或图表实例 |
 | Workbench State | 镜像当前股票和模式，保存 Session 修订、布局、图层、5 分钟可见范围与跟随最新/手工浏览状态、加载与错误状态；分时不保存局部时间窗口 | App Coordinator 是当前股票和模式的后端权威；行情快照与成交仓储是彼此独立的事实源 |
 | 选股与模式工具栏 | 证券搜索选择、股票名称、实盘/回放切换 | 搜索结果必须来自标准证券主数据接口 |
-| Workbench Grid | 三列三行尺寸、64/36、50/50、隐藏分时及状态保持 | 不创建行情或计算指标 |
+| Workbench Grid | 三列三行尺寸、显示/隐藏副图、副图内分时与 30 分钟切换及状态保持 | 不创建行情或计算指标；分时/30 分钟选择不持久化 |
 | 5 分钟图表组 | K、BOLL、MA、笔、笔中枢、CZSC、独立成交覆盖层、宽度驱动的最近 N 根满轴视口及组内联动 | 成交标记不进入行情 model、不参与 autoscale；成交变化不得重设行情 series 或视口 |
 | 1 分钟图表组 | 分时价格、VWAP、VOL、MACD；全日交易分钟轴（`09:30→15:00`）左锚视口，已发生数据从左向右填充；组内十字光标联动 | 与 5 分钟组不共享时间轴/跟随状态；不使用宽度驱动右对齐 N |
+| 30 分钟图表组 | 与 5 分钟组相同的三行结构、图层、Tooltip 和成交标记；独立消费 30 分钟行情、指标和缠论 | 视口复用 5 分钟根数规则，使用独立 `chartViews.thirtyMinute`；与 5 分钟不强制同步十字光标 |
 | 日 K 与行情栏 | 日 K、「行情数据」字段与右对齐「数据截止」元信息 | 已有快照但字段不可用时显示 `N/A`；尚无快照或尚未推进到该点时显示 `--`；不做信号解释 |
 | 回放面板 | 日期、开始、播放/暂停、单步、倍速、进度定位；根据 Session 状态、当前时间、下一根实际 K 的时间、市场结束时间和回放粒度推导控件状态 | 发控制意图，不在前端自行推进市场时钟；不要求 Python 返回按钮开关字段 |
 | 成交模块 | SQLite 真实成交录入、编辑、删除确认、历史入口、按股票/日期查询与独立标记展示 | 不依赖 Live/Replay Session；Replay 和历史日图只读，不挂载增删改入口；不直接计算持仓、配对或盈亏 |
@@ -159,6 +163,7 @@ Electron 主进程模块之间可以共享基础日志与配置，但不得成�
 ├── 当前股票与实盘 / 回放模式的前端镜像
 ├── 回放控制状态
 ├── 5 分钟图表可见范围与跟随最新 / 手工浏览状态
+├── 30 分钟图表可见范围与跟随最新 / 手工浏览状态（仅当前会话）
 └── Drawer 展开状态
 
 持久化 UI 偏好

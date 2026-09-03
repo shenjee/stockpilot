@@ -609,6 +609,33 @@ class EmptyPrefixTests(_BasePipelineTests):
         self.assertEqual(result.indicators_1m["volume"]["values"], [])
         self.assertEqual(result.indicators_5m["volume"]["values"], [])
         self.assertEqual(analyzer.calls[0][1], [])
+        self.assertEqual(result.bars_30m, ())
+        self.assertFalse(
+            any(
+                item["warning_code"] == "thirty_minute_market_data_unavailable"
+                for item in result.warnings
+            )
+        )
+
+    def test_empty_thirty_minute_after_first_close_emits_unavailable_warning(
+        self,
+    ) -> None:
+        empty_input = PipelineMarketInput(
+            symbol=_SYMBOL,
+            trade_date=_TRADE_DATE,
+            previous_close=10.15,
+        )
+        pipeline = self._make_pipeline(
+            market_input=empty_input,
+            target_time="2026-07-24 10:20:00",
+        )
+        result = pipeline.step()
+
+        self.assertEqual(result.bars_30m, ())
+        self.assertEqual(
+            [item["warning_code"] for item in result.warnings],
+            ["thirty_minute_market_data_unavailable"],
+        )
 
 
 class PreheatFutureDataTests(_BasePipelineTests):
