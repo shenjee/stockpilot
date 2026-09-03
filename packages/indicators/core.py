@@ -224,6 +224,27 @@ def calculate_five_minute_indicators(bars: Sequence[Bar]) -> dict[str, Any]:
     }
 
 
+def calculate_thirty_minute_indicators(bars: Sequence[Bar]) -> dict[str, Any]:
+    """Build the frozen logical-schema thirty-minute indicator object.
+
+    The output shape mirrors :func:`calculate_five_minute_indicators`
+    (``ma``, ``boll``, ``volume``, ``macd``) but is computed independently from
+    a closed 30m bar prefix.  The unclosed 30m bar never enters this function;
+    it is display-only and excluded from indicator calculation (§9.3).
+    """
+
+    _validate_closed_bars(bars)
+    return {
+        "ma": {
+            f"ma{period}": calculate_moving_average(bars, period)
+            for period in MA_PERIODS
+        },
+        "boll": calculate_boll(bars),
+        "volume": calculate_volume_indicators(bars),
+        "macd": calculate_macd(bars),
+    }
+
+
 def calculate_one_minute_indicators(bars: Sequence[Bar]) -> dict[str, Any]:
     """Build the frozen logical-schema one-minute indicator object."""
 

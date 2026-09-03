@@ -60,6 +60,9 @@ def _update(
     elif kind is LiveRefreshKind.ONE_MINUTE:
         payload = {"target": "bars_1m", "bars": [], "quote": None}
         event_type = "market_update"
+    elif kind is LiveRefreshKind.OFFICIAL_THIRTY_MINUTE:
+        payload = {"target": "bars_30m", "bars": [], "quote": None}
+        event_type = "market_update"
     else:
         payload = {"target": "bars_5m", "bars": [], "quote": None}
         event_type = "market_update"
@@ -154,6 +157,7 @@ class LiveRefreshSchedulerTests(unittest.TestCase):
         quote_time = self.t0 + timedelta(seconds=3)
         one_minute_time = self.t0 + timedelta(minutes=1)
         five_minute_time = self.t0 + timedelta(minutes=5)
+        thirty_minute_time = self.t0 + timedelta(minutes=30)
         self.input.queue(
             LiveRefreshKind.QUOTE,
             LiveRefreshResult(quote_time, (_update(LiveRefreshKind.QUOTE),)),
@@ -175,9 +179,16 @@ class LiveRefreshSchedulerTests(unittest.TestCase):
                 (_update(LiveRefreshKind.OFFICIAL_FIVE_MINUTE),),
             ),
         )
+        self.input.queue(
+            LiveRefreshKind.OFFICIAL_THIRTY_MINUTE,
+            LiveRefreshResult(
+                thirty_minute_time,
+                (_update(LiveRefreshKind.OFFICIAL_THIRTY_MINUTE),),
+            ),
+        )
 
         initial = self.scheduler.run_due(self.t0)
-        self.assertEqual(len(self.input.calls), 3)
+        self.assertEqual(len(self.input.calls), 4)
         self.assertEqual(
             initial[LiveRefreshKind.QUOTE].latest_data_time, quote_time
         )
@@ -188,6 +199,10 @@ class LiveRefreshSchedulerTests(unittest.TestCase):
             initial[LiveRefreshKind.OFFICIAL_FIVE_MINUTE].latest_data_time,
             five_minute_time,
         )
+        self.assertEqual(
+            initial[LiveRefreshKind.OFFICIAL_THIRTY_MINUTE].latest_data_time,
+            thirty_minute_time,
+        )
 
         self.scheduler.run_due(self.t0 + timedelta(seconds=2))
         self.assertEqual(
@@ -196,6 +211,7 @@ class LiveRefreshSchedulerTests(unittest.TestCase):
                 LiveRefreshKind.QUOTE,
                 LiveRefreshKind.ONE_MINUTE,
                 LiveRefreshKind.OFFICIAL_FIVE_MINUTE,
+                LiveRefreshKind.OFFICIAL_THIRTY_MINUTE,
                 LiveRefreshKind.QUOTE,
             ],
         )
@@ -211,6 +227,10 @@ class LiveRefreshSchedulerTests(unittest.TestCase):
         self.assertEqual(
             states[LiveRefreshKind.OFFICIAL_FIVE_MINUTE].latest_data_time,
             five_minute_time,
+        )
+        self.assertEqual(
+            states[LiveRefreshKind.OFFICIAL_THIRTY_MINUTE].latest_data_time,
+            thirty_minute_time,
         )
 
     def test_no_new_official_five_minute_bar_is_successful_noop(self) -> None:
@@ -238,6 +258,75 @@ class LiveRefreshSchedulerTests(unittest.TestCase):
         )
         self.assertEqual(self.failures, [])
 
+    def test_thirty_minute_branch_starts_at_boundary_and_retries(self) -> None:
+        boundaries = (
+            self.t0 + timedelta(minutes=30),
+            self.t0 + timedelta(minutes=60),
+        )
+
+        def next_boundary(observed_at: datetime) -> datetime | None:
+            return next((value for value in boundaries if value > observed_at), None)
+
+        scheduler = LiveRefreshScheduler(
+            self.spec,
+            self.input,
+            self.executor,
+            on_update=self.updates.append,
+            intervals=self.intervals,
+            thirty_minute_boundary_provider=next_boundary,
+        )
+        self.addCleanup(scheduler.retire)
+        self.input.queue(
+            LiveRefreshKind.OFFICIAL_THIRTY_MINUTE,
+            LiveRefreshResult.no_change(),
+            LiveRefreshResult.no_change(),
+        )
+
+        scheduler.run_due(self.t0)
+        state = scheduler.state_for(LiveRefreshKind.OFFICIAL_THIRTY_MINUTE)
+        self.assertEqual(
+            state.next_due_at,
+            self.t0 + timedelta(minutes=30, seconds=5),
+        )
+
+        retry_at = self.t0 + timedelta(minutes=30, seconds=5)
+        scheduler.run_due(retry_at)
+        state = scheduler.state_for(LiveRefreshKind.OFFICIAL_THIRTY_MINUTE)
+        self.assertEqual(state.last_success_at, retry_at)
+        self.assertEqual(state.next_due_at, retry_at + timedelta(seconds=15))
+
+    def test_thirty_minute_branch_reduces_to_sixty_seconds_after_two_minutes(
+        self,
+    ) -> None:
+        boundary = self.t0 + timedelta(minutes=30)
+
+        def next_boundary(observed_at: datetime) -> datetime | None:
+            return boundary if observed_at < boundary else None
+
+        scheduler = LiveRefreshScheduler(
+            self.spec,
+            self.input,
+            self.executor,
+            on_update=self.updates.append,
+            intervals=self.intervals,
+            thirty_minute_boundary_provider=next_boundary,
+        )
+        self.addCleanup(scheduler.retire)
+        self.input.queue(
+            LiveRefreshKind.OFFICIAL_THIRTY_MINUTE,
+            *([LiveRefreshResult.no_change()] * 10),
+        )
+
+        scheduler.run_due(self.t0)
+        first_attempt = boundary + timedelta(seconds=5)
+        scheduler.run_due(first_attempt)
+        delayed_at = first_attempt + timedelta(minutes=2)
+        scheduler.run_due(delayed_at)
+
+        state = scheduler.state_for(LiveRefreshKind.OFFICIAL_THIRTY_MINUTE)
+        self.assertTrue(state.thirty_minute_delayed)
+        self.assertEqual(state.next_due_at, delayed_at + timedelta(seconds=60))
+
     def test_failure_in_one_branch_does_not_block_other_due_branches(self) -> None:
         quote_failure = RuntimeError("quote unavailable")
         one_minute_time = self.t0 + timedelta(minutes=1)
@@ -252,6 +341,10 @@ class LiveRefreshSchedulerTests(unittest.TestCase):
             LiveRefreshKind.OFFICIAL_FIVE_MINUTE,
             LiveRefreshResult.no_change(),
         )
+        self.input.queue(
+            LiveRefreshKind.OFFICIAL_THIRTY_MINUTE,
+            LiveRefreshResult.no_change(),
+        )
 
         states = self.scheduler.run_due(self.t0)
 
@@ -264,6 +357,10 @@ class LiveRefreshSchedulerTests(unittest.TestCase):
         )
         self.assertEqual(
             states[LiveRefreshKind.OFFICIAL_FIVE_MINUTE].last_success_at,
+            self.t0,
+        )
+        self.assertEqual(
+            states[LiveRefreshKind.OFFICIAL_THIRTY_MINUTE].last_success_at,
             self.t0,
         )
         self.assertEqual(self.failures, [(LiveRefreshKind.QUOTE, quote_failure)])
@@ -601,9 +698,13 @@ class LiveRefreshSchedulerTests(unittest.TestCase):
             LiveRefreshKind.OFFICIAL_FIVE_MINUTE,
             LiveRefreshResult.no_change(),
         )
+        self.input.queue(
+            LiveRefreshKind.OFFICIAL_THIRTY_MINUTE,
+            LiveRefreshResult.no_change(),
+        )
         self.scheduler.set_polling_profile("idle")
         self.scheduler.run_reconciliation(self.t0 + timedelta(hours=6))
-        self.assertEqual(len(self.input.calls), 3)
+        self.assertEqual(len(self.input.calls), 4)
         self.assertEqual(self.scheduler.polling_profile, "idle")
 
     def test_stale_market_epoch_result_is_discarded(self) -> None:

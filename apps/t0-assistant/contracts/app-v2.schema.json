@@ -947,6 +947,7 @@
             "live",
             "intraday_chart",
             "five_minute_chart",
+            "thirty_minute_chart",
             "chan_analysis",
             "trades",
             "preferences",
@@ -1283,6 +1284,7 @@
             "quote",
             "bars_1m",
             "bars_5m",
+            "bars_30m",
             "daily_bars"
           ]
         },
@@ -1330,6 +1332,7 @@
                 "enum": [
                   "bars_1m",
                   "bars_5m",
+                  "bars_30m",
                   "daily_bars"
                 ]
               }
@@ -1470,6 +1473,7 @@
             "market_update",
             "indicators_updated",
             "chan_analysis_replaced",
+            "chan_analysis_30m_replaced",
             "live_market_view_updated",
             "trades_changed",
             "preferences_changed",
@@ -1567,6 +1571,25 @@
             "properties": {
               "event_type": {
                 "const": "chan_analysis_replaced"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "session_id": {
+                "type": "string"
+              },
+              "payload": {
+                "$ref": "https://stockpilot.local/contracts/t0-logic-v2.schema.json#/$defs/chan_analysis"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "event_type": {
+                "const": "chan_analysis_30m_replaced"
               }
             }
           },

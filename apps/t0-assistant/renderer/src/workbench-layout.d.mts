@@ -1,6 +1,5 @@
 export const WorkbenchLayoutMode: Readonly<{
-  MAIN_PRIORITY: "main_priority";
-  EQUAL: "equal";
+  SHOW_INTRADAY: "show_intraday";
   HIDE_INTRADAY: "hide_intraday";
 }>;
 
@@ -41,7 +40,6 @@ export interface WorkbenchState {
   mode: "live" | "replay";
   security: SecurityIdentity | null;
   layout: {
-    chartSplit: "64_36" | "50_50";
     showIntraday: boolean;
   };
   layers: {
@@ -56,6 +54,7 @@ export interface WorkbenchState {
   chartViews: {
     fiveMinute: ChartViewportSnapshot | null;
     intraday: ChartViewportSnapshot | null;
+    thirtyMinute: ChartViewportSnapshot | null;
   };
 }
 
@@ -83,12 +82,12 @@ export function applyWorkbenchPreferences(
   state: WorkbenchState,
   preferences: {
     last_symbol: string | null;
-    layout: { chart_split: "64_36" | "50_50"; show_intraday: boolean };
+    layout: { show_intraday: boolean };
     layers: WorkbenchState["layers"];
   },
 ): WorkbenchState;
 export function workbenchPreferences(state: WorkbenchState): {
   last_symbol: string | null;
-  layout: { chart_split: "64_36" | "50_50"; show_intraday: boolean };
+  layout: { show_intraday: boolean };
   layers: WorkbenchState["layers"];
 };

@@ -520,6 +520,7 @@ class LiveApplicationApi:
             LiveRefreshKind.QUOTE: "live",
             LiveRefreshKind.ONE_MINUTE: "intraday_chart",
             LiveRefreshKind.OFFICIAL_FIVE_MINUTE: "five_minute_chart",
+            LiveRefreshKind.OFFICIAL_THIRTY_MINUTE: "thirty_minute_chart",
         }
         accepted = self._store.accept_operation_failure(
             session_id=spec.session_id,

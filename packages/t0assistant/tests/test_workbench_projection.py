@@ -156,6 +156,34 @@ def _make_chan_analysis(symbol: str) -> dict[str, Any]:
     }
 
 
+def _make_chan_analysis_30m(symbol: str) -> dict[str, Any]:
+    result = dict(_make_chan_analysis(symbol))
+    result["timeframe"] = "30m"
+    return result
+
+
+def _empty_30m_indicators() -> dict[str, Any]:
+    return {
+        "ma": {f"ma{period}": [] for period in (5, 10, 20, 30, 60)},
+        "boll": {
+            "period": 20,
+            "stddev": 2.0,
+            "upper": [],
+            "middle": [],
+            "lower": [],
+        },
+        "volume": {"values": [], "ma5": [], "ma10": []},
+        "macd": {
+            "fast_period": 12,
+            "slow_period": 26,
+            "signal_period": 9,
+            "dif": [],
+            "dea": [],
+            "histogram": [],
+        },
+    }
+
+
 def _make_pipeline_result(
     *,
     symbol: str = "sh.600000",
@@ -171,6 +199,9 @@ def _make_pipeline_result(
     indicators_5m: dict[str, Any] | None = None,
     chan_analysis: dict[str, Any] | None = None,
     warnings: list[dict[str, Any]] | None = None,
+    bars_30m: list[dict[str, Any]] | None = None,
+    indicators_30m: dict[str, Any] | None = None,
+    chan_analysis_30m: dict[str, Any] | None = None,
 ) -> PipelineResult:
     return PipelineResult(
         target_time=target_time,
@@ -186,6 +217,10 @@ def _make_pipeline_result(
         indicators_5m=indicators_5m if indicators_5m is not None else _empty_5m_indicators(),
         chan_analysis=chan_analysis if chan_analysis is not None else _make_chan_analysis(symbol),
         warnings=list(warnings if warnings is not None else []),
+        bars_30m=tuple(bars_30m if bars_30m is not None else []),
+        closed_30m_prefix=(),
+        indicators_30m=indicators_30m if indicators_30m is not None else _empty_30m_indicators(),
+        chan_analysis_30m=chan_analysis_30m if chan_analysis_30m is not None else _make_chan_analysis_30m(symbol),
     )
 
 
@@ -551,6 +586,9 @@ class ValidationTests(unittest.TestCase):
                 "one_minute_indicators_as_of": None,
                 "five_minute_indicators_as_of": None,
                 "czsc_as_of": None,
+                "bars_30m_as_of": None,
+                "thirty_minute_indicators_as_of": None,
+                "czsc_30m_as_of": None,
             },
         ).to_dict()
         self.assertEqual(
@@ -588,6 +626,9 @@ class ValidationTests(unittest.TestCase):
                     "one_minute_indicators_as_of": None,
                     "five_minute_indicators_as_of": None,
                     "czsc_as_of": None,
+                    "bars_30m_as_of": None,
+                    "thirty_minute_indicators_as_of": None,
+                    "czsc_30m_as_of": None,
                 },
             )
 

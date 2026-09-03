@@ -40,9 +40,15 @@
       "playback_speed": 5,
       "step_seconds": 60
     },
-    "market": {"bars_1m": [], "bars_5m": [], "daily_bars": [], "quote": null},
+    "market": {"bars_1m": [], "bars_5m": [], "bars_30m": [], "daily_bars": [], "quote": null},
     "indicators": {
       "five_minute": {
+        "ma": {"ma5": [], "ma10": [], "ma20": [], "ma30": [], "ma60": []},
+        "boll": {"period": 20, "stddev": 2.0, "upper": [], "middle": [], "lower": []},
+        "volume": {"values": [], "ma5": [], "ma10": []},
+        "macd": {"fast_period": 12, "slow_period": 26, "signal_period": 9, "dif": [], "dea": [], "histogram": []}
+      },
+      "thirty_minute": {
         "ma": {"ma5": [], "ma10": [], "ma20": [], "ma30": [], "ma60": []},
         "boll": {"period": 20, "stddev": 2.0, "upper": [], "middle": [], "lower": []},
         "volume": {"values": [], "ma5": [], "ma10": []},
@@ -57,6 +63,30 @@
     "chan_analysis": {
       "symbol": "600000.SH",
       "timeframe": "5m",
+      "source": "fixture",
+      "engine": "czsc",
+      "engine_version": "0.10.12",
+      "parameters": {},
+      "fractals": [],
+      "strokes": [],
+      "segments": [],
+      "pivot_zones": [],
+      "divergences": [],
+      "structure_alerts": [],
+      "signal_series": [],
+      "signal_events": [],
+      "signal_snapshots": [],
+      "candidate_point_events": [],
+      "candidate_buy_points": [],
+      "candidate_sell_points": [],
+      "plot_primitives": [],
+      "summary": [],
+      "warnings": [],
+      "meta": {}
+    },
+    "chan_analysis_30m": {
+      "symbol": "600000.SH",
+      "timeframe": "30m",
       "source": "fixture",
       "engine": "czsc",
       "engine_version": "0.10.12",

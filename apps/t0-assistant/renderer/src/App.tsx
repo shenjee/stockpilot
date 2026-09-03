@@ -864,7 +864,6 @@ export function App() {
   }, [
     preferencesHydrated,
     workbench.security?.symbol,
-    workbench.layout.chartSplit,
     workbench.layout.showIntraday,
     workbench.layers,
   ]);
@@ -1807,7 +1806,7 @@ export function App() {
     }
     setWorkbench((current) => ({
       ...current,
-      chartViews: { fiveMinute: null, intraday: null },
+      chartViews: { fiveMinute: null, intraday: null, thirtyMinute: null },
     }));
   }, [chartDatasetIdentity]);
   const fiveMinuteInitialViewport =
@@ -1916,7 +1915,6 @@ export function App() {
       <section
         className="workspace"
         data-testid="workbench"
-        data-chart-split={workbench.layout.chartSplit}
         data-show-intraday={workbench.layout.showIntraday}
         aria-label="T+0 三栏三行工作台"
       >
@@ -2453,16 +2451,10 @@ function LayoutSwitcher({
       aria-label="工作台布局"
     >
       <LayoutButton
-        active={mode === WorkbenchLayoutMode.MAIN_PRIORITY}
-        testId="layout-main-priority"
-        label="64 / 36"
-        onClick={() => onSelect(WorkbenchLayoutMode.MAIN_PRIORITY)}
-      />
-      <LayoutButton
-        active={mode === WorkbenchLayoutMode.EQUAL}
-        testId="layout-equal"
-        label="50 / 50"
-        onClick={() => onSelect(WorkbenchLayoutMode.EQUAL)}
+        active={mode === WorkbenchLayoutMode.SHOW_INTRADAY}
+        testId="layout-show-intraday"
+        label="显示副图"
+        onClick={() => onSelect(WorkbenchLayoutMode.SHOW_INTRADAY)}
       />
       <LayoutButton
         active={mode === WorkbenchLayoutMode.HIDE_INTRADAY}

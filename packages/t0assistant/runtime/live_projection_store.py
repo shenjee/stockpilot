@@ -53,7 +53,7 @@ _INCREMENTAL_EVENT_TYPES = frozenset(
         "live_market_view_updated",
     }
 )
-_MARKET_TARGETS = frozenset({"quote", "bars_1m", "bars_5m", "daily_bars"})
+_MARKET_TARGETS = frozenset({"quote", "bars_1m", "bars_5m", "bars_30m", "daily_bars"})
 
 
 class LiveProjectionStoreError(RuntimeMarketDataError):
@@ -529,7 +529,10 @@ def _apply_incremental(
     elif event_type == "live_market_view_updated":
         target["live_market_view"] = copy.deepcopy(payload)
     else:  # chan_analysis_replaced
-        target["chan_analysis"] = copy.deepcopy(payload)
+        if payload.get("timeframe") == "30m":
+            target["chan_analysis_30m"] = copy.deepcopy(payload)
+        else:
+            target["chan_analysis"] = copy.deepcopy(payload)
 
 
 def merge_five_minute_bars(
@@ -604,13 +607,13 @@ def _merge_indicators(
     projection after a rebaseline.
     """
 
-    for timeframe in ("five_minute", "one_minute"):
+    for timeframe in ("five_minute", "thirty_minute", "one_minute"):
         current_tf = current.get(timeframe) or {}
         incoming_tf = incoming.get(timeframe) or {}
         if not incoming_tf:
             continue
         merged: dict[str, Any] = {**current_tf, **incoming_tf}
-        if timeframe == "five_minute":
+        if timeframe in ("five_minute", "thirty_minute"):
             current_ma = current_tf.get("ma") or {}
             incoming_ma = incoming_tf.get("ma") or {}
             merged["ma"] = {
@@ -693,7 +696,7 @@ def _build_incremental_validators() -> dict[str, Draft202012Validator]:
         "additionalProperties": False,
         "required": ["target", "bars", "quote"],
         "properties": {
-            "target": {"enum": ["quote", "bars_1m", "bars_5m", "daily_bars"]},
+            "target": {"enum": ["quote", "bars_1m", "bars_5m", "bars_30m", "daily_bars"]},
             "bars": {"type": "array", "items": {"$ref": f"{logic_id}#/$defs/bar"}},
             "quote": {
                 "oneOf": [
@@ -713,7 +716,7 @@ def _build_incremental_validators() -> dict[str, Draft202012Validator]:
                 },
             },
             {
-                "if": {"properties": {"target": {"enum": ["bars_1m", "bars_5m", "daily_bars"]}}},
+                "if": {"properties": {"target": {"enum": ["bars_1m", "bars_5m", "bars_30m", "daily_bars"]}}},
                 "then": {"properties": {"quote": {"type": "null"}}},
             },
         ],

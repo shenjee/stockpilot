@@ -40,7 +40,7 @@ _OPEN_TIME = time(9, 30)
 _MORNING_CLOSE_TIME = time(11, 30)
 _AFTERNOON_OPEN_TIME = time(13, 0)
 _CLOSE_TIME = time(15, 0)
-_SUPPORTED_BAR_MINUTES = frozenset({1, 5})
+_SUPPORTED_BAR_MINUTES = frozenset({1, 5, 30})
 
 
 class MarketContextError(ValueError):
@@ -97,10 +97,10 @@ class MarketSession:
         return self.phase_at(value) in {"morning", "afternoon"}
 
     def bar_close_times(self, minutes: int) -> tuple[datetime, ...]:
-        """Return nominal 1m or 5m close boundaries without lunch placeholders."""
+        """Return nominal 1m, 5m or 30m close boundaries without lunch placeholders."""
 
         if minutes not in _SUPPORTED_BAR_MINUTES:
-            raise MarketContextError("bar interval must be 1 or 5 minutes")
+            raise MarketContextError("bar interval must be 1, 5 or 30 minutes")
         step = timedelta(minutes=minutes)
         return (
             *_period_close_times(self.start, self.morning_close, step),

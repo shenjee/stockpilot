@@ -192,7 +192,7 @@ button { color: inherit; }
   min-height: 0;
   overflow: hidden;
 }
-.workspace[data-chart-split="50_50"] {
+.workspace[data-show-intraday="true"] {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) var(--sidebar-width);
 }
 .workspace[data-show-intraday="false"] {

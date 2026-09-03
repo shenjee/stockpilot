@@ -34,7 +34,8 @@ DataQuality = Literal["full", "degraded", "partial"]
 SymbolAvailability = Literal["available", "no_current_data", "suspended"]
 MarketClosedReason = Literal["weekend", "holiday"]
 
-MINIMUM_PREHEAT_5M = 500
+DEFAULT_CHART_PREHEAT_COUNT = 500
+MINIMUM_PREHEAT_5M = DEFAULT_CHART_PREHEAT_COUNT
 _TIMESTAMP_PATTERN = r"^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$"
 CloseReconcileStatus = Literal[
     "not_started",
@@ -624,6 +625,8 @@ def build_live_market_view(
     symbol_availability: SymbolAvailability | None = None,
     market_closed_reason: MarketClosedReason | None = None,
     minimum_preheat_5m: int = MINIMUM_PREHEAT_5M,
+    bars_30m: Sequence[Mapping[str, object]] = (),
+    closed_30m_prefix: Sequence[Mapping[str, object]] = (),
 ) -> dict[str, object]:
     """Build the authoritative Live Market View contract payload (#130 PR-C)."""
 
@@ -651,6 +654,8 @@ def build_live_market_view(
     daily_rows = daily_bars if isinstance(daily_bars, list) else ()
     quote_rows = (quote,) if isinstance(quote, Mapping) else ()
     closed_5m_rows = tuple(closed_5m_prefix)
+    bars_30m_rows = tuple(bars_30m)
+    closed_30m_rows = tuple(closed_30m_prefix)
 
     security_data_trade_date = resolve_security_data_trade_date(
         bars_1m_rows,
@@ -714,6 +719,19 @@ def build_live_market_view(
         ),
         "czsc_as_of": _latest_closed_bar_timestamp(
             closed_5m_rows,
+            closed_only=True,
+        ),
+        "bars_30m_as_of": _latest_closed_bar_timestamp(
+            bars_30m_rows,
+            trade_date=trade_date,
+            closed_only=True,
+        ),
+        "thirty_minute_indicators_as_of": _latest_closed_bar_timestamp(
+            closed_30m_rows,
+            closed_only=True,
+        ),
+        "czsc_30m_as_of": _latest_closed_bar_timestamp(
+            closed_30m_rows,
             closed_only=True,
         ),
     }

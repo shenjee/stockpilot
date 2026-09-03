@@ -554,6 +554,9 @@ class LiveProjectionStoreTests(unittest.TestCase):
             "one_minute_indicators_as_of": "2026-07-24 09:32:00",
             "five_minute_indicators_as_of": None,
             "czsc_as_of": None,
+            "bars_30m_as_of": None,
+            "thirty_minute_indicators_as_of": None,
+            "czsc_30m_as_of": None,
         }
         event = self.store.accept_incremental(
             LiveIncrementalUpdate(

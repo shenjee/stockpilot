@@ -36,7 +36,7 @@ from .market_data import get_market_prefix
 T0_MARKET_SCHEMA_VERSION = "t0_market_v1"
 T0_TIMEZONE = "Asia/Shanghai"
 T0_MARKETS = frozenset({"sh", "sz"})
-T0_TIMEFRAMES = frozenset({"1m", "5m", "day"})
+T0_TIMEFRAMES = frozenset({"1m", "5m", "30m", "day"})
 
 
 class InstrumentType(StrEnum):

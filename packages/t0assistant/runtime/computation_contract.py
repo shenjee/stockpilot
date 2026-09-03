@@ -262,6 +262,8 @@ class PreparedReplayData:
     market_input_port: "ReplayMarketInputPort"
     assessment_1m: ReplayReliabilityAssessment | None
     assessment_5m: ReplayReliabilityAssessment | None
+    preheat_30m_bars: tuple[Mapping[str, Any], ...] = ()
+    official_30m_bars: tuple[Mapping[str, Any], ...] = ()
 
 
 class ReplayMarketInputPort(Protocol):
