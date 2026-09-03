@@ -1158,6 +1158,21 @@ def _branch_updates(
             ),
             LiveIncrementalUpdate(
                 **identity,
+                event_type="market_update",
+                payload={
+                    "target": "bars_30m",
+                    # Only the current unclosed (forming) 30m bar so the
+                    # sub-chart advances between official boundaries.  The
+                    # aggregator keeps at most one dynamic 30m bar at a time
+                    # and the store merge is a timestamp upsert, so pushing
+                    # the single unclosed row is sufficient and cannot
+                    # resurrect a stale bucket.
+                    "bars": _unclosed_bars(market["bars_30m"]),
+                    "quote": None,
+                },
+            ),
+            LiveIncrementalUpdate(
+                **identity,
                 event_type="indicators_updated",
                 payload=snapshot["indicators"],
             ),

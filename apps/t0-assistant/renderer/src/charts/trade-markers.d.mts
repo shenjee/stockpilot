@@ -35,9 +35,19 @@ export interface TradeMarkerModel {
 export interface ProjectTradeMarkersOptions {
   /** If provided, only keep markers whose chart time matches an existing 5m K-line time. */
   allowedTimes?: Set<number> | number[] | undefined;
+  /** Override bucket_start, used to place the same trades onto 30m bars via executed_at. */
+  resolveBucketStart?: ((trade: TradeRecord) => string | null) | undefined;
 }
 
 export function parseMarketTimestampSeconds(timestamp: string): number;
+
+/**
+ * Map an execution time onto the 30-minute bar close that contains it.
+ * Lunch (after 11:30 and before 13:00) and pre-open times yield null.
+ */
+export function thirtyMinuteCloseTimestamp(
+  executedAt: string,
+): string | null;
 
 export function formatLotLabel(quantity: number): string;
 

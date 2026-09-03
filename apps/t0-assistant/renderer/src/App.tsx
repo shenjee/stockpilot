@@ -1778,8 +1778,9 @@ export function App() {
         thirtyMinuteCloseTimestamp(trade.executed_at),
     });
   }, [chartTrades, thirtyMinuteModel]);
-  const thirtyMinuteUnavailable =
-    !thirtyMinuteModelResult.ok || thirtyMinuteModel.bars.length === 0;
+  // thirtyMinuteModel already falls back to the last good 30m model (or an
+  // empty model), so "unavailable" is purely about having no bars to show.
+  const thirtyMinuteUnavailable = thirtyMinuteModel.bars.length === 0;
   const thirtyMinuteWarnings = (
     (snapshot as { warnings?: Array<{ warning_code?: string; message?: string }> })
       .warnings ?? []
@@ -2053,13 +2054,14 @@ export function App() {
                   <h2>30 分钟</h2>
                   <div className="heading-actions">
                     <SecondaryChartSwitcher
-                    value={workbench.secondaryChart}
-                    onSelect={(value) =>
-                      updateWorkbenchFromUser((current) =>
-                        selectWorkbenchSecondaryChart(current, value),
-                      )
-                    }
-                  />
+                      value={workbench.secondaryChart}
+                      onSelect={(value) =>
+                        updateWorkbenchFromUser((current) =>
+                          selectWorkbenchSecondaryChart(current, value),
+                        )
+                      }
+                    />
+                  </div>
                 </div>
                 <p>无 30 分钟数据</p>
                 {thirtyMinuteWarnings.map((warning) => (
