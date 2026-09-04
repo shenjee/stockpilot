@@ -568,11 +568,11 @@ def _apply_incremental(
     sort, mirroring the Renderer's ``mergeTimestampRows`` so a rebaseline
     snapshot never loses history and stays chronologically ordered (a
     late-arriving earlier row lands in order, not at the tail).  Five-minute
-    updates also drop unclosed rows whose timestamps are absent from the
-    increment so a new dynamic bucket can replace the previous one.  ``quote``
-    and ``chan_analysis`` are authoritative full replacements.  Incoming rows
-    are deep-copied so the caller's payload can never alias the authoritative
-    state.
+    and thirty-minute updates also drop unclosed rows whose timestamps are
+    absent from the increment so a new dynamic bucket can replace the previous
+    one.  ``quote`` and ``chan_analysis`` are authoritative full replacements.
+    Incoming rows are deep-copied so the caller's payload can never alias the
+    authoritative state.
     """
 
     if event_type == "market_update":
@@ -582,6 +582,10 @@ def _apply_incremental(
             market["quote"] = copy.deepcopy(payload["quote"])
         elif target_field == "bars_5m":
             market[target_field] = _merge_five_minute_bars(
+                market[target_field], payload["bars"]
+            )
+        elif target_field == "bars_30m":
+            market[target_field] = _merge_thirty_minute_bars(
                 market[target_field], payload["bars"]
             )
         else:
@@ -633,6 +637,44 @@ def _merge_five_minute_bars(
     """Compatibility alias for :func:`merge_five_minute_bars`."""
 
     return merge_five_minute_bars(current, incoming)
+
+
+def merge_thirty_minute_bars(
+    current: list[dict[str, Any]] | None,
+    incoming: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Upsert 30m bars and drop unclosed rows absent from the increment.
+
+    Same semantics as :func:`merge_five_minute_bars`, applied to the 30m
+    timeframe: one-minute refreshes publish only the current dynamic (unclosed)
+    30m bar, so a timestamp merge alone cannot delete the previous bucket's
+    dynamic bar once the boundary advances.  Any unclosed row whose timestamp
+    is missing from ``incoming`` is removed.  Closed bars are never deleted
+    here; official 30m increments carry the full bar list including the next
+    bucket's dynamic bar, so they cannot wipe it.
+
+    Public test surface for cross-runtime parity with Renderer
+    ``mergeThirtyMinuteBars``.
+    """
+
+    incoming_timestamps = {
+        row["timestamp"] for row in incoming or () if "timestamp" in row
+    }
+    retained = [
+        row
+        for row in current or ()
+        if row.get("closed") is True or row.get("timestamp") in incoming_timestamps
+    ]
+    return _merge_rows_by_timestamp(retained, incoming)
+
+
+def _merge_thirty_minute_bars(
+    current: list[dict[str, Any]] | None,
+    incoming: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Compatibility alias for :func:`merge_thirty_minute_bars`."""
+
+    return merge_thirty_minute_bars(current, incoming)
 
 
 def _merge_rows_by_timestamp(

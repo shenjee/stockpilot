@@ -149,7 +149,7 @@ function applyMarketUpdate(snapshot, payload) {
     payload.target === "bars_5m"
       ? mergeFiveMinuteBars(snapshot.market.bars_5m, payload.bars)
       : payload.target === "bars_30m"
-        ? mergeTimestampRows(snapshot.market.bars_30m, payload.bars)
+        ? mergeThirtyMinuteBars(snapshot.market.bars_30m, payload.bars)
         : mergeTimestampRows(snapshot.market[payload.target], payload.bars);
   return {
     ...snapshot,
@@ -355,6 +355,26 @@ export function mergeFiveMinuteBars(current, incoming) {
   // Unclosed 5m rows whose timestamps are absent from the increment are the
   // previous bucket's dynamic K and must be dropped. Closed history is never
   // deleted by this path.
+  const incomingTimestamps = new Set(
+    (incoming ?? []).map((row) => row.timestamp),
+  );
+  const retained = (current ?? []).filter(
+    (row) => row.closed === true || incomingTimestamps.has(row.timestamp),
+  );
+  return mergeTimestampRows(retained, incoming);
+}
+
+/**
+ * Upsert 30m bars and drop unclosed rows absent from the increment.
+ *
+ * Mirrors Python `LiveProjectionStore` / `merge_thirty_minute_bars`. Same
+ * semantics as `mergeFiveMinuteBars` applied to the 30m timeframe: one-minute
+ * refreshes publish only the current dynamic (unclosed) 30m bar, so a plain
+ * timestamp merge cannot delete the previous bucket's dynamic bar once the
+ * boundary advances. Closed history is never deleted; official 30m increments
+ * carry the full bar list including the next bucket's dynamic bar.
+ */
+export function mergeThirtyMinuteBars(current, incoming) {
   const incomingTimestamps = new Set(
     (incoming ?? []).map((row) => row.timestamp),
   );

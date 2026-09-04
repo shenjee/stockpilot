@@ -1860,13 +1860,19 @@ export function App() {
     chartDatasetIdentityRef.current != null &&
     chartDatasetIdentity != null &&
     chartDatasetIdentityRef.current !== chartDatasetIdentity;
+  // Issue #168：Replay 视口按 Session 保存。chartViewSessionIdentity 覆盖
+  // Live 与 Replay 两种投影（Replay 用 session_id），Session 变化时清空
+  // chartViews，避免旧 Session 的手工范围被错误恢复到新 Session。
+  const chartViewSessionIdentity =
+    replayFacts?.sessionId ?? projection.sessionId ?? null;
+  const chartViewSessionIdentityRef = useRef(chartViewSessionIdentity);
   useEffect(() => {
-    const previous = chartDatasetIdentityRef.current;
-    chartDatasetIdentityRef.current = chartDatasetIdentity;
+    const previous = chartViewSessionIdentityRef.current;
+    chartViewSessionIdentityRef.current = chartViewSessionIdentity;
     if (
       previous == null ||
-      chartDatasetIdentity == null ||
-      previous === chartDatasetIdentity
+      chartViewSessionIdentity == null ||
+      previous === chartViewSessionIdentity
     ) {
       return;
     }
@@ -1874,19 +1880,16 @@ export function App() {
       ...current,
       chartViews: { fiveMinute: null, intraday: null, thirtyMinute: null },
     }));
-  }, [chartDatasetIdentity]);
-  const fiveMinuteInitialViewport =
-    replayFacts || datasetIdentityJustReplaced
-      ? null
-      : workbench.chartViews.fiveMinute;
-  const intradayInitialViewport =
-    replayFacts || datasetIdentityJustReplaced
-      ? null
-      : workbench.chartViews.intraday;
-  const thirtyMinuteInitialViewport =
-    replayFacts || datasetIdentityJustReplaced
-      ? null
-      : workbench.chartViews.thirtyMinute;
+  }, [chartViewSessionIdentity]);
+  const fiveMinuteInitialViewport = datasetIdentityJustReplaced
+    ? null
+    : workbench.chartViews.fiveMinute;
+  const intradayInitialViewport = datasetIdentityJustReplaced
+    ? null
+    : workbench.chartViews.intraday;
+  const thirtyMinuteInitialViewport = datasetIdentityJustReplaced
+    ? null
+    : workbench.chartViews.thirtyMinute;
   const layoutMode = workbenchLayoutMode(workbench);
   const dailyBars = latestDailyBars(snapshot);
 
@@ -2006,10 +2009,8 @@ export function App() {
             }
             datasetIdentity={chartDatasetIdentity}
             initialViewport={fiveMinuteInitialViewport}
-            onViewportChange={
-              replayFacts
-                ? undefined
-                : (snapshot) => rememberChartView("fiveMinute", snapshot)
+            onViewportChange={(snapshot) =>
+              rememberChartView("fiveMinute", snapshot)
             }
             priceHeader={
               <div className="panel-heading">
@@ -2080,10 +2081,8 @@ export function App() {
                 }
                 datasetIdentity={chartDatasetIdentity}
                 initialViewport={thirtyMinuteInitialViewport}
-                onViewportChange={
-                  replayFacts
-                    ? undefined
-                    : (snapshot) => rememberChartView("thirtyMinute", snapshot)
+                onViewportChange={(snapshot) =>
+                  rememberChartView("thirtyMinute", snapshot)
                 }
                 priceHeader={
                   <div className="panel-heading">
@@ -2122,10 +2121,8 @@ export function App() {
               }`}
               model={intradayModel}
               initialViewport={intradayInitialViewport}
-              onViewportChange={
-                replayFacts
-                  ? undefined
-                  : (snapshot) => rememberChartView("intraday", snapshot)
+              onViewportChange={(snapshot) =>
+                rememberChartView("intraday", snapshot)
               }
               priceHeader={
                 <div className="panel-heading">

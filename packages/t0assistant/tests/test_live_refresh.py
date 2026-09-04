@@ -367,6 +367,104 @@ class LiveRefreshSchedulerTests(unittest.TestCase):
         scheduler.retry(LiveRefreshKind.OFFICIAL_THIRTY_MINUTE, delayed_at)
         self.assertEqual(delayed_flags, [True, False])
 
+    def test_thirty_minute_failure_advances_boundary_wait_and_enters_delayed(
+        self,
+    ) -> None:
+        delayed_flags: list[bool] = []
+        boundary = self.t0 + timedelta(minutes=30)
+
+        def next_boundary(observed_at: datetime) -> datetime | None:
+            return boundary if observed_at < boundary else None
+
+        scheduler = LiveRefreshScheduler(
+            self.spec,
+            self.input,
+            self.executor,
+            on_update=self.updates.append,
+            intervals=self.intervals,
+            thirty_minute_boundary_provider=next_boundary,
+            on_thirty_minute_delayed=delayed_flags.append,
+        )
+        self.addCleanup(scheduler.retire)
+        self.input.queue(
+            LiveRefreshKind.OFFICIAL_THIRTY_MINUTE,
+            RuntimeError("provider unavailable"),
+            RuntimeError("provider unavailable"),
+            RuntimeError("provider unavailable"),
+        )
+
+        scheduler.run_due(self.t0)
+        state = scheduler.state_for(LiveRefreshKind.OFFICIAL_THIRTY_MINUTE)
+        # Before the boundary the schedule cannot determine a wait, so the
+        # generic backoff applies (15s * 2 = 30s after the first failure).
+        self.assertEqual(state.next_due_at, self.t0 + timedelta(seconds=30))
+        self.assertFalse(state.thirty_minute_delayed)
+        self.assertEqual(delayed_flags, [])
+
+        # First attempt past the boundary fails: retry after 15s, not the
+        # exponential backoff (which would be 60s here).
+        first_attempt = boundary + timedelta(seconds=5)
+        scheduler.run_due(first_attempt)
+        state = scheduler.state_for(LiveRefreshKind.OFFICIAL_THIRTY_MINUTE)
+        self.assertEqual(state.next_due_at, first_attempt + timedelta(seconds=15))
+        self.assertFalse(state.thirty_minute_delayed)
+        self.assertEqual(delayed_flags, [])
+
+        # Two minutes past the first attempt: the failure path must enter the
+        # delayed state and switch to the 60s reduced interval.
+        delayed_at = first_attempt + timedelta(minutes=2)
+        scheduler.run_due(delayed_at)
+        state = scheduler.state_for(LiveRefreshKind.OFFICIAL_THIRTY_MINUTE)
+        self.assertTrue(state.thirty_minute_delayed)
+        self.assertEqual(state.next_due_at, delayed_at + timedelta(seconds=60))
+        self.assertEqual(delayed_flags, [True])
+
+    def test_thirty_minute_failure_clears_delayed_state_when_data_arrives(
+        self,
+    ) -> None:
+        delayed_flags: list[bool] = []
+        boundary = self.t0 + timedelta(minutes=30)
+
+        def next_boundary(observed_at: datetime) -> datetime | None:
+            return boundary if observed_at < boundary else None
+
+        scheduler = LiveRefreshScheduler(
+            self.spec,
+            self.input,
+            self.executor,
+            on_update=self.updates.append,
+            intervals=self.intervals,
+            thirty_minute_boundary_provider=next_boundary,
+            on_thirty_minute_delayed=delayed_flags.append,
+        )
+        self.addCleanup(scheduler.retire)
+        self.input.queue(
+            LiveRefreshKind.OFFICIAL_THIRTY_MINUTE,
+            RuntimeError("provider unavailable"),
+            RuntimeError("provider unavailable"),
+            RuntimeError("provider unavailable"),
+            LiveRefreshResult(
+                boundary,
+                (_update(LiveRefreshKind.OFFICIAL_THIRTY_MINUTE),),
+            ),
+        )
+
+        scheduler.run_due(self.t0)
+        first_attempt = boundary + timedelta(seconds=5)
+        scheduler.run_due(first_attempt)
+        delayed_at = first_attempt + timedelta(minutes=2)
+        scheduler.run_due(delayed_at)
+        self.assertEqual(delayed_flags, [True])
+
+        # A successful refresh with data must clear the delayed state even
+        # after the delayed transition happened on the failure path.
+        scheduler.run_due(delayed_at + timedelta(seconds=60))
+        state = scheduler.state_for(LiveRefreshKind.OFFICIAL_THIRTY_MINUTE)
+        self.assertFalse(state.thirty_minute_delayed)
+        self.assertIsNone(state.last_failure)
+        self.assertEqual(state.consecutive_failures, 0)
+        self.assertEqual(delayed_flags, [True, False])
+
     def test_failure_in_one_branch_does_not_block_other_due_branches(self) -> None:
         quote_failure = RuntimeError("quote unavailable")
         one_minute_time = self.t0 + timedelta(minutes=1)

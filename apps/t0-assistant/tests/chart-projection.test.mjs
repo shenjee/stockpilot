@@ -384,6 +384,114 @@ test("Live projection merges bars_30m increments independently of 5m", () => {
   assert.equal(projected.snapshot.market.bars_5m.length, baseline.market.bars_5m.length);
 });
 
+function thirtyMinuteBar(timestamp, extra = {}) {
+  return {
+    timestamp,
+    open: extra.open ?? 10.0,
+    high: extra.high ?? 10.2,
+    low: extra.low ?? 9.9,
+    close: extra.close ?? 10.1,
+    volume: extra.volume ?? 80000,
+    amount: extra.amount ?? 808000,
+    closed: extra.closed ?? false,
+  };
+}
+
+function bars30mEvent(revision, bars) {
+  return {
+    ...marketUpdate,
+    revision,
+    event_type: "market_update",
+    payload: { target: "bars_30m", bars, quote: null },
+  };
+}
+
+test("bars_30m increments revise the dynamic bar, drop the previous bucket, and keep it after a late official close", () => {
+  const snapshot = structuredClone(baseline);
+  snapshot.market.bars_30m = [
+    thirtyMinuteBar("2026-07-22 10:00:00", {
+      close: 10.1,
+      volume: 100,
+      amount: 1000,
+      closed: false,
+    }),
+  ];
+  let projection = createChartProjection(snapshot, fixture.initial_snapshot_event);
+
+  projection = applyLiveChartEvent(
+    projection,
+    bars30mEvent(2, [
+      thirtyMinuteBar("2026-07-22 10:00:00", {
+        high: 10.4,
+        close: 10.3,
+        volume: 350,
+        amount: 3550,
+        closed: false,
+      }),
+    ]),
+  );
+  assert.equal(projection.snapshot.market.bars_30m.length, 1);
+  assert.equal(projection.snapshot.market.bars_30m[0].close, 10.3);
+  assert.equal(projection.snapshot.market.bars_30m[0].closed, false);
+
+  // Boundary advance: one-minute refresh publishes only the new bucket's
+  // dynamic bar; the previous unclosed bar must be dropped.
+  projection = applyLiveChartEvent(
+    projection,
+    bars30mEvent(3, [
+      thirtyMinuteBar("2026-07-22 10:30:00", {
+        open: 11,
+        high: 11,
+        low: 11,
+        close: 11,
+        volume: 2,
+        amount: 22,
+        closed: false,
+      }),
+    ]),
+  );
+  assert.deepEqual(
+    projection.snapshot.market.bars_30m.map((bar) => bar.timestamp),
+    ["2026-07-22 10:30:00"],
+  );
+  assert.equal(projection.snapshot.market.bars_30m[0].closed, false);
+
+  // Official full payload (closed history + next dynamic bar) must not wipe
+  // the dynamic bar and must close the previous bucket.
+  projection = applyLiveChartEvent(
+    projection,
+    bars30mEvent(4, [
+      thirtyMinuteBar("2026-07-22 10:00:00", {
+        high: 10.5,
+        low: 9.8,
+        close: 10.4,
+        volume: 900,
+        amount: 9200,
+        closed: true,
+      }),
+      thirtyMinuteBar("2026-07-22 10:30:00", {
+        open: 11,
+        high: 11,
+        low: 11,
+        close: 11,
+        volume: 2,
+        amount: 22,
+        closed: false,
+      }),
+    ]),
+  );
+  const byTimestamp = Object.fromEntries(
+    projection.snapshot.market.bars_30m.map((bar) => [bar.timestamp, bar]),
+  );
+  assert.equal(byTimestamp["2026-07-22 10:00:00"].closed, true);
+  assert.equal(byTimestamp["2026-07-22 10:00:00"].close, 10.4);
+  assert.equal(byTimestamp["2026-07-22 10:30:00"].closed, false);
+  assert.equal(
+    projection.snapshot.market.bars_30m.filter((bar) => bar.closed === false).length,
+    1,
+  );
+});
+
 test("Live projection replaces chan_analysis_30m without touching 5m analysis", () => {
   const replacement = {
     symbol: "600000.SH",

@@ -833,7 +833,20 @@ class LiveRefreshScheduler:
         *,
         market_epoch: int | None = None,
     ) -> None:
+        """Record a failed branch attempt and schedule the next retry.
+
+        A failed OFFICIAL_THIRTY_MINUTE attempt is treated as a no-data
+        attempt: the boundary wait state advances exactly as it does when a
+        refresh succeeds without official data (15s retries, 60s once the
+        2-minute delay threshold trips).  Generic exponential backoff would
+        silently stretch the retry past the boundary window and never raise
+        the delayed-official warning, so it is only used when the boundary
+        schedule cannot determine a wait (no pending boundary, e.g. outside
+        the trading session).
+        """
+
         publish_failure = False
+        delayed_changed: bool | None = None
         with self._lock:
             if self._retired:
                 return
@@ -846,13 +859,33 @@ class LiveRefreshScheduler:
             state = self._states[kind]
             state.last_failure = failure
             state.consecutive_failures += 1
-            state.next_due_at = observed_at + self._backoff.delay(
-                self._intervals.for_kind(
-                    kind,
-                    polling_profile=self._polling_profile,
-                ),
-                state.consecutive_failures,
+            base_interval = self._intervals.for_kind(
+                kind,
+                polling_profile=self._polling_profile,
             )
+            if (
+                kind is LiveRefreshKind.OFFICIAL_THIRTY_MINUTE
+                and self._thirty_minute_boundary_provider is not None
+            ):
+                delayed_changed = self._advance_thirty_minute_schedule(
+                    state,
+                    observed_at,
+                    data_received=False,
+                )
+                if state.boundary_first_attempt_at is None:
+                    # The boundary schedule could not determine a wait (no
+                    # pending boundary, or still before the boundary window);
+                    # fall back to the generic backoff so the branch still
+                    # retries.
+                    state.next_due_at = observed_at + self._backoff.delay(
+                        base_interval,
+                        state.consecutive_failures,
+                    )
+            else:
+                state.next_due_at = observed_at + self._backoff.delay(
+                    base_interval,
+                    state.consecutive_failures,
+                )
             publish_failure = True
         if publish_failure and self._on_failure is not None:
             try:
@@ -867,7 +900,8 @@ class LiveRefreshScheduler:
                         "original_failure_type": type(failure).__name__,
                     },
                 )
-                return
+        if delayed_changed is not None and self._on_thirty_minute_delayed is not None:
+            self._on_thirty_minute_delayed(delayed_changed)
 
     def _read_input_market_epoch(self) -> int | None:
         return _read_input_int_attr(self._input_port, "market_epoch")

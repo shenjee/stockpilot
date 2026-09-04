@@ -47,3 +47,8 @@ export function mergeFiveMinuteBars(
   current: WorkbenchChartSnapshot["market"]["bars_5m"] | null | undefined,
   incoming: WorkbenchChartSnapshot["market"]["bars_5m"] | null | undefined,
 ): WorkbenchChartSnapshot["market"]["bars_5m"];
+
+export function mergeThirtyMinuteBars(
+  current: WorkbenchChartSnapshot["market"]["bars_30m"] | null | undefined,
+  incoming: WorkbenchChartSnapshot["market"]["bars_30m"] | null | undefined,
+): WorkbenchChartSnapshot["market"]["bars_30m"];
