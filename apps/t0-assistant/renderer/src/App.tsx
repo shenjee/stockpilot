@@ -37,6 +37,7 @@ import {
   createWorkbenchState,
   selectWorkbenchLayout,
   selectWorkbenchMode,
+  selectWorkbenchSecondaryChart,
   selectWorkbenchSecurity,
   toggleWorkbenchLayer,
   workbenchLayoutMode,
@@ -44,6 +45,7 @@ import {
   WorkbenchLayer,
   WorkbenchLayoutMode,
   WorkbenchMode,
+  WorkbenchSecondaryChart,
   type ChartViewportSnapshot,
   type SecurityIdentity,
   type WorkbenchLayoutModeValue,
@@ -100,7 +102,7 @@ import {
   isRealTradesChangedEvent,
 } from "./trading/trade-state.mjs";
 import type { TradeRecord } from "./trading/trade-client.mjs";
-import { projectTradeMarkers } from "./charts/trade-markers.mjs";
+import { projectTradeMarkers, thirtyMinuteCloseTimestamp } from "./charts/trade-markers.mjs";
 
 const initialStatus: ServiceStatus = {
   state: "starting",
@@ -110,9 +112,21 @@ const initialStatus: ServiceStatus = {
 
 const emptyChartSnapshot: WorkbenchChartSnapshot = {
   timezone: "Asia/Shanghai",
-  market: { bars_1m: [], bars_5m: [], daily_bars: [], quote: null },
+  market: { bars_1m: [], bars_5m: [], bars_30m: [], daily_bars: [], quote: null },
   indicators: {
     five_minute: {
+      ma: { ma5: [], ma10: [], ma20: [], ma30: [], ma60: [] },
+      volume: { values: [], ma5: [], ma10: [] },
+      macd: {
+        fast_period: 12,
+        slow_period: 26,
+        signal_period: 9,
+        dif: [],
+        dea: [],
+        histogram: [],
+      },
+    },
+    thirty_minute: {
       ma: { ma5: [], ma10: [], ma20: [], ma30: [], ma60: [] },
       volume: { values: [], ma5: [], ma10: [] },
       macd: {
@@ -138,6 +152,12 @@ const emptyChartSnapshot: WorkbenchChartSnapshot = {
     },
   },
   chan_analysis: {
+    strokes: [],
+    pivot_zones: [],
+    candidate_buy_points: [],
+    candidate_sell_points: [],
+  },
+  chan_analysis_30m: {
     strokes: [],
     pivot_zones: [],
     candidate_buy_points: [],
@@ -211,6 +231,7 @@ export function App() {
   const lastGoodChartModels = useRef<{
     fiveMinute: ChartGroupModel;
     intraday: ChartGroupModel;
+    thirtyMinute: ChartGroupModel;
   } | null>(null);
   const activeOperations = useRef(new Map<string, ActiveOperation>());
   const modeRef = useRef(workbench.mode);
@@ -864,7 +885,6 @@ export function App() {
   }, [
     preferencesHydrated,
     workbench.security?.symbol,
-    workbench.layout.chartSplit,
     workbench.layout.showIntraday,
     workbench.layers,
   ]);
@@ -1707,6 +1727,15 @@ export function App() {
       ),
     [snapshot, workbench.layers],
   );
+  const thirtyMinuteModelResult = useMemo(
+    () =>
+      tryCreateChartGroupModel(
+        snapshot,
+        ChartGroupKind.THIRTY_MINUTE,
+        workbench.layers,
+      ),
+    [snapshot, workbench.layers],
+  );
   const intradayModelResult = useMemo(
     () => tryCreateChartGroupModel(snapshot, ChartGroupKind.ONE_MINUTE),
     [snapshot],
@@ -1719,6 +1748,14 @@ export function App() {
           emptyChartSnapshot,
           ChartGroupKind.FIVE_MINUTE,
         ));
+  const thirtyMinuteModel =
+    thirtyMinuteModelResult.ok
+      ? thirtyMinuteModelResult.model
+      : (lastGoodChartModels.current?.thirtyMinute ??
+        createChartGroupModel(
+          emptyChartSnapshot,
+          ChartGroupKind.THIRTY_MINUTE,
+        ));
   const intradayModel =
     intradayModelResult.ok
       ? intradayModelResult.model
@@ -1730,12 +1767,39 @@ export function App() {
     const allowedTimes = new Set(Object.values(fiveMinuteModel.timeByTimestamp));
     return projectTradeMarkers(chartTrades, { allowedTimes });
   }, [chartTrades, fiveMinuteModel]);
+  const thirtyMinuteTradeMarkers = useMemo(() => {
+    if (thirtyMinuteModel.kind !== ChartGroupKind.THIRTY_MINUTE) return [];
+    const allowedTimes = new Set(
+      Object.values(thirtyMinuteModel.timeByTimestamp),
+    );
+    return projectTradeMarkers(chartTrades, {
+      allowedTimes,
+      resolveBucketStart: (trade) =>
+        thirtyMinuteCloseTimestamp(trade.executed_at),
+    });
+  }, [chartTrades, thirtyMinuteModel]);
+  // thirtyMinuteModel already falls back to the last good 30m model (or an
+  // empty model), so "unavailable" is purely about having no bars to show.
+  const thirtyMinuteUnavailable = thirtyMinuteModel.bars.length === 0;
+  const thirtyMinuteWarnings = (
+    (snapshot as { warnings?: Array<{ warning_code?: string; message?: string }> })
+      .warnings ?? []
+  ).filter((warning) =>
+    String(warning.warning_code ?? "").startsWith("thirty_minute_"),
+  );
 
   useEffect(() => {
     if (fiveMinuteModelResult.ok && intradayModelResult.ok) {
       lastGoodChartModels.current = {
         fiveMinute: fiveMinuteModelResult.model,
         intraday: intradayModelResult.model,
+        thirtyMinute: thirtyMinuteModelResult.ok
+          ? thirtyMinuteModelResult.model
+          : (lastGoodChartModels.current?.thirtyMinute ??
+            createChartGroupModel(
+              emptyChartSnapshot,
+              ChartGroupKind.THIRTY_MINUTE,
+            )),
       };
       setBackgroundError((current) =>
         current?.error_code === "chart_contract_failed" ||
@@ -1757,6 +1821,7 @@ export function App() {
     }
   }, [
     fiveMinuteModelResult,
+    thirtyMinuteModelResult,
     intradayModelResult,
     workbench.mode,
   ]);
@@ -1765,7 +1830,7 @@ export function App() {
   // 保存 {range, followState} 快照；controller 节流上报，避免高频 setState。React 是
   // 运行时权威，组件重建后据此恢复，不依赖图表实例未被卸载。
   const rememberChartView = (
-    group: "fiveMinute" | "intraday",
+    group: "fiveMinute" | "intraday" | "thirtyMinute",
     snapshot: ChartViewportSnapshot | null,
   ) => {
     setWorkbench((current) => {
@@ -1790,34 +1855,31 @@ export function App() {
   };
   // 同股票数据集 identity 替换时丢弃旧手工范围，避免 key 重建后错误恢复（Issue #148）。
   const chartDatasetIdentity = replayFacts ? null : projection.sessionId;
-  const chartDatasetIdentityRef = useRef(chartDatasetIdentity);
-  const datasetIdentityJustReplaced =
-    chartDatasetIdentityRef.current != null &&
-    chartDatasetIdentity != null &&
-    chartDatasetIdentityRef.current !== chartDatasetIdentity;
-  useEffect(() => {
-    const previous = chartDatasetIdentityRef.current;
-    chartDatasetIdentityRef.current = chartDatasetIdentity;
-    if (
-      previous == null ||
-      chartDatasetIdentity == null ||
-      previous === chartDatasetIdentity
-    ) {
-      return;
-    }
+  // Issue #168：视口按 Session 保存。chartViewSessionIdentity 覆盖 Live 与
+  // Replay 两种投影（Replay 用 session_id）。Session 变化必须在 render 期间
+  // 同步清空 chartViews：带新 Session key 的 ChartGroup 会在该次 render 挂载，
+  // 且只在挂载时消费 initialViewport；若推迟到 useEffect 清空，新图表首屏会
+  // 继承旧 Session 的手工范围而不是右对齐最新 K。React 在 render 期间
+  // setState 会丢弃本次输出并立即以新状态重渲染，因此提交的 render 中
+  // chartViews 已清空、initialViewport 为 null。
+  const chartViewSessionIdentity =
+    replayFacts?.sessionId ?? projection.sessionId ?? null;
+  const [prevChartViewSessionIdentity, setPrevChartViewSessionIdentity] =
+    useState(chartViewSessionIdentity);
+  if (
+    prevChartViewSessionIdentity != null &&
+    chartViewSessionIdentity != null &&
+    prevChartViewSessionIdentity !== chartViewSessionIdentity
+  ) {
+    setPrevChartViewSessionIdentity(chartViewSessionIdentity);
     setWorkbench((current) => ({
       ...current,
-      chartViews: { fiveMinute: null, intraday: null },
+      chartViews: { fiveMinute: null, intraday: null, thirtyMinute: null },
     }));
-  }, [chartDatasetIdentity]);
-  const fiveMinuteInitialViewport =
-    replayFacts || datasetIdentityJustReplaced
-      ? null
-      : workbench.chartViews.fiveMinute;
-  const intradayInitialViewport =
-    replayFacts || datasetIdentityJustReplaced
-      ? null
-      : workbench.chartViews.intraday;
+  }
+  const fiveMinuteInitialViewport = workbench.chartViews.fiveMinute;
+  const intradayInitialViewport = workbench.chartViews.intraday;
+  const thirtyMinuteInitialViewport = workbench.chartViews.thirtyMinute;
   const layoutMode = workbenchLayoutMode(workbench);
   const dailyBars = latestDailyBars(snapshot);
 
@@ -1916,7 +1978,6 @@ export function App() {
       <section
         className="workspace"
         data-testid="workbench"
-        data-chart-split={workbench.layout.chartSplit}
         data-show-intraday={workbench.layout.showIntraday}
         aria-label="T+0 三栏三行工作台"
       >
@@ -1938,10 +1999,8 @@ export function App() {
             }
             datasetIdentity={chartDatasetIdentity}
             initialViewport={fiveMinuteInitialViewport}
-            onViewportChange={
-              replayFacts
-                ? undefined
-                : (snapshot) => rememberChartView("fiveMinute", snapshot)
+            onViewportChange={(snapshot) =>
+              rememberChartView("fiveMinute", snapshot)
             }
             priceHeader={
               <div className="panel-heading">
@@ -1970,14 +2029,80 @@ export function App() {
         </article>
 
         <article
-          className="chart-group intraday-group"
+          className="chart-group secondary-group"
           data-testid="intraday-group"
-          aria-label="分时图表组"
+          aria-label={
+            workbench.secondaryChart === WorkbenchSecondaryChart.THIRTY_MINUTE
+              ? "30 分钟图表组"
+              : "分时图表组"
+          }
           hidden={!workbench.layout.showIntraday}
         >
-          {fiveMinuteFallback ? (
+          {workbench.secondaryChart === WorkbenchSecondaryChart.THIRTY_MINUTE ? (
+            thirtyMinuteUnavailable ? (
+              <div className="intraday-unavailable" role="status">
+                <div className="panel-heading">
+                  <h2>30 分钟</h2>
+                  <div className="heading-actions">
+                    <SecondaryChartSwitcher
+                      value={workbench.secondaryChart}
+                      onSelect={(value) =>
+                        updateWorkbenchFromUser((current) =>
+                          selectWorkbenchSecondaryChart(current, value),
+                        )
+                      }
+                    />
+                  </div>
+                </div>
+                <p>无 30 分钟数据</p>
+                {thirtyMinuteWarnings.map((warning) => (
+                  <p key={warning.warning_code}>{warning.message}</p>
+                ))}
+              </div>
+            ) : (
+              <ChartGroup
+                key={`thirty-${workbench.security?.symbol ?? "fixture"}-${
+                  replayFacts?.sessionId ?? projection.sessionId ?? "live"
+                }`}
+                model={thirtyMinuteModel}
+                tradeMarkers={thirtyMinuteTradeMarkers}
+                appendFollowPolicy={
+                  replayFacts ? "preserve" : "force-follow-latest"
+                }
+                datasetIdentity={chartDatasetIdentity}
+                initialViewport={thirtyMinuteInitialViewport}
+                onViewportChange={(snapshot) =>
+                  rememberChartView("thirtyMinute", snapshot)
+                }
+                priceHeader={
+                  <div className="panel-heading">
+                    <h2>30 分钟</h2>
+                    <SecondaryChartSwitcher
+                      value={workbench.secondaryChart}
+                      onSelect={(value) =>
+                        updateWorkbenchFromUser((current) =>
+                          selectWorkbenchSecondaryChart(current, value),
+                        )
+                      }
+                    />
+                  </div>
+                }
+              />
+            )
+          ) : fiveMinuteFallback ? (
             <div className="intraday-unavailable" role="status">
-              无 1 分钟数据
+              <div className="panel-heading">
+                <h2>分时</h2>
+                <SecondaryChartSwitcher
+                  value={workbench.secondaryChart}
+                  onSelect={(value) =>
+                    updateWorkbenchFromUser((current) =>
+                      selectWorkbenchSecondaryChart(current, value),
+                    )
+                  }
+                />
+              </div>
+              <p>无 1 分钟数据</p>
             </div>
           ) : (
             <ChartGroup
@@ -1986,14 +2111,20 @@ export function App() {
               }`}
               model={intradayModel}
               initialViewport={intradayInitialViewport}
-              onViewportChange={
-                replayFacts
-                  ? undefined
-                  : (snapshot) => rememberChartView("intraday", snapshot)
+              onViewportChange={(snapshot) =>
+                rememberChartView("intraday", snapshot)
               }
               priceHeader={
                 <div className="panel-heading">
                   <h2>分时</h2>
+                  <SecondaryChartSwitcher
+                    value={workbench.secondaryChart}
+                    onSelect={(value) =>
+                      updateWorkbenchFromUser((current) =>
+                        selectWorkbenchSecondaryChart(current, value),
+                      )
+                    }
+                  />
                 </div>
               }
             />
@@ -2439,6 +2570,37 @@ function LayerSwitcher({
   );
 }
 
+function SecondaryChartSwitcher({
+  value,
+  onSelect,
+}: {
+  value: (typeof WorkbenchSecondaryChart)[keyof typeof WorkbenchSecondaryChart];
+  onSelect: (
+    value: (typeof WorkbenchSecondaryChart)[keyof typeof WorkbenchSecondaryChart],
+  ) => void;
+}) {
+  return (
+    <div
+      className="layout-switcher"
+      data-testid="secondary-chart-switcher"
+      aria-label="副图内容"
+    >
+      <LayoutButton
+        active={value === WorkbenchSecondaryChart.INTRADAY}
+        testId="secondary-intraday"
+        label="分时"
+        onClick={() => onSelect(WorkbenchSecondaryChart.INTRADAY)}
+      />
+      <LayoutButton
+        active={value === WorkbenchSecondaryChart.THIRTY_MINUTE}
+        testId="secondary-thirty-minute"
+        label="30m"
+        onClick={() => onSelect(WorkbenchSecondaryChart.THIRTY_MINUTE)}
+      />
+    </div>
+  );
+}
+
 function LayoutSwitcher({
   mode,
   onSelect,
@@ -2453,21 +2615,15 @@ function LayoutSwitcher({
       aria-label="工作台布局"
     >
       <LayoutButton
-        active={mode === WorkbenchLayoutMode.MAIN_PRIORITY}
-        testId="layout-main-priority"
-        label="64 / 36"
-        onClick={() => onSelect(WorkbenchLayoutMode.MAIN_PRIORITY)}
-      />
-      <LayoutButton
-        active={mode === WorkbenchLayoutMode.EQUAL}
-        testId="layout-equal"
-        label="50 / 50"
-        onClick={() => onSelect(WorkbenchLayoutMode.EQUAL)}
+        active={mode === WorkbenchLayoutMode.SHOW_INTRADAY}
+        testId="layout-show-intraday"
+        label="显示副图"
+        onClick={() => onSelect(WorkbenchLayoutMode.SHOW_INTRADAY)}
       />
       <LayoutButton
         active={mode === WorkbenchLayoutMode.HIDE_INTRADAY}
         testId="layout-hide-intraday"
-        label="隐藏分时"
+        label="隐藏副图"
         onClick={() => onSelect(WorkbenchLayoutMode.HIDE_INTRADAY)}
       />
     </div>

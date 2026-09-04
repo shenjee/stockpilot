@@ -1,7 +1,11 @@
 export const WorkbenchLayoutMode = Object.freeze({
-  MAIN_PRIORITY: "main_priority",
-  EQUAL: "equal",
+  SHOW_INTRADAY: "show_intraday",
   HIDE_INTRADAY: "hide_intraday",
+});
+
+export const WorkbenchSecondaryChart = Object.freeze({
+  INTRADAY: "intraday",
+  THIRTY_MINUTE: "thirty_minute",
 });
 
 export const WorkbenchMode = Object.freeze({
@@ -24,9 +28,9 @@ export function createWorkbenchState() {
     mode: WorkbenchMode.LIVE,
     security: null,
     layout: {
-      chartSplit: "64_36",
       showIntraday: true,
     },
+    secondaryChart: WorkbenchSecondaryChart.INTRADAY,
     layers: {
       ma5: false,
       ma10: false,
@@ -39,21 +43,17 @@ export function createWorkbenchState() {
     chartViews: {
       fiveMinute: null,
       intraday: null,
+      thirtyMinute: null,
     },
   };
 }
 
 export function selectWorkbenchLayout(state, mode) {
   switch (mode) {
-    case WorkbenchLayoutMode.MAIN_PRIORITY:
+    case WorkbenchLayoutMode.SHOW_INTRADAY:
       return {
         ...state,
-        layout: { chartSplit: "64_36", showIntraday: true },
-      };
-    case WorkbenchLayoutMode.EQUAL:
-      return {
-        ...state,
-        layout: { chartSplit: "50_50", showIntraday: true },
+        layout: { showIntraday: true },
       };
     case WorkbenchLayoutMode.HIDE_INTRADAY:
       return {
@@ -66,12 +66,20 @@ export function selectWorkbenchLayout(state, mode) {
 }
 
 export function workbenchLayoutMode(state) {
-  if (!state.layout.showIntraday) {
-    return WorkbenchLayoutMode.HIDE_INTRADAY;
+  return state.layout.showIntraday
+    ? WorkbenchLayoutMode.SHOW_INTRADAY
+    : WorkbenchLayoutMode.HIDE_INTRADAY;
+}
+
+export function selectWorkbenchSecondaryChart(state, secondaryChart) {
+  if (!Object.values(WorkbenchSecondaryChart).includes(secondaryChart)) {
+    throw new TypeError(`Unsupported secondary chart: ${secondaryChart}`);
   }
-  return state.layout.chartSplit === "50_50"
-    ? WorkbenchLayoutMode.EQUAL
-    : WorkbenchLayoutMode.MAIN_PRIORITY;
+  return {
+    ...state,
+    secondaryChart,
+    layout: { ...state.layout, showIntraday: true },
+  };
 }
 
 export function selectWorkbenchMode(state, mode) {
@@ -97,7 +105,7 @@ export function selectWorkbenchSecurity(state, security) {
   return {
     ...state,
     security: { ...security },
-    chartViews: { fiveMinute: null, intraday: null },
+    chartViews: { fiveMinute: null, intraday: null, thirtyMinute: null },
   };
 }
 
@@ -121,7 +129,6 @@ export function applyWorkbenchPreferences(state, preferences) {
   const { layout, layers } = preferences;
   if (
     !layout ||
-    !["64_36", "50_50"].includes(layout.chart_split) ||
     typeof layout.show_intraday !== "boolean" ||
     !layers ||
     Object.values(WorkbenchLayer).some(
@@ -132,10 +139,7 @@ export function applyWorkbenchPreferences(state, preferences) {
   }
   return {
     ...state,
-    layout: {
-      chartSplit: layout.chart_split,
-      showIntraday: layout.show_intraday,
-    },
+    layout: { showIntraday: layout.show_intraday },
     layers: { ...layers },
   };
 }
@@ -143,10 +147,7 @@ export function applyWorkbenchPreferences(state, preferences) {
 export function workbenchPreferences(state) {
   return {
     last_symbol: state.security?.symbol ?? null,
-    layout: {
-      chart_split: state.layout.chartSplit,
-      show_intraday: state.layout.showIntraday,
-    },
+    layout: { show_intraday: state.layout.showIntraday },
     layers: { ...state.layers },
   };
 }

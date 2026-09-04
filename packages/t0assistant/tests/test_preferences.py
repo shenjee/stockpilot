@@ -29,7 +29,6 @@ class PreferenceValueTests(unittest.TestCase):
             {
                 "last_symbol": None,
                 "layout": {
-                    "chart_split": "64_36",
                     "show_intraday": True,
                 },
                 "layers": {
@@ -44,10 +43,10 @@ class PreferenceValueTests(unittest.TestCase):
             },
         )
 
-    def test_mapping_round_trip_matches_app_v1_shape(self) -> None:
+    def test_mapping_round_trip_matches_app_v2_shape(self) -> None:
         payload = {
             "last_symbol": "sh.600584",
-            "layout": {"chart_split": "50_50", "show_intraday": False},
+            "layout": {"show_intraday": False},
             "layers": {
                 "ma5": True,
                 "ma10": False,
@@ -72,9 +71,9 @@ class PreferenceValueTests(unittest.TestCase):
             (
                 {
                     **PreferenceValues().to_dict(),
-                    "layout": {"chart_split": "70_30", "show_intraday": True},
+                    "layout": {"show_intraday": "yes"},
                 },
-                "layout.chart_split",
+                "layout.show_intraday",
             ),
             (
                 {
@@ -134,7 +133,7 @@ class PreferencePersistenceTests(unittest.TestCase):
     def _changed_values() -> PreferenceValues:
         return PreferenceValues(
             last_symbol="sh.600584",
-            layout=LayoutPreference(chart_split="50_50", show_intraday=False),
+            layout=LayoutPreference(show_intraday=False),
             layers=LayerPreference(
                 ma5=True,
                 ma10=True,
@@ -255,7 +254,7 @@ class PreferencePersistenceTests(unittest.TestCase):
         with open_app_database(self.db_path) as database:
             service = PreferenceService(SqlitePreferenceRepository(database))
             service.save_last_symbol("sh.600519")
-            alt_layout = LayoutPreference(chart_split="50_50", show_intraday=False)
+            alt_layout = LayoutPreference(show_intraday=False)
             layers = LayerPreference(ma5=True)
             worker_count = 8
             start = Barrier(worker_count)

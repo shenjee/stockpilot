@@ -8,6 +8,7 @@ from threading import Event, Thread
 from typing import Any, Mapping, Sequence
 
 from packages.marketdata.services.market_context_service import MarketContextService
+from packages.marketdata.t0_schema import InstrumentIdentity, InstrumentType
 from packages.t0assistant.runtime.coordinator import SessionSpec, SessionType
 from packages.t0assistant.runtime.computation_executor import BoundedComputationExecutor
 from packages.t0assistant.runtime.live_projection_store import (
@@ -138,6 +139,10 @@ class _QueuedLiveSource:
     def load_refresh_bars(self, spec, *, timeframe, trade_date) -> Sequence[Mapping]:
         if timeframe == "1m":
             return tuple(self.bars_1m)
+        if timeframe == "30m":
+            # The scheduler runs the OFFICIAL_THIRTY_MINUTE branch on every
+            # refresh tick; this fixture has no official 30m data to serve.
+            return ()
         return tuple(self.official_5m)
 
     def load_refresh_quotes(self, spec, *, trade_date) -> Sequence[Mapping]:
@@ -158,12 +163,22 @@ class _FakeCoordinator:
         return True
 
 
+_STOCK = InstrumentIdentity(
+    symbol="sh.600000",
+    code="600000",
+    market="sh",
+    name="Test Stock",
+    instrument_type=InstrumentType.STOCK,
+)
+
+
 def _spec() -> SessionSpec:
     return SessionSpec(
         session_id="live-1",
         session_type=SessionType.LIVE,
         symbol="sh.600000",
         generation=1,
+        instrument=_STOCK,
         trade_date=None,
     )
 
@@ -323,7 +338,9 @@ class LiveDynamicFiveMinuteTests(unittest.TestCase):
             for update in result.updates
             if update.event_type == "market_update"
         ]
-        self.assertEqual(targets, ["bars_1m", "daily_bars", "bars_5m"])
+        self.assertEqual(
+            targets, ["bars_1m", "daily_bars", "bars_5m", "bars_30m"]
+        )
         bars_5m = next(
             update.payload["bars"]
             for update in result.updates
@@ -334,6 +351,49 @@ class LiveDynamicFiveMinuteTests(unittest.TestCase):
         self.assertFalse(bars_5m[0]["closed"])
         self.assertEqual(bars_5m[0]["volume"], 350)
         self.assertEqual(bars_5m[0]["amount"], 3550)
+        bars_30m = next(
+            update.payload["bars"]
+            for update in result.updates
+            if update.payload.get("target") == "bars_30m"
+        )
+        self.assertEqual(len(bars_30m), 1)
+        self.assertEqual(bars_30m[0]["timestamp"], "2026-07-24 10:00:00")
+        self.assertFalse(bars_30m[0]["closed"])
+        self.assertEqual(bars_30m[0]["volume"], 350)
+        self.assertEqual(bars_30m[0]["amount"], 3550)
+
+    def test_one_minute_refresh_advances_forming_30m_bar_in_store(self) -> None:
+        """Regression: the Live 30m sub-chart must not freeze between boundaries.
+
+        A ONE_MINUTE refresh publishes the forming 30m bar; applying it to the
+        store must advance the dynamic 30m K in the snapshot without touching
+        the closed 30m history.
+        """
+        initial = self.store.get_live_snapshot(
+            session_id=self.spec.session_id,
+            generation=self.spec.generation,
+        )
+        initial_30m = initial["market"]["bars_30m"]
+        self.assertEqual(len(initial_30m), 1)
+        self.assertEqual(initial_30m[0]["timestamp"], "2026-07-24 10:00:00")
+        self.assertFalse(initial_30m[0]["closed"])
+        self.assertEqual(initial_30m[0]["volume"], 100)
+
+        self.source.bars_1m = [BAR_0931, BAR_0932]
+        result = self.port.refresh(
+            LiveRefreshKind.ONE_MINUTE,
+            self.spec,
+            observed_at=datetime(2026, 7, 24, 9, 32),
+            latest_data_time=datetime(2026, 7, 24, 9, 31),
+        )
+        after = self._apply(result.updates)
+
+        bars_30m = after["market"]["bars_30m"]
+        self.assertEqual(len(bars_30m), 1)
+        self.assertEqual(bars_30m[0]["timestamp"], "2026-07-24 10:00:00")
+        self.assertFalse(bars_30m[0]["closed"])
+        self.assertEqual(bars_30m[0]["volume"], 350)
+        self.assertEqual(bars_30m[0]["amount"], 3550)
 
 
 class _BarrierLiveInput(BranchingLiveInput):

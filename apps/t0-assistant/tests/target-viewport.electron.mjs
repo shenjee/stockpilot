@@ -13,7 +13,6 @@ const targetViewports = Object.freeze([
 const defaultPreferences = Object.freeze({
   last_symbol: null,
   layout: {
-    chart_split: "64_36",
     show_intraday: true,
   },
   layers: {
@@ -187,7 +186,6 @@ async function inspectWorkbench(window) {
         intradayHidden:
           intraday?.hasAttribute("hidden") ||
           (intraday ? getComputedStyle(intraday).display === "none" : null),
-        chartSplit: workspace?.getAttribute("data-chart-split") ?? null,
         showIntraday: workspace?.getAttribute("data-show-intraday") ?? null,
         ma5Pressed: ma5?.getAttribute("aria-pressed") ?? null,
       };
@@ -248,7 +246,6 @@ function assertChartRowsAligned(metrics, label) {
 function assertBaseLayout(metrics, target) {
   assert.equal(metrics.viewport.width, target.width);
   assert.equal(metrics.viewport.height, target.height);
-  assert.equal(metrics.chartSplit, "64_36");
   assert.equal(metrics.showIntraday, "true");
   assert.equal(metrics.intradayHidden, false);
   assertNoHorizontalOverflow(metrics, target.name);
@@ -261,8 +258,8 @@ function assertBaseLayout(metrics, target) {
   );
   const chartsWidth = metrics.fiveMinute.width + metrics.intraday.width;
   assert.ok(
-    Math.abs(metrics.fiveMinute.width / chartsWidth - 0.64) <= 0.01,
-    `${target.name}: main-priority split is not 64/36`,
+    Math.abs(metrics.fiveMinute.width / chartsWidth - 0.5) <= 0.01,
+    `${target.name}: visible secondary pane must use a 50/50 split`,
   );
   assertChartRowsAligned(metrics, target.name);
 }
@@ -275,9 +272,8 @@ async function verifyTargetViewport(window, target) {
   assertBaseLayout(metrics, target);
 
   await clickTestId(window, "layer-ma5");
-  await clickTestId(window, "layout-equal");
+  await clickTestId(window, "layout-show-intraday");
   metrics = await inspectWorkbench(window);
-  assert.equal(metrics.chartSplit, "50_50");
   assert.equal(metrics.showIntraday, "true");
   assert.equal(metrics.ma5Pressed, "true");
   assertNoHorizontalOverflow(metrics, `${target.name} 50/50`);
@@ -299,10 +295,9 @@ async function verifyTargetViewport(window, target) {
     `${target.name}: hidden layout must keep the sidebar separate`,
   );
 
-  await clickTestId(window, "layout-main-priority");
+  await clickTestId(window, "layout-show-intraday");
   await clickTestId(window, "mode-replay");
   metrics = await inspectWorkbench(window);
-  assert.equal(metrics.chartSplit, "64_36");
   assert.equal(metrics.ma5Pressed, "true");
   assertNoHorizontalOverflow(metrics, `${target.name} replay`);
   assertWithinViewport(
@@ -328,7 +323,7 @@ async function verifyTargetViewport(window, target) {
     sidebar_width: metrics.sidebar.width,
     workspace_height: metrics.workspace.height,
     horizontal_overflow: false,
-    layouts: ["64_36", "50_50", "hide_intraday"],
+    layouts: ["show_intraday", "hide_intraday"],
     replay_controls_visible: true,
     trade_drawer_overlays_charts: true,
   };

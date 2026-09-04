@@ -24,6 +24,7 @@ from packages.marketdata.services.market_context_service import MarketSession
 
 from .coordinator import SessionSpec, SessionType
 from .live_market_view import (
+    DEFAULT_CHART_PREHEAT_COUNT,
     MINIMUM_PREHEAT_5M,
     MarketClosedReason,
     PollingProfile,
@@ -129,12 +130,14 @@ class LiveSnapshotCandidate:
             market={
                 "bars_1m": preview["bars_1m"],
                 "bars_5m": preview["bars_5m"],
+                "bars_30m": preview["bars_30m"],
                 "daily_bars": preview["daily_bars"],
                 "quote": preview["quote"],
             },
             indicators={
                 "one_minute": preview["indicators_1m"],
                 "five_minute": preview["indicators_5m"],
+                "thirty_minute": preview["indicators_30m"],
             },
             chan_analysis=preview["chan_analysis"],
             closed_5m_prefix=self.pipeline_result.closed_5m_prefix,
@@ -151,6 +154,8 @@ class LiveSnapshotCandidate:
             symbol_availability=self.symbol_availability,
             market_closed_reason=self.market_closed_reason,
             minimum_preheat_5m=MINIMUM_PREHEAT_5M,
+            bars_30m=preview["bars_30m"],
+            closed_30m_prefix=self.pipeline_result.closed_30m_prefix,
         )
         return build_workbench_projection(
             self.pipeline_result,
@@ -166,7 +171,7 @@ LiveStateHandler = Callable[[str, str], None]
 class LiveSession:
     """Concrete Live Session that performs the initial full-load workflow."""
 
-    MINIMUM_PREHEAT_5M = 500
+    MINIMUM_PREHEAT_5M = DEFAULT_CHART_PREHEAT_COUNT
 
     def __init__(
         self,

@@ -6,44 +6,59 @@ import {
   createWorkbenchState,
   selectWorkbenchLayout,
   selectWorkbenchMode,
+  selectWorkbenchSecondaryChart,
   selectWorkbenchSecurity,
   toggleWorkbenchLayer,
   workbenchPreferences,
   WorkbenchLayer,
   WorkbenchLayoutMode,
   WorkbenchMode,
+  WorkbenchSecondaryChart,
   workbenchLayoutMode,
 } from "../renderer/src/workbench-layout.mjs";
 
 
-test("workbench defaults to the 64/36 split with a visible intraday group", () => {
+test("workbench defaults to a visible secondary pane on the intraday chart", () => {
   const state = createWorkbenchState();
 
-  assert.deepEqual(state.layout, {
-    chartSplit: "64_36",
-    showIntraday: true,
+  assert.deepEqual(state.layout, { showIntraday: true });
+  assert.equal(state.secondaryChart, WorkbenchSecondaryChart.INTRADAY);
+  assert.equal(workbenchLayoutMode(state), WorkbenchLayoutMode.SHOW_INTRADAY);
+  assert.deepEqual(state.chartViews, {
+    fiveMinute: null,
+    intraday: null,
+    thirtyMinute: null,
   });
-  assert.equal(workbenchLayoutMode(state), WorkbenchLayoutMode.MAIN_PRIORITY);
 });
 
-test("all three layout choices retain chart view state", () => {
+test("show and hide secondary layout retain chart view state", () => {
   const fiveMinute = { range: { from: 120, to: 180 }, followState: "manual" };
   const intraday = { range: { from: 0, to: 60 }, followState: "following" };
+  const thirtyMinute = { range: { from: 8, to: 80 }, followState: "manual" };
   const initial = {
     ...createWorkbenchState(),
-    chartViews: { fiveMinute, intraday },
+    chartViews: { fiveMinute, intraday, thirtyMinute },
   };
 
-  const equal = selectWorkbenchLayout(initial, WorkbenchLayoutMode.EQUAL);
-  const hidden = selectWorkbenchLayout(equal, WorkbenchLayoutMode.HIDE_INTRADAY);
-  const restored = selectWorkbenchLayout(hidden, WorkbenchLayoutMode.MAIN_PRIORITY);
+  const hidden = selectWorkbenchLayout(initial, WorkbenchLayoutMode.HIDE_INTRADAY);
+  const restored = selectWorkbenchLayout(hidden, WorkbenchLayoutMode.SHOW_INTRADAY);
 
-  assert.deepEqual(equal.layout, { chartSplit: "50_50", showIntraday: true });
-  assert.deepEqual(hidden.layout, { chartSplit: "50_50", showIntraday: false });
-  assert.deepEqual(restored.layout, { chartSplit: "64_36", showIntraday: true });
-  assert.strictEqual(equal.chartViews.fiveMinute, fiveMinute);
+  assert.deepEqual(hidden.layout, { showIntraday: false });
+  assert.deepEqual(restored.layout, { showIntraday: true });
+  assert.strictEqual(hidden.chartViews.fiveMinute, fiveMinute);
   assert.strictEqual(hidden.chartViews.intraday, intraday);
-  assert.strictEqual(restored.chartViews.intraday, intraday);
+  assert.strictEqual(restored.chartViews.thirtyMinute, thirtyMinute);
+});
+
+test("secondary chart type is session-only and is not persisted", () => {
+  const state = selectWorkbenchSecondaryChart(
+    createWorkbenchState(),
+    WorkbenchSecondaryChart.THIRTY_MINUTE,
+  );
+  assert.equal(state.secondaryChart, WorkbenchSecondaryChart.THIRTY_MINUTE);
+  assert.equal(state.layout.showIntraday, true);
+  assert.equal(workbenchPreferences(state).layout.show_intraday, true);
+  assert.equal("secondaryChart" in workbenchPreferences(state), false);
 });
 
 test("an unsupported layout cannot silently corrupt state", () => {
@@ -66,10 +81,15 @@ test("selecting a new security clears chart view state to avoid inheriting the p
     chartViews: {
       fiveMinute: { range: { from: 10, to: 80 }, followState: "manual" },
       intraday: { range: { from: 0, to: 40 }, followState: "following" },
+      thirtyMinute: { range: { from: 4, to: 40 }, followState: "manual" },
     },
   };
   const selected = selectWorkbenchSecurity(withViews, security);
-  assert.deepEqual(selected.chartViews, { fiveMinute: null, intraday: null });
+  assert.deepEqual(selected.chartViews, {
+    fiveMinute: null,
+    intraday: null,
+    thirtyMinute: null,
+  });
 });
 
 test("mode and layout changes preserve layers, security, and chart view state", () => {
@@ -83,7 +103,7 @@ test("mode and layout changes preserve layers, security, and chart view state", 
   const snapshot = { range: { from: 10, to: 80 }, followState: "manual" };
   let state = {
     ...selectWorkbenchSecurity(createWorkbenchState(), security),
-    chartViews: { fiveMinute: snapshot, intraday: null },
+    chartViews: { fiveMinute: snapshot, intraday: null, thirtyMinute: null },
   };
   state = toggleWorkbenchLayer(state, WorkbenchLayer.MA20);
   state = selectWorkbenchMode(state, WorkbenchMode.REPLAY);
@@ -110,12 +130,12 @@ test("persisted preferences are copies and never own current React state", () =>
 
   const restored = applyWorkbenchPreferences(createWorkbenchState(), {
     ...persistedCopy,
-    layout: { chart_split: "50_50", show_intraday: false },
+    layout: { show_intraday: false },
   });
   assert.deepEqual(restored.layout, {
-    chartSplit: "50_50",
     showIntraday: false,
   });
   assert.equal(restored.layers.ma5, true);
   assert.equal(restored.mode, "live");
+  assert.equal(restored.secondaryChart, WorkbenchSecondaryChart.INTRADAY);
 });

@@ -320,7 +320,7 @@ class LiveApplicationTests(unittest.TestCase):
             request_id="save-layout",
             preferences={
                 "last_symbol": None,
-                "layout": {"chart_split": "50_50", "show_intraday": False},
+                "layout": {"show_intraday": False},
                 "layers": PreferenceValues().layers.to_dict(),
             },
         )
@@ -330,9 +330,8 @@ class LiveApplicationTests(unittest.TestCase):
             self.preferences.restore_for_startup().snapshot.preferences.last_symbol,
             "sh.600519",
         )
-        self.assertEqual(
-            saved["data"]["preferences"]["layout"]["chart_split"],
-            "50_50",
+        self.assertFalse(
+            saved["data"]["preferences"]["layout"]["show_intraday"],
         )
 
     def test_save_preferences_ignores_stale_non_null_last_symbol(
@@ -346,7 +345,7 @@ class LiveApplicationTests(unittest.TestCase):
             request_id="save-layout",
             preferences={
                 "last_symbol": "sh.600000",
-                "layout": {"chart_split": "50_50", "show_intraday": False},
+                "layout": {"show_intraday": False},
                 "layers": PreferenceValues().layers.to_dict(),
             },
         )
@@ -368,7 +367,7 @@ class LiveApplicationTests(unittest.TestCase):
         self.events.get(timeout=1)
         layout_prefs = {
             "last_symbol": "sh.600000",
-            "layout": {"chart_split": "50_50", "show_intraday": False},
+            "layout": {"show_intraday": False},
             "layers": PreferenceValues().layers.to_dict(),
         }
         barrier = Barrier(2)

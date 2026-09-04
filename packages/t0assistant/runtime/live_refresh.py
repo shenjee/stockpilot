@@ -45,11 +45,12 @@ class LiveRefreshValidationError(LiveRefreshError, ValueError):
 
 
 class LiveRefreshKind(str, Enum):
-    """The three independently scheduled Live data branches."""
+    """The independently scheduled Live data branches."""
 
     QUOTE = "quote"
     ONE_MINUTE = "one_minute"
     OFFICIAL_FIVE_MINUTE = "official_five_minute"
+    OFFICIAL_THIRTY_MINUTE = "official_thirty_minute"
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,18 +60,22 @@ class LiveRefreshIntervals:
     quote: timedelta = timedelta(seconds=3)
     one_minute: timedelta = timedelta(seconds=15)
     official_five_minute: timedelta = timedelta(seconds=30)
+    official_thirty_minute: timedelta = timedelta(seconds=15)
     reduced_quote: timedelta = timedelta(seconds=15)
     reduced_one_minute: timedelta = timedelta(seconds=30)
     reduced_official_five_minute: timedelta = timedelta(seconds=60)
+    reduced_official_thirty_minute: timedelta = timedelta(seconds=60)
 
     def __post_init__(self) -> None:
         for name, value in (
             ("quote", self.quote),
             ("one_minute", self.one_minute),
             ("official_five_minute", self.official_five_minute),
+            ("official_thirty_minute", self.official_thirty_minute),
             ("reduced_quote", self.reduced_quote),
             ("reduced_one_minute", self.reduced_one_minute),
             ("reduced_official_five_minute", self.reduced_official_five_minute),
+            ("reduced_official_thirty_minute", self.reduced_official_thirty_minute),
         ):
             if not isinstance(value, timedelta) or value <= timedelta(0):
                 raise LiveRefreshValidationError(
@@ -88,12 +93,16 @@ class LiveRefreshIntervals:
                 return self.reduced_quote
             if kind is LiveRefreshKind.ONE_MINUTE:
                 return self.reduced_one_minute
-            return self.reduced_official_five_minute
+            if kind is LiveRefreshKind.OFFICIAL_FIVE_MINUTE:
+                return self.reduced_official_five_minute
+            return self.reduced_official_thirty_minute
         if kind is LiveRefreshKind.QUOTE:
             return self.quote
         if kind is LiveRefreshKind.ONE_MINUTE:
             return self.one_minute
-        return self.official_five_minute
+        if kind is LiveRefreshKind.OFFICIAL_FIVE_MINUTE:
+            return self.official_five_minute
+        return self.official_thirty_minute
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,6 +188,7 @@ LiveRefreshUpdateHandler = Callable[[LiveIncrementalUpdate], object]
 LiveRefreshFailureHandler = Callable[
     [LiveRefreshKind, BaseException, int | None], None
 ]
+LiveThirtyMinuteDelayedHandler = Callable[[bool], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,6 +203,7 @@ class LiveRefreshBranchState:
     last_failure: BaseException | None
     consecutive_failures: int
     in_flight: bool
+    thirty_minute_delayed: bool = False
 
 
 @dataclass(slots=True)
@@ -203,6 +214,14 @@ class _MutableBranchState:
     next_due_at: datetime | None = None
     last_failure: BaseException | None = None
     consecutive_failures: int = 0
+    # 30m boundary-triggered scheduling (design §10).
+    # ``thirty_minute_pending_boundary`` is the 30m close boundary whose
+    # official bar we are currently waiting for.  ``boundary_first_attempt_at``
+    # records when we first tried to fetch it, so we can detect the 2-minute
+    # delay threshold.
+    thirty_minute_pending_boundary: datetime | None = None
+    boundary_first_attempt_at: datetime | None = None
+    thirty_minute_delayed: bool = False
 
 
 class LiveRefreshScheduler:
@@ -227,6 +246,7 @@ class LiveRefreshScheduler:
         LiveRefreshKind.QUOTE,
         LiveRefreshKind.ONE_MINUTE,
         LiveRefreshKind.OFFICIAL_FIVE_MINUTE,
+        LiveRefreshKind.OFFICIAL_THIRTY_MINUTE,
     )
 
     def __init__(
@@ -242,6 +262,9 @@ class LiveRefreshScheduler:
         on_failure: LiveRefreshFailureHandler | None = None,
         initial_data_times: Mapping[LiveRefreshKind | str, datetime | None]
         | None = None,
+        thirty_minute_boundary_provider: Callable[[datetime], datetime | None]
+        | None = None,
+        on_thirty_minute_delayed: LiveThirtyMinuteDelayedHandler | None = None,
     ) -> None:
         if not isinstance(spec, SessionSpec):
             raise TypeError("spec must be a SessionSpec")
@@ -259,6 +282,16 @@ class LiveRefreshScheduler:
             raise TypeError("clock must be callable")
         if on_failure is not None and not callable(on_failure):
             raise TypeError("on_failure must be callable")
+        if (
+            thirty_minute_boundary_provider is not None
+            and not callable(thirty_minute_boundary_provider)
+        ):
+            raise TypeError("thirty_minute_boundary_provider must be callable")
+        if (
+            on_thirty_minute_delayed is not None
+            and not callable(on_thirty_minute_delayed)
+        ):
+            raise TypeError("on_thirty_minute_delayed must be callable")
 
         self._spec = spec
         self._input_port = input_port
@@ -268,6 +301,8 @@ class LiveRefreshScheduler:
         self._backoff = backoff
         self._clock = clock or datetime.now
         self._on_failure = on_failure
+        self._thirty_minute_boundary_provider = thirty_minute_boundary_provider
+        self._on_thirty_minute_delayed = on_thirty_minute_delayed
         self._lock = RLock()
         self._publish_lock = Lock()
         self._retired = False
@@ -386,6 +421,9 @@ class LiveRefreshScheduler:
                 state.next_due_at = None
                 state.last_failure = None
                 state.consecutive_failures = 0
+                state.thirty_minute_pending_boundary = None
+                state.boundary_first_attempt_at = None
+                state.thirty_minute_delayed = False
             for raw_kind, data_time in (data_times or {}).items():
                 kind = _coerce_kind(raw_kind)
                 if data_time is not None and (
@@ -454,8 +492,10 @@ class LiveRefreshScheduler:
                 self._active_kinds.add(kind)
                 state = self._states[kind]
                 state.last_attempt_at = observed_at
-                state.next_due_at = observed_at + self._intervals.for_kind(
+                state.next_due_at = self._compute_next_due_at(
                     kind,
+                    state,
+                    observed_at,
                     polling_profile=profile,
                 )
                 watermark = state.latest_data_time
@@ -614,10 +654,16 @@ class LiveRefreshScheduler:
                 return False
         for update in result.updates:
             self._on_update(update)
+        delayed_changed: bool | None = None
         with self._lock:
             if self._retired:
                 return False
-            self._store_watermark(kind, observed_at, result)
+            delayed_changed = self._store_watermark(kind, observed_at, result)
+        if (
+            delayed_changed is not None
+            and self._on_thirty_minute_delayed is not None
+        ):
+            self._on_thirty_minute_delayed(delayed_changed)
         return True
 
     def _store_watermark(
@@ -625,13 +671,118 @@ class LiveRefreshScheduler:
         kind: LiveRefreshKind,
         observed_at: datetime,
         result: LiveRefreshResult,
-    ) -> None:
+    ) -> bool | None:
         state = self._states[kind]
         if result.data_time is not None:
             state.latest_data_time = result.data_time
         state.last_success_at = observed_at
         state.last_failure = None
         state.consecutive_failures = 0
+        if kind is LiveRefreshKind.OFFICIAL_THIRTY_MINUTE:
+            return self._advance_thirty_minute_schedule(
+                state,
+                observed_at,
+                data_received=result.data_time is not None,
+            )
+        return None
+
+    def _compute_next_due_at(
+        self,
+        kind: LiveRefreshKind,
+        state: _MutableBranchState,
+        observed_at: datetime,
+        *,
+        polling_profile: PollingProfile,
+    ) -> datetime:
+        """Compute the next due time for a branch.
+
+        For fixed-interval branches (quote, 1m, 5m) this is simply
+        ``observed_at + interval``.  For 30m, if a boundary provider is
+        available, the next due time is the next 30m boundary + 5s (design
+        §10).  If no provider is configured, 30m falls back to fixed-interval
+        scheduling like the other branches.
+        """
+
+        if (
+            kind is LiveRefreshKind.OFFICIAL_THIRTY_MINUTE
+            and self._thirty_minute_boundary_provider is not None
+        ):
+            next_boundary = self._thirty_minute_boundary_provider(observed_at)
+            if next_boundary is not None:
+                if state.thirty_minute_pending_boundary is None:
+                    state.thirty_minute_pending_boundary = next_boundary
+                return next_boundary + timedelta(seconds=5)
+        return observed_at + self._intervals.for_kind(
+            kind,
+            polling_profile=polling_profile,
+        )
+
+    def _advance_thirty_minute_schedule(
+        self,
+        state: _MutableBranchState,
+        observed_at: datetime,
+        *,
+        data_received: bool,
+    ) -> bool | None:
+        """Advance the 30m boundary-triggered schedule after a refresh result.
+
+        Returns ``True`` when the branch newly enters the delayed state,
+        ``False`` when it leaves that state, and ``None`` when the delayed
+        flag does not change.
+
+        When official data is received, the watermark advances to the new
+        boundary and the next due time is the *next* 30-minute boundary + 5s.
+        When no data is returned (the official bar is not yet available), the
+        branch retries after the retry interval (15s active, 60s reduced).  If
+        2 minutes have elapsed since the boundary's first attempt without
+        receiving data, the branch enters the delayed state and switches to
+        the 60s reduced interval.
+        """
+
+        if self._thirty_minute_boundary_provider is None:
+            return None
+        was_delayed = state.thirty_minute_delayed
+        if data_received:
+            state.thirty_minute_pending_boundary = None
+            state.boundary_first_attempt_at = None
+            state.thirty_minute_delayed = False
+            next_boundary = self._thirty_minute_boundary_provider(observed_at)
+            if next_boundary is not None:
+                state.thirty_minute_pending_boundary = next_boundary
+                state.next_due_at = next_boundary + timedelta(seconds=5)
+            if was_delayed and not state.thirty_minute_delayed:
+                return False
+            return None
+        # No data — the official bar is not yet available.  Track the boundary
+        # we are waiting for and when we first tried.
+        if state.thirty_minute_pending_boundary is None:
+            boundary = self._thirty_minute_boundary_provider(observed_at)
+            if boundary is not None:
+                state.thirty_minute_pending_boundary = boundary
+        if (
+            state.boundary_first_attempt_at is None
+            and state.thirty_minute_pending_boundary is not None
+            and observed_at
+            >= state.thirty_minute_pending_boundary + timedelta(seconds=5)
+        ):
+            state.boundary_first_attempt_at = observed_at
+        if state.boundary_first_attempt_at is None:
+            return None
+        # Check the 2-minute delay threshold.
+        if (
+            state.boundary_first_attempt_at is not None
+            and observed_at
+            >= state.boundary_first_attempt_at + timedelta(minutes=2)
+        ):
+            state.thirty_minute_delayed = True
+            state.next_due_at = observed_at + self._intervals.reduced_official_thirty_minute
+        else:
+            state.next_due_at = observed_at + self._intervals.official_thirty_minute
+        if state.thirty_minute_delayed and not was_delayed:
+            return True
+        if was_delayed and not state.thirty_minute_delayed:
+            return False
+        return None
 
     def _validate_update(
         self,
@@ -662,6 +813,12 @@ class LiveRefreshScheduler:
                 "chan_analysis_replaced",
                 "live_market_view_updated",
             },
+            LiveRefreshKind.OFFICIAL_THIRTY_MINUTE: {
+                "market_update",
+                "indicators_updated",
+                "chan_analysis_30m_replaced",
+                "live_market_view_updated",
+            },
         }[kind]
         if update.event_type not in allowed:
             raise LiveRefreshValidationError(
@@ -676,7 +833,22 @@ class LiveRefreshScheduler:
         *,
         market_epoch: int | None = None,
     ) -> None:
+        """Record a failed branch attempt and schedule the next retry.
+
+        A failed OFFICIAL_THIRTY_MINUTE attempt is treated as a no-data
+        attempt: the boundary wait state advances exactly as it does when a
+        refresh succeeds without official data (15s retries, 60s once the
+        2-minute delay threshold trips).  Generic exponential backoff would
+        silently stretch the retry past the boundary window and never raise
+        the delayed-official warning, so it is only used when no pending
+        boundary exists (e.g. outside the trading session).  While a future
+        boundary is pending, the ``boundary + 5s`` schedule computed at
+        dispatch is preserved so a pre-boundary failure cannot postpone the
+        first post-boundary attempt.
+        """
+
         publish_failure = False
+        delayed_changed: bool | None = None
         with self._lock:
             if self._retired:
                 return
@@ -689,13 +861,36 @@ class LiveRefreshScheduler:
             state = self._states[kind]
             state.last_failure = failure
             state.consecutive_failures += 1
-            state.next_due_at = observed_at + self._backoff.delay(
-                self._intervals.for_kind(
-                    kind,
-                    polling_profile=self._polling_profile,
-                ),
-                state.consecutive_failures,
+            base_interval = self._intervals.for_kind(
+                kind,
+                polling_profile=self._polling_profile,
             )
+            if (
+                kind is LiveRefreshKind.OFFICIAL_THIRTY_MINUTE
+                and self._thirty_minute_boundary_provider is not None
+            ):
+                delayed_changed = self._advance_thirty_minute_schedule(
+                    state,
+                    observed_at,
+                    data_received=False,
+                )
+                if state.thirty_minute_pending_boundary is None:
+                    # No pending boundary (e.g. outside the trading session):
+                    # the boundary schedule cannot determine a wait, so fall
+                    # back to the generic backoff so the branch still retries.
+                    state.next_due_at = observed_at + self._backoff.delay(
+                        base_interval,
+                        state.consecutive_failures,
+                    )
+                # Otherwise keep the boundary schedule: either the pending
+                # boundary's ``boundary + 5s`` due time (pre-boundary failure)
+                # or the retry interval set by _advance_thirty_minute_schedule
+                # (post-boundary failure).
+            else:
+                state.next_due_at = observed_at + self._backoff.delay(
+                    base_interval,
+                    state.consecutive_failures,
+                )
             publish_failure = True
         if publish_failure and self._on_failure is not None:
             try:
@@ -710,7 +905,8 @@ class LiveRefreshScheduler:
                         "original_failure_type": type(failure).__name__,
                     },
                 )
-                return
+        if delayed_changed is not None and self._on_thirty_minute_delayed is not None:
+            self._on_thirty_minute_delayed(delayed_changed)
 
     def _read_input_market_epoch(self) -> int | None:
         return _read_input_int_attr(self._input_port, "market_epoch")
@@ -740,6 +936,7 @@ class LiveRefreshScheduler:
             last_failure=state.last_failure,
             consecutive_failures=state.consecutive_failures,
             in_flight=kind in self._active_kinds,
+            thirty_minute_delayed=state.thirty_minute_delayed,
         )
 
 

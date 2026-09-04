@@ -205,6 +205,26 @@ class LiveDataPreparator(LiveInitialInputPort):
                 session_validator=session_validator,
             )
         previous_close = _derive_previous_close(daily_history, preheat_bars)
+
+        # ---- 30m preheat and official 30m (direct provider, never from 5m)
+        preheat_30m = self._load_preheat_30m_best_effort(
+            code=code,
+            market=market,
+            instrument_type=instrument_type,
+            session=effective_session,
+            minimum_preheat_30m=minimum_preheat_5m,
+            session_validator=session_validator,
+        )
+        official_30m = self._load_target_day_bars_best_effort(
+            code=code,
+            market=market,
+            trade_date=effective_session.trade_date.isoformat(),
+            timeframe="30m",
+            instrument_type=instrument_type,
+            session_validator=session_validator,
+            observed_at=_bar_filter_observed_at(observed_now, effective_session.trade_date),
+        )
+
         symbol_availability = assess_symbol_availability(
             market_candidate_trade_date=market_candidate_date,
             security_data_trade_date=resolve_security_data_trade_date(
@@ -224,6 +244,8 @@ class LiveDataPreparator(LiveInitialInputPort):
             daily_bars_history=_freeze_rows(daily_history),
             quote_snapshots=_freeze_rows(quote_snapshots),
             previous_close=previous_close,
+            preheat_30m_bars=_freeze_rows(preheat_30m),
+            official_30m_bars=_freeze_rows(official_30m),
         )
         return PreparedLiveWarmup(
             market_session=effective_session,
@@ -250,8 +272,8 @@ class LiveDataPreparator(LiveInitialInputPort):
         detects post-open evidence for the calendar target day.
         """
 
-        if timeframe not in {"1m", "5m"}:
-            raise LiveDataError("refresh timeframe must be '1m' or '5m'")
+        if timeframe not in {"1m", "5m", "30m"}:
+            raise LiveDataError("refresh timeframe must be '1m', '5m' or '30m'")
         _, code, market = self._refresh_identity(spec)
         instrument_type = _instrument_type_from_spec(spec)
         observed_now = self._resolve_observed_now()
@@ -534,6 +556,96 @@ class LiveDataPreparator(LiveInitialInputPort):
         except LiveDataError:
             return ()
 
+    def _load_preheat_30m_best_effort(
+        self,
+        *,
+        code: str,
+        market: str,
+        instrument_type: str | None,
+        session,
+        minimum_preheat_30m: int,
+        session_validator: Callable[[], bool] | None,
+    ) -> tuple[Mapping[str, Any], ...]:
+        """Best-effort 30m preheat loading (design §10, §14.3).
+
+        30m preheat always comes from the official ``30m`` provider interface,
+        never aggregated from 5m bars.  Unlike 5m preheat, 30m preheat is
+        best-effort: a provider failure or insufficient bars must not block
+        Live startup.  The 30m chart simply shows an empty state with a
+        warning when preheat is unavailable.
+        """
+
+        try:
+            return self._load_preheat_30m(
+                code=code,
+                market=market,
+                instrument_type=instrument_type,
+                session=session,
+                minimum_preheat_30m=minimum_preheat_30m,
+                session_validator=session_validator,
+            )
+        except LiveDataError:
+            return ()
+
+    def _load_preheat_30m(
+        self,
+        *,
+        code: str,
+        market: str,
+        instrument_type: str | None,
+        session,
+        minimum_preheat_30m: int,
+        session_validator: Callable[[], bool] | None,
+    ) -> tuple[Mapping[str, Any], ...]:
+        collected: list[Mapping[str, Any]] = []
+        batch_end = self._calendar.previous_trading_day(
+            session.trade_date,
+            market,
+        )
+        normalized: tuple[dict[str, Any], ...] = ()
+        while batch_end is not None and len(normalized) < minimum_preheat_30m:
+            remaining = minimum_preheat_30m - len(normalized)
+            batch_days = max(3, ceil(remaining / 8) + 2)
+            batch_start = batch_end
+            for _ in range(batch_days - 1):
+                previous = self._calendar.previous_trading_day(
+                    batch_start,
+                    market,
+                )
+                if previous is None:
+                    break
+                batch_start = previous
+            result = self._market_data.get_klines_result(
+                code=code,
+                end_date=batch_end.isoformat(),
+                market=market,
+                timeframe="30m",
+                start_date=batch_start.isoformat(),
+                limit=minimum_preheat_30m,
+                instrument_type=instrument_type,
+                request_priority=self._config.request_priority,
+                session_validator=session_validator,
+                request_timeout=self._config.request_timeout,
+            )
+            rows = normalize_provider_bar_units(
+                _extract_live_rows(result),
+                self._market_data,
+            )
+            collected.extend(rows)
+            normalized = _normalize_preheat_bars(
+                collected,
+                session_start=session.start,
+            )
+            batch_end = self._calendar.previous_trading_day(
+                batch_start,
+                market,
+            )
+        if len(normalized) < minimum_preheat_30m:
+            raise LiveDataUnavailableError(
+                f"live initial load requires at least {minimum_preheat_30m} closed 30m preheat bars"
+            )
+        return normalized[-minimum_preheat_30m:]
+
     def _load_intraday_discovery_range(
         self,
         *,
@@ -670,6 +782,32 @@ class LiveDataPreparator(LiveInitialInputPort):
         ]
         session = self._calendar.require_session(trade_date, market)
         return _normalize_target_day_bars(rows, session=session)
+
+    def _load_target_day_bars_best_effort(
+        self,
+        *,
+        code: str,
+        market: str,
+        trade_date: str,
+        timeframe: str,
+        instrument_type: str | None,
+        session_validator: Callable[[], bool] | None,
+        observed_at: datetime,
+    ) -> tuple[Mapping[str, Any], ...]:
+        """Best-effort official bar load; 30m failures must not block Live."""
+
+        try:
+            return self._load_target_day_bars(
+                code=code,
+                market=market,
+                trade_date=trade_date,
+                timeframe=timeframe,
+                instrument_type=instrument_type,
+                session_validator=session_validator,
+                observed_at=observed_at,
+            )
+        except LiveDataError:
+            return ()
 
     def _load_daily_history(
         self,

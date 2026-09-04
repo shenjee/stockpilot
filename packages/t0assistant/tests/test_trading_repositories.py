@@ -123,7 +123,7 @@ class TradingRepositoryTests(unittest.TestCase):
             database.connection.execute(
                 """
                 UPDATE preferences
-                SET last_symbol = 'sh.600584', chart_split = '50_50'
+                SET last_symbol = 'sh.600584', show_intraday = 0
                 WHERE singleton_id = 1
                 """
             )
@@ -147,15 +147,20 @@ class TradingRepositoryTests(unittest.TestCase):
             last_symbol = migrated.connection.execute(
                 "SELECT last_symbol FROM preferences WHERE singleton_id = 1"
             ).fetchone()[0]
-            chart_split = migrated.connection.execute(
-                "SELECT chart_split FROM preferences WHERE singleton_id = 1"
+            preference_columns = {
+                row[1]
+                for row in migrated.connection.execute("PRAGMA table_info(preferences)")
+            }
+            show_intraday = migrated.connection.execute(
+                "SELECT show_intraday FROM preferences WHERE singleton_id = 1"
             ).fetchone()[0]
             migrated_plans = SqliteFeePlanRepository(migrated)
             migrated_trades = SqliteTradeRepository(migrated)
 
             self.assertEqual(schema_version, SCHEMA_VERSION)
             self.assertEqual(last_symbol, "sh.600584")
-            self.assertEqual(chart_split, "50_50")
+            self.assertEqual(show_intraday, 0)
+            self.assertNotIn("chart_split", preference_columns)
             self.assertEqual(migrated_plans.list_all(), (plan,))
             self.assertEqual(migrated_trades.list_all(), (trade,))
 

@@ -52,6 +52,17 @@ const SHARES_PER_LOT = 100;
 const MARKET_TIMESTAMP_RE =
   /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/;
 
+const THIRTY_MINUTE_CLOSES = Object.freeze([
+  "10:00:00",
+  "10:30:00",
+  "11:00:00",
+  "11:30:00",
+  "13:30:00",
+  "14:00:00",
+  "14:30:00",
+  "15:00:00",
+]);
+
 /**
  * Parse a market timestamp string into a Unix timestamp in seconds.
  *
@@ -65,6 +76,42 @@ export function parseMarketTimestampSeconds(timestamp) {
   }
   const [, year, month, day, hour, minute, second] = match.map(Number);
   return Date.UTC(year, month - 1, day, hour, minute, second) / 1000;
+}
+
+/**
+ * Map an execution time onto the 30-minute bar close that contains it.
+ * Lunch (after 11:30 and before 13:00) and pre-open times yield null.
+ *
+ * @param {string} executedAt
+ * @returns {string | null}
+ */
+export function thirtyMinuteCloseTimestamp(executedAt) {
+  if (typeof executedAt !== "string" || !MARKET_TIMESTAMP_RE.test(executedAt)) {
+    return null;
+  }
+  const date = executedAt.slice(0, 10);
+  let executed;
+  try {
+    executed = parseMarketTimestampSeconds(executedAt);
+  } catch {
+    return null;
+  }
+  const open = parseMarketTimestampSeconds(`${date} 09:30:00`);
+  const lunchStart = parseMarketTimestampSeconds(`${date} 11:30:00`);
+  const afternoonStart = parseMarketTimestampSeconds(`${date} 13:00:00`);
+  if (executed < open) {
+    return null;
+  }
+  if (executed > lunchStart && executed < afternoonStart) {
+    return null;
+  }
+  for (const close of THIRTY_MINUTE_CLOSES) {
+    const closeTime = parseMarketTimestampSeconds(`${date} ${close}`);
+    if (executed <= closeTime) {
+      return `${date} ${close}`;
+    }
+  }
+  return null;
 }
 
 /**
@@ -145,10 +192,11 @@ export function projectTradeMarker(trade) {
  *
  * @param {TradeRecord[]} trades
  * @param {Object} [options]
- * @param {Set<number> | number[]} [options.allowedTimes] - if provided, only keep markers whose chart time matches an existing 5m K-line time. Markers with no matching K-line are discarded so they cannot create fake candles.
+ * @param {Set<number> | number[]} [options.allowedTimes] - if provided, only keep markers whose chart time matches an existing K-line time.
+ * @param {(trade: TradeRecord) => string | null} [options.resolveBucketStart] - override bucket_start, used to place the same trades onto 30m bars via executed_at.
  * @returns {TradeMarkerModel[]}
  */
-export function projectTradeMarkers(trades, { allowedTimes } = {}) {
+export function projectTradeMarkers(trades, { allowedTimes, resolveBucketStart } = {}) {
   if (!Array.isArray(trades)) {
     return [];
   }
@@ -156,7 +204,16 @@ export function projectTradeMarkers(trades, { allowedTimes } = {}) {
   const allowed = allowedTimes ? new Set(allowedTimes) : null;
 
   const markers = trades
-    .map(projectTradeMarker)
+    .map((trade) => {
+      if (!resolveBucketStart) {
+        return projectTradeMarker(trade);
+      }
+      const bucketStart = resolveBucketStart(trade);
+      if (!bucketStart) {
+        return null;
+      }
+      return projectTradeMarker({ ...trade, bucket_start: bucketStart });
+    })
     .filter(
       /** @type {(m: TradeMarkerModel | null) => m is TradeMarkerModel} */
         ((m) => m !== null),

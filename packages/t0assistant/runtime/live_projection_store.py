@@ -33,7 +33,7 @@ from __future__ import annotations
 import copy
 from dataclasses import dataclass
 from threading import RLock
-from typing import Any, Protocol
+from typing import Any, Mapping, Protocol, Sequence
 
 from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
@@ -50,10 +50,11 @@ _INCREMENTAL_EVENT_TYPES = frozenset(
         "market_update",
         "indicators_updated",
         "chan_analysis_replaced",
+        "chan_analysis_30m_replaced",
         "live_market_view_updated",
     }
 )
-_MARKET_TARGETS = frozenset({"quote", "bars_1m", "bars_5m", "daily_bars"})
+_MARKET_TARGETS = frozenset({"quote", "bars_1m", "bars_5m", "bars_30m", "daily_bars"})
 
 
 class LiveProjectionStoreError(RuntimeMarketDataError):
@@ -411,6 +412,69 @@ class LiveProjectionStore:
             return None
         return event_box[0] if event_box else None
 
+    def sync_warnings(
+        self,
+        *,
+        session_id: str,
+        generation: int,
+        warnings: Sequence[Mapping[str, Any]],
+    ) -> LiveAcceptedEvent | None:
+        """Replace snapshot warnings when the code set actually changes.
+
+        Used for Live-only ``thirty_minute_official_delayed`` and to clear it
+        once the official 30m bar arrives.  No-ops when the warning codes
+        already match so 15s retries do not republish full snapshots.
+        """
+
+        if not session_id:
+            raise ValueError("session_id must be non-empty")
+        incoming = [copy.deepcopy(dict(item)) for item in warnings]
+        incoming_codes = [item["warning_code"] for item in incoming]
+        event_box: list[LiveAcceptedEvent] = []
+
+        def commit() -> None:
+            with self._lock:
+                session_key = (session_id, generation)
+                if (
+                    self._current_session != session_key
+                    or self._current_payload is None
+                    or self._current_revision is None
+                ):
+                    return
+                current_codes = [
+                    item.get("warning_code")
+                    for item in self._current_payload.get("warnings") or ()
+                ]
+                if current_codes == incoming_codes:
+                    return
+                revision = self._current_revision + 1
+                staged = copy.deepcopy(self._current_payload)
+                staged["session"]["revision"] = revision
+                staged["warnings"] = incoming
+                _LOGICAL_SNAPSHOT_VALIDATOR.validate(staged)
+                self._current_payload = staged
+                self._current_revision = revision
+                event_box.append(
+                    LiveAcceptedEvent(
+                        schema_version=SCHEMA_VERSION,
+                        service_generation=self._service_generation,
+                        session_id=session_id,
+                        revision=revision,
+                        event_type="workbench_snapshot",
+                        payload=copy.deepcopy(staged),
+                    )
+                )
+
+        accepted = self._coordinator.commit_if_accepted(
+            session_type=SessionType.LIVE,
+            session_id=session_id,
+            generation=generation,
+            commit=commit,
+        )
+        if not accepted:
+            return None
+        return event_box[0] if event_box else None
+
     def get_live_snapshot(
         self,
         *,
@@ -504,11 +568,11 @@ def _apply_incremental(
     sort, mirroring the Renderer's ``mergeTimestampRows`` so a rebaseline
     snapshot never loses history and stays chronologically ordered (a
     late-arriving earlier row lands in order, not at the tail).  Five-minute
-    updates also drop unclosed rows whose timestamps are absent from the
-    increment so a new dynamic bucket can replace the previous one.  ``quote``
-    and ``chan_analysis`` are authoritative full replacements.  Incoming rows
-    are deep-copied so the caller's payload can never alias the authoritative
-    state.
+    and thirty-minute updates also drop unclosed rows whose timestamps are
+    absent from the increment so a new dynamic bucket can replace the previous
+    one.  ``quote`` and ``chan_analysis`` are authoritative full replacements.
+    Incoming rows are deep-copied so the caller's payload can never alias the
+    authoritative state.
     """
 
     if event_type == "market_update":
@@ -520,6 +584,10 @@ def _apply_incremental(
             market[target_field] = _merge_five_minute_bars(
                 market[target_field], payload["bars"]
             )
+        elif target_field == "bars_30m":
+            market[target_field] = _merge_thirty_minute_bars(
+                market[target_field], payload["bars"]
+            )
         else:
             market[target_field] = _merge_rows_by_timestamp(
                 market[target_field], payload["bars"]
@@ -528,6 +596,8 @@ def _apply_incremental(
         _merge_indicators(target["indicators"], payload)
     elif event_type == "live_market_view_updated":
         target["live_market_view"] = copy.deepcopy(payload)
+    elif event_type == "chan_analysis_30m_replaced":
+        target["chan_analysis_30m"] = copy.deepcopy(payload)
     else:  # chan_analysis_replaced
         target["chan_analysis"] = copy.deepcopy(payload)
 
@@ -569,6 +639,44 @@ def _merge_five_minute_bars(
     return merge_five_minute_bars(current, incoming)
 
 
+def merge_thirty_minute_bars(
+    current: list[dict[str, Any]] | None,
+    incoming: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Upsert 30m bars and drop unclosed rows absent from the increment.
+
+    Same semantics as :func:`merge_five_minute_bars`, applied to the 30m
+    timeframe: one-minute refreshes publish only the current dynamic (unclosed)
+    30m bar, so a timestamp merge alone cannot delete the previous bucket's
+    dynamic bar once the boundary advances.  Any unclosed row whose timestamp
+    is missing from ``incoming`` is removed.  Closed bars are never deleted
+    here; official 30m increments carry the full bar list including the next
+    bucket's dynamic bar, so they cannot wipe it.
+
+    Public test surface for cross-runtime parity with Renderer
+    ``mergeThirtyMinuteBars``.
+    """
+
+    incoming_timestamps = {
+        row["timestamp"] for row in incoming or () if "timestamp" in row
+    }
+    retained = [
+        row
+        for row in current or ()
+        if row.get("closed") is True or row.get("timestamp") in incoming_timestamps
+    ]
+    return _merge_rows_by_timestamp(retained, incoming)
+
+
+def _merge_thirty_minute_bars(
+    current: list[dict[str, Any]] | None,
+    incoming: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Compatibility alias for :func:`merge_thirty_minute_bars`."""
+
+    return merge_thirty_minute_bars(current, incoming)
+
+
 def _merge_rows_by_timestamp(
     current: list[dict[str, Any]] | None,
     incoming: list[dict[str, Any]] | None,
@@ -604,13 +712,13 @@ def _merge_indicators(
     projection after a rebaseline.
     """
 
-    for timeframe in ("five_minute", "one_minute"):
+    for timeframe in ("five_minute", "thirty_minute", "one_minute"):
         current_tf = current.get(timeframe) or {}
         incoming_tf = incoming.get(timeframe) or {}
         if not incoming_tf:
             continue
         merged: dict[str, Any] = {**current_tf, **incoming_tf}
-        if timeframe == "five_minute":
+        if timeframe in ("five_minute", "thirty_minute"):
             current_ma = current_tf.get("ma") or {}
             incoming_ma = incoming_tf.get("ma") or {}
             merged["ma"] = {
@@ -693,7 +801,7 @@ def _build_incremental_validators() -> dict[str, Draft202012Validator]:
         "additionalProperties": False,
         "required": ["target", "bars", "quote"],
         "properties": {
-            "target": {"enum": ["quote", "bars_1m", "bars_5m", "daily_bars"]},
+            "target": {"enum": ["quote", "bars_1m", "bars_5m", "bars_30m", "daily_bars"]},
             "bars": {"type": "array", "items": {"$ref": f"{logic_id}#/$defs/bar"}},
             "quote": {
                 "oneOf": [
@@ -713,7 +821,7 @@ def _build_incremental_validators() -> dict[str, Draft202012Validator]:
                 },
             },
             {
-                "if": {"properties": {"target": {"enum": ["bars_1m", "bars_5m", "daily_bars"]}}},
+                "if": {"properties": {"target": {"enum": ["bars_1m", "bars_5m", "bars_30m", "daily_bars"]}}},
                 "then": {"properties": {"quote": {"type": "null"}}},
             },
         ],
@@ -724,6 +832,9 @@ def _build_incremental_validators() -> dict[str, Draft202012Validator]:
             {"$ref": f"{logic_id}#/$defs/indicators"}, registry=registry
         ),
         "chan_analysis_replaced": Draft202012Validator(
+            {"$ref": f"{logic_id}#/$defs/chan_analysis"}, registry=registry
+        ),
+        "chan_analysis_30m_replaced": Draft202012Validator(
             {"$ref": f"{logic_id}#/$defs/chan_analysis"}, registry=registry
         ),
         "live_market_view_updated": Draft202012Validator(

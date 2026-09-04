@@ -152,6 +152,11 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
         with self._lock:
             return self._close_reconcile_status
 
+    @property
+    def market_session(self) -> MarketSession | None:
+        with self._lock:
+            return self._session
+
     def prepare(
         self,
         spec: SessionSpec,
@@ -325,6 +330,14 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
             rows = tuple(
                 self._source.load_refresh_quotes(spec, trade_date=trade_date)
             )
+        elif kind is LiveRefreshKind.OFFICIAL_THIRTY_MINUTE:
+            rows = tuple(
+                self._source.load_refresh_bars(
+                    spec,
+                    timeframe="30m",
+                    trade_date=trade_date,
+                )
+            )
         else:
             rows = tuple(
                 self._source.load_refresh_bars(
@@ -342,7 +355,11 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
 
         data_time = _latest_row_time(
             rows,
-            closed_only=kind is LiveRefreshKind.OFFICIAL_FIVE_MINUTE,
+            closed_only=kind
+            in (
+                LiveRefreshKind.OFFICIAL_FIVE_MINUTE,
+                LiveRefreshKind.OFFICIAL_THIRTY_MINUTE,
+            ),
         )
         data_changed = not (
             data_time is None
@@ -364,6 +381,8 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
                 updated_input = replace(self._market_input, quote_snapshots=rows)
             elif kind is LiveRefreshKind.ONE_MINUTE:
                 updated_input = replace(self._market_input, bars_1m=rows)
+            elif kind is LiveRefreshKind.OFFICIAL_THIRTY_MINUTE:
+                updated_input = replace(self._market_input, official_30m_bars=rows)
             else:
                 updated_input = replace(self._market_input, official_5m_bars=rows)
             # This is the intentional cross-branch consistency boundary.
@@ -740,6 +759,7 @@ class LiveRuntimeSession:
             [LiveRefreshKind, BaseException, int | None], None
         ],
         on_state_change: Callable[[str, str], None] | None = None,
+        on_thirty_minute_delayed: Callable[[bool], None] | None = None,
         analyzer: CzscAnalyzerPort | None = None,
         intervals: LiveRefreshIntervals = LiveRefreshIntervals(),
         clock: Callable[[], datetime] | None = None,
@@ -753,6 +773,7 @@ class LiveRuntimeSession:
         self._external_candidate = on_snapshot_candidate
         self._on_incremental_update = on_incremental_update
         self._on_refresh_failure = on_refresh_failure
+        self._on_thirty_minute_delayed = on_thirty_minute_delayed
         self._intervals = intervals
         self._clock = clock or datetime.now
         self._poll_interval_seconds = poll_interval_seconds
@@ -864,6 +885,10 @@ class LiveRuntimeSession:
             clock=self._clock,
             on_failure=self._on_refresh_failure,
             initial_data_times=_initial_data_times(candidate),
+            thirty_minute_boundary_provider=_make_thirty_minute_boundary_provider(
+                self._input_port
+            ),
+            on_thirty_minute_delayed=self._on_thirty_minute_delayed,
         )
         with self._lock:
             if self._retired.is_set():
@@ -1059,6 +1084,11 @@ def _snapshot_branch_time(
             if isinstance(quote, dict)
             else None
         )
+    if kind is LiveRefreshKind.OFFICIAL_THIRTY_MINUTE:
+        return _latest_row_time(
+            market["bars_30m"],
+            closed_only=True,
+        )
     return _latest_row_time(
         market["bars_1m" if kind is LiveRefreshKind.ONE_MINUTE else "bars_5m"],
         closed_only=kind is LiveRefreshKind.OFFICIAL_FIVE_MINUTE,
@@ -1128,8 +1158,49 @@ def _branch_updates(
             ),
             LiveIncrementalUpdate(
                 **identity,
+                event_type="market_update",
+                payload={
+                    "target": "bars_30m",
+                    # Only the current unclosed (forming) 30m bar so the
+                    # sub-chart advances between official boundaries.  The
+                    # aggregator keeps at most one dynamic 30m bar at a time
+                    # and the store merge drops unclosed rows absent from
+                    # this payload (same semantics as bars_5m), so pushing
+                    # the single unclosed row is sufficient and cannot
+                    # resurrect a stale bucket.
+                    "bars": _unclosed_bars(market["bars_30m"]),
+                    "quote": None,
+                },
+            ),
+            LiveIncrementalUpdate(
+                **identity,
                 event_type="indicators_updated",
                 payload=snapshot["indicators"],
+            ),
+            live_view_update,
+        )
+    if kind is LiveRefreshKind.OFFICIAL_THIRTY_MINUTE:
+        return (
+            LiveIncrementalUpdate(
+                **identity,
+                event_type="market_update",
+                payload={
+                    "target": "bars_30m",
+                    # Full display series, including the current dynamic bar.
+                    # A closed-only replace would wipe the next-bucket dynamic K.
+                    "bars": list(market["bars_30m"]),
+                    "quote": None,
+                },
+            ),
+            LiveIncrementalUpdate(
+                **identity,
+                event_type="indicators_updated",
+                payload=snapshot["indicators"],
+            ),
+            LiveIncrementalUpdate(
+                **identity,
+                event_type="chan_analysis_30m_replaced",
+                payload=snapshot["chan_analysis_30m"],
             ),
             live_view_update,
         )
@@ -1167,6 +1238,29 @@ def _initial_data_times(
         kind: _snapshot_branch_time(kind, snapshot)
         for kind in LiveRefreshKind
     }
+
+
+def _make_thirty_minute_boundary_provider(
+    input_port: BranchingLiveInput,
+) -> Callable[[datetime], datetime | None]:
+    """Create a 30m boundary resolver backed by the Live session's MarketSession.
+
+    Given a wall-clock ``now``, returns the next 30m close boundary that is
+    strictly later than ``now``.  Returns ``None`` if the session is not yet
+    prepared or ``now`` is past the last boundary (15:00).
+    """
+
+    def resolve(now: datetime) -> datetime | None:
+        session = input_port.market_session
+        if session is None:
+            return None
+        boundaries = session.bar_close_times(30)
+        for boundary in boundaries:
+            if boundary > now:
+                return boundary
+        return None
+
+    return resolve
 
 
 __all__ = [

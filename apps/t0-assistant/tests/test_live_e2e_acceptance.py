@@ -348,7 +348,7 @@ class LiveEndToEndAcceptanceTests(unittest.TestCase):
                 datetime(2026, 7, 24, 9, 32),
             )
             updates = []
-            while len(updates) < 5:
+            while len(updates) < 6:
                 updates.append(harness.events.get(timeout=2))
             refreshed = harness.command(
                 "get_live_snapshot",
@@ -360,7 +360,7 @@ class LiveEndToEndAcceptanceTests(unittest.TestCase):
             self.assertEqual(updates[0]["payload"]["target"], "bars_1m")
             self.assertEqual(
                 [event["payload"].get("target") for event in updates if event["event_type"] == "market_update"],
-                ["bars_1m", "daily_bars", "bars_5m"],
+                ["bars_1m", "daily_bars", "bars_5m", "bars_30m"],
             )
             dynamic_5m = updates[2]["payload"]["bars"]
             self.assertTrue(dynamic_5m)

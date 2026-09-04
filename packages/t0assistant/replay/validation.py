@@ -18,7 +18,10 @@ def validate_replay_snapshot(
     root = _mapping(
         snapshot,
         "snapshot",
-        {"timezone", "session", "replay", "market", "indicators", "chan_analysis", "warnings"},
+        {
+            "timezone", "session", "replay", "market", "indicators",
+            "chan_analysis", "chan_analysis_30m", "warnings",
+        },
     )
     if root["timezone"] != "Asia/Shanghai":
         raise TypeError("snapshot.timezone must be Asia/Shanghai")
@@ -27,6 +30,7 @@ def validate_replay_snapshot(
     _market(root["market"])
     _indicators(root["indicators"])
     _chan_analysis(root["chan_analysis"])
+    _chan_analysis_30m(root["chan_analysis_30m"])
     warnings = _array(root["warnings"], "snapshot.warnings")
     for index, warning in enumerate(warnings):
         _warning(warning, f"snapshot.warnings[{index}]")
@@ -88,8 +92,10 @@ def _replay(value: object) -> None:
 
 def _market(value: object) -> None:
     path = "snapshot.market"
-    market = _mapping(value, path, {"bars_1m", "bars_5m", "daily_bars", "quote"})
-    for field in ("bars_1m", "bars_5m", "daily_bars"):
+    market = _mapping(
+        value, path, {"bars_1m", "bars_5m", "bars_30m", "daily_bars", "quote"}
+    )
+    for field in ("bars_1m", "bars_5m", "bars_30m", "daily_bars"):
         for index, bar in enumerate(_array(market[field], f"{path}.{field}")):
             _bar(bar, f"{path}.{field}[{index}]")
     if market["quote"] is not None:
@@ -137,36 +143,21 @@ def _quote(value: object, path: str) -> None:
 
 def _indicators(value: object) -> None:
     path = "snapshot.indicators"
-    indicators = _mapping(value, path, {"five_minute", "one_minute"})
+    indicators = _mapping(
+        value, path, {"five_minute", "thirty_minute", "one_minute"}
+    )
     five = _mapping(
         indicators["five_minute"],
         f"{path}.five_minute",
         {"ma", "boll", "volume", "macd"},
     )
-    ma = _mapping(
-        five["ma"],
-        f"{path}.five_minute.ma",
-        {"ma5", "ma10", "ma20", "ma30", "ma60"},
+    _indicator_block(five, f"{path}.five_minute")
+    thirty = _mapping(
+        indicators["thirty_minute"],
+        f"{path}.thirty_minute",
+        {"ma", "boll", "volume", "macd"},
     )
-    for field, points in ma.items():
-        _points(points, f"{path}.five_minute.ma.{field}")
-    boll = _mapping(
-        five["boll"],
-        f"{path}.five_minute.boll",
-        {"period", "stddev", "upper", "middle", "lower"},
-    )
-    if boll["period"] != 20 or boll["stddev"] != 2.0:
-        raise TypeError(f"{path}.five_minute.boll parameters are invalid")
-    for field in ("upper", "middle", "lower"):
-        _points(boll[field], f"{path}.five_minute.boll.{field}")
-    volume = _mapping(
-        five["volume"],
-        f"{path}.five_minute.volume",
-        {"values", "ma5", "ma10"},
-    )
-    for field, points in volume.items():
-        _points(points, f"{path}.five_minute.volume.{field}")
-    _macd(five["macd"], f"{path}.five_minute.macd")
+    _indicator_block(thirty, f"{path}.thirty_minute")
 
     one = _mapping(
         indicators["one_minute"],
@@ -197,6 +188,41 @@ def _macd(value: object, path: str) -> None:
         _points(macd[field], f"{path}.{field}")
 
 
+def _indicator_block(block: Mapping[str, Any], path: str) -> None:
+    ma = _mapping(
+        block["ma"],
+        f"{path}.ma",
+        {"ma5", "ma10", "ma20", "ma30", "ma60"},
+    )
+    for field, points in ma.items():
+        _points(points, f"{path}.ma.{field}")
+    boll = _mapping(
+        block["boll"],
+        f"{path}.boll",
+        {"period", "stddev", "upper", "middle", "lower"},
+    )
+    if boll["period"] != 20 or boll["stddev"] != 2.0:
+        raise TypeError(f"{path}.boll parameters are invalid")
+    for field in ("upper", "middle", "lower"):
+        _points(boll[field], f"{path}.boll.{field}")
+    volume = _mapping(
+        block["volume"],
+        f"{path}.volume",
+        {"values", "ma5", "ma10"},
+    )
+    for field in ("values", "ma5", "ma10"):
+        _points(volume[field], f"{path}.volume.{field}")
+    macd = _mapping(
+        block["macd"],
+        f"{path}.macd",
+        {"fast_period", "slow_period", "signal_period", "dif", "dea", "histogram"},
+    )
+    if macd["fast_period"] != 12 or macd["slow_period"] != 26 or macd["signal_period"] != 9:
+        raise TypeError(f"{path}.macd parameters are invalid")
+    for field in ("dif", "dea", "histogram"):
+        _points(macd[field], f"{path}.macd.{field}")
+
+
 def _points(value: object, path: str) -> None:
     for index, point in enumerate(_array(value, path)):
         item_path = f"{path}[{index}]"
@@ -208,7 +234,14 @@ def _points(value: object, path: str) -> None:
 
 
 def _chan_analysis(value: object) -> None:
-    path = "snapshot.chan_analysis"
+    _chan_analysis_at(value, "snapshot.chan_analysis")
+
+
+def _chan_analysis_30m(value: object) -> None:
+    _chan_analysis_at(value, "snapshot.chan_analysis_30m")
+
+
+def _chan_analysis_at(value: object, path: str) -> None:
     fields = {
         "symbol", "timeframe", "source", "engine", "engine_version", "parameters",
         "fractals", "strokes", "segments", "pivot_zones", "divergences",
@@ -253,7 +286,11 @@ def _warning(value: object, path: str) -> None:
     if warning["severity"] not in {"info", "warning"}:
         raise TypeError(f"{path}.severity is invalid")
     if warning["affected_capability"] not in {
-        "replay", "intraday_chart", "five_minute_chart", "chan_analysis"
+        "replay",
+        "intraday_chart",
+        "five_minute_chart",
+        "thirty_minute_chart",
+        "chan_analysis",
     }:
         raise TypeError(f"{path}.affected_capability is invalid")
     if not isinstance(warning["affected_field"], str):

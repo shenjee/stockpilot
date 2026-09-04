@@ -5,6 +5,7 @@ import {
   projectTradeMarker,
   projectTradeMarkers,
   sortTradeMarkers,
+  thirtyMinuteCloseTimestamp,
 } from "../renderer/src/charts/trade-markers.mjs";
 import {
   createChartGroupModel,
@@ -264,4 +265,21 @@ test("chart model rebuild is independent of trade list changes", () => {
   });
   assert.equal(withTrades.length, 1);
   assert.equal(withoutTrades.length, 0);
+});
+
+test("30m trade markers use executed_at mapped onto the 30-minute close", () => {
+  assert.equal(
+    thirtyMinuteCloseTimestamp("2024-07-22 10:12:00"),
+    "2024-07-22 10:30:00",
+  );
+  assert.equal(thirtyMinuteCloseTimestamp("2024-07-22 12:00:00"), null);
+  const markers = projectTradeMarkers(
+    [{ ...realBuy, executed_at: "2024-07-22 10:12:00" }],
+    {
+      resolveBucketStart: (trade) =>
+        thirtyMinuteCloseTimestamp(trade.executed_at),
+    },
+  );
+  assert.equal(markers.length, 1);
+  assert.equal(markers[0].time, Date.UTC(2024, 6, 22, 10, 30, 0) / 1000);
 });

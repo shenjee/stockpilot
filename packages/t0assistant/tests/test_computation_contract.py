@@ -183,6 +183,8 @@ class PreparedReplayDataShapeTests(unittest.TestCase):
             "market_input_port",
             "assessment_1m",
             "assessment_5m",
+            "preheat_30m_bars",
+            "official_30m_bars",
         }
         self.assertEqual(set(fields), expected)
 

@@ -1,10 +1,16 @@
 const FIVE_MINUTE = "five_minute";
 const ONE_MINUTE = "one_minute";
+const THIRTY_MINUTE = "thirty_minute";
 
 export const ChartGroupKind = Object.freeze({
   FIVE_MINUTE,
   ONE_MINUTE,
+  THIRTY_MINUTE,
 });
+
+export function isCandleChartKind(kind) {
+  return kind === FIVE_MINUTE || kind === THIRTY_MINUTE;
+}
 
 export function parseMarketTimestamp(timestamp) {
   const match = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/.exec(
@@ -330,16 +336,19 @@ export function calculateIntradayPriceTicks(P0, R) {
  * a full model rebuild when trades change.
  */
 export function createChartGroupModel(snapshot, kind, layers = {}) {
-  if (kind !== FIVE_MINUTE && kind !== ONE_MINUTE) {
+  if (kind !== FIVE_MINUTE && kind !== ONE_MINUTE && kind !== THIRTY_MINUTE) {
     throw new TypeError(`Unsupported chart group: ${kind}`);
   }
 
+  const candleKind = isCandleChartKind(kind);
   // 展示层只消费已对齐的快照载荷，不读取 replay / session_type 做内容裁剪。
-  // 时点正确性由后端契约保证（含 closed=false 动态 5m 的桶收盘标签）。
+  // 时点正确性由后端契约保证（含 closed=false 动态 K 的桶收盘标签）。
   const bars =
     kind === FIVE_MINUTE
       ? (snapshot.market.bars_5m ?? [])
-      : (snapshot.market.bars_1m ?? []);
+      : kind === THIRTY_MINUTE
+        ? (snapshot.market.bars_30m ?? [])
+        : (snapshot.market.bars_1m ?? []);
   const previousClose =
     typeof snapshot.market.quote?.previous_close === "number" &&
     Number.isFinite(snapshot.market.quote.previous_close)
@@ -348,7 +357,13 @@ export function createChartGroupModel(snapshot, kind, layers = {}) {
   const indicator =
     kind === FIVE_MINUTE
       ? snapshot.indicators.five_minute
-      : snapshot.indicators.one_minute;
+      : kind === THIRTY_MINUTE
+        ? (snapshot.indicators.thirty_minute ?? _emptyCandleIndicators())
+        : snapshot.indicators.one_minute;
+  const chanAnalysis =
+    kind === THIRTY_MINUTE
+      ? snapshot.chan_analysis_30m
+      : snapshot.chan_analysis;
 
   assertOrderedUnique(bars, `${kind} bars`);
   const barTimestamps = bars.map((bar) => bar.timestamp);
@@ -367,63 +382,56 @@ export function createChartGroupModel(snapshot, kind, layers = {}) {
   const movingAverages = {};
   for (const period of ["ma5", "ma10", "ma20", "ma30", "ma60"]) {
     movingAverages[period] =
-      kind === FIVE_MINUTE && enabled(period)
+      candleKind && enabled(period)
         ? normalizePoints(
             indicator.ma?.[period] ?? [],
             timestampSet,
-            `five_minute ${period}`,
+            `${kind} ${period}`,
           )
         : [];
   }
   // BOLL 默认显示，不提供独立开关；只消费契约数据，不在 Renderer 计算。
   // 保留 null 预热值的空白语义（toLineData 转为 whitespace）。
   const boll =
-    kind === FIVE_MINUTE
+    candleKind
       ? {
           upper: normalizePoints(
             indicator.boll?.upper ?? [],
             timestampSet,
-            "five_minute boll upper",
+            `${kind} boll upper`,
           ),
           middle: normalizePoints(
             indicator.boll?.middle ?? [],
             timestampSet,
-            "five_minute boll middle",
+            `${kind} boll middle`,
           ),
           lower: normalizePoints(
             indicator.boll?.lower ?? [],
             timestampSet,
-            "five_minute boll lower",
+            `${kind} boll lower`,
           ),
         }
       : { upper: [], middle: [], lower: [] };
-  // chan-viewer / chantheory plotting：confirmed 笔画实线；未终止尾笔在
-  // meta.pending_stroke，单独用虚线画出，不进入 strokes 数组。
   const strokes =
-    kind === FIVE_MINUTE && enabled("strokes")
-      ? normalizeStrokes(collectStrokeRows(snapshot.chan_analysis), timestampSet)
+    candleKind && enabled("strokes")
+      ? normalizeStrokes(collectStrokeRows(chanAnalysis), timestampSet)
       : [];
-  // PRD：中枢均指笔中枢。chantheory 会同时产出 stroke/segment，
-  // 图层只投影 level=stroke（缺省 level 视为 stroke，兼容旧快照）。
   const pivotZones =
-    kind === FIVE_MINUTE && enabled("pivot_zones")
-      ? normalizePivotZones(snapshot.chan_analysis?.pivot_zones, timestampSet)
+    candleKind && enabled("pivot_zones")
+      ? normalizePivotZones(chanAnalysis?.pivot_zones, timestampSet)
       : [];
-  // CZSC 买卖点映射标准 1B/1S/2B/2S/3B/3S 和结构候选 Buy?/Sell?；
-  // 显示投影不修改后端 CZSC 数据。
   const czscMarkers =
-    kind === FIVE_MINUTE
+    candleKind
       ? normalizeCzscMarkers(
-          snapshot.chan_analysis?.candidate_buy_points,
-          snapshot.chan_analysis?.candidate_sell_points,
+          chanAnalysis?.candidate_buy_points,
+          chanAnalysis?.candidate_sell_points,
           timestampSet,
         )
       : [];
-  // 背驰标注与 chan-viewer / chantheory plotting 一致：Bull Div 在下、Bear Div 在上。
   const divergenceMarkers =
-    kind === FIVE_MINUTE
+    candleKind
       ? normalizeDivergenceMarkers(
-          snapshot.chan_analysis?.divergences,
+          chanAnalysis?.divergences,
           timestampSet,
         )
       : [];
@@ -437,11 +445,7 @@ export function createChartGroupModel(snapshot, kind, layers = {}) {
     kind === ONE_MINUTE
       ? padPointsToTimeline(normalizedVolumePoints, timestamps)
       : normalizedVolumePoints;
-  if (kind === FIVE_MINUTE) {
-    // 动态未闭合 K 的成交量来自 bar，不进入正式 volume.values。
-    // MACD / VOL MA 仍只跟已闭合 K；下方 padPointsToTimeline 在动态槽留 null，
-    // 模型数组与 K 等长。5 分钟 fixRightEdge 下仅靠 whitespace 撑不住右缘，
-    // Renderer 还需隐藏 series 占槽（见 SynchronizedChartGroup.macdTimeAnchorSeries）。
+  if (candleKind) {
     for (const bar of bars) {
       if (
         !bar.closed &&
@@ -459,7 +463,7 @@ export function createChartGroupModel(snapshot, kind, layers = {}) {
     bars: bars.map((bar) => ({ ...bar })),
     previousClose,
     price:
-      kind === FIVE_MINUTE
+      candleKind
         ? bars.map((bar) => ({
             timestamp: bar.timestamp,
             open: bar.open,
@@ -494,30 +498,27 @@ export function createChartGroupModel(snapshot, kind, layers = {}) {
     divergenceMarkers,
     volume: volumePoints,
     volumeMa5:
-      kind === FIVE_MINUTE
+      candleKind
         ? padPointsToTimeline(
             normalizePoints(
               indicator.volume.ma5 ?? [],
               timestampSet,
-              "five_minute volume ma5",
+              `${kind} volume ma5`,
             ),
             timestamps,
           )
         : [],
     volumeMa10:
-      kind === FIVE_MINUTE
+      candleKind
         ? padPointsToTimeline(
             normalizePoints(
               indicator.volume.ma10 ?? [],
               timestampSet,
-              "five_minute volume ma10",
+              `${kind} volume ma10`,
             ),
             timestamps,
           )
         : [],
-    // 1 分钟：补全日交易分钟空白。5 分钟：动态未闭合 K 不进入正式指标，
-    // 在对应时间槽留 null（可见 series 转 whitespace）。5 分钟还开了
-    // fixRightEdge，仅靠 whitespace 撑不住右缘，Renderer 另用隐藏 series 占槽。
     macd: {
       dif: padPointsToTimeline(
         normalizePoints(
@@ -567,6 +568,15 @@ export function tryCreateChartGroupModel(
   } catch (error) {
     return { ok: false, error };
   }
+}
+
+function _emptyCandleIndicators() {
+  return {
+    ma: { ma5: [], ma10: [], ma20: [], ma30: [], ma60: [] },
+    boll: { upper: [], middle: [], lower: [] },
+    volume: { values: [], ma5: [], ma10: [] },
+    macd: { dif: [], dea: [], histogram: [] },
+  };
 }
 
 function buildIntradayTradingTimeline(tradeDate) {

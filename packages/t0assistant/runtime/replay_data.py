@@ -46,6 +46,7 @@ from .computation_contract import (
     ReplayMarketInputPort,
     ReplayReliabilityAssessment,
 )
+from .live_market_view import DEFAULT_CHART_PREHEAT_COUNT
 from ._market_bars import (
     MARKET_TIMESTAMP_FORMAT,
     RuntimeMarketDataError,
@@ -159,7 +160,8 @@ class ReplayPreparationConfig:
     code.  Tests inject short values; production injects longer ones.
     """
 
-    preheat_5m_count: int = 500
+    preheat_5m_count: int = DEFAULT_CHART_PREHEAT_COUNT
+    preheat_30m_count: int = DEFAULT_CHART_PREHEAT_COUNT
     daily_history_days: int = 120
     deadline_monotonic: float | None = None
     request_priority: ProviderRequestPriority = ProviderRequestPriority.REPLAY_PREFETCH
@@ -318,6 +320,35 @@ class ReplayDataPreparator:
         )
         previous_close = _derive_previous_close(daily_history, preheat_bars)
 
+        # ---- preheat 30m (cross-trading-day, before session start) ----------
+        # 30m preheat always comes from the official 30m provider interface,
+        # never aggregated from 5m bars (design §10, §14.3).
+        preheat_30m: tuple[Mapping[str, Any], ...] = ()
+        official_30m: tuple[Mapping[str, Any], ...] = ()
+        try:
+            preheat_30m = self._load_preheat_30m(
+                code=code,
+                market=market,
+                instrument_type=instrument_type,
+                session=session,
+                config=config,
+                session_validator=session_validator,
+            )
+        except ReplayDataError:
+            preheat_30m = ()
+        try:
+            official_30m = self._load_target_day_bars(
+                code=code,
+                market=market,
+                instrument_type=instrument_type,
+                session=session,
+                timeframe="30m",
+                config=config,
+                session_validator=session_validator,
+            )
+        except ReplayDataError:
+            official_30m = ()
+
         actual_bar_times = _build_actual_bar_times(
             granularity=granularity,
             bars_1m=bars_1m,
@@ -336,6 +367,8 @@ class ReplayDataPreparator:
         frozen_daily_history = _freeze_rows(daily_history)
         frozen_quote_snapshots = _freeze_rows(quote_snapshots)
         frozen_warnings = _freeze_rows(warnings)
+        frozen_preheat_30m = _freeze_rows(preheat_30m)
+        frozen_official_30m = _freeze_rows(official_30m)
 
         market_input_port = _InMemoryMarketInputPort(
             symbol=resolved_symbol,
@@ -347,6 +380,8 @@ class ReplayDataPreparator:
             daily_bars_history=frozen_daily_history,
             quote_snapshots=frozen_quote_snapshots,
             previous_close=previous_close,
+            preheat_30m_bars=frozen_preheat_30m,
+            official_30m_bars=frozen_official_30m,
         )
 
         return PreparedReplayData(
@@ -367,6 +402,8 @@ class ReplayDataPreparator:
             market_input_port=market_input_port,
             assessment_1m=probe_1m.assessment,
             assessment_5m=assessment_5m,
+            preheat_30m_bars=frozen_preheat_30m,
+            official_30m_bars=frozen_official_30m,
         )
 
     # ------------------------------------------------------------------
@@ -492,6 +529,70 @@ class ReplayDataPreparator:
         if len(normalized) <= config.preheat_5m_count:
             return normalized
         return normalized[-config.preheat_5m_count :]
+
+    def _load_preheat_30m(
+        self,
+        *,
+        code: str,
+        market: str,
+        instrument_type: str | None,
+        session: MarketSession,
+        config: ReplayPreparationConfig,
+        session_validator: Callable[[], bool] | None,
+    ) -> tuple[Mapping[str, Any], ...]:
+        """Load cross-trading-day official closed 30m bars before session start.
+
+        30m preheat always comes from the official ``30m`` provider interface,
+        never aggregated from 5m bars (design §10, §14.3, §17).
+        """
+
+        self._check_deadline(config)
+        collected: list[Mapping[str, Any]] = []
+        normalized: tuple[dict[str, Any], ...] = ()
+        batch_end = self._market_context.previous_trading_day(
+            session.trade_date,
+            market,
+        )
+        while batch_end is not None and len(normalized) < config.preheat_30m_count:
+            batch_start = batch_end
+            for _ in range(14):
+                previous = self._market_context.previous_trading_day(
+                    batch_start,
+                    market,
+                )
+                if previous is None:
+                    break
+                batch_start = previous
+            result = self._get_klines_result(
+                code=code,
+                end_date=batch_end.isoformat(),
+                market=market,
+                timeframe="30m",
+                start_date=batch_start.isoformat(),
+                limit=config.preheat_30m_count + 15 * 8,
+                instrument_type=instrument_type,
+                config=config,
+                session_validator=session_validator,
+            )
+            self._check_deadline(config)
+            collected.extend(
+                normalize_provider_bar_units(
+                    _extract_rows(result),
+                    self._market_data,
+                )
+            )
+            normalized = _normalize_preheat_bars(
+                collected,
+                session_start=session.start,
+            )
+            batch_end = self._market_context.previous_trading_day(
+                batch_start,
+                market,
+            )
+
+        if len(normalized) <= config.preheat_30m_count:
+            return normalized
+        return normalized[-config.preheat_30m_count :]
 
     def _assess_granularity(
         self,
@@ -1105,6 +1206,8 @@ class _InMemoryMarketInputPort:
     daily_bars_history: tuple[Mapping[str, Any], ...]
     quote_snapshots: tuple[Mapping[str, Any], ...]
     previous_close: float | int | None
+    preheat_30m_bars: tuple[Mapping[str, Any], ...] = ()
+    official_30m_bars: tuple[Mapping[str, Any], ...] = ()
 
     def read(self, target_time: datetime) -> Any:
         """Return the :class:`PipelineMarketInput` prefix at ``target_time``.
@@ -1134,6 +1237,8 @@ class _InMemoryMarketInputPort:
             official_5m_bars=_prefix_at(self.official_5m_bars, target_time),
             quote_snapshots=_prefix_at(self.quote_snapshots, target_time),
             daily_bars_history=tuple(self.daily_bars_history),
+            preheat_30m_bars=tuple(self.preheat_30m_bars),
+            official_30m_bars=_prefix_at(self.official_30m_bars, target_time),
         )
 
 

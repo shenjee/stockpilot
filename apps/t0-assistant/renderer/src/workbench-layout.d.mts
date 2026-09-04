@@ -1,11 +1,18 @@
 export const WorkbenchLayoutMode: Readonly<{
-  MAIN_PRIORITY: "main_priority";
-  EQUAL: "equal";
+  SHOW_INTRADAY: "show_intraday";
   HIDE_INTRADAY: "hide_intraday";
 }>;
 
 export type WorkbenchLayoutModeValue =
   (typeof WorkbenchLayoutMode)[keyof typeof WorkbenchLayoutMode];
+
+export const WorkbenchSecondaryChart: Readonly<{
+  INTRADAY: "intraday";
+  THIRTY_MINUTE: "thirty_minute";
+}>;
+
+export type WorkbenchSecondaryChartValue =
+  (typeof WorkbenchSecondaryChart)[keyof typeof WorkbenchSecondaryChart];
 
 export const WorkbenchMode: Readonly<{ LIVE: "live"; REPLAY: "replay" }>;
 export const WorkbenchLayer: Readonly<{
@@ -41,9 +48,9 @@ export interface WorkbenchState {
   mode: "live" | "replay";
   security: SecurityIdentity | null;
   layout: {
-    chartSplit: "64_36" | "50_50";
     showIntraday: boolean;
   };
+  secondaryChart: WorkbenchSecondaryChartValue;
   layers: {
     ma5: boolean;
     ma10: boolean;
@@ -56,6 +63,7 @@ export interface WorkbenchState {
   chartViews: {
     fiveMinute: ChartViewportSnapshot | null;
     intraday: ChartViewportSnapshot | null;
+    thirtyMinute: ChartViewportSnapshot | null;
   };
 }
 
@@ -67,6 +75,10 @@ export function selectWorkbenchLayout(
 export function workbenchLayoutMode(
   state: WorkbenchState,
 ): WorkbenchLayoutModeValue;
+export function selectWorkbenchSecondaryChart(
+  state: WorkbenchState,
+  secondaryChart: WorkbenchSecondaryChartValue,
+): WorkbenchState;
 export function selectWorkbenchMode(
   state: WorkbenchState,
   mode: "live" | "replay",
@@ -83,12 +95,12 @@ export function applyWorkbenchPreferences(
   state: WorkbenchState,
   preferences: {
     last_symbol: string | null;
-    layout: { chart_split: "64_36" | "50_50"; show_intraday: boolean };
+    layout: { show_intraday: boolean };
     layers: WorkbenchState["layers"];
   },
 ): WorkbenchState;
 export function workbenchPreferences(state: WorkbenchState): {
   last_symbol: string | null;
-  layout: { chart_split: "64_36" | "50_50"; show_intraday: boolean };
+  layout: { show_intraday: boolean };
   layers: WorkbenchState["layers"];
 };

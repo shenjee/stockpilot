@@ -87,6 +87,7 @@ class MarketContextServiceTests(unittest.TestCase):
         session = self.service.require_session("2024-09-30", "sz")
         one_minute = session.bar_close_times(1)
         five_minute = session.bar_close_times(5)
+        thirty_minute = session.bar_close_times(30)
 
         self.assertEqual(len(one_minute), 240)
         self.assertEqual(one_minute[0], datetime(2024, 9, 30, 9, 31))
@@ -99,6 +100,14 @@ class MarketContextServiceTests(unittest.TestCase):
         self.assertEqual(five_minute[23], datetime(2024, 9, 30, 11, 30))
         self.assertEqual(five_minute[24], datetime(2024, 9, 30, 13, 5))
         self.assertEqual(five_minute[-1], datetime(2024, 9, 30, 15, 0))
+
+        # 30m boundaries: 10:00, 10:30, 11:00, 11:30 | 13:30, 14:00, 14:30, 15:00.
+        # Lunch break is never merged into one bar.
+        self.assertEqual(len(thirty_minute), 8)
+        self.assertEqual(thirty_minute[0], datetime(2024, 9, 30, 10, 0))
+        self.assertEqual(thirty_minute[3], datetime(2024, 9, 30, 11, 30))
+        self.assertEqual(thirty_minute[4], datetime(2024, 9, 30, 13, 30))
+        self.assertEqual(thirty_minute[-1], datetime(2024, 9, 30, 15, 0))
 
     def test_replay_advances_only_to_actual_bars_across_lunch_and_suspension(self):
         session = self.service.require_session("2024-09-30", "sh")
@@ -152,7 +161,7 @@ class MarketContextServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(MarketContextError, "sh and sz"):
             self.service.is_trading_day("2024-09-30", "bj")
         session = self.service.require_session("2024-09-30", "sh")
-        with self.assertRaisesRegex(MarketContextError, "1 or 5"):
+        with self.assertRaisesRegex(MarketContextError, "1, 5 or 30"):
             session.bar_close_times(15)
         with self.assertRaisesRegex(MarketContextError, "trading period"):
             session.next_actual_bar_time(

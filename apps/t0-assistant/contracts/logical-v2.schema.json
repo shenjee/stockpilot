@@ -232,6 +232,130 @@
         "one_minute"
       ],
       "properties": {
+        "thirty_minute": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ma",
+            "boll",
+            "volume",
+            "macd"
+          ],
+          "properties": {
+            "ma": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "ma5",
+                "ma10",
+                "ma20",
+                "ma30",
+                "ma60"
+              ],
+              "properties": {
+                "ma5": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/indicator_point"
+                  }
+                },
+                "ma10": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/indicator_point"
+                  }
+                },
+                "ma20": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/indicator_point"
+                  }
+                },
+                "ma30": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/indicator_point"
+                  }
+                },
+                "ma60": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/indicator_point"
+                  }
+                }
+              }
+            },
+            "boll": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "period",
+                "stddev",
+                "upper",
+                "middle",
+                "lower"
+              ],
+              "properties": {
+                "period": {
+                  "const": 20
+                },
+                "stddev": {
+                  "const": 2.0
+                },
+                "upper": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/indicator_point"
+                  }
+                },
+                "middle": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/indicator_point"
+                  }
+                },
+                "lower": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/indicator_point"
+                  }
+                }
+              }
+            },
+            "volume": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "values",
+                "ma5",
+                "ma10"
+              ],
+              "properties": {
+                "values": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/indicator_point"
+                  }
+                },
+                "ma5": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/indicator_point"
+                  }
+                },
+                "ma10": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/indicator_point"
+                  }
+                }
+              }
+            },
+            "macd": {
+              "$ref": "#/$defs/macd"
+            }
+          }
+        },
         "five_minute": {
           "type": "object",
           "additionalProperties": false,
@@ -424,6 +548,7 @@
             "replay",
             "intraday_chart",
             "five_minute_chart",
+            "thirty_minute_chart",
             "chan_analysis"
           ]
         },
@@ -503,6 +628,12 @@
           }
         },
         "bars_5m": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/bar"
+          }
+        },
+        "bars_30m": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/bar"
@@ -688,7 +819,10 @@
         "daily_as_of",
         "one_minute_indicators_as_of",
         "five_minute_indicators_as_of",
-        "czsc_as_of"
+        "czsc_as_of",
+        "bars_30m_as_of",
+        "thirty_minute_indicators_as_of",
+        "czsc_30m_as_of"
       ],
       "properties": {
         "effective_trade_date": {
@@ -810,6 +944,39 @@
             }
           ]
         },
+        "bars_30m_as_of": {
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "thirty_minute_indicators_as_of": {
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "czsc_30m_as_of": {
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "market_closed_reason": {
           "enum": [
             "weekend",
@@ -884,6 +1051,9 @@
           "$ref": "#/$defs/indicators"
         },
         "chan_analysis": {
+          "$ref": "#/$defs/chan_analysis"
+        },
+        "chan_analysis_30m": {
           "$ref": "#/$defs/chan_analysis"
         },
         "warnings": {

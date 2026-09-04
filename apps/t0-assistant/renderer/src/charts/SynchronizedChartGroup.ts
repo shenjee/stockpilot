@@ -30,6 +30,7 @@ import {
   formatPriceExactLabel,
   formatVolumeAxisLabel,
   formatVolumeAxisLabels,
+  isCandleChartKind,
   PRICE_EXACT_PRICE_FORMAT,
   resolvePriceAxisMinMove,
   type ChartGroupModel,
@@ -295,7 +296,7 @@ export class SynchronizedChartGroup {
       lastValueVisible: false,
     });
 
-    if (this.kind === ChartGroupKind.FIVE_MINUTE) {
+    if (isCandleChartKind(this.kind)) {
       this.priceSeries = this.priceChart.addSeries(CandlestickSeries, {
         upColor: RED,
         downColor: GREEN,
@@ -403,7 +404,7 @@ export class SynchronizedChartGroup {
       lastValueVisible: false,
     });
     this.macdTimeAnchorSeries =
-      this.kind === ChartGroupKind.FIVE_MINUTE
+      isCandleChartKind(this.kind)
         ? this.macdChart.addSeries(LineSeries, {
             visible: false,
             lastValueVisible: false,
@@ -546,7 +547,7 @@ export class SynchronizedChartGroup {
     } else {
       const shouldForceFollow =
         this.appendFollowPolicy === AppendFollowPolicy.FORCE_FOLLOW_LATEST &&
-        this.kind === ChartGroupKind.FIVE_MINUTE &&
+        isCandleChartKind(this.kind) &&
         isStableForwardAppend(this.viewport.logicalToTime, times);
       this.viewport = applyModel(this.viewport, times, visibleCount);
       if (shouldForceFollow) {
@@ -933,7 +934,7 @@ export class SynchronizedChartGroup {
     const currentLastTime = times[times.length - 1] ?? null;
     const forcesFollow =
       this.appendFollowPolicy === AppendFollowPolicy.FORCE_FOLLOW_LATEST &&
-      this.kind === ChartGroupKind.FIVE_MINUTE;
+      isCandleChartKind(this.kind);
     const identityChangedWhileBackground =
       forcesFollow &&
       savedDatasetIdentity != null &&
@@ -1079,8 +1080,8 @@ export class SynchronizedChartGroup {
         // 分时：必须关闭。分时用全日交易分钟轴 + 未来分钟 whitespace；若开启
         // fixRightEdge，LC 会把右缘钉在最后一根有值分钟上，把 {from:0,to:全日}
         // 钳成「贴右、新分钟往左顶」——与 09:30→15:00 从左往右生长相反。
-        fixLeftEdge: this.kind === ChartGroupKind.FIVE_MINUTE,
-        fixRightEdge: this.kind === ChartGroupKind.FIVE_MINUTE,
+        fixLeftEdge: isCandleChartKind(this.kind),
+        fixRightEdge: isCandleChartKind(this.kind),
         // 布局变化时锁定可见时间范围（仅改 barSpacing，不增减可见 K）：manual 下保留
         // 用户逻辑范围不被 LC 自动左移露更多 K；following 仍由 resize() 显式重算 N 覆盖。
         lockVisibleTimeRangeOnResize: true,
@@ -1119,7 +1120,7 @@ export class SynchronizedChartGroup {
       // 分时图是“当日已发生的完整交易时间”视图，不允许手势把早盘数据
       // 滚出屏幕。5 分钟 K 线仍保留 Chan Viewer 风格的缩放和平移。
       handleScale:
-        this.kind === ChartGroupKind.FIVE_MINUTE
+        isCandleChartKind(this.kind)
           ? {
               axisPressedMouseMove: { time: true, price: false },
               mouseWheel: true,
@@ -1127,7 +1128,7 @@ export class SynchronizedChartGroup {
             }
           : false,
       handleScroll:
-        this.kind === ChartGroupKind.FIVE_MINUTE
+        isCandleChartKind(this.kind)
           ? {
               mouseWheel: true,
               pressedMouseMove: true,
@@ -1145,7 +1146,7 @@ export class SynchronizedChartGroup {
     const time = (timestamp: string) =>
       this.model!.timeByTimestamp[timestamp] as UTCTimestamp;
 
-    if (this.kind === ChartGroupKind.FIVE_MINUTE) {
+    if (isCandleChartKind(this.kind)) {
       const candleData: CandlestickData<Time>[] = this.model.price.flatMap(
         (point) => {
           if (!("open" in point)) {
@@ -1285,7 +1286,7 @@ export class SynchronizedChartGroup {
   private applyCzscMarkers(
     time: (timestamp: string) => UTCTimestamp,
   ) {
-    if (!this.model || this.kind !== ChartGroupKind.FIVE_MINUTE) {
+    if (!this.model || !isCandleChartKind(this.kind)) {
       return;
     }
     // 原语整体替换 markers 数组（原子替换，旧标记不残留），按 (time, price) 精确定位。
@@ -1302,7 +1303,7 @@ export class SynchronizedChartGroup {
   private applyDivergenceMarkers(
     time: (timestamp: string) => UTCTimestamp,
   ) {
-    if (!this.model || this.kind !== ChartGroupKind.FIVE_MINUTE) {
+    if (!this.model || !isCandleChartKind(this.kind)) {
       return;
     }
     this.divergenceMarkerPrimitive?.setMarkers(
@@ -1326,7 +1327,7 @@ export class SynchronizedChartGroup {
     }
     this.tradeMarkerSeries.clear();
 
-    if (!this.model || this.model.kind !== ChartGroupKind.FIVE_MINUTE) {
+    if (!this.model || !isCandleChartKind(this.model.kind)) {
       return;
     }
 
@@ -1690,7 +1691,7 @@ export class SynchronizedChartGroup {
   }
 
   private setupMarketBarTooltip() {
-    if (this.kind !== ChartGroupKind.FIVE_MINUTE) {
+    if (!isCandleChartKind(this.kind)) {
       return;
     }
     const host = this.tooltipHost;
@@ -1838,7 +1839,7 @@ export class SynchronizedChartGroup {
     if (!tip) {
       return;
     }
-    if (this.kind !== ChartGroupKind.FIVE_MINUTE || !this.model) {
+    if (!isCandleChartKind(this.kind) || !this.model) {
       this.hideMarketBarTooltip();
       return;
     }

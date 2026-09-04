@@ -47,6 +47,10 @@ from packages.t0assistant.runtime import (
     LiveRuntimeSession,
     SessionSpec,
 )
+from packages.t0assistant.runtime.thirty_minute_warnings import (
+    THIRTY_MINUTE_OFFICIAL_DELAYED,
+    warning_dict,
+)
 
 try:
     from backend.historical_snapshot_api import _build_live_market_context
@@ -78,6 +82,7 @@ class LiveSessionFactory:
             | None
         ) = None
         self._state_handler: Callable[[SessionSpec, str, str], None] | None = None
+        self._thirty_minute_delayed_handler: Callable[[bool], None] | None = None
         self._latest_session: LiveRuntimeSession | None = None
 
     @property
@@ -93,11 +98,13 @@ class LiveSessionFactory:
             [SessionSpec, LiveRefreshKind, BaseException, int | None], None
         ],
         state_handler: Callable[[SessionSpec, str, str], None],
+        thirty_minute_delayed_handler: Callable[[bool], None] | None = None,
     ) -> None:
         self._candidate_handler = candidate_handler
         self._incremental_handler = incremental_handler
         self._refresh_failure_handler = refresh_failure_handler
         self._state_handler = state_handler
+        self._thirty_minute_delayed_handler = thirty_minute_delayed_handler
 
     def create_live(self, spec: SessionSpec) -> LiveRuntimeSession:
         if (
@@ -123,6 +130,7 @@ class LiveSessionFactory:
             on_state_change=lambda state, reason: self._state_handler(
                 spec, state, reason
             ),
+            on_thirty_minute_delayed=self._thirty_minute_delayed_handler,
             analyzer=self._analyzer,
             auto_poll=self._auto_poll,
         )
@@ -167,6 +175,7 @@ class LiveApplicationApi:
             incremental_handler=self._accept_incremental,
             refresh_failure_handler=self._on_refresh_failure,
             state_handler=self._on_state_change,
+            thirty_minute_delayed_handler=self._on_thirty_minute_delayed,
         )
         if restore_on_startup:
             self.restore_startup()
@@ -508,6 +517,33 @@ class LiveApplicationApi:
         if accepted is not None:
             self._event_publisher.publish_envelope(accepted.to_envelope())
 
+    def _on_thirty_minute_delayed(self, delayed: bool) -> None:
+        session = self._session_factory.latest_session
+        if session is None:
+            return
+        spec = session.spec
+        try:
+            snapshot = self._store.get_live_snapshot(
+                session_id=spec.session_id,
+                generation=spec.generation,
+            )
+        except Exception:
+            return
+        warnings = [
+            warning
+            for warning in snapshot.get("warnings") or []
+            if warning.get("warning_code") != "thirty_minute_official_delayed"
+        ]
+        if delayed:
+            warnings.append(warning_dict(THIRTY_MINUTE_OFFICIAL_DELAYED))
+        accepted = self._store.sync_warnings(
+            session_id=spec.session_id,
+            generation=spec.generation,
+            warnings=warnings,
+        )
+        if accepted is not None:
+            self._event_publisher.publish_envelope(accepted.to_envelope())
+
     def _on_refresh_failure(
         self,
         spec: SessionSpec,
@@ -520,6 +556,7 @@ class LiveApplicationApi:
             LiveRefreshKind.QUOTE: "live",
             LiveRefreshKind.ONE_MINUTE: "intraday_chart",
             LiveRefreshKind.OFFICIAL_FIVE_MINUTE: "five_minute_chart",
+            LiveRefreshKind.OFFICIAL_THIRTY_MINUTE: "thirty_minute_chart",
         }
         accepted = self._store.accept_operation_failure(
             session_id=spec.session_id,

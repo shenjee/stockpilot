@@ -160,14 +160,17 @@ def build_workbench_projection(
         "market": {
             "bars_1m": list(pipeline_result.bars_1m),
             "bars_5m": list(pipeline_result.bars_5m),
+            "bars_30m": list(pipeline_result.bars_30m),
             "daily_bars": list(pipeline_result.daily_bars),
             "quote": pipeline_result.quote,
         },
         "indicators": {
             "five_minute": pipeline_result.indicators_5m,
+            "thirty_minute": pipeline_result.indicators_30m,
             "one_minute": pipeline_result.indicators_1m,
         },
         "chan_analysis": pipeline_result.chan_analysis,
+        "chan_analysis_30m": pipeline_result.chan_analysis_30m,
         "warnings": list(pipeline_result.warnings),
     }
     if live_market_view is not None:
@@ -405,6 +408,9 @@ def _validate_live_market_view(
         "one_minute_indicators_as_of",
         "five_minute_indicators_as_of",
         "czsc_as_of",
+        "bars_30m_as_of",
+        "thirty_minute_indicators_as_of",
+        "czsc_30m_as_of",
     }
     missing = required - set(live_market_view)
     if missing:

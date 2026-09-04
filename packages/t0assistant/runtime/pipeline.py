@@ -27,6 +27,7 @@ from packages.chantheory import (
 from packages.indicators import (
     calculate_five_minute_indicators,
     calculate_one_minute_indicators,
+    calculate_thirty_minute_indicators,
 )
 from packages.marketdata.services.market_context_service import MarketSession
 
@@ -41,6 +42,13 @@ from ._market_bars import (
 )
 from .five_minute import DynamicFiveMinuteAggregator
 from .projection import project_market_at
+from .thirty_minute import DynamicThirtyMinuteAggregator
+from .thirty_minute_warnings import (
+    THIRTY_MINUTE_CHAN_ANALYSIS_UNAVAILABLE,
+    THIRTY_MINUTE_INDICATORS_UNAVAILABLE,
+    THIRTY_MINUTE_MARKET_DATA_UNAVAILABLE,
+    warning_dict,
+)
 
 
 class WorkbenchPipelineError(RuntimeMarketDataError):
@@ -84,6 +92,8 @@ class PipelineMarketInput:
     official_5m_bars: Sequence[Mapping[str, Any]] = field(default_factory=tuple)
     quote_snapshots: Sequence[Mapping[str, Any]] = field(default_factory=tuple)
     daily_bars_history: Sequence[Mapping[str, Any]] = field(default_factory=tuple)
+    preheat_30m_bars: Sequence[Mapping[str, Any]] = field(default_factory=tuple)
+    official_30m_bars: Sequence[Mapping[str, Any]] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +113,10 @@ class PipelineResult:
     indicators_5m: dict[str, Any]
     chan_analysis: dict[str, Any]
     warnings: list[dict[str, Any]]
+    bars_30m: tuple[dict[str, Any], ...] = ()
+    closed_30m_prefix: tuple[dict[str, Any], ...] = ()
+    indicators_30m: dict[str, Any] = field(default_factory=dict)
+    chan_analysis_30m: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -123,6 +137,10 @@ class PipelineResult:
             "indicators_5m": dict(self.indicators_5m),
             "chan_analysis": dict(self.chan_analysis),
             "warnings": list(self.warnings),
+            "bars_30m": [dict(bar) for bar in self.bars_30m],
+            "closed_30m_prefix": [dict(bar) for bar in self.closed_30m_prefix],
+            "indicators_30m": dict(self.indicators_30m),
+            "chan_analysis_30m": dict(self.chan_analysis_30m),
         }
 
     @classmethod
@@ -148,6 +166,10 @@ class PipelineResult:
             chan_analysis = _default_analyze_5m((), symbol)
         except Exception:
             chan_analysis = _empty_chan_analysis(symbol)
+        try:
+            chan_analysis_30m = _default_analyze_30m((), symbol)
+        except Exception:
+            chan_analysis_30m = _empty_chan_analysis_30m(symbol)
         return cls(
             target_time=target_time,
             symbol=symbol,
@@ -174,6 +196,10 @@ class PipelineResult:
                     "details": {},
                 }
             ],
+            bars_30m=(),
+            closed_30m_prefix=(),
+            indicators_30m=_empty_30m_indicators(),
+            chan_analysis_30m=chan_analysis_30m,
         )
 
 
@@ -192,6 +218,21 @@ def _default_analyze_5m(
     return result.to_dict()
 
 
+def _default_analyze_30m(
+    bars: Sequence[Mapping[str, Any]],
+    symbol: str,
+) -> dict[str, Any]:
+    """Project-owned full rebuild over a closed 30m prefix."""
+
+    result = analyze(
+        rows=bars,
+        symbol=symbol,
+        timeframe="30m",
+        source="tencent",
+    )
+    return result.to_dict()
+
+
 def _empty_chan_analysis(symbol: str) -> dict[str, Any]:
     """Schema-valid empty chan analysis when the analyzer cannot run.
 
@@ -203,6 +244,20 @@ def _empty_chan_analysis(symbol: str) -> dict[str, Any]:
     result = AnalysisResult(
         symbol=symbol,
         timeframe="5m",
+        source="tencent",
+        engine=ENGINE_NAME,
+        engine_version=PINNED_ENGINE_VERSION,
+        parameters=get_default_parameters(),
+    )
+    return result.to_dict()
+
+
+def _empty_chan_analysis_30m(symbol: str) -> dict[str, Any]:
+    """Schema-valid empty 30m chan analysis when the analyzer cannot run."""
+
+    result = AnalysisResult(
+        symbol=symbol,
+        timeframe="30m",
         source="tencent",
         engine=ENGINE_NAME,
         engine_version=PINNED_ENGINE_VERSION,
@@ -330,6 +385,15 @@ class WorkbenchPipeline:
             market_input.preheat_5m_bars,
             session_start=self._session.start,
         )
+        official_30m = _target_day_closed_bars(
+            market_input.official_30m_bars,
+            trade_date=trade_date,
+            target_time=resolved_target,
+        )
+        preheat_30m = _preheat_closed_bars(
+            market_input.preheat_30m_bars,
+            session_start=self._session.start,
+        )
 
         aggregator = DynamicFiveMinuteAggregator(self._session)
         for bar in bars_1m:
@@ -340,6 +404,16 @@ class WorkbenchPipeline:
         display_5m = list(aggregator.display_bars)
         closed_5m = _merge_sorted_bars(preheat_5m, aggregator.analysis_bars)
         bars_5m = _merge_sorted_bars(preheat_5m, display_5m)
+
+        aggregator_30m = DynamicThirtyMinuteAggregator(self._session)
+        for bar in bars_1m:
+            aggregator_30m.update_one_minute(bar)
+        for bar in official_30m:
+            aggregator_30m.accept_official(bar)
+
+        display_30m = list(aggregator_30m.display_bars)
+        closed_30m = _merge_sorted_bars(preheat_30m, aggregator_30m.analysis_bars)
+        bars_30m = _merge_sorted_bars(preheat_30m, display_30m)
 
         projection = project_market_at(
             bars_1m,
@@ -364,6 +438,24 @@ class WorkbenchPipeline:
             if closed_5m
             else _empty_5m_indicators()
         )
+        warnings: list[dict[str, Any]] = []
+        first_30m_close = min(self._session.bar_close_times(30), default=None)
+        if (
+            not bars_30m
+            and first_30m_close is not None
+            and resolved_target >= first_30m_close
+        ):
+            warnings.append(warning_dict(THIRTY_MINUTE_MARKET_DATA_UNAVAILABLE))
+
+        try:
+            indicators_30m = (
+                calculate_thirty_minute_indicators(closed_30m)
+                if closed_30m
+                else _empty_30m_indicators()
+            )
+        except Exception:
+            indicators_30m = _empty_30m_indicators()
+            warnings.append(warning_dict(THIRTY_MINUTE_INDICATORS_UNAVAILABLE))
 
         chan_analysis = self._analyzer(closed_5m, market_input.symbol)
         if not isinstance(chan_analysis, Mapping):
@@ -372,6 +464,12 @@ class WorkbenchPipeline:
                 "a dict chan_analysis payload (e.g. AnalysisResult.to_dict()), "
                 f"got {type(chan_analysis).__name__}"
             )
+
+        try:
+            chan_analysis_30m = _default_analyze_30m(closed_30m, market_input.symbol)
+        except Exception:
+            chan_analysis_30m = _empty_chan_analysis_30m(market_input.symbol)
+            warnings.append(warning_dict(THIRTY_MINUTE_CHAN_ANALYSIS_UNAVAILABLE))
 
         return PipelineResult(
             target_time=resolved_target,
@@ -386,7 +484,11 @@ class WorkbenchPipeline:
             indicators_1m=indicators_1m,
             indicators_5m=indicators_5m,
             chan_analysis=chan_analysis,
-            warnings=[],
+            warnings=warnings,
+            bars_30m=tuple(bars_30m),
+            closed_30m_prefix=tuple(closed_30m),
+            indicators_30m=indicators_30m,
+            chan_analysis_30m=chan_analysis_30m,
         )
 
     def _resolve_target_time(
@@ -527,6 +629,28 @@ def _empty_1m_indicators() -> dict[str, Any]:
 
 
 def _empty_5m_indicators() -> dict[str, Any]:
+    return {
+        "ma": {f"ma{period}": [] for period in (5, 10, 20, 30, 60)},
+        "boll": {
+            "period": 20,
+            "stddev": 2.0,
+            "upper": [],
+            "middle": [],
+            "lower": [],
+        },
+        "volume": {"values": [], "ma5": [], "ma10": []},
+        "macd": {
+            "fast_period": 12,
+            "slow_period": 26,
+            "signal_period": 9,
+            "dif": [],
+            "dea": [],
+            "histogram": [],
+        },
+    }
+
+
+def _empty_30m_indicators() -> dict[str, Any]:
     return {
         "ma": {f"ma{period}": [] for period in (5, 10, 20, 30, 60)},
         "boll": {
