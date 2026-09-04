@@ -391,15 +391,32 @@ class LiveRefreshSchedulerTests(unittest.TestCase):
             RuntimeError("provider unavailable"),
             RuntimeError("provider unavailable"),
             RuntimeError("provider unavailable"),
+            RuntimeError("provider unavailable"),
         )
 
         scheduler.run_due(self.t0)
         state = scheduler.state_for(LiveRefreshKind.OFFICIAL_THIRTY_MINUTE)
-        # Before the boundary the schedule cannot determine a wait, so the
-        # generic backoff applies (15s * 2 = 30s after the first failure).
-        self.assertEqual(state.next_due_at, self.t0 + timedelta(seconds=30))
+        # Before the boundary a future pending boundary exists, so the
+        # ``boundary + 5s`` schedule computed at dispatch is preserved and
+        # the generic backoff must not postpone the first post-boundary
+        # attempt.
+        self.assertEqual(
+            state.next_due_at, boundary + timedelta(seconds=5)
+        )
         self.assertFalse(state.thirty_minute_delayed)
         self.assertEqual(delayed_flags, [])
+
+        # Repeated pre-boundary failures keep the boundary schedule instead
+        # of compounding exponential backoff toward the boundary window.
+        scheduler.retry(
+            LiveRefreshKind.OFFICIAL_THIRTY_MINUTE,
+            self.t0 + timedelta(seconds=30),
+        )
+        state = scheduler.state_for(LiveRefreshKind.OFFICIAL_THIRTY_MINUTE)
+        self.assertEqual(
+            state.next_due_at, boundary + timedelta(seconds=5)
+        )
+        self.assertEqual(state.consecutive_failures, 2)
 
         # First attempt past the boundary fails: retry after 15s, not the
         # exponential backoff (which would be 60s here).

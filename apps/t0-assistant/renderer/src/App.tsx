@@ -1855,41 +1855,31 @@ export function App() {
   };
   // 同股票数据集 identity 替换时丢弃旧手工范围，避免 key 重建后错误恢复（Issue #148）。
   const chartDatasetIdentity = replayFacts ? null : projection.sessionId;
-  const chartDatasetIdentityRef = useRef(chartDatasetIdentity);
-  const datasetIdentityJustReplaced =
-    chartDatasetIdentityRef.current != null &&
-    chartDatasetIdentity != null &&
-    chartDatasetIdentityRef.current !== chartDatasetIdentity;
-  // Issue #168：Replay 视口按 Session 保存。chartViewSessionIdentity 覆盖
-  // Live 与 Replay 两种投影（Replay 用 session_id），Session 变化时清空
-  // chartViews，避免旧 Session 的手工范围被错误恢复到新 Session。
+  // Issue #168：视口按 Session 保存。chartViewSessionIdentity 覆盖 Live 与
+  // Replay 两种投影（Replay 用 session_id）。Session 变化必须在 render 期间
+  // 同步清空 chartViews：带新 Session key 的 ChartGroup 会在该次 render 挂载，
+  // 且只在挂载时消费 initialViewport；若推迟到 useEffect 清空，新图表首屏会
+  // 继承旧 Session 的手工范围而不是右对齐最新 K。React 在 render 期间
+  // setState 会丢弃本次输出并立即以新状态重渲染，因此提交的 render 中
+  // chartViews 已清空、initialViewport 为 null。
   const chartViewSessionIdentity =
     replayFacts?.sessionId ?? projection.sessionId ?? null;
-  const chartViewSessionIdentityRef = useRef(chartViewSessionIdentity);
-  useEffect(() => {
-    const previous = chartViewSessionIdentityRef.current;
-    chartViewSessionIdentityRef.current = chartViewSessionIdentity;
-    if (
-      previous == null ||
-      chartViewSessionIdentity == null ||
-      previous === chartViewSessionIdentity
-    ) {
-      return;
-    }
+  const [prevChartViewSessionIdentity, setPrevChartViewSessionIdentity] =
+    useState(chartViewSessionIdentity);
+  if (
+    prevChartViewSessionIdentity != null &&
+    chartViewSessionIdentity != null &&
+    prevChartViewSessionIdentity !== chartViewSessionIdentity
+  ) {
+    setPrevChartViewSessionIdentity(chartViewSessionIdentity);
     setWorkbench((current) => ({
       ...current,
       chartViews: { fiveMinute: null, intraday: null, thirtyMinute: null },
     }));
-  }, [chartViewSessionIdentity]);
-  const fiveMinuteInitialViewport = datasetIdentityJustReplaced
-    ? null
-    : workbench.chartViews.fiveMinute;
-  const intradayInitialViewport = datasetIdentityJustReplaced
-    ? null
-    : workbench.chartViews.intraday;
-  const thirtyMinuteInitialViewport = datasetIdentityJustReplaced
-    ? null
-    : workbench.chartViews.thirtyMinute;
+  }
+  const fiveMinuteInitialViewport = workbench.chartViews.fiveMinute;
+  const intradayInitialViewport = workbench.chartViews.intraday;
+  const thirtyMinuteInitialViewport = workbench.chartViews.thirtyMinute;
   const layoutMode = workbenchLayoutMode(workbench);
   const dailyBars = latestDailyBars(snapshot);
 

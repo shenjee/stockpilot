@@ -840,9 +840,11 @@ class LiveRefreshScheduler:
         refresh succeeds without official data (15s retries, 60s once the
         2-minute delay threshold trips).  Generic exponential backoff would
         silently stretch the retry past the boundary window and never raise
-        the delayed-official warning, so it is only used when the boundary
-        schedule cannot determine a wait (no pending boundary, e.g. outside
-        the trading session).
+        the delayed-official warning, so it is only used when no pending
+        boundary exists (e.g. outside the trading session).  While a future
+        boundary is pending, the ``boundary + 5s`` schedule computed at
+        dispatch is preserved so a pre-boundary failure cannot postpone the
+        first post-boundary attempt.
         """
 
         publish_failure = False
@@ -872,15 +874,18 @@ class LiveRefreshScheduler:
                     observed_at,
                     data_received=False,
                 )
-                if state.boundary_first_attempt_at is None:
-                    # The boundary schedule could not determine a wait (no
-                    # pending boundary, or still before the boundary window);
-                    # fall back to the generic backoff so the branch still
-                    # retries.
+                if state.thirty_minute_pending_boundary is None:
+                    # No pending boundary (e.g. outside the trading session):
+                    # the boundary schedule cannot determine a wait, so fall
+                    # back to the generic backoff so the branch still retries.
                     state.next_due_at = observed_at + self._backoff.delay(
                         base_interval,
                         state.consecutive_failures,
                     )
+                # Otherwise keep the boundary schedule: either the pending
+                # boundary's ``boundary + 5s`` due time (pre-boundary failure)
+                # or the retry interval set by _advance_thirty_minute_schedule
+                # (post-boundary failure).
             else:
                 state.next_due_at = observed_at + self._backoff.delay(
                     base_interval,
