@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -6,6 +7,20 @@ import { app, BrowserWindow, ipcMain } from "electron";
 
 
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+// 真实快照 fixture：驱动选股 → get_live_snapshot → 图表投影 → TradeDrawer 挂载。
+const workbenchFixture = JSON.parse(
+  await readFile(
+    resolve(appRoot, "contracts", "fixtures", "workbench-flow-v2.json"),
+    "utf8",
+  ),
+);
+const fixtureSecurity = Object.freeze({
+  symbol: "sh.600000",
+  code: "600000",
+  market: "sh",
+  name: "浦发银行",
+  instrument_type: "stock",
+});
 const targetViewports = Object.freeze([
   { name: "13-inch-default", width: 1440, height: 900 },
   { name: "14-inch-default", width: 1512, height: 982 },
@@ -65,7 +80,23 @@ function registerFakeBackend() {
       });
     }
     if (command === "search_securities") {
-      return appResponse(request, { securities: [] });
+      return appResponse(request, { securities: [fixtureSecurity] });
+    }
+    if (command === "select_security") {
+      return appResponse(request, {
+        session_id:
+          workbenchFixture.initial_snapshot_event.payload.session.session_id,
+        security: fixtureSecurity,
+      });
+    }
+    if (command === "get_live_snapshot") {
+      return appResponse(
+        request,
+        workbenchFixture.initial_snapshot_event.payload,
+      );
+    }
+    if (command === "list_trades") {
+      return appResponse(request, null);
     }
     if (command === "list_fee_plans") {
       return appResponse(request, { fee_plans: [] });
@@ -132,6 +163,67 @@ async function clickTestId(window, testId) {
   await settle(window);
 }
 
+// 通过搜索框选择证券：输入 → 防抖 → search_securities → 点击建议 → select_security
+// → get_live_snapshot → 投影就绪 → isTradableSecurity → TradeDrawer 挂载。
+async function selectSecurityViaSearch(window) {
+  await window.webContents.executeJavaScript(`
+    (() => {
+      const input = document.querySelector("#security-search");
+      if (!input) throw new Error("missing #security-search");
+      input.focus();
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value",
+      ).set;
+      setter.call(input, "600000");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    })()
+  `);
+  const clickedOption = await window.webContents.executeJavaScript(`
+    new Promise((resolve, reject) => {
+      const deadline = Date.now() + 5000;
+      const poll = () => {
+        const option = document.querySelector('#security-results [role="option"]');
+        if (option) {
+          option.click();
+          resolve(true);
+          return;
+        }
+        if (Date.now() >= deadline) {
+          resolve(false);
+          return;
+        }
+        setTimeout(poll, 25);
+      };
+      poll();
+    })
+  `);
+  assert.equal(
+    clickedOption,
+    true,
+    "security suggestion did not appear after search",
+  );
+  const drawerMounted = await window.webContents.executeJavaScript(`
+    new Promise((resolve) => {
+      const deadline = Date.now() + 5000;
+      const poll = () => {
+        if (document.querySelector('[data-testid="trade-drawer-toggle"]')) {
+          resolve(true);
+          return;
+        }
+        if (Date.now() >= deadline) {
+          resolve(false);
+          return;
+        }
+        setTimeout(poll, 25);
+      };
+      poll();
+    })
+  `);
+  assert.equal(drawerMounted, true, "trade drawer did not mount after selection");
+  await settle(window);
+}
+
 async function inspectWorkbench(window) {
   return window.webContents.executeJavaScript(`
     (() => {
@@ -186,6 +278,7 @@ async function inspectWorkbench(window) {
         intradayHidden:
           intraday?.hasAttribute("hidden") ||
           (intraday ? getComputedStyle(intraday).display === "none" : null),
+        intradayDisplay: intraday ? getComputedStyle(intraday).display : null,
         showIntraday: workspace?.getAttribute("data-show-intraday") ?? null,
         ma5Pressed: ma5?.getAttribute("aria-pressed") ?? null,
       };
@@ -287,12 +380,22 @@ async function verifyTargetViewport(window, target) {
   metrics = await inspectWorkbench(window);
   assert.equal(metrics.showIntraday, "false");
   assert.equal(metrics.intradayHidden, true);
+  assert.equal(
+    metrics.intradayDisplay,
+    "none",
+    `${target.name}: hidden secondary pane must not occupy grid space`,
+  );
   assert.equal(metrics.ma5Pressed, "true");
   assertNoHorizontalOverflow(metrics, `${target.name} hidden intraday`);
   assertWithinViewport(metrics.sidebar, metrics.viewport, "market sidebar");
   assert.ok(
     metrics.fiveMinute.right < metrics.sidebar.left,
     `${target.name}: hidden layout must keep the sidebar separate`,
+  );
+  assert.ok(
+    metrics.sidebar.top >= metrics.workspace.top - 0.5 &&
+      metrics.sidebar.bottom <= metrics.workspace.bottom + 0.5,
+    `${target.name}: sidebar must stay on the first workspace row`,
   );
 
   await clickTestId(window, "layout-show-intraday");
@@ -307,6 +410,7 @@ async function verifyTargetViewport(window, target) {
   );
 
   await clickTestId(window, "mode-live");
+  await selectSecurityViaSearch(window);
   const beforeDrawer = await inspectWorkbench(window);
   await clickTestId(window, "trade-drawer-toggle");
   metrics = await inspectWorkbench(window);
