@@ -55,6 +55,8 @@ jobs:
           tests/chart-model.test.mjs
           tests/chart-primitives-lc.test.mjs
           tests/chart-snapshot-smoke.test.mjs
+      - name: Run App session viewport integration tests
+        run: npm run test:app
       - run: npm run smoke:renderer
 
   electron-smoke:

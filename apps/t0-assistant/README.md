@@ -70,16 +70,20 @@ From the repository root:
 source ~/.venvs/czsc/bin/activate
 python -m unittest discover -s apps/t0-assistant/tests -p 'test_*.py'
 cd apps/t0-assistant
+npm test
 npm run smoke
 npm run acceptance:target-viewports
 ```
+
+`npm test` runs the existing Node contract/unit files plus the App-layer Vitest
+suite (`npm run test:app`) that covers Session-switch `initialViewport` commits.
 
 The smoke suite is offline with respect to market services. CI reports four
 independent tracks so failures are attributable without reading unrelated logs:
 
 ```text
 Python smoke     contracts plus the formal loopback service bootstrap
-Renderer smoke   TypeScript checking plus the production Vite build
+Renderer smoke   TypeScript checking, production Vite build, and App React integration tests
 Electron smoke   Python service host lifecycle and bounded shutdown
 Contract smoke   Python JSON Schema validation plus Node fixture consumption
 ```

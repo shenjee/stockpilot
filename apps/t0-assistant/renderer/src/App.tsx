@@ -1864,18 +1864,31 @@ export function App() {
   // chartViews 已清空、initialViewport 为 null。
   const chartViewSessionIdentity =
     replayFacts?.sessionId ?? projection.sessionId ?? null;
-  const [prevChartViewSessionIdentity, setPrevChartViewSessionIdentity] =
+  const [lastNonNullChartViewSessionIdentity, setLastNonNullChartViewSessionIdentity] =
     useState(chartViewSessionIdentity);
-  if (
-    prevChartViewSessionIdentity != null &&
-    chartViewSessionIdentity != null &&
-    prevChartViewSessionIdentity !== chartViewSessionIdentity
-  ) {
-    setPrevChartViewSessionIdentity(chartViewSessionIdentity);
-    setWorkbench((current) => ({
-      ...current,
-      chartViews: { fiveMinute: null, intraday: null, thirtyMinute: null },
-    }));
+  if (chartViewSessionIdentity == null) {
+    // generation reset 会走 A → null → B。prev 不能写成 null，否则到达 B 时
+    // 会被当成冷启动、不清空。进入 null 时若仍有旧视口则同步清掉，避免
+    // ChartGroup key 落到 "live" 时继承 A。
+    if (
+      lastNonNullChartViewSessionIdentity != null &&
+      (workbench.chartViews.fiveMinute ||
+        workbench.chartViews.intraday ||
+        workbench.chartViews.thirtyMinute)
+    ) {
+      setWorkbench((current) => ({
+        ...current,
+        chartViews: { fiveMinute: null, intraday: null, thirtyMinute: null },
+      }));
+    }
+  } else if (lastNonNullChartViewSessionIdentity !== chartViewSessionIdentity) {
+    setLastNonNullChartViewSessionIdentity(chartViewSessionIdentity);
+    if (lastNonNullChartViewSessionIdentity != null) {
+      setWorkbench((current) => ({
+        ...current,
+        chartViews: { fiveMinute: null, intraday: null, thirtyMinute: null },
+      }));
+    }
   }
   const fiveMinuteInitialViewport = workbench.chartViews.fiveMinute;
   const intradayInitialViewport = workbench.chartViews.intraday;
