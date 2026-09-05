@@ -376,8 +376,9 @@ describe("App session-switch initialViewport commits", () => {
       SAME_SESSION_MANUAL.thirtyMinute,
     );
 
-    fireEvent.click(screen.getByTestId("layout-hide-intraday"));
-    fireEvent.click(screen.getByTestId("layout-show-intraday"));
+    const layoutSwitcher = screen.getByTestId("layout-switcher");
+    fireEvent.click(layoutSwitcher);
+    fireEvent.click(layoutSwitcher);
     await waitForChart("thirty_minute");
     expect(lastMount("thirty_minute").initialViewport).toEqual(
       SAME_SESSION_MANUAL.thirtyMinute,
