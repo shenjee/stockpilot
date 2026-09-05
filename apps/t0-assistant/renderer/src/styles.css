@@ -358,6 +358,7 @@ button { color: inherit; }
   min-width: 0;
 }
 .layout-switcher button,
+button.layout-switcher,
 .layer-switcher button {
   border: 1px solid #34445f;
   border-radius: 5px;
@@ -369,8 +370,10 @@ button { color: inherit; }
   cursor: pointer;
 }
 .layout-switcher button:hover,
+button.layout-switcher:hover,
 .layer-switcher button:hover { border-color: #607493; color: #cbd5e1; }
 .layout-switcher button[aria-pressed="true"],
+button.layout-switcher[aria-pressed="true"],
 .layer-switcher button[aria-pressed="true"] {
   border-color: #4f8cff;
   background: transparent;
@@ -638,7 +641,8 @@ button { color: inherit; }
 
 @media (max-width: 1180px) {
   :root { --sidebar-width: 272px; --workspace-gap: 8px; }
-  .layout-switcher button { padding-inline: 5px; }
+  .layout-switcher button,
+  button.layout-switcher { padding-inline: 5px; }
   .layer-switcher { display: none; }
   .replay-granularity { display: none; }
 }
