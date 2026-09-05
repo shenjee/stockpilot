@@ -2621,25 +2621,26 @@ function LayoutSwitcher({
   mode: WorkbenchLayoutModeValue;
   onSelect: (mode: WorkbenchLayoutModeValue) => void;
 }) {
+  // 单按钮切换：文案描述点击后的动作。副图显示时点击隐藏，反之显示。
+  const showIntraday = mode === WorkbenchLayoutMode.SHOW_INTRADAY;
   return (
-    <div
+    <button
+      type="button"
       className="layout-switcher"
       data-testid="layout-switcher"
+      data-layout-mode={mode}
       aria-label="工作台布局"
+      aria-pressed={showIntraday}
+      onClick={() =>
+        onSelect(
+          showIntraday
+            ? WorkbenchLayoutMode.HIDE_INTRADAY
+            : WorkbenchLayoutMode.SHOW_INTRADAY,
+        )
+      }
     >
-      <LayoutButton
-        active={mode === WorkbenchLayoutMode.SHOW_INTRADAY}
-        testId="layout-show-intraday"
-        label="显示副图"
-        onClick={() => onSelect(WorkbenchLayoutMode.SHOW_INTRADAY)}
-      />
-      <LayoutButton
-        active={mode === WorkbenchLayoutMode.HIDE_INTRADAY}
-        testId="layout-hide-intraday"
-        label="隐藏副图"
-        onClick={() => onSelect(WorkbenchLayoutMode.HIDE_INTRADAY)}
-      />
-    </div>
+      {showIntraday ? "隐藏副图" : "显示副图"}
+    </button>
   );
 }
 

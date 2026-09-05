@@ -365,7 +365,7 @@ async function verifyTargetViewport(window, target) {
   assertBaseLayout(metrics, target);
 
   await clickTestId(window, "layer-ma5");
-  await clickTestId(window, "layout-show-intraday");
+  // 副图默认显示，此处直接校验显示态下的 50/50 分栏；切换行为在下方单独验证。
   metrics = await inspectWorkbench(window);
   assert.equal(metrics.showIntraday, "true");
   assert.equal(metrics.ma5Pressed, "true");
@@ -376,7 +376,7 @@ async function verifyTargetViewport(window, target) {
   );
   assertChartRowsAligned(metrics, `${target.name} 50/50`);
 
-  await clickTestId(window, "layout-hide-intraday");
+  await clickTestId(window, "layout-switcher");
   metrics = await inspectWorkbench(window);
   assert.equal(metrics.showIntraday, "false");
   assert.equal(metrics.intradayHidden, true);
@@ -398,7 +398,7 @@ async function verifyTargetViewport(window, target) {
     `${target.name}: sidebar must stay on the first workspace row`,
   );
 
-  await clickTestId(window, "layout-show-intraday");
+  await clickTestId(window, "layout-switcher");
   await clickTestId(window, "mode-replay");
   metrics = await inspectWorkbench(window);
   assert.equal(metrics.ma5Pressed, "true");
