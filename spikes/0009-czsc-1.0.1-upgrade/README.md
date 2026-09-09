@@ -14,6 +14,11 @@
 > 1. [P1] 移除循环依赖：#173 的关闭条件仅为安装验证 + 旧基线冻结 + 样本覆盖，不依赖 #174/#176。新版适配与对照保留为后续子任务。
 > 2. [P1] 修复失败处理：生成器在任一必需场景失败时返回非零退出码，且不覆盖已提交的校验清单和金标输出。
 > 3. [P2] 只读验证模式：新增 `--verify` 模式，生成到临时目录与已提交清单比较；新增引擎版本守卫，防止在新版环境误写旧基线。
+>
+> **第三轮审查回应**：
+> 1. [P1] `--verify` 离线可用：固定输入始终从已提交 `inputs/` 读取，从不重新拉取行情。离线环境（`packages.marketdata` 阻断）下 `--verify` 仍全部通过。
+> 2. [P1] 失败不改金标：生成模式先在临时目录生成全部输出，全部成功后才复制到 `outputs/`。已用"先成功且输出改变、后失败"回归验证：exit 1，committed outputs 全部不变。
+> 3. [P2] 版本守卫独立于项目 pin：使用硬编码 `BASELINE_ENGINE_VERSION = "0.10.12"`，不随 `config.PINNED_ENGINE_VERSION` 改变。即使 #177 将项目 pin 更新为 1.0.1，此守卫仍拒绝在 1.0.1 环境运行。
 
 ---
 
@@ -148,7 +153,7 @@ top-level RawBar: <class 'builtins.RawBar'>      ← Rust 路径（项目未使�
 ```bash
 source ~/.venvs/czsc/bin/activate
 
-# 生成模式：写入 inputs/outputs/checksums/repro-log
+# 生成模式：写入 outputs/checksums/repro-log（inputs 只读）
 python spikes/0009-czsc-1.0.1-upgrade/baseline/generate_baseline.py
 
 # 验证模式（只读）：生成到临时目录，与已提交的 checksums.sha256 比较
@@ -156,19 +161,25 @@ python spikes/0009-czsc-1.0.1-upgrade/baseline/generate_baseline.py --verify
 ```
 
 脚本逻辑：
-1. **引擎版本守卫**：检查 `czsc.__version__ == PINNED_ENGINE_VERSION`（0.10.12），
-   不匹配则拒绝运行（退出码 2），防止在新版环境误写旧基线。
-2. 生成/加载固定输入（合成日线 seed=42；真实 5m/30m 从冻结 JSON 或首次拉取）
+1. **引擎版本守卫**：检查 `czsc.__version__ == BASELINE_ENGINE_VERSION`（硬编码
+   `"0.10.12"`，**不**随项目 `config.PINNED_ENGINE_VERSION` 改变）。不匹配则拒绝
+   运行（退出码 2），防止在新版环境误写旧基线。即使 #177 将项目 pin 更新为 1.0.1，
+   此守卫仍拒绝在 1.0.1 环境运行。
+2. **固定输入只读**：所有场景的输入始终从已提交的 `inputs/` 目录读取，**从不重新
+   拉取行情**。`--verify` 模式在离线环境（`packages.marketdata` 不可用）下仍可运行。
 3. 调用 `analyze()` 完整管线（含 normalize → engine → structure_mapping → signals）
 4. 序列化完整 `AnalysisResult` JSON
 5. 记录引擎探针（实际 `RawBar.__module__`、`czsc.__version__`、环境变量）
 6. 计算所有输入/输出文件的 SHA-256
 
-**失败处理**：任一必需场景分析失败时，脚本记录错误、返回非零退出码（1），
-且**不覆盖**已提交的校验清单和金标输出。
+**失败处理（先成功后失败不改金标）**：生成模式先将所有场景输出写入临时目录，
+**全部成功后**才复制到 `outputs/` 并写入校验清单。任一场景失败时返回非零退出码（1），
+已提交的金标输出和校验清单**完全不变**（已用"第一场景成功且输出改变、第二场景失败"
+回归验证：exit 1，3 个 committed outputs 全部 unchanged）。
 
-**验证模式（`--verify`）**：生成到临时目录，计算 SHA-256，与已提交的
-`checksums.sha256` 逐项比较。全部一致返回 0，任一不匹配返回 1。不修改任何已提交文件。
+**验证模式（`--verify`）**：生成到临时目录（仅 outputs），计算 SHA-256，与已提交的
+`checksums.sha256` 逐项比较。全部一致返回 0，任一不匹配返回 1。不修改任何已提交文件，
+不重写校验清单，因此即使结果改变也不会"自证通过"。
 
 ### 4.2 固定输入
 
@@ -245,6 +256,10 @@ VERIFICATION PASSED: all 6 files match committed checksums
 
 输出字节级一致，证明基线可重复生成。`--verify` 模式不重写校验清单，
 因此即使结果改变也不会"自证通过"。
+
+**离线验证**：`--verify` 模式始终从已提交的 `inputs/` 读取固定输入，从不重新拉取
+行情。在 `packages.marketdata` 导入被阻断的离线环境下，`--verify` 仍全部通过
+（exit 0），证明不依赖网络。
 
 ### 4.7 生成日志
 
