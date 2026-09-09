@@ -3,12 +3,17 @@
 - 日期：2026-09-09（修订版，回应 PR #178 审查意见）
 - 分支：`upgrade/czsc-1.0.1`（基于 main `b924c53`）
 - 父 issue：#172；本报告对应子任务 #173
-- 结论：**安装验证通过；基线门禁未完成。** 本 PR 不关闭 #173。
+- 结论：**安装验证通过；旧版基线冻结完成；样本覆盖完成。** 本 PR 关闭 #173。
 
 > **审查回应**：本版修正了初版报告的三个问题：
 > 1. [P1] 补齐可复现旧版基线：新增生成脚本、固定输入、完整分析 JSON、SHA-256 校验清单，并验证可重复生成。
 > 2. [P1] 补齐样本覆盖：日线/5m/30m 三周期均有固定输入与完整输出；四信号在 30m 场景全部触发，在日线/5m 场景有触发/未触发记录。
 > 3. [P2] 修正 16:00 时间戳错误结论：旧版纯 Python 引擎（`engine.py` 实际加载路径）无 16:00 偏移；初版实验误用顶层 Rust `RawBar` 路径导致错误归因。详见 §3.2。
+>
+> **第二轮审查回应**：
+> 1. [P1] 移除循环依赖：#173 的关闭条件仅为安装验证 + 旧基线冻结 + 样本覆盖，不依赖 #174/#176。新版适配与对照保留为后续子任务。
+> 2. [P1] 修复失败处理：生成器在任一必需场景失败时返回非零退出码，且不覆盖已提交的校验清单和金标输出。
+> 3. [P2] 只读验证模式：新增 `--verify` 模式，生成到临时目录与已提交清单比较；新增引擎版本守卫，防止在新版环境误写旧基线。
 
 ---
 
@@ -142,16 +147,28 @@ top-level RawBar: <class 'builtins.RawBar'>      ← Rust 路径（项目未使�
 
 ```bash
 source ~/.venvs/czsc/bin/activate
+
+# 生成模式：写入 inputs/outputs/checksums/repro-log
 python spikes/0009-czsc-1.0.1-upgrade/baseline/generate_baseline.py
+
+# 验证模式（只读）：生成到临时目录，与已提交的 checksums.sha256 比较
+python spikes/0009-czsc-1.0.1-upgrade/baseline/generate_baseline.py --verify
 ```
 
 脚本逻辑：
-1. 生成/加载固定输入（合成日线 seed=42；真实 5m/30m 从冻结 JSON 或首次拉取）
-2. 调用 `analyze()` 完整管线（含 normalize → engine → structure_mapping → signals）
-3. 序列化完整 `AnalysisResult` JSON
-4. 记录引擎探针（实际 `RawBar.__module__`、`czsc.__version__`、环境变量）
-5. 计算所有输入/输出文件的 SHA-256
-6. 写入 `repro-log.txt` 生成日志
+1. **引擎版本守卫**：检查 `czsc.__version__ == PINNED_ENGINE_VERSION`（0.10.12），
+   不匹配则拒绝运行（退出码 2），防止在新版环境误写旧基线。
+2. 生成/加载固定输入（合成日线 seed=42；真实 5m/30m 从冻结 JSON 或首次拉取）
+3. 调用 `analyze()` 完整管线（含 normalize → engine → structure_mapping → signals）
+4. 序列化完整 `AnalysisResult` JSON
+5. 记录引擎探针（实际 `RawBar.__module__`、`czsc.__version__`、环境变量）
+6. 计算所有输入/输出文件的 SHA-256
+
+**失败处理**：任一必需场景分析失败时，脚本记录错误、返回非零退出码（1），
+且**不覆盖**已提交的校验清单和金标输出。
+
+**验证模式（`--verify`）**：生成到临时目录，计算 SHA-256，与已提交的
+`checksums.sha256` 逐项比较。全部一致返回 0，任一不匹配返回 1。不修改任何已提交文件。
 
 ### 4.2 固定输入
 
@@ -202,20 +219,32 @@ acb130f5...  outputs/daily_synthetic_120_result.json
 fed13e7c...  inputs/daily_synthetic_120_rows.json
 ```
 
-### 4.6 可复现性验证
+### 4.6 可复现性验证（只读 `--verify` 模式）
 
-重新运行生成脚本后，`shasum -c checksums.sha256` 全部通过：
+使用 `--verify` 模式验证可复现性。该模式生成到临时目录，计算 SHA-256，
+与**已提交的** `checksums.sha256` 逐项比较，不修改任何已提交文件：
 
-```
-inputs/5m_real_600584_548_rows.json: OK
-outputs/5m_real_600584_548_result.json: OK
-outputs/30m_real_600584_result.json: OK
-inputs/30m_600584_sh_rows.json: OK
-inputs/daily_synthetic_120_rows.json: OK
-outputs/daily_synthetic_120_result.json: OK
+```bash
+source ~/.venvs/czsc/bin/activate
+python spikes/0009-czsc-1.0.1-upgrade/baseline/generate_baseline.py --verify
 ```
 
-输出字节级一致，证明基线可重复生成。
+验证结果（退出码 0 = 全部一致）：
+
+```
+--- Verify: comparing 6 generated files against committed checksums ---
+  inputs/30m_600584_sh_rows.json: OK
+  inputs/5m_real_600584_548_rows.json: OK
+  inputs/daily_synthetic_120_rows.json: OK
+  outputs/30m_real_600584_result.json: OK
+  outputs/5m_real_600584_548_result.json: OK
+  outputs/daily_synthetic_120_result.json: OK
+
+VERIFICATION PASSED: all 6 files match committed checksums
+```
+
+输出字节级一致，证明基线可重复生成。`--verify` 模式不重写校验清单，
+因此即使结果改变也不会"自证通过"。
 
 ### 4.7 生成日志
 
@@ -257,21 +286,36 @@ outputs/daily_synthetic_120_result.json: OK
 
 ## 7. 结论与遗留风险
 
-### 安装验证：通过
+### #173 完成项
+
+#### 安装验证：通过
 
 1. Python 3.14.5 + cp310-abi3 wheel 安装/导入全部成功，无需换解释器、无需编译工具链。
 2. 四个默认信号在 Rust 分发器中全部注册且可调用，未触发口径与现有契约一致。
 3. `min_bi_len` 成为显式构造参数且默认 6，与旧版实际生效值一致；#174 将显式传参固定。
 
-### 基线门禁：未完成
+#### 旧版基线冻结：完成
 
-以下项需在后续子任务中完成，**本 PR 不关闭 #173**：
+1. §4 的基线是旧版 0.10.12 的输出，使用生产代码路径（`engine.py` → `czsc.py.objects` 纯 Python）。
+2. 生成脚本 `generate_baseline.py` 支持 `--verify` 只读验证模式（生成到临时目录与已提交清单比较）和引擎版本守卫（拒绝在非 0.10.12 环境运行）。
+3. 任一必需场景失败时返回非零退出码且不覆盖已提交金标。
+4. 三周期（日线/5m/30m）固定输入 + 完整 AnalysisResult JSON + SHA-256 校验清单均已提交。
+5. `--verify` 模式验证全部 6 文件字节级一致。
 
-1. **旧版基线已冻结但新版对照未做**：§4 的基线是旧版 0.10.12 的输出，新版 1.0.1
-   在同输入上的对照需在 #174/#176 完成。基线生成脚本已就绪，可在隔离环境重跑。
-2. **`p2_sample_*` 旧 fixture 与实际引擎不一致**：5 根样本在旧版引擎实际产生 0 分型，
-   但 `p2_sample_result.json` 记录了 4 分型/3 笔。该 fixture 非本次生成，保留原样
-   不动；新版 fixture 仅在 #176 对照验收通过后更新。
+#### 样本覆盖：完成
+
+1. 30m 场景（1336 根）四信号全部触发（111/102/161/205 active）。
+2. 日线/5m 场景有触发（first_sell）与未触发覆盖。
+3. 时间戳敏感场景已覆盖（§3.2 基线分型/笔端点 dt 精确等于 K 线 dt）。
+
+**#173 的关闭条件（安装验证 + 旧基线冻结 + 样本覆盖）均已满足。本 PR 关闭 #173。**
+
+### 后续子任务（不阻塞 #173）
+
+以下项属 #174（引擎适配）/#175（信号迁移）/#176（对照验收）的 DoD，不属于 #173：
+
+1. **新版对照**：§4 基线是旧版输出，新版 1.0.1 在同输入上的对照需在 #174/#176 完成。基线生成脚本已就绪，可在隔离环境重跑。
+2. **`p2_sample_*` 旧 fixture 与实际引擎不一致**：5 根样本在旧版引擎实际产生 0 分型，但 `p2_sample_result.json` 记录了 4 分型/3 笔。该 fixture 非本次生成，保留原样不动；新版 fixture 仅在 #176 对照验收通过后更新。
 3. **同 dt 更新场景**：engine 层缺，属 #174 DoD。
 4. **逐根增量 vs 全量重建一致性**：属 #176。
 

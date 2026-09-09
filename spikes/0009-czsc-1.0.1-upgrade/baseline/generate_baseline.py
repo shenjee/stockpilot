@@ -15,18 +15,29 @@ Outputs (written next to this script):
 Usage (from repo root, prod env ``~/.venvs/czsc``):
 
     source ~/.venvs/czsc/bin/activate
+
+Generate (writes inputs/outputs/checksums/repro-log next to this script):
+
     python spikes/0009-czsc-1.0.1-upgrade/baseline/generate_baseline.py
 
-Re-run to verify reproducibility: outputs must be byte-identical and
-checksums must match.
+Verify reproducibility (read-only: generates to a temp dir and compares
+against the committed ``checksums.sha256``; returns non-zero on mismatch):
+
+    python spikes/0009-czsc-1.0.1-upgrade/baseline/generate_baseline.py --verify
+
+The generator refuses to run unless the installed czsc version equals
+``PINNED_ENGINE_VERSION`` (0.10.12), preventing accidental baseline
+corruption from a new-version environment.
 """
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
 import sys
+import tempfile
 import traceback
 from datetime import datetime
 from pathlib import Path
@@ -47,6 +58,7 @@ from packages.chantheory.engine import load_czsc  # noqa: E402
 BASELINE_DIR = Path(__file__).resolve().parent
 INPUTS_DIR = BASELINE_DIR / "inputs"
 OUTPUTS_DIR = BASELINE_DIR / "outputs"
+COMMITTED_CHECKSUMS = BASELINE_DIR / "checksums.sha256"
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +130,7 @@ def _make_5m_input() -> list[dict]:
     return normalised
 
 
-def _make_30m_input() -> list[dict]:
+def _make_30m_input(inputs_dir: Path) -> list[dict]:
     """Fixed real 30-minute bars (600584.SH, ~1336 bars).
 
     Fetched once from the Tencent mkline API and frozen. The fetch is
@@ -130,7 +142,7 @@ def _make_30m_input() -> list[dict]:
     default signals trigger at least once, satisfying the #173 DoD
     requirement for 'four default signals each triggered/untriggered'.
     """
-    frozen = INPUTS_DIR / "30m_600584_sh_rows.json"
+    frozen = inputs_dir / "30m_600584_sh_rows.json"
     if frozen.exists():
         with open(frozen, encoding="utf-8") as f:
             return json.load(f)
@@ -265,28 +277,59 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def main() -> int:
-    INPUTS_DIR.mkdir(parents=True, exist_ok=True)
-    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+def _assert_engine_version(probe: dict) -> None:
+    """Refuse to generate baselines if the installed czsc version does not
+    match ``PINNED_ENGINE_VERSION``. This prevents accidentally writing
+    old-engine baselines from a new-version (1.0.1) environment.
+    """
+    installed = probe["czsc_version"]
+    pinned = probe["PINNED_ENGINE_VERSION"]
+    if installed != pinned:
+        raise RuntimeError(
+            f"Engine version mismatch: installed czsc=={installed} but "
+            f"PINNED_ENGINE_VERSION=={pinned}. Refusing to generate "
+            f"old-engine baselines from a mismatched environment. "
+            f"Activate the prod env (~/.venvs/czsc) and re-run."
+        )
 
-    log_lines: list[str] = []
-    log_lines.append(f"Baseline generation started: {datetime.now().isoformat()}")
-    probe = _probe_engine()
-    log_lines.append(f"Engine probe: {json.dumps(probe, indent=2)}")
+
+def _run_scenarios(
+    inputs_dir: Path,
+    outputs_dir: Path,
+    log_lines: list[str],
+    probe: dict,
+) -> tuple[list[str], list[str]]:
+    """Run all scenarios into ``inputs_dir``/``outputs_dir``.
+
+    Returns ``(checksums, failures)``. On any scenario failure the
+    function records the error and continues, but the caller must check
+    ``failures`` and return non-zero if non-empty. No committed files are
+    overwritten when failures occur.
+    """
+    inputs_dir.mkdir(parents=True, exist_ok=True)
+    outputs_dir.mkdir(parents=True, exist_ok=True)
 
     checksums: list[str] = []
+    failures: list[str] = []
 
     for scenario in SCENARIOS:
         sid = scenario["id"]
         log_lines.append(f"\n--- Scenario: {sid} ---")
         log_lines.append(f"Description: {scenario['description']}")
 
-        # Generate / load fixed input
-        rows = scenario["make_rows"]()
-        input_path = INPUTS_DIR / scenario["input_file"]
+        # Generate / load fixed input. _make_30m_input takes inputs_dir;
+        # the others take no args.
+        make_rows = scenario["make_rows"]
+        import inspect
+
+        if len(inspect.signature(make_rows).parameters) > 0:
+            rows = make_rows(inputs_dir)
+        else:
+            rows = make_rows()
+        input_path = inputs_dir / scenario["input_file"]
         with open(input_path, "w", encoding="utf-8") as f:
             json.dump(rows, f, ensure_ascii=False, indent=2)
-        log_lines.append(f"Input written: {input_path.relative_to(BASELINE_DIR)} ({len(rows)} bars)")
+        log_lines.append(f"Input written: {scenario['input_file']} ({len(rows)} bars)")
 
         # Run full analyze() pipeline (production code path)
         max_bi_num = get_default_max_bi_num(scenario["timeframe"])
@@ -304,39 +347,179 @@ def main() -> int:
                 strict=True,
             )
         except Exception:
-            log_lines.append(f"ERROR: analyze() failed for {sid}:\n{traceback.format_exc()}")
+            tb = traceback.format_exc()
+            log_lines.append(f"ERROR: analyze() failed for {sid}:\n{tb}")
+            failures.append(sid)
             continue
 
         # Serialise complete AnalysisResult
-        output_path = OUTPUTS_DIR / f"{sid}_result.json"
+        output_path = outputs_dir / f"{sid}_result.json"
         result_json = json.dumps(result.to_dict(), ensure_ascii=False, indent=2, default=str)
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(result_json)
         log_lines.append(
-            f"Output written: {output_path.relative_to(BASELINE_DIR)} "
+            f"Output written: {sid}_result.json "
             f"({len(result.fractals)} fractals, {len(result.strokes)} strokes, "
             f"{len(result.segments)} segments, {len(result.pivot_zones)} pivots)"
         )
 
         # Signal probe
-        sig_probe = _run_signal_probe(rows, scenario["symbol"], scenario["timeframe"])
-        log_lines.append(f"Signal probe: {json.dumps(sig_probe, indent=2)}")
+        try:
+            sig_probe = _run_signal_probe(rows, scenario["symbol"], scenario["timeframe"])
+            log_lines.append(f"Signal probe: {json.dumps(sig_probe, indent=2)}")
+        except Exception:
+            tb = traceback.format_exc()
+            log_lines.append(f"ERROR: signal probe failed for {sid}:\n{tb}")
+            failures.append(f"{sid} (signal_probe)")
 
-        # Checksums
+        # Checksums (relative paths match committed layout: inputs/... outputs/...)
         for p in (input_path, output_path):
             digest = _sha256_file(p)
-            rel = p.relative_to(BASELINE_DIR)
+            rel = p.relative_to(inputs_dir.parent)
             checksums.append(f"{digest}  {rel}")
             log_lines.append(f"SHA-256 {rel}: {digest}")
 
-    # Write checksums
-    checksum_path = BASELINE_DIR / "checksums.sha256"
     checksums.sort()
+    return checksums, failures
+
+
+def _load_committed_checksums() -> dict[str, str]:
+    """Load the committed ``checksums.sha256`` into a ``{rel_path: digest}``
+    dict. Returns ``{}`` if the file does not exist.
+    """
+    if not COMMITTED_CHECKSUMS.exists():
+        return {}
+    result: dict[str, str] = {}
+    with open(COMMITTED_CHECKSUMS, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(None, 1)
+            if len(parts) != 2:
+                continue
+            digest, rel = parts
+            result[rel] = digest
+    return result
+
+
+def _verify(temp_dir: Path, log_lines: list[str], probe: dict) -> int:
+    """Read-only reproducibility verification.
+
+    Generates baselines into ``temp_dir``, computes checksums, and compares
+    against the committed ``checksums.sha256``. Returns ``0`` on exact match,
+    non-zero on any mismatch. Does not modify any committed file.
+    """
+    temp_inputs = temp_dir / "inputs"
+    temp_outputs = temp_dir / "outputs"
+
+    checksums, failures = _run_scenarios(
+        temp_inputs, temp_outputs, log_lines, probe
+    )
+
+    if failures:
+        log_lines.append(
+            f"\nVERIFICATION FAILED: {len(failures)} scenario(s) failed: {failures}"
+        )
+        return 1
+
+    committed = _load_committed_checksums()
+    if not committed:
+        log_lines.append("\nVERIFICATION FAILED: no committed checksums.sha256 found")
+        return 1
+
+    generated: dict[str, str] = {}
+    for line in checksums:
+        parts = line.split(None, 1)
+        if len(parts) == 2:
+            generated[parts[1]] = parts[0]
+
+    log_lines.append(
+        f"\n--- Verify: comparing {len(generated)} generated files against committed checksums ---"
+    )
+
+    mismatches: list[str] = []
+    for rel, digest in sorted(generated.items()):
+        committed_digest = committed.get(rel)
+        if committed_digest is None:
+            mismatches.append(f"  {rel}: NOT IN committed checksums")
+        elif digest != committed_digest:
+            mismatches.append(
+                f"  {rel}: MISMATCH (generated={digest[:16]}..., committed={committed_digest[:16]}...)"
+            )
+        else:
+            log_lines.append(f"  {rel}: OK")
+
+    # Check for committed entries missing from generation
+    for rel in sorted(committed):
+        if rel not in generated:
+            mismatches.append(f"  {rel}: in committed but NOT generated")
+
+    if mismatches:
+        log_lines.append(f"\nVERIFICATION FAILED: {len(mismatches)} mismatch(es):")
+        log_lines.extend(mismatches)
+        return 1
+
+    log_lines.append(f"\nVERIFICATION PASSED: all {len(generated)} files match committed checksums")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Reproducible old-engine (czsc 0.10.12) baseline generator for #173"
+    )
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="Read-only mode: generate to a temp dir and compare against committed "
+        "checksums.sha256. Returns non-zero on mismatch. Does not modify committed files.",
+    )
+    args = parser.parse_args()
+
+    log_lines: list[str] = []
+    log_lines.append(f"Baseline generation started: {datetime.now().isoformat()}")
+    probe = _probe_engine()
+    log_lines.append(f"Engine probe: {json.dumps(probe, indent=2)}")
+
+    # Engine version guard — refuse to run in a mismatched environment.
+    try:
+        _assert_engine_version(probe)
+    except RuntimeError as exc:
+        log_lines.append(f"FATAL: {exc}")
+        print(f"FATAL: {exc}", file=sys.stderr)
+        return 2
+
+    if args.verify:
+        with tempfile.TemporaryDirectory(prefix="czsc-baseline-verify-") as tmp:
+            log_lines.append(f"Verify mode: generating to temp dir {tmp}")
+            exit_code = _verify(Path(tmp), log_lines, probe)
+            print("\n".join(log_lines))
+            return exit_code
+
+    # --- Generate mode ---
+    checksums, failures = _run_scenarios(INPUTS_DIR, OUTPUTS_DIR, log_lines, probe)
+
+    if failures:
+        log_lines.append(
+            f"\nGENERATION FAILED: {len(failures)} scenario(s) failed: {failures}. "
+            f"Committed checksums and outputs NOT overwritten."
+        )
+        log_path = BASELINE_DIR / "repro-log.txt"
+        with open(log_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(log_lines) + "\n")
+        print(
+            f"GENERATION FAILED: {len(failures)} scenario(s) failed: {failures}. "
+            f"Committed files not overwritten. See {log_path}.",
+            file=sys.stderr,
+        )
+        return 1
+
+    # All scenarios succeeded — safe to write checksums and log.
+    checksum_path = BASELINE_DIR / "checksums.sha256"
     with open(checksum_path, "w", encoding="utf-8") as f:
         f.write("\n".join(checksums) + "\n")
-    log_lines.append(f"\nChecksums written: {checksum_path.relative_to(BASELINE_DIR)} ({len(checksums)} entries)")
+    log_lines.append(f"\nChecksums written: checksums.sha256 ({len(checksums)} entries)")
 
-    # Write log
     log_path = BASELINE_DIR / "repro-log.txt"
     with open(log_path, "w", encoding="utf-8") as f:
         f.write("\n".join(log_lines) + "\n")
