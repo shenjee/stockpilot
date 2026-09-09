@@ -1,0 +1,154 @@
+Baseline generation started: 2026-09-10T00:25:31.138155
+Engine probe: {
+  "czsc_version": "0.10.12",
+  "RawBar_module": "czsc.py.objects",
+  "CZSC_module": "czsc.py.analyze",
+  "Freq_module": "czsc.py.enum",
+  "czsc_min_bi_len_env": "<unset>",
+  "python_version": "3.14.5 (main, May 10 2026, 10:21:34) [Clang 21.0.0 (clang-2100.0.123.102)]",
+  "PINNED_ENGINE_VERSION": "0.10.12"
+}
+Generate mode: generating outputs to temp dir /var/folders/wp/_mzp6sb909j3pthq64lbh4_m0000gn/T/czsc-baseline-gen-e1sym3xm
+Inputs read from committed: inputs
+
+--- Scenario: daily_synthetic_120 ---
+Description: Synthetic daily bars, seed=42, 120 bars. Structure + timestamp baseline.
+Input loaded: daily_synthetic_120_rows.json (120 bars)
+Output written: daily_synthetic_120_result.json (30 fractals, 9 strokes, 1 segments, 2 pivots)
+Signal probe: {
+  "signal_status": {
+    "first_buy": {
+      "signal_name": "cxt_first_buy_V221126",
+      "latest_value": "\u5176\u4ed6_\u4efb\u610f_\u4efb\u610f_0",
+      "latest_timestamp": "2024-06-14",
+      "point_count": 120,
+      "active_points": 0
+    },
+    "first_sell": {
+      "signal_name": "cxt_first_sell_V221126",
+      "latest_value": "\u5176\u4ed6_\u4efb\u610f_\u4efb\u610f_0",
+      "latest_timestamp": "2024-06-14",
+      "point_count": 120,
+      "active_points": 16
+    },
+    "second_bs": {
+      "signal_name": "cxt_second_bs_V240524",
+      "latest_value": "\u5176\u4ed6_\u4efb\u610f_\u4efb\u610f_0",
+      "latest_timestamp": "2024-06-14",
+      "point_count": 120,
+      "active_points": 0
+    },
+    "third_bs": {
+      "signal_name": "cxt_third_bs_V230319",
+      "latest_value": "\u5176\u4ed6_\u4efb\u610f_\u4efb\u610f_0",
+      "latest_timestamp": "2024-06-14",
+      "point_count": 120,
+      "active_points": 0
+    }
+  },
+  "warnings": [
+    "Missing amount values are derived with close * volume during Phase 1.",
+    "Signal function `czsc.signals.cxt.cxt_third_bs_V230319` not_ready: list index out of range"
+  ],
+  "bar_count": 120,
+  "fractal_count": 30,
+  "stroke_count": 9
+}
+SHA-256 inputs/daily_synthetic_120_rows.json: fed13e7c47f19865d582011bb5114c919737b64850acbaa30a6da1ee876f24af
+SHA-256 outputs/daily_synthetic_120_result.json: acb130f5d0578187e984190cd8399addb3642e99d9719bd2565bd754542e606c
+
+--- Scenario: 5m_real_600584_548 ---
+Description: Real 5-minute bars, 600584.SH, 548 bars. Structure + timestamp baseline.
+Input loaded: 5m_real_600584_548_rows.json (548 bars)
+Output written: 5m_real_600584_548_result.json (38 fractals, 24 strokes, 3 segments, 1 pivots)
+Signal probe: {
+  "signal_status": {
+    "first_buy": {
+      "signal_name": "cxt_first_buy_V221126",
+      "latest_value": "\u5176\u4ed6_\u4efb\u610f_\u4efb\u610f_0",
+      "latest_timestamp": "2026-07-14 15:00:00",
+      "point_count": 548,
+      "active_points": 0
+    },
+    "first_sell": {
+      "signal_name": "cxt_first_sell_V221126",
+      "latest_value": "\u5176\u4ed6_\u4efb\u610f_\u4efb\u610f_0",
+      "latest_timestamp": "2026-07-14 15:00:00",
+      "point_count": 548,
+      "active_points": 46
+    },
+    "second_bs": {
+      "signal_name": "cxt_second_bs_V240524",
+      "latest_value": "\u5176\u4ed6_\u4efb\u610f_\u4efb\u610f_0",
+      "latest_timestamp": "2026-07-14 15:00:00",
+      "point_count": 548,
+      "active_points": 38
+    },
+    "third_bs": {
+      "signal_name": "cxt_third_bs_V230319",
+      "latest_value": "\u5176\u4ed6_\u4efb\u610f_\u4efb\u610f_0",
+      "latest_timestamp": "2026-07-14 15:00:00",
+      "point_count": 548,
+      "active_points": 0
+    }
+  },
+  "warnings": [
+    "Signal function `czsc.signals.cxt.cxt_third_bs_V230319` not_ready: list index out of range"
+  ],
+  "bar_count": 548,
+  "fractal_count": 38,
+  "stroke_count": 24
+}
+SHA-256 inputs/5m_real_600584_548_rows.json: 03c5deb34d9adf44f56bd8bf6e8b8d945b7d0927219227055d5e94c1aaccf8d6
+SHA-256 outputs/5m_real_600584_548_result.json: 56debd2ad67720b7dbe7b8519254b5c0e90d9b593995997fee5e0ba67a1b5d58
+
+--- Scenario: 30m_real_600584 ---
+Description: Real 30-minute bars, 600584.SH. Structure + timestamp baseline.
+Input loaded: 30m_600584_sh_rows.json (1336 bars)
+Output written: 30m_real_600584_result.json (417 fractals, 95 strokes, 9 segments, 21 pivots)
+Signal probe: {
+  "signal_status": {
+    "first_buy": {
+      "signal_name": "cxt_first_buy_V221126",
+      "latest_value": "\u5176\u4ed6_\u4efb\u610f_\u4efb\u610f_0",
+      "latest_timestamp": "2026-09-09 15:00:00",
+      "point_count": 1336,
+      "active_points": 111
+    },
+    "first_sell": {
+      "signal_name": "cxt_first_sell_V221126",
+      "latest_value": "\u5176\u4ed6_\u4efb\u610f_\u4efb\u610f_0",
+      "latest_timestamp": "2026-09-09 15:00:00",
+      "point_count": 1336,
+      "active_points": 102
+    },
+    "second_bs": {
+      "signal_name": "cxt_second_bs_V240524",
+      "latest_value": "\u5176\u4ed6_\u4efb\u610f_\u4efb\u610f_0",
+      "latest_timestamp": "2026-09-09 15:00:00",
+      "point_count": 1336,
+      "active_points": 161
+    },
+    "third_bs": {
+      "signal_name": "cxt_third_bs_V230319",
+      "latest_value": "\u5176\u4ed6_\u4efb\u610f_\u4efb\u610f_0",
+      "latest_timestamp": "2026-09-09 15:00:00",
+      "point_count": 1336,
+      "active_points": 205
+    }
+  },
+  "warnings": [
+    "Missing amount values are derived with close * volume during Phase 1.",
+    "Signal function `czsc.signals.cxt.cxt_third_bs_V230319` not_ready: list index out of range"
+  ],
+  "bar_count": 1336,
+  "fractal_count": 417,
+  "stroke_count": 95
+}
+SHA-256 inputs/30m_600584_sh_rows.json: f60f5b735f07fabb73747fd2f3576ed4d3b293cfcdc2fcab74922bb6289da9d9
+SHA-256 outputs/30m_real_600584_result.json: 62716e1c7cf1d64fecb32873bbfe441866b016b7c5e3b691e1ec380c8ab34cc0
+Output committed: outputs/daily_synthetic_120_result.json
+Output committed: outputs/5m_real_600584_548_result.json
+Output committed: outputs/30m_real_600584_result.json
+
+Checksums written: checksums.sha256 (6 entries)

@@ -1,0 +1,11 @@
+# 正式环境实测记录（~/.venvs/czsc，未修改）
+# 日期: 2026-09-08
+python: 3.14.5 (main, May 10 2026, 10:21:34) [Clang 21.0.0 (clang-2100.0.123.102)]
+platform: macOS-26.6.2-arm64-arm-64bit-Mach-O | machine: arm64
+exe: /Users/jishen/.venvs/czsc/bin/python
+czsc_min_bi_len env: <unset>
+czsc version: 0.10.12
+effective min_bi_len: 6        # czsc.envs.get_min_bi_len()，来源: 环境变量未设置 -> 默认 6
+effective max_bi_num(env): 50  # czsc.envs.get_max_bi_num() 默认
+# 项目参数: DEFAULT_PARAMETERS.max_bi_num=50; 分钟级 timeframe -> 500 (get_default_max_bi_num)
+# 项目代码从未设置 min_bi_len; 旧版 CZSC.__init__ 参数仅有 bars/get_signals/max_bi_num
