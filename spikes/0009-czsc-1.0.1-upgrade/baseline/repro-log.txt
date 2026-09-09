@@ -1,4 +1,4 @@
-Baseline generation started: 2026-09-09T18:18:27.742885
+Baseline generation started: 2026-09-10T00:25:31.138155
 Engine probe: {
   "czsc_version": "0.10.12",
   "RawBar_module": "czsc.py.objects",
@@ -8,7 +8,7 @@ Engine probe: {
   "python_version": "3.14.5 (main, May 10 2026, 10:21:34) [Clang 21.0.0 (clang-2100.0.123.102)]",
   "PINNED_ENGINE_VERSION": "0.10.12"
 }
-Generate mode: generating outputs to temp dir /var/folders/wp/_mzp6sb909j3pthq64lbh4_m0000gn/T/czsc-baseline-gen-hmw9yt2d
+Generate mode: generating outputs to temp dir /var/folders/wp/_mzp6sb909j3pthq64lbh4_m0000gn/T/czsc-baseline-gen-e1sym3xm
 Inputs read from committed: inputs
 
 --- Scenario: daily_synthetic_120 ---

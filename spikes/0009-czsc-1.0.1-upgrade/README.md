@@ -19,6 +19,10 @@
 > 1. [P1] `--verify` 离线可用：固定输入始终从已提交 `inputs/` 读取，从不重新拉取行情。离线环境（`packages.marketdata` 阻断）下 `--verify` 仍全部通过。
 > 2. [P1] 失败不改金标：生成模式先在临时目录生成全部输出，全部成功后才复制到 `outputs/`。已用"先成功且输出改变、后失败"回归验证：exit 1，committed outputs 全部不变。
 > 3. [P2] 版本守卫独立于项目 pin：使用硬编码 `BASELINE_ENGINE_VERSION = "0.10.12"`，不随 `config.PINNED_ENGINE_VERSION` 改变。即使 #177 将项目 pin 更新为 1.0.1，此守卫仍拒绝在 1.0.1 环境运行。
+>
+> **第四轮审查回应**：
+> 1. [P2] `--verify` 不再补写缺失输入：验证和生成模式均通过 `_load_frozen_input()` 直接读取三个冻结 JSON；文件缺失立即非零退出，不补写、不重新获取。已用"删除任一冻结输入后验证"回归验证：exit 1，`inputs/` 目录内容不变。
+> 2. 日线和 5m 输入统一收口：三个场景的输入加载路径统一为 `_load_frozen_input()`，不再在验证/生成时调用 `make_rows()` 或从其他位置读取。首次制作输入单独通过 `--init-inputs` 模式处理。
 
 ---
 
@@ -158,6 +162,9 @@ python spikes/0009-czsc-1.0.1-upgrade/baseline/generate_baseline.py
 
 # 验证模式（只读）：生成到临时目录，与已提交的 checksums.sha256 比较
 python spikes/0009-czsc-1.0.1-upgrade/baseline/generate_baseline.py --verify
+
+# 首次制作输入（需网络拉取 30m 行情；仅首次使用）
+python spikes/0009-czsc-1.0.1-upgrade/baseline/generate_baseline.py --init-inputs
 ```
 
 脚本逻辑：
@@ -165,8 +172,11 @@ python spikes/0009-czsc-1.0.1-upgrade/baseline/generate_baseline.py --verify
    `"0.10.12"`，**不**随项目 `config.PINNED_ENGINE_VERSION` 改变）。不匹配则拒绝
    运行（退出码 2），防止在新版环境误写旧基线。即使 #177 将项目 pin 更新为 1.0.1，
    此守卫仍拒绝在 1.0.1 环境运行。
-2. **固定输入只读**：所有场景的输入始终从已提交的 `inputs/` 目录读取，**从不重新
-   拉取行情**。`--verify` 模式在离线环境（`packages.marketdata` 不可用）下仍可运行。
+2. **固定输入只读（冻结 JSON 直接读取）**：验证和生成模式均通过
+   `_load_frozen_input()` 直接读取三个冻结 JSON（日线/5m/30m），**从不补写缺失输入、
+   从不重新获取行情**。文件缺失立即非零退出（退出码 1），不区分模式。首次制作输入
+   单独通过 `--init-inputs` 模式处理（日线合成、5m 从 fixtures 复制、30m 从腾讯 API
+   拉取）。`--verify` 模式在离线环境（`packages.marketdata` 不可用）下仍可运行。
 3. 调用 `analyze()` 完整管线（含 normalize → engine → structure_mapping → signals）
 4. 序列化完整 `AnalysisResult` JSON
 5. 记录引擎探针（实际 `RawBar.__module__`、`czsc.__version__`、环境变量）
@@ -260,6 +270,16 @@ VERIFICATION PASSED: all 6 files match committed checksums
 **离线验证**：`--verify` 模式始终从已提交的 `inputs/` 读取固定输入，从不重新拉取
 行情。在 `packages.marketdata` 导入被阻断的离线环境下，`--verify` 仍全部通过
 （exit 0），证明不依赖网络。
+
+**缺失输入回归验证**：删除任一冻结输入后运行 `--verify`，脚本立即非零退出
+（exit 1），且 `inputs/` 目录内容不变（不补写、不重新获取）。三个输入分别测试均
+通过：
+
+| 删除的输入 | 退出码 | `inputs/` 文件数 |
+|---|---|---|
+| `daily_synthetic_120_rows.json` | 1 | 2（未补写） |
+| `5m_real_600584_548_rows.json` | 1 | 2（未补写） |
+| `30m_600584_sh_rows.json` | 1 | 2（未补写） |
 
 ### 4.7 生成日志
 

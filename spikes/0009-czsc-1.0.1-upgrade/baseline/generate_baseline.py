@@ -16,19 +16,31 @@ Usage (from repo root, prod env ``~/.venvs/czsc``):
 
     source ~/.venvs/czsc/bin/activate
 
-Generate (writes inputs/outputs/checksums/repro-log next to this script):
+Generate (writes outputs/checksums/repro-log next to this script;
+inputs are read-only from committed ``inputs/``):
 
     python spikes/0009-czsc-1.0.1-upgrade/baseline/generate_baseline.py
 
-Verify reproducibility (read-only: generates to a temp dir and compares
-against the committed ``checksums.sha256``; returns non-zero on mismatch):
+Verify reproducibility (read-only: generates outputs to a temp dir and
+compares against the committed ``checksums.sha256``; returns non-zero on
+mismatch; never writes or re-fetches inputs):
 
     python spikes/0009-czsc-1.0.1-upgrade/baseline/generate_baseline.py --verify
+
+Create frozen inputs from scratch (first-time setup only; requires network
+for 30m input):
+
+    python spikes/0009-czsc-1.0.1-upgrade/baseline/generate_baseline.py --init-inputs
 
 The generator refuses to run unless the installed czsc version equals the
 hardcoded ``BASELINE_ENGINE_VERSION`` (0.10.12), independent of the project
 pin. This prevents accidental baseline corruption from a new-version
 environment, even after the project pin is updated to 1.0.1 (#177).
+
+Both ``--verify`` and generate modes read inputs **only** from the committed
+``inputs/`` directory. If any frozen input is missing, the script exits
+non-zero immediately — it never writes, generates, or re-fetches inputs.
+First-time input creation is handled separately via ``--init-inputs``.
 """
 
 from __future__ import annotations
@@ -69,15 +81,40 @@ BASELINE_ENGINE_VERSION = "0.10.12"
 
 
 # ---------------------------------------------------------------------------
-# Fixed input data generators
+# Frozen input loader (used by --verify and generate modes)
 # ---------------------------------------------------------------------------
 
-def _make_daily_input() -> list[dict]:
+def _load_frozen_input(filename: str) -> list[dict]:
+    """Read a frozen input JSON from the committed ``INPUTS_DIR``.
+
+    Raises ``FileNotFoundError`` if the file is missing — never writes,
+    never generates, never re-fetches. Both ``--verify`` and generate modes
+    use this loader so that a missing frozen input causes immediate failure
+    rather than silent re-creation.
+    """
+    path = INPUTS_DIR / filename
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Frozen input not found: {path}. The committed baseline is "
+            f"incomplete. Use --init-inputs to create inputs from scratch."
+        )
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+# ---------------------------------------------------------------------------
+# Input generators (used by --init-inputs only)
+# ---------------------------------------------------------------------------
+
+def _generate_daily_rows() -> list[dict]:
     """Fixed synthetic daily bars (seed=42, 120 bars, 000001.SZ).
 
     Deterministic: uses ``random.seed(42)`` with a fixed starting price and
     date. No network dependency. Produces enough fractals/strokes for a
     meaningful structure baseline.
+
+    Used by ``--init-inputs`` only. For ``--verify`` and generate modes,
+    inputs are read from committed frozen JSON via ``_load_frozen_input``.
     """
     import random
 
@@ -109,12 +146,14 @@ def _make_daily_input() -> list[dict]:
     return bars
 
 
-def _make_5m_input() -> list[dict]:
+def _generate_5m_rows() -> list[dict]:
     """Fixed real 5-minute bars (600584.SH, 548 bars).
 
     Sourced from ``spikes/0008-.../fixtures/a_share_5m_548.json`` — a
     frozen real-data sample already in the repository. We copy the rows
     into the baseline inputs directory so the baseline is self-contained.
+
+    Used by ``--init-inputs`` only.
     """
     src = REPO_ROOT / "spikes/0008-czsc-update-and-rebuild-strategy/fixtures/a_share_5m_548.json"
     with open(src, encoding="utf-8") as f:
@@ -137,30 +176,37 @@ def _make_5m_input() -> list[dict]:
     return normalised
 
 
-def _make_30m_input(inputs_dir: Path | None = None) -> list[dict]:
-    """Fixed real 30-minute bars (600584.SH, ~1336 bars).
+def _generate_30m_rows() -> list[dict]:
+    """Fetch real 30-minute bars (600584.SH, ~1336 bars) from Tencent API.
 
-    Fetched once from the Tencent mkline API and frozen. The frozen JSON in
-    the committed ``inputs/`` directory is the authoritative input. This
-    function **never re-fetches** — it only reads the frozen file. If the
-    file is missing, it raises ``FileNotFoundError`` so the caller knows
-    the committed baseline is incomplete.
+    Fetched once and frozen. The frozen JSON in the committed ``inputs/``
+    directory is the authoritative input. This function is used by
+    ``--init-inputs`` only and requires network access. For ``--verify``
+    and generate modes, the frozen JSON is read via ``_load_frozen_input``.
 
     Uses the full available history (2026-01-01..2026-09-09) so all four
     default signals trigger at least once, satisfying the #173 DoD
     requirement for 'four default signals each triggered/untriggered'.
     """
-    # Always read from the committed inputs directory, regardless of where
-    # outputs are being generated (temp dir or committed dir). This ensures
-    # --verify mode works offline and never re-fetches.
-    frozen = INPUTS_DIR / "30m_600584_sh_rows.json"
-    if not frozen.exists():
-        raise FileNotFoundError(
-            f"Frozen 30m input not found: {frozen}. The committed baseline "
-            f"is incomplete. Do not re-fetch in verify mode."
+    from packages.marketdata import TencentStockDataProvider
+
+    rows = TencentStockDataProvider.get_minute_kline(
+        "600584", "2026-01-01", "2026-09-09", ktype="30m", market="sh"
+    )
+    normalised: list[dict] = []
+    for r in rows:
+        normalised.append(
+            {
+                "date": r["timestamp"],
+                "open": r["open"],
+                "close": r["close"],
+                "high": r["high"],
+                "low": r["low"],
+                "volume": r["volume"],
+                "amount": r.get("amount"),
+            }
         )
-    with open(frozen, encoding="utf-8") as f:
-        return json.load(f)
+    return normalised
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +220,7 @@ SCENARIOS: list[dict] = [
         "symbol": "000001.SZ",
         "source": "synthetic",
         "input_file": "daily_synthetic_120_rows.json",
-        "make_rows": _make_daily_input,
+        "generate_rows": _generate_daily_rows,
         "description": "Synthetic daily bars, seed=42, 120 bars. Structure + timestamp baseline.",
     },
     {
@@ -183,7 +229,7 @@ SCENARIOS: list[dict] = [
         "symbol": "600584.SH",
         "source": "tencent",
         "input_file": "5m_real_600584_548_rows.json",
-        "make_rows": _make_5m_input,
+        "generate_rows": _generate_5m_rows,
         "description": "Real 5-minute bars, 600584.SH, 548 bars. Structure + timestamp baseline.",
     },
     {
@@ -192,7 +238,7 @@ SCENARIOS: list[dict] = [
         "symbol": "600584.SH",
         "source": "tencent",
         "input_file": "30m_600584_sh_rows.json",
-        "make_rows": _make_30m_input,
+        "generate_rows": _generate_30m_rows,
         "description": "Real 30-minute bars, 600584.SH. Structure + timestamp baseline.",
     },
 ]
@@ -297,8 +343,11 @@ def _run_scenarios(
 ) -> tuple[list[str], list[str]]:
     """Run all scenarios, writing outputs to ``outputs_dir``.
 
-    Fixed inputs are **always** read from the committed ``INPUTS_DIR`` —
-    never re-fetched. This ensures offline reproducibility.
+    Fixed inputs are **always** read from the committed ``INPUTS_DIR`` via
+    ``_load_frozen_input`` — never generated, never written, never
+    re-fetched. If any frozen input is missing, the scenario fails
+    immediately. This ensures offline reproducibility and guarantees that
+    ``--verify`` never modifies committed files.
 
     Returns ``(checksums, failures)``. On any scenario failure the
     function records the error and continues, but the caller must check
@@ -314,21 +363,15 @@ def _run_scenarios(
         log_lines.append(f"\n--- Scenario: {sid} ---")
         log_lines.append(f"Description: {scenario['description']}")
 
-        # Load fixed input from committed INPUTS_DIR (never re-fetch).
-        make_rows = scenario["make_rows"]
-        import inspect
-
-        sig = inspect.signature(make_rows)
-        if len(sig.parameters) > 0:
-            rows = make_rows(INPUTS_DIR)
-        else:
-            rows = make_rows()
+        # Load frozen input from committed INPUTS_DIR — never generate,
+        # never write, never re-fetch. Missing input = immediate failure.
         input_path = INPUTS_DIR / scenario["input_file"]
-        if not input_path.exists():
-            # Write the generated rows to the committed inputs dir (generate
-            # mode only; verify mode will fail here if input is missing).
-            with open(input_path, "w", encoding="utf-8") as f:
-                json.dump(rows, f, ensure_ascii=False, indent=2)
+        try:
+            rows = _load_frozen_input(scenario["input_file"])
+        except FileNotFoundError as exc:
+            log_lines.append(f"FATAL: {exc}")
+            failures.append(sid)
+            continue
         log_lines.append(f"Input loaded: {scenario['input_file']} ({len(rows)} bars)")
 
         # Run full analyze() pipeline (production code path)
@@ -373,9 +416,6 @@ def _run_scenarios(
             failures.append(f"{sid} (signal_probe)")
 
         # Checksums (relative paths match committed layout: inputs/... outputs/...)
-        # Input checksum is computed from the committed INPUTS_DIR path.
-        # Output checksum is computed from the temp outputs path, but the
-        # relative path uses the committed layout (outputs/<sid>_result.json).
         input_digest = _sha256_file(input_path)
         input_rel = input_path.relative_to(BASELINE_DIR)
         checksums.append(f"{input_digest}  {input_rel}")
@@ -388,6 +428,27 @@ def _run_scenarios(
 
     checksums.sort()
     return checksums, failures
+
+
+def _init_inputs(log_lines: list[str]) -> int:
+    """Create frozen inputs from scratch (first-time setup).
+
+    Generates all three input files and writes them to ``INPUTS_DIR``.
+    Requires network access for the 30m input (Tencent API). Existing files
+    are overwritten.
+    """
+    INPUTS_DIR.mkdir(parents=True, exist_ok=True)
+    for scenario in SCENARIOS:
+        sid = scenario["id"]
+        log_lines.append(f"\n--- Generating input: {sid} ---")
+        rows = scenario["generate_rows"]()
+        input_path = INPUTS_DIR / scenario["input_file"]
+        with open(input_path, "w", encoding="utf-8") as f:
+            json.dump(rows, f, ensure_ascii=False, indent=2)
+        log_lines.append(f"Input written: {scenario['input_file']} ({len(rows)} bars)")
+    log_lines.append(f"\nAll {len(SCENARIOS)} inputs created in {INPUTS_DIR.relative_to(BASELINE_DIR)}")
+    print("\n".join(log_lines))
+    return 0
 
 
 def _load_committed_checksums() -> dict[str, str]:
@@ -482,6 +543,12 @@ def main() -> int:
         help="Read-only mode: generate to a temp dir and compare against committed "
         "checksums.sha256. Returns non-zero on mismatch. Does not modify committed files.",
     )
+    parser.add_argument(
+        "--init-inputs",
+        action="store_true",
+        help="Create frozen inputs from scratch (first-time setup). "
+        "Generates all three input JSONs in inputs/. Requires network for 30m.",
+    )
     args = parser.parse_args()
 
     log_lines: list[str] = []
@@ -496,6 +563,10 @@ def main() -> int:
         log_lines.append(f"FATAL: {exc}")
         print(f"FATAL: {exc}", file=sys.stderr)
         return 2
+
+    if args.init_inputs:
+        log_lines.append("Init-inputs mode: creating frozen inputs from scratch")
+        return _init_inputs(log_lines)
 
     if args.verify:
         with tempfile.TemporaryDirectory(prefix="czsc-baseline-verify-") as tmp:
