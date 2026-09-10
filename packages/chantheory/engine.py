@@ -139,10 +139,11 @@ def run_engine(
     min_bi_len = int(parameters.get("min_bi_len", MIN_BI_LEN_DEFAULT))
 
     # czsc 1.0.1 exposes ``min_bi_len`` as a constructor parameter and as an
-    # instance attribute; 0.10.12 hardcodes the default internally and rejects
-    # the kwarg. Only forward ``min_bi_len`` when the installed engine accepts
-    # it, so the same call path works under both versions. Passing it
-    # explicitly on 1.0.1 prevents env-var (CZSC_MIN_BI_LEN) drift from
+    # instance attribute; 0.10.12 does NOT accept the kwarg (its pure-Python
+    # path reads ``czsc_min_bi_len`` from the environment, while the Rust
+    # extension uses the default of 6). Only forward ``min_bi_len`` when the
+    # installed engine accepts it, so the same call path works under both
+    # versions. Passing it explicitly on 1.0.1 prevents env-var drift from
     # silently changing the baseline structure.
     czsc = import_module("czsc")
     installed_version = getattr(czsc, "__version__", "")

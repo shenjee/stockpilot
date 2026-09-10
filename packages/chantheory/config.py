@@ -21,11 +21,14 @@ DEFAULT_PARAMETERS = {
 }
 
 # czsc 1.0.1 exposes ``min_bi_len`` as a CZSC constructor parameter (default
-# 6) and as an instance attribute. czsc 0.10.12 hardcodes the same default
-# internally and does NOT accept the kwarg. The baseline fixtures were frozen
-# under 0.10.12 with the implicit default of 6, so the explicit value keeps
-# 1.0.1 aligned with the baseline and prevents env-var (CZSC_MIN_BI_LEN)
-# drift. ``run_engine`` only forwards the kwarg on 1.0+.
+# 6) and as an instance attribute; the kwarg takes precedence over the
+# ``czsc_min_bi_len`` / ``CZSC_MIN_BI_LEN`` env vars. czsc 0.10.12 does NOT
+# accept the kwarg — its pure-Python path reads ``czsc_min_bi_len`` from the
+# environment (default 6) via ``czsc.envs.get_min_bi_len``, while the Rust
+# extension uses the default of 6 regardless. The baseline fixtures were
+# frozen under 0.10.12 with an effective value of 6, so the explicit value
+# keeps 1.0.1 aligned with the baseline and prevents env-var drift.
+# ``run_engine`` only forwards the kwarg on 1.0+.
 MIN_BI_LEN_DEFAULT = 6
 
 MINUTE_TIMEFRAMES_FOR_MAX_BI = {"1m", "5m", "15m", "30m", "60m"}
