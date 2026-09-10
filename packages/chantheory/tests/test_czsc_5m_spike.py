@@ -204,7 +204,127 @@ class RebuildAndIncrementalTests(unittest.TestCase):
         for field in ("signal_events", "candidate_buy_points", "candidate_sell_points", "pivot_zones", "plot_primitives", "meta"):
             self.assertIn(field, payload)
 
+
+class RealEngineSignalTests(unittest.TestCase):
+    """Real czsc 1.0.1 engine samples for the four default signals (#175 DoD).
+
+    These tests exercise the Rust-native ``czsc._native.call_signal``
+    dispatcher against the frozen 5m fixture. They document the coverage
+    status of each default signal (triggered vs. non-triggered) so that
+    regressions in signal evaluation are caught immediately.
+
+    Coverage summary for the 548-bar fixture (500 warm + 48 target):
+    - cxt_first_buy_V221126:  NOT triggered (0 active points)
+    - cxt_first_sell_V221126: triggered (46 active points, e.g. bar 276)
+    - cxt_second_bs_V240524:  triggered (38 active points, e.g. bar 341)
+    - cxt_third_bs_V230319:   NOT triggered (0 active points)
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        payload = load_fixture()
+        cls.warm, cls.target = split_rows(payload)
+        cls.normalized, cls.result = full_rebuild(cls.warm + cls.target)
+        cls.series_by_key = {ss.signal_key: ss for ss in cls.result.signal_series}
+
+    def test_four_default_signal_series_are_present(self):
+        """All four default signals produce a series with the expected keys."""
+        self.assertEqual(
+            [ss.signal_key for ss in self.result.signal_series],
+            ["first_buy", "first_sell", "second_bs", "third_bs"],
+        )
+        for ss in self.result.signal_series:
+            self.assertEqual(ss.module, "czsc._native")
+            self.assertTrue(ss.points)
+
+    def test_first_sell_signal_triggers_on_real_engine(self):
+        """cxt_first_sell_V221126 triggers on the 5m fixture (real engine sample 1).
+
+        The signal fires at bar 276 with value ``一卖_9笔_任意_0`` and produces
+        a ``triggered`` event. This verifies the Rust-native dispatcher
+        evaluates the first-sell signal correctly against real chan structure.
+        """
+        series = self.series_by_key["first_sell"]
+        active_points = [p for p in series.points if p.active]
+        self.assertGreater(len(active_points), 0)
+
+        bar_276 = next(p for p in series.points if p.bar_index == 276)
+        self.assertEqual(bar_276.status, "active")
+        self.assertEqual(bar_276.value, "一卖_9笔_任意_0")
+
+        events = [e for e in self.result.signal_events if e.signal_key == "first_sell" and e.event_type == "triggered"]
+        self.assertTrue(any(e.bar_index == 276 for e in events))
+
+    def test_second_bs_signal_triggers_on_real_engine(self):
+        """cxt_second_bs_V240524 triggers on the 5m fixture (real engine sample 2).
+
+        The signal fires at bar 341 with value ``二买_任意_任意_0`` and produces
+        a ``triggered`` event. This verifies the Rust-native dispatcher
+        evaluates the second buy/sell signal correctly against real chan
+        structure.
+        """
+        series = self.series_by_key["second_bs"]
+        active_points = [p for p in series.points if p.active]
+        self.assertGreater(len(active_points), 0)
+
+        bar_341 = next(p for p in series.points if p.bar_index == 341)
+        self.assertEqual(bar_341.status, "active")
+        self.assertEqual(bar_341.value, "二买_任意_任意_0")
+
+        events = [e for e in self.result.signal_events if e.signal_key == "second_bs" and e.event_type == "triggered"]
+        self.assertTrue(any(e.bar_index == 341 for e in events))
+
+    def test_first_buy_signal_does_not_trigger_on_fixture(self):
+        """cxt_first_buy_V221126 does not trigger on the 5m fixture.
+
+        The fixture's chan structure does not form a valid first-buy pattern.
+        All 548 points are ``inactive`` with value ``其他_任意_任意_0``. This is
+        documented coverage: the signal is exercised (evaluated bar-by-bar)
+        but the structure does not match.
+        """
+        series = self.series_by_key["first_buy"]
+        active_points = [p for p in series.points if p.active]
+        self.assertEqual(len(active_points), 0)
+        self.assertEqual(series.latest_value, "其他_任意_任意_0")
+
+    def test_third_bs_signal_does_not_trigger_on_fixture(self):
+        """cxt_third_bs_V230319 does not trigger on the 5m fixture.
+
+        The fixture's chan structure does not form a valid third buy/sell
+        pattern. All 548 points are ``inactive`` with value
+        ``其他_任意_任意_0``. This is documented coverage: the signal is
+        exercised (evaluated bar-by-bar) but the structure does not match.
+        """
+        series = self.series_by_key["third_bs"]
+        active_points = [p for p in series.points if p.active]
+        self.assertEqual(len(active_points), 0)
+        self.assertEqual(series.latest_value, "其他_任意_任意_0")
+
+    def test_candidate_point_events_align_with_signal_events(self):
+        """Signal evaluations flow through to candidate point events.
+
+        first_sell triggers map to ``first_sell`` candidate events, and
+        second_bs triggers map to ``second_buy``/``second_sell`` candidate
+        events. This verifies the full pipeline from dispatcher → evaluation
+        → candidate point mapping works end-to-end on the real engine.
+        """
+        sell_events = [e for e in self.result.candidate_point_events if e.point_type == "first_sell"]
+        buy_events = [e for e in self.result.candidate_point_events if e.point_type == "second_buy"]
+        self.assertGreater(len(sell_events), 0)
+        self.assertGreater(len(buy_events), 0)
+        self.assertTrue(any(e.bar_index == 276 for e in sell_events))
+        self.assertTrue(any(e.bar_index == 341 for e in buy_events))
+
     def test_unsafe_raw_bar_sharing_has_prefix_two_minimal_reproduction(self):
+        # czsc 1.0.1's Rust-native signal dispatcher (czsc._native.call_signal)
+        # is stateless with respect to RawBar objects: it does not cache
+        # intermediate calculations on the bar instances the way the old
+        # pure-Python czsc.signals.cxt functions did. Consequently, sharing
+        # the engine-owned RawBar list across signal replay no longer produces
+        # a different result from a clean rebuild. This test was originally
+        # written under czsc 0.10.12 where the old signal functions mutated
+        # shared bar state; under 1.0.1 the unsafe and isolated paths are
+        # equivalent, which is the correct and safer behaviour.
         unsafe = IncrementalExperiment(self.warm, isolate_signal_replay=False)
         first_normalized, first = unsafe.advance(self.target[0])
         oracle_normalized, oracle = full_rebuild(self.warm + self.target[:1])
@@ -213,10 +333,9 @@ class RebuildAndIncrementalTests(unittest.TestCase):
         second_normalized, second = unsafe.advance(self.target[1])
         oracle_normalized, oracle = full_rebuild(self.warm + self.target[:2])
         differences = compare_results(oracle, second, oracle_normalized, second_normalized)
-        self.assertTrue(differences)
-        self.assertEqual(differences[0]["path"], "$.signal_series[3].points[0].status")
-        self.assertEqual(differences[0]["left"], "not_ready")
-        self.assertEqual(differences[0]["right"], "inactive")
+        # Under czsc 1.0.1 the Rust-native dispatcher does not mutate shared
+        # RawBar state, so the unsafe path matches the clean rebuild.
+        self.assertEqual(differences, [])
 
 
 class DynamicBarAndReplayTests(unittest.TestCase):

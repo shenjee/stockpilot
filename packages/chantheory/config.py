@@ -34,24 +34,30 @@ MIN_BI_LEN_DEFAULT = 6
 MINUTE_TIMEFRAMES_FOR_MAX_BI = {"1m", "5m", "15m", "30m", "60m"}
 DEFAULT_MAX_BI_NUM_MINUTE = 500
 
+# czsc 1.0.1 removed the pure-Python ``czsc.signals.cxt`` module and replaced
+# it with the Rust-native ``czsc._native.call_signal`` dispatcher. Signal
+# definitions no longer reference a Python module; the dispatcher resolves a
+# signal by its registered name (e.g. ``cxt_first_buy_V221126``). The
+# ``module`` field is retained for schema compatibility and lineage metadata
+# but is set to ``czsc._native`` so consumers can trace the dispatch path.
 DEFAULT_SIGNALS_CONFIG = (
     {
-        "module": "czsc.signals.cxt",
+        "module": "czsc._native",
         "name": "cxt_first_buy_V221126",
         "key": "first_buy",
     },
     {
-        "module": "czsc.signals.cxt",
+        "module": "czsc._native",
         "name": "cxt_first_sell_V221126",
         "key": "first_sell",
     },
     {
-        "module": "czsc.signals.cxt",
+        "module": "czsc._native",
         "name": "cxt_second_bs_V240524",
         "key": "second_bs",
     },
     {
-        "module": "czsc.signals.cxt",
+        "module": "czsc._native",
         "name": "cxt_third_bs_V230319",
         "key": "third_bs",
     },

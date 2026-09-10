@@ -21,7 +21,7 @@ from chantheory.adapters import (
     analyze_normalized,
     analyze_tracker_klines,
 )
-from chantheory.engine import load_czsc
+from chantheory.engine import load_czsc, EngineImportError
 from chantheory.structure_mapping import (
     map_segment_pivot_zones,
     normalize_direction as _normalize_direction,
@@ -31,6 +31,50 @@ from chantheory.structure_mapping import (
 from chantheory.schema import AnalysisResult, AnalysisWarning, Segment, Stroke
 from chantheory.segments import SEGMENT_MAPPING_STRATEGY
 from chantheory.config import get_default_max_bi_num
+
+
+class _MockSignal:
+    """Minimal stand-in for ``czsc._native.Signal`` used by mock dispatchers.
+
+    Only the ``value`` attribute is consumed by ``_extract_signal_value``;
+    ``key`` and ``to_string`` are included for completeness.
+    """
+
+    def __init__(self, key: str, value: str):
+        self.key = key
+        self.value = value
+
+    def to_string(self) -> str:
+        return f"{self.key}_{self.value}"
+
+    def __repr__(self) -> str:
+        return f"_MockSignal('{self.to_string()}')"
+
+
+def _make_mock_dispatcher(value_by_name: dict, calls: list | None = None):
+    """Build a mock signal dispatcher for tests.
+
+    *value_by_name* maps signal names to either:
+    - a string value (the signal is always evaluated to that value), or
+    - a callable ``(analyzer, params) -> str`` for per-bar logic, or
+    - an Exception instance to raise when the signal is called.
+
+    *calls*, if provided, receives the signal name on each dispatch.
+    """
+
+    def _dispatch(signal_name, analyzer, params):
+        if calls is not None:
+            calls.append(signal_name)
+        entry = value_by_name.get(signal_name)
+        if isinstance(entry, Exception):
+            raise entry
+        if callable(entry):
+            value = entry(analyzer, params)
+        else:
+            value = entry or "其他_任意_任意_0"
+        return [_MockSignal(key=signal_name, value=value)]
+
+    return _dispatch
 
 
 class GetDefaultMaxBiNumTests(unittest.TestCase):
@@ -679,32 +723,32 @@ class AdapterTests(unittest.TestCase):
         analyzer = MockAnalyzer(bars_raw)
         calls = []
 
-        def signal(name, value):
-            def _func(_analyzer, **kwargs):
+        def signal_value(name, active_value):
+            def _value(analyzer, params):
                 calls.append(name)
-                dt_str = _analyzer.bars_raw[-1].dt.strftime("%Y-%m-%d") if hasattr(_analyzer.bars_raw[-1].dt, "strftime") else str(_analyzer.bars_raw[-1].dt)
+                dt_str = analyzer.bars_raw[-1].dt.strftime("%Y-%m-%d") if hasattr(analyzer.bars_raw[-1].dt, "strftime") else str(analyzer.bars_raw[-1].dt)
                 if dt_str in ("2025-01-02", "2025-01-04"):
-                    return {name: value}
-                return {name: "其他_任意_任意_0"}
-            return _func
+                    return active_value
+                return "其他_任意_任意_0"
+            return _value
 
-        sig_module = SimpleNamespace(
-            cxt_first_buy_V221126=signal("cxt_first_buy_V221126", "其他_任意_任意_0"),
-            cxt_first_sell_V221126=signal("cxt_first_sell_V221126", "一卖_5笔_任意_0"),
-            cxt_second_bs_V240524=signal("cxt_second_bs_V240524", "二买_任意_任意_0"),
-            cxt_third_bs_V230319=signal("cxt_third_bs_V230319", "三卖_均线新低_任意_0"),
+        dispatcher = _make_mock_dispatcher({
+            "cxt_first_buy_V221126": signal_value("cxt_first_buy_V221126", "其他_任意_任意_0"),
+            "cxt_first_sell_V221126": signal_value("cxt_first_sell_V221126", "一卖_5笔_任意_0"),
+            "cxt_second_bs_V240524": signal_value("cxt_second_bs_V240524", "二买_任意_任意_0"),
+            "cxt_third_bs_V230319": signal_value("cxt_third_bs_V230319", "三卖_均线新低_任意_0"),
+        })
+
+        signal_evaluations, signal_series, signal_events, signal_snapshots, warnings, _ = _build_signal_payloads(
+            strokes=strokes,
+            analyzer=analyzer,
+            index_by_timestamp={
+                "2025-01-02": 1,
+                "2025-01-04": 3,
+            },
+            signals_config=None,
+            dispatcher=dispatcher,
         )
-
-        with patch("chantheory.signals.import_module", return_value=sig_module):
-            signal_evaluations, signal_series, signal_events, signal_snapshots, warnings, _ = _build_signal_payloads(
-                strokes=strokes,
-                analyzer=analyzer,
-                index_by_timestamp={
-                    "2025-01-02": 1,
-                    "2025-01-04": 3,
-                },
-                signals_config=None,
-            )
         candidate_point_events = _build_candidate_point_events(signal_evaluations)
         buy_points, sell_points = _build_candidate_points(
             strokes=strokes,
@@ -744,26 +788,20 @@ class AdapterTests(unittest.TestCase):
 
         analyzer = MockAnalyzer(bars_raw)
 
-        def not_ready_func(_a, **kw):
-            raise IndexError("list index out of range")
+        dispatcher = _make_mock_dispatcher({
+            "cxt_first_buy_V221126": "一买_5笔_任意_0",
+            "cxt_first_sell_V221126": "其他_任意_任意_0",
+            "cxt_second_bs_V240524": IndexError("list index out of range"),
+            "cxt_third_bs_V230319": ValueError("unexpected error"),
+        })
 
-        def error_func(_a, **kw):
-            raise ValueError("unexpected error")
-
-        sig_module = SimpleNamespace(
-            cxt_first_buy_V221126=lambda _a, **kw: {"cxt_first_buy_V221126": "一买_5笔_任意_0"},
-            cxt_first_sell_V221126=lambda _a, **kw: {"cxt_first_sell_V221126": "其他_任意_任意_0"},
-            cxt_second_bs_V240524=not_ready_func,
-            cxt_third_bs_V230319=error_func,
+        evaluations, series, events, snapshots, warnings, _ = _build_signal_payloads(
+            strokes=strokes,
+            analyzer=analyzer,
+            index_by_timestamp={"2025-01-01": 0, "2025-01-02": 1},
+            signals_config=None,
+            dispatcher=dispatcher,
         )
-
-        with patch("chantheory.signals.import_module", return_value=sig_module):
-            evaluations, series, events, snapshots, warnings, _ = _build_signal_payloads(
-                strokes=strokes,
-                analyzer=analyzer,
-                index_by_timestamp={"2025-01-01": 0, "2025-01-02": 1},
-                signals_config=None,
-            )
 
         first_bar = [e for e in evaluations if e["bar_index"] == 0]
         status_by_key = {e["signal_key"]: e["status"] for e in first_bar}
@@ -778,6 +816,108 @@ class AdapterTests(unittest.TestCase):
             self.assertEqual(snapshot.statuses.get("third_bs"), "error")
 
         self.assertTrue(any(w.warning_code == "SIGNAL_EVALUATION_FAILED" for w in warnings))
+
+    def test_unknown_signal_name_produces_function_unavailable_warning(self):
+        """Unknown signal names raise KeyError from the dispatcher and are
+        recorded once with SIGNAL_FUNCTION_UNAVAILABLE, then skipped for the
+        rest of the replay (#175 DoD: 未知信号诊断)."""
+        strokes = [
+            _stroke("1", "up", "2025-01-01", 10.0, "2025-01-02", 11.0),
+        ]
+        bars_raw = [
+            SimpleNamespace(dt="2025-01-01", close=10.0),
+            SimpleNamespace(dt="2025-01-02", close=11.0),
+        ]
+
+        class MockAnalyzer:
+            def __init__(self, bars, max_bi_num=50):
+                self.bars_raw = list(bars)
+                self.bi_list = []
+                self.max_bi_num = max_bi_num
+
+            def update(self, bar):
+                if bar not in self.bars_raw:
+                    self.bars_raw.append(bar)
+
+        analyzer = MockAnalyzer(bars_raw)
+
+        dispatcher = _make_mock_dispatcher({
+            "cxt_first_buy_V221126": KeyError("signal not found"),
+            "cxt_first_sell_V221126": "其他_任意_任意_0",
+            "cxt_second_bs_V240524": "其他_任意_任意_0",
+            "cxt_third_bs_V230319": "其他_任意_任意_0",
+        })
+
+        evaluations, series, events, snapshots, warnings, _ = _build_signal_payloads(
+            strokes=strokes,
+            analyzer=analyzer,
+            index_by_timestamp={"2025-01-01": 0, "2025-01-02": 1},
+            signals_config=None,
+            dispatcher=dispatcher,
+        )
+
+        # Unknown signal → "not_ready" status, no evaluation entries.
+        first_buy_evals = [e for e in evaluations if e["signal_key"] == "first_buy"]
+        self.assertTrue(all(e["status"] == "not_ready" for e in first_buy_evals))
+
+        # Warning recorded exactly once (not once per bar).
+        unavailable_warnings = [w for w in warnings if w.warning_code == "SIGNAL_FUNCTION_UNAVAILABLE"]
+        self.assertEqual(len(unavailable_warnings), 1)
+        self.assertIn("cxt_first_buy_V221126", unavailable_warnings[0].message)
+
+        # Other signals still evaluated normally.
+        first_sell_evals = [e for e in evaluations if e["signal_key"] == "first_sell"]
+        self.assertTrue(len(first_sell_evals) > 0)
+        self.assertTrue(all(e["status"] == "inactive" for e in first_sell_evals))
+
+    def test_dispatcher_unavailable_produces_dispatcher_unavailable_warning(self):
+        """When the default dispatcher cannot be resolved (czsc._native
+        missing), a single SIGNAL_DISPATCHER_UNAVAILABLE warning is emitted
+        and all signal evaluation is skipped (#175 DoD: 模块缺失诊断)."""
+        strokes = [
+            _stroke("1", "up", "2025-01-01", 10.0, "2025-01-02", 11.0),
+        ]
+        bars_raw = [
+            SimpleNamespace(dt="2025-01-01", close=10.0),
+            SimpleNamespace(dt="2025-01-02", close=11.0),
+        ]
+
+        class MockAnalyzer:
+            def __init__(self, bars, max_bi_num=50):
+                self.bars_raw = list(bars)
+                self.bi_list = []
+                self.max_bi_num = max_bi_num
+
+            def update(self, bar):
+                if bar not in self.bars_raw:
+                    self.bars_raw.append(bar)
+
+        analyzer = MockAnalyzer(bars_raw)
+
+        # Patch _get_default_dispatcher to raise EngineImportError,
+        # simulating czsc < 1.0 without _native.call_signal.
+        with patch(
+            "chantheory.signals._get_default_dispatcher",
+            side_effect=EngineImportError("czsc._native.call_signal is not available"),
+        ):
+            evaluations, series, events, snapshots, warnings, _ = _build_signal_payloads(
+                strokes=strokes,
+                analyzer=analyzer,
+                index_by_timestamp={"2025-01-01": 0, "2025-01-02": 1},
+                signals_config=None,
+                dispatcher=None,
+            )
+
+        # No evaluations, series, events, or snapshots produced.
+        self.assertEqual(evaluations, [])
+        self.assertEqual(series, [])
+        self.assertEqual(events, [])
+        self.assertEqual(snapshots, [])
+
+        # Single dispatcher-level warning.
+        dispatcher_warnings = [w for w in warnings if w.warning_code == "SIGNAL_DISPATCHER_UNAVAILABLE"]
+        self.assertEqual(len(dispatcher_warnings), 1)
+        self.assertIn("call_signal", dispatcher_warnings[0].message)
 
     def test_build_signal_payloads_uses_raw_bars_over_truncated_bars_raw(self):
         # Regression: czsc's CZSC.update() truncates analyzer.bars_raw after
@@ -804,21 +944,21 @@ class AdapterTests(unittest.TestCase):
         # Simulate czsc truncation: analyzer.bars_raw keeps only a tail slice.
         analyzer.bars_raw = list(full_bars[5:])
 
-        sig_module = SimpleNamespace(
-            cxt_first_buy_V221126=lambda _a, **kw: {"cxt_first_buy_V221126": "其他_任意_任意_0"},
-            cxt_first_sell_V221126=lambda _a, **kw: {"cxt_first_sell_V221126": "其他_任意_任意_0"},
-            cxt_second_bs_V240524=lambda _a, **kw: {"cxt_second_bs_V240524": "其他_任意_任意_0"},
-            cxt_third_bs_V230319=lambda _a, **kw: {"cxt_third_bs_V230319": "其他_任意_任意_0"},
-        )
+        dispatcher = _make_mock_dispatcher({
+            "cxt_first_buy_V221126": "其他_任意_任意_0",
+            "cxt_first_sell_V221126": "其他_任意_任意_0",
+            "cxt_second_bs_V240524": "其他_任意_任意_0",
+            "cxt_third_bs_V230319": "其他_任意_任意_0",
+        })
 
-        with patch("chantheory.signals.import_module", return_value=sig_module):
-            evaluations, series, events, snapshots, warnings, _ = _build_signal_payloads(
-                strokes=[],
-                analyzer=analyzer,
-                index_by_timestamp=index_by_timestamp,
-                signals_config=None,
-                raw_bars=full_bars,
-            )
+        evaluations, series, events, snapshots, warnings, _ = _build_signal_payloads(
+            strokes=[],
+            analyzer=analyzer,
+            index_by_timestamp=index_by_timestamp,
+            signals_config=None,
+            raw_bars=full_bars,
+            dispatcher=dispatcher,
+        )
 
         # All 10 bars must produce snapshots, starting at bar index 0.
         self.assertEqual(len(snapshots), len(full_bars))
@@ -888,33 +1028,29 @@ class AdapterTests(unittest.TestCase):
         analyzer.finished_bis = [bi1, bi2, bi3, bi4]
         analyzer.last_bi_extend = False
 
-        def trend_signal(_analyzer, di=1, **_kwargs):
-            dt_str = _analyzer.bars_raw[-1].dt.strftime("%Y-%m-%d") if hasattr(_analyzer.bars_raw[-1].dt, "strftime") else str(_analyzer.bars_raw[-1].dt)
+        def trend_signal_value(analyzer, params):
+            dt_str = analyzer.bars_raw[-1].dt.strftime("%Y-%m-%d") if hasattr(analyzer.bars_raw[-1].dt, "strftime") else str(analyzer.bars_raw[-1].dt)
             values = {
                 "2025-01-02": "其他_任意_任意_0",
                 "2025-01-03": "看多_低位_任意_0",
                 "2025-01-04": "看多_加速_任意_0",
                 "2025-01-05": "其他_任意_任意_0",
             }
-            return {"trend_signal": values.get(dt_str, "其他_任意_任意_0")}
+            return values.get(dt_str, "其他_任意_任意_0")
 
-        signal_module = SimpleNamespace(trend_signal=trend_signal)
-
-        def fake_import(name):
-            if name == "custom.signals":
-                return signal_module
-            raise ImportError(name)
+        mock_dispatcher = _make_mock_dispatcher({
+            "trend_signal": trend_signal_value,
+        })
 
         with patch("chantheory.adapters._run_engine", return_value=(analyzer, bars_raw)), patch(
             "chantheory.engine.load_czsc_utils", return_value=SimpleNamespace(get_zs_seq=lambda bis: [])
-        ), patch("chantheory.signals.import_module", side_effect=fake_import):
+        ), patch("chantheory.signals._get_default_dispatcher", return_value=mock_dispatcher):
             result = analyze_tracker_klines(
                 rows=rows,
                 code="000001",
                 market="sz",
                 signals_config=[
                     {
-                        "module": "custom.signals",
                         "name": "trend_signal",
                         "key": "trend_bias",
                     }
@@ -956,7 +1092,7 @@ class AdapterTests(unittest.TestCase):
             {
                 "signal_key": "second_bs",
                 "signal_name": "cxt_second_bs_V240524",
-                "module": "czsc.signals.cxt",
+                "module": "czsc._native",
                 "timestamp": "2025-01-02",
                 "bar_index": 1,
                 "reference_id": "stroke_1",
@@ -968,7 +1104,7 @@ class AdapterTests(unittest.TestCase):
             {
                 "signal_key": "second_bs",
                 "signal_name": "cxt_second_bs_V240524",
-                "module": "czsc.signals.cxt",
+                "module": "czsc._native",
                 "timestamp": "2025-01-03",
                 "bar_index": 2,
                 "reference_id": "stroke_2",
@@ -980,7 +1116,7 @@ class AdapterTests(unittest.TestCase):
             {
                 "signal_key": "second_bs",
                 "signal_name": "cxt_second_bs_V240524",
-                "module": "czsc.signals.cxt",
+                "module": "czsc._native",
                 "timestamp": "2025-01-04",
                 "bar_index": 3,
                 "reference_id": "stroke_3",
@@ -992,7 +1128,7 @@ class AdapterTests(unittest.TestCase):
             {
                 "signal_key": "second_bs",
                 "signal_name": "cxt_second_bs_V240524",
-                "module": "czsc.signals.cxt",
+                "module": "czsc._native",
                 "timestamp": "2025-01-05",
                 "bar_index": 4,
                 "reference_id": "stroke_4",
