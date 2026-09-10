@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from datetime import datetime
 from importlib import import_module
 from typing import Any, Dict, List, Tuple
@@ -10,6 +11,37 @@ from .schema import NormalizationResult
 
 class EngineImportError(RuntimeError):
     pass
+
+
+class EngineVersionMismatchError(RuntimeError):
+    """Raised when the installed czsc version differs from the pinned version."""
+
+
+def _get_installed_version() -> str | None:
+    """Return the installed czsc ``__version__`` string, or ``None``."""
+    try:
+        czsc = import_module("czsc")
+    except ImportError:
+        return None
+    return getattr(czsc, "__version__", None)
+
+
+def assert_engine_version() -> str:
+    """Verify the installed czsc version matches the project pin.
+
+    Returns the installed version string. Raises
+    :class:`EngineVersionMismatchError` when the installed version differs
+    from :data:`~chantheory.config.PINNED_ENGINE_VERSION`.
+    """
+    installed = _get_installed_version()
+    if installed is None:
+        raise EngineImportError("czsc is not installed or has no __version__ attribute")
+    if installed != PINNED_ENGINE_VERSION:
+        raise EngineVersionMismatchError(
+            f"czsc version mismatch: installed {installed!r} != pinned {PINNED_ENGINE_VERSION!r}. "
+            f"Install czsc=={PINNED_ENGINE_VERSION} or update the pin."
+        )
+    return installed
 
 
 def load_czsc() -> Tuple[object, object, object]:
@@ -27,36 +59,56 @@ def load_czsc() -> Tuple[object, object, object]:
             return None
         return getattr(module, attr_name, None)
 
-    # Prefer the pure-Python CZSC path. The top-level rs_czsc-backed RawBar
-    # converts date-only daily bars to pandas timestamps such as the previous
-    # day 16:00, which makes Chan structures fall off the K-line trading dates.
-    py_raw_bar = _import_attr("czsc.py.objects", "RawBar")
-    py_freq = _import_attr("czsc.py.objects", "Freq")
-    py_czsc = _import_attr("czsc.py.analyze", "CZSC")
-    if py_raw_bar is not None and py_freq is not None and py_czsc is not None:
-        return py_raw_bar, py_freq, py_czsc
+    # czsc 1.0+ exports RawBar/Freq/CZSC from the package root via the
+    # built-in Rust extension (czsc._native). The old pure-Python czsc.py
+    # path was removed in 1.0; the top-level exports are now the only entry.
+    RawBar = getattr(czsc, "RawBar", None)
+    Freq = getattr(czsc, "Freq", None)
+    CZSC = getattr(czsc, "CZSC", None)
 
-    # czsc 0.10.x exports these symbols from the package root / core module,
-    # while older releases exposed RawBar from czsc.objects.
-    raw_bar_candidates = (
-        getattr(czsc, "RawBar", None),
-        _import_attr("czsc.core", "RawBar"),
-        _import_attr("czsc.py.objects", "RawBar"),
-    )
-    RawBar = next((candidate for candidate in raw_bar_candidates if candidate is not None), None)
+    # czsc 0.10.x did not export from the package root on all paths; fall
+    # back to the sub-module locations that existed in that series.
+    if RawBar is None:
+        RawBar = _import_attr("czsc.py.objects", "RawBar") or _import_attr("czsc.core", "RawBar")
+    if Freq is None:
+        Freq = _import_attr("czsc.py.objects", "Freq") or _import_attr("czsc.core", "Freq")
+    if CZSC is None:
+        CZSC = _import_attr("czsc.py.analyze", "CZSC") or _import_attr("czsc.core", "CZSC")
+
     if RawBar is None:
         try:
             RawBar = getattr(import_module("czsc.objects"), "RawBar")
         except ImportError as exc:
             raise EngineImportError("Unable to resolve czsc.RawBar from the installed czsc package") from exc
+    if Freq is None:
+        Freq = getattr(import_module("czsc.objects"), "Freq")
+    if CZSC is None:
+        CZSC = getattr(import_module("czsc.analyze"), "CZSC")
 
-    Freq = getattr(czsc, "Freq", None) or _import_attr("czsc.core", "Freq")
-    CZSC = getattr(czsc, "CZSC", None) or _import_attr("czsc.core", "CZSC")
     return RawBar, Freq, CZSC
 
 
 def load_czsc_utils() -> object:
-    return import_module("czsc.utils.sig")
+    """Return a namespace exposing ``get_zs_seq``.
+
+    czsc 0.10.x exposed ``get_zs_seq`` via ``czsc.utils.sig``; 1.0+ moved it
+    to the top-level ``czsc.get_zs_seq``. This loader returns a module-like
+    object with a ``get_zs_seq`` attribute in both cases. Callers that need
+    the pivot-zone sequence should prefer ``analyzer.zs_list`` (available on
+    CZSC instances in 1.0+) and only fall back to ``get_zs_seq`` when the
+    instance attribute is unavailable.
+    """
+    try:
+        return import_module("czsc.utils.sig")
+    except ImportError:
+        pass
+    czsc = import_module("czsc")
+    if hasattr(czsc, "get_zs_seq"):
+        return czsc
+    raise EngineImportError(
+        "Unable to resolve czsc.get_zs_seq: czsc.utils.sig was removed in 1.0+ "
+        "and the top-level get_zs_seq is unavailable."
+    )
 
 
 def run_engine(

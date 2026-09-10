@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Any, Callable, List, Mapping, Sequence
 
 from .config import ENGINE_NAME
+from .engine import EngineImportError
 from .schema import (
     AnalysisResult,
     AnalysisWarning,
@@ -338,18 +339,41 @@ def map_pivot_zones(
         from .engine import load_czsc_utils as _load_czsc_utils
         load_czsc_utils = _load_czsc_utils
 
-    try:
-        sig_module = load_czsc_utils()
-        get_zs_seq = getattr(sig_module, "get_zs_seq")
-    except Exception:
-        return []
+    # czsc 1.0+ exposes zs_list as a CZSC instance attribute — prefer it
+    # over the function-based get_zs_seq to avoid recomputation. Fall back to
+    # get_zs_seq(finished_bis) for 0.10.x compatibility. If both are
+    # unavailable, raise so callers can emit an explicit warning rather than
+    # silently returning an empty list (which masks a capability failure).
+    zs_items: list = []
+    zs_source = "unknown"
+    zs_error: Exception | None = None
+
+    zs_list_attr = getattr(analyzer, "zs_list", None)
+    if zs_list_attr is not None:
+        zs_items = list(zs_list_attr)
+        zs_source = "czsc_zs_list"
+    else:
+        try:
+            sig_module = load_czsc_utils()
+            get_zs_seq = getattr(sig_module, "get_zs_seq")
+            bis = list(getattr(analyzer, "finished_bis", []) or [])
+            if bis:
+                zs_items = list(get_zs_seq(bis) or [])
+            zs_source = "czsc_get_zs_seq"
+        except Exception as exc:
+            zs_error = exc
+
+    if zs_error is not None and zs_source == "unknown":
+        raise EngineImportError(
+            "Unable to resolve pivot zones: analyzer has no zs_list attribute "
+            f"and get_zs_seq is unavailable: {zs_error}"
+        )
 
     items: List[PivotZone] = []
-    bis = list(getattr(analyzer, "finished_bis", []) or [])
-    if not bis:
+    if not zs_items:
         return items
 
-    for index, zs in enumerate(list(get_zs_seq(bis) or []), start=1):
+    for index, zs in enumerate(zs_items, start=1):
         start_timestamp = to_timestamp(safe_get(zs, "sdt", default=""))
         end_timestamp = to_timestamp(safe_get(zs, "edt", default=""))
         high = to_float(safe_get(zs, "zg", "gg", default=0.0))
@@ -373,9 +397,9 @@ def map_pivot_zones(
                 low=low,
                 segment_ids=related_segment_ids,
                 level="stroke",
-                active=index == len(list(get_zs_seq(bis) or [])),
+                active=index == len(zs_items),
                 meta={
-                    "mapping_strategy": "czsc_get_zs_seq",
+                    "mapping_strategy": zs_source,
                     "gg": to_float(safe_get(zs, "gg", default=high)),
                     "dd": to_float(safe_get(zs, "dd", default=low)),
                     "zz": to_float(safe_get(zs, "zz", default=(high + low) / 2 if high and low else 0.0)),

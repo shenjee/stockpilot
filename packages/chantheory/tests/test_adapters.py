@@ -347,34 +347,28 @@ class AdapterTests(unittest.TestCase):
         self.assertIs(actual_freq, Freq)
         self.assertIs(actual_czsc, CZSC)
 
-    def test_load_czsc_prefers_pure_python_exports(self):
+    def test_load_czsc_prefers_top_level_exports(self):
+        """czsc 1.0+ exports RawBar/Freq/CZSC from the package root via the
+        built-in Rust extension. The old pure-Python czsc.py path was removed;
+        the loader must prefer the top-level exports."""
         top_raw_bar = object()
         top_freq = object()
         top_czsc = object()
-        py_raw_bar = object()
-        py_freq = object()
-        py_czsc = object()
         czsc_module = SimpleNamespace(RawBar=top_raw_bar, Freq=top_freq, CZSC=top_czsc)
-        py_objects_module = SimpleNamespace(RawBar=py_raw_bar, Freq=py_freq)
-        py_analyze_module = SimpleNamespace(CZSC=py_czsc)
 
         def fake_import(name):
             if name == "numpy.typing":
                 return object()
             if name == "czsc":
                 return czsc_module
-            if name == "czsc.py.objects":
-                return py_objects_module
-            if name == "czsc.py.analyze":
-                return py_analyze_module
             raise ImportError(name)
 
         with patch("chantheory.engine.import_module", side_effect=fake_import):
             actual_raw_bar, actual_freq, actual_czsc = load_czsc()
 
-        self.assertIs(actual_raw_bar, py_raw_bar)
-        self.assertIs(actual_freq, py_freq)
-        self.assertIs(actual_czsc, py_czsc)
+        self.assertIs(actual_raw_bar, top_raw_bar)
+        self.assertIs(actual_freq, top_freq)
+        self.assertIs(actual_czsc, top_czsc)
 
     def test_engine_failure_returns_frozen_schema(self):
         rows = [

@@ -118,6 +118,65 @@ class RebuildAndIncrementalTests(unittest.TestCase):
         self.assertTrue(result.fractals)
         self.assertTrue(result.strokes)
 
+    def test_finished_bis_tail_exclusion_condition(self):
+        """Regression assertion: czsc 1.0.1 retains the tail-exclusion
+        condition on finished_bis. The type stubs claim finished_bis is
+        identical to bi_list, but the actual source excludes the last bi
+        when an unfinished bi (ubi) is active. When no ubi extends past the
+        last bi, finished_bis equals bi_list. This must not change without
+        explicit confirmation."""
+        normalized = normalize_rows(self.warm)
+        analyzer, _ = run_engine(normalized, {"max_bi_num": 500})
+        bi_list = list(getattr(analyzer, "bi_list", []) or [])
+        finished_bis = list(getattr(analyzer, "finished_bis", []) or [])
+        if not bi_list:
+            self.skipTest("no bis in 500-bar fixture")
+
+        ubi = getattr(analyzer, "ubi", None)
+        has_active_ubi = ubi is not None and bool(getattr(ubi, "bars", []) or [])
+
+        if has_active_ubi:
+            # The last bi is still being extended by ubi → excluded.
+            self.assertLess(
+                len(finished_bis),
+                len(bi_list),
+                "finished_bis must exclude the last bi when ubi is active; "
+                "type stubs claiming equality with bi_list are inaccurate.",
+            )
+            self.assertEqual(len(finished_bis), len(bi_list) - 1)
+            self.assertNotIn(bi_list[-1], finished_bis)
+        else:
+            # No active ubi → the last bi is confirmed → included.
+            self.assertEqual(
+                len(finished_bis),
+                len(bi_list),
+                "finished_bis must equal bi_list when no ubi is active.",
+            )
+
+    def test_zs_list_matches_get_zs_seq_on_finished_bis(self):
+        """czsc 1.0.1 exposes zs_list as a CZSC instance attribute and
+        get_zs_seq as a top-level function. Both must produce the same
+        pivot-zone sequence when applied to finished_bis."""
+        from chantheory.engine import load_czsc_utils
+
+        normalized = normalize_rows(self.warm)
+        analyzer, _ = run_engine(normalized, {"max_bi_num": 500})
+        zs_list = list(getattr(analyzer, "zs_list", []) or [])
+        if not zs_list:
+            self.skipTest("no pivot zones in 500-bar fixture")
+
+        sig_module = load_czsc_utils()
+        get_zs_seq = getattr(sig_module, "get_zs_seq")
+        finished_bis = list(getattr(analyzer, "finished_bis", []) or [])
+        zs_from_func = list(get_zs_seq(finished_bis) or [])
+
+        self.assertEqual(len(zs_list), len(zs_from_func))
+        for zs_a, zs_b in zip(zs_list, zs_from_func):
+            self.assertEqual(getattr(zs_a, "sdt", None), getattr(zs_b, "sdt", None))
+            self.assertEqual(getattr(zs_a, "edt", None), getattr(zs_b, "edt", None))
+            self.assertEqual(getattr(zs_a, "zg", None), getattr(zs_b, "zg", None))
+            self.assertEqual(getattr(zs_a, "zd", None), getattr(zs_b, "zd", None))
+
     def test_every_closed_bar_prefix_is_deterministic(self):
         failures = {prefix: diff[:1] for prefix, diff in self.determinism_diffs.items() if diff}
         self.assertEqual(failures, {})

@@ -5,10 +5,11 @@ from typing import Dict, List, Tuple
 
 
 ENGINE_NAME = "czsc"
-PINNED_ENGINE_VERSION = "0.10.12"
+PINNED_ENGINE_VERSION = "1.0.1"
 PINNED_ENGINE_REASON = (
-    "Pinned to the installed and validated czsc 0.10.12 baseline for the "
-    "current project runtime."
+    "Pinned to czsc 1.0.1; the Rust-native engine replaces the old pure-Python "
+    "czsc.py path. Timestamps, finished_bis tail-exclusion, and zs_list have "
+    "been verified against the 0.10.12 baseline."
 )
 
 DEFAULT_PARAMETERS = {
@@ -118,9 +119,9 @@ def get_engine_compatibility() -> EngineCompatibility:
     return EngineCompatibility(
         engine=ENGINE_NAME,
         version=PINNED_ENGINE_VERSION,
-        supported_python="Requires Python >=3.10; classifiers currently published through 3.13 on 0.10.12",
+        supported_python="Requires Python >=3.10; czsc 1.0.1 uses built-in Rust extension (czsc._native)",
         validated_python="3.14.5",
-        import_shim="Import numpy.typing before czsc so rs_czsc-dependent imports initialize consistently.",
+        import_shim="Import numpy.typing before czsc so the Rust extension initializes consistently.",
     )
 
 
