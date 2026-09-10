@@ -121,37 +121,47 @@ class RebuildAndIncrementalTests(unittest.TestCase):
     def test_finished_bis_tail_exclusion_condition(self):
         """Regression assertion: czsc 1.0.1 retains the tail-exclusion
         condition on finished_bis. The type stubs claim finished_bis is
-        identical to bi_list, but the actual source excludes the last bi
-        when an unfinished bi (ubi) is active. When no ubi extends past the
-        last bi, finished_bis equals bi_list. This must not change without
-        explicit confirmation."""
-        normalized = normalize_rows(self.warm)
-        analyzer, _ = run_engine(normalized, {"max_bi_num": 500})
-        bi_list = list(getattr(analyzer, "bi_list", []) or [])
-        finished_bis = list(getattr(analyzer, "finished_bis", []) or [])
-        if not bi_list:
-            self.skipTest("no bis in 500-bar fixture")
+        identical to bi_list, but the actual engine excludes the last bi
+        when the unfinished-bi (ubi) buffer holds fewer than 5 bars
+        (``len(bars_ubi) < 5``). When ``bars_ubi >= 5`` the last bi is
+        confirmed and finished_bis equals bi_list.
 
-        ubi = getattr(analyzer, "ubi", None)
-        has_active_ubi = ubi is not None and bool(getattr(ubi, "bars", []) or [])
+        ``ubi`` is a plain dict in 1.0.1 (not an object), so attribute
+        access via ``getattr(ubi, "bars", [])`` silently returns ``[]`` and
+        never exercises the exclusion branch. This test uses two real
+        fixed prefixes of the 5m fixture — one per branch — and verifies
+        bi endpoints so the condition cannot regress undetected."""
+        # Prefix 60: bars_ubi=3 (< 5) → last bi excluded.
+        normalized_excl = normalize_rows(self.warm[:60])
+        analyzer_excl, _ = run_engine(normalized_excl, {"max_bi_num": 500})
+        bi_list_excl = list(getattr(analyzer_excl, "bi_list", []) or [])
+        finished_bis_excl = list(getattr(analyzer_excl, "finished_bis", []) or [])
+        ubi_excl = getattr(analyzer_excl, "ubi", None)
+        bars_ubi_excl = len(ubi_excl["bars"]) if isinstance(ubi_excl, dict) else 0
 
-        if has_active_ubi:
-            # The last bi is still being extended by ubi → excluded.
-            self.assertLess(
-                len(finished_bis),
-                len(bi_list),
-                "finished_bis must exclude the last bi when ubi is active; "
-                "type stubs claiming equality with bi_list are inaccurate.",
-            )
-            self.assertEqual(len(finished_bis), len(bi_list) - 1)
-            self.assertNotIn(bi_list[-1], finished_bis)
-        else:
-            # No active ubi → the last bi is confirmed → included.
-            self.assertEqual(
-                len(finished_bis),
-                len(bi_list),
-                "finished_bis must equal bi_list when no ubi is active.",
-            )
+        self.assertGreaterEqual(len(bi_list_excl), 2)
+        self.assertEqual(bars_ubi_excl, 3)
+        self.assertEqual(len(finished_bis_excl), len(bi_list_excl) - 1)
+        self.assertNotIn(bi_list_excl[-1], finished_bis_excl)
+        # Excluded last bi endpoints (frozen from the 5m fixture).
+        self.assertEqual(str(getattr(bi_list_excl[-1], "sdt", None)), "2026-06-30 10:45:00")
+        self.assertEqual(str(getattr(bi_list_excl[-1], "edt", None)), "2026-06-30 14:00:00")
+
+        # Prefix 62: bars_ubi=5 (>= 5) → last bi confirmed → included.
+        normalized_conf = normalize_rows(self.warm[:62])
+        analyzer_conf, _ = run_engine(normalized_conf, {"max_bi_num": 500})
+        bi_list_conf = list(getattr(analyzer_conf, "bi_list", []) or [])
+        finished_bis_conf = list(getattr(analyzer_conf, "finished_bis", []) or [])
+        ubi_conf = getattr(analyzer_conf, "ubi", None)
+        bars_ubi_conf = len(ubi_conf["bars"]) if isinstance(ubi_conf, dict) else 0
+
+        self.assertGreaterEqual(len(bi_list_conf), 2)
+        self.assertEqual(bars_ubi_conf, 5)
+        self.assertEqual(len(finished_bis_conf), len(bi_list_conf))
+        self.assertIn(bi_list_conf[-1], finished_bis_conf)
+        # Confirmed last bi endpoints (same bi as the excluded case).
+        self.assertEqual(str(getattr(bi_list_conf[-1], "sdt", None)), "2026-06-30 10:45:00")
+        self.assertEqual(str(getattr(bi_list_conf[-1], "edt", None)), "2026-06-30 14:00:00")
 
     def test_zs_list_matches_get_zs_seq_on_finished_bis(self):
         """czsc 1.0.1 exposes zs_list as a CZSC instance attribute and

@@ -261,10 +261,28 @@ def analyze_normalized(
             "fractal_count": len(fractals),
             "finished_bi_count": len(strokes),
             "last_bi_extend": _safe_last_bi_extend(analyzer),
-            "min_bi_len": getattr(analyzer, "min_bi_len", None),
+            "min_bi_len": getattr(analyzer, "min_bi_len", merged_parameters.get("min_bi_len")),
+            "min_bi_len_requested": merged_parameters.get("min_bi_len"),
             "max_bi_num": getattr(analyzer, "max_bi_num", merged_parameters.get("max_bi_num")),
             "installed_version": PINNED_ENGINE_VERSION,
         }
+        # Warn when the engine's effective min_bi_len diverges from the
+        # requested value (e.g. env-var CZSC_MIN_BI_LEN overrode the kwarg).
+        effective_min_bi_len = getattr(analyzer, "min_bi_len", None)
+        requested_min_bi_len = merged_parameters.get("min_bi_len")
+        if effective_min_bi_len is not None and requested_min_bi_len is not None and effective_min_bi_len != requested_min_bi_len:
+            result.warnings.append(
+                _warning(
+                    warning_id="warning_min_bi_len_drift",
+                    code="MIN_BI_LEN_DRIFT",
+                    message=(
+                        f"czsc effective min_bi_len={effective_min_bi_len} "
+                        f"differs from requested={requested_min_bi_len}; "
+                        "structure may not match the frozen baseline."
+                    ),
+                    field="engine",
+                )
+            )
         result.meta["mapping"] = {
             "fractal_count": len(fractals),
             "stroke_count": len(strokes),

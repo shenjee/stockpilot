@@ -5,7 +5,7 @@ from datetime import datetime
 from importlib import import_module
 from typing import Any, Dict, List, Tuple
 
-from .config import ENGINE_NAME, PINNED_ENGINE_VERSION, get_freq_name
+from .config import ENGINE_NAME, MIN_BI_LEN_DEFAULT, PINNED_ENGINE_VERSION, get_freq_name
 from .schema import NormalizationResult
 
 
@@ -135,7 +135,22 @@ def run_engine(
             )
         )
 
-    analyzer = CZSC(raw_bars, max_bi_num=int(parameters["max_bi_num"]))
+    max_bi_num = int(parameters["max_bi_num"])
+    min_bi_len = int(parameters.get("min_bi_len", MIN_BI_LEN_DEFAULT))
+
+    # czsc 1.0.1 exposes ``min_bi_len`` as a constructor parameter and as an
+    # instance attribute; 0.10.12 hardcodes the default internally and rejects
+    # the kwarg. Only forward ``min_bi_len`` when the installed engine accepts
+    # it, so the same call path works under both versions. Passing it
+    # explicitly on 1.0.1 prevents env-var (CZSC_MIN_BI_LEN) drift from
+    # silently changing the baseline structure.
+    czsc = import_module("czsc")
+    installed_version = getattr(czsc, "__version__", "")
+    accepts_min_bi_len = installed_version != "" and not installed_version.startswith("0.")
+    if accepts_min_bi_len:
+        analyzer = CZSC(raw_bars, max_bi_num=max_bi_num, min_bi_len=min_bi_len)
+    else:
+        analyzer = CZSC(raw_bars, max_bi_num=max_bi_num)
     return analyzer, raw_bars
 
 

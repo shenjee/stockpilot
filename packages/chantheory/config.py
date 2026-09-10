@@ -14,10 +14,19 @@ PINNED_ENGINE_REASON = (
 
 DEFAULT_PARAMETERS = {
     "max_bi_num": 50,
+    "min_bi_len": 6,
     "min_bars": 60,
     "strict_validation": True,
     "derive_amount_from_close_volume": True,
 }
+
+# czsc 1.0.1 exposes ``min_bi_len`` as a CZSC constructor parameter (default
+# 6) and as an instance attribute. czsc 0.10.12 hardcodes the same default
+# internally and does NOT accept the kwarg. The baseline fixtures were frozen
+# under 0.10.12 with the implicit default of 6, so the explicit value keeps
+# 1.0.1 aligned with the baseline and prevents env-var (CZSC_MIN_BI_LEN)
+# drift. ``run_engine`` only forwards the kwarg on 1.0+.
+MIN_BI_LEN_DEFAULT = 6
 
 MINUTE_TIMEFRAMES_FOR_MAX_BI = {"1m", "5m", "15m", "30m", "60m"}
 DEFAULT_MAX_BI_NUM_MINUTE = 500
