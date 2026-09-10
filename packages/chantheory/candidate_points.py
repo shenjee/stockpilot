@@ -25,26 +25,50 @@ def build_candidate_point_events(signal_evaluations: Sequence[Mapping[str, Any]]
     events: List[CandidatePointEvent] = []
     for signal_key, items in by_signal.items():
         previous_mapping: Tuple[str, str] | None = None
+        previous_status: str | None = None
+        # Track the last *known-good* mapping — the most recent mapping
+        # derived from an evaluation whose status is neither "error" nor
+        # "not_ready". When a signal recovers from an error/not_ready
+        # state, we compare against this (not against the error bar) so
+        # that recovery to the same value does not produce a spurious
+        # "invalidated" → "triggered" pair (#175 P1 fix).
+        last_known_good_mapping: Tuple[str, str] | None = None
         for item in items:
             current_mapping = _map_signal_evaluation_to_candidate_point(item)
+            current_status = str(item.get("status") or ("active" if item.get("active") else "inactive"))
             event_type = ""
             point_type = ""
 
-            if previous_mapping is None and current_mapping is not None:
+            # Resolve the comparison baseline. When the previous bar was
+            # an error/not_ready, use last_known_good_mapping so that
+            # recovery to the same value does not produce spurious events.
+            if previous_status in ("error", "not_ready"):
+                baseline_mapping = last_known_good_mapping
+            else:
+                baseline_mapping = previous_mapping
+
+            if baseline_mapping is None and current_mapping is not None:
                 event_type = "triggered"
                 _, point_type = current_mapping
-            elif previous_mapping is not None and current_mapping is None:
-                event_type = "invalidated"
-                point_type = previous_mapping[1]
-            elif previous_mapping is not None and current_mapping is not None:
-                _, previous_point_type = previous_mapping
+            elif baseline_mapping is not None and current_mapping is None:
+                # Only emit "invalidated" when the signal genuinely
+                # transitioned to inactive. An error or not_ready status
+                # means evaluation failed — the signal did not actually
+                # deactivate (#175 P1 fix).
+                if current_status in ("error", "not_ready"):
+                    event_type = ""
+                else:
+                    event_type = "invalidated"
+                    point_type = baseline_mapping[1]
+            elif baseline_mapping is not None and current_mapping is not None:
+                _, previous_point_type = baseline_mapping
                 _, current_point_type = current_mapping
                 if previous_point_type != current_point_type:
                     event_type = "switched"
                     point_type = current_point_type
 
             if event_type:
-                previous_point_type = previous_mapping[1] if previous_mapping is not None else ""
+                previous_point_type = baseline_mapping[1] if baseline_mapping is not None else ""
                 events.append(
                     CandidatePointEvent(
                         id=f"candidate_point_event_{signal_key}_{item['bar_index']}_{event_type}",
@@ -60,13 +84,16 @@ def build_candidate_point_events(signal_evaluations: Sequence[Mapping[str, Any]]
                             "signal_key": signal_key,
                             "signal_name": str(item["signal_name"]),
                             "previous_point_type": previous_point_type,
-                            "previous_value": str(previous_mapping[0]) if previous_mapping is not None else "",
+                            "previous_value": str(baseline_mapping[0]) if baseline_mapping is not None else "",
                             "direction": item.get("direction", ""),
                         },
                     )
                 )
 
             previous_mapping = (str(item["value"]), current_mapping[1]) if current_mapping is not None else None
+            previous_status = current_status
+            if current_status not in ("error", "not_ready"):
+                last_known_good_mapping = previous_mapping
 
     events.sort(key=lambda item: (item.bar_index, item.point_type, item.event_type))
     return events

@@ -116,6 +116,18 @@ class SignalReturnTypeError(Exception):
     """
 
 
+class SignalFunctionNotFoundError(AttributeError):
+    """Raised when a signal function cannot be found in its module.
+
+    This is a subclass of :class:`AttributeError` so that callers can
+    distinguish **function lookup failure** (the function does not exist
+    in the module — permanent, should be cached and skipped) from
+    **function execution failure** (the function exists but raised
+    ``AttributeError`` internally — transient, should NOT be cached and
+    must NOT prevent subsequent bars from re-evaluating the signal).
+    """
+
+
 # ---------------------------------------------------------------------------
 # Signal configuration normalization
 # ---------------------------------------------------------------------------
@@ -254,7 +266,7 @@ def _evaluate_custom_module_signal(
         module_cache[module_name] = module
     func = getattr(module, signal_name, None)
     if func is None:
-        raise AttributeError(
+        raise SignalFunctionNotFoundError(
             f"Signal function `{module_name}.{signal_name}` is not available."
         )
     result = func(analyzer, di=di, **dict(kwargs))
@@ -485,8 +497,10 @@ def build_signal_payloads(
                         )
                     )
                 continue
-            except AttributeError as exc:
-                # Custom module imported but signal function not found.
+            except SignalFunctionNotFoundError as exc:
+                # Custom module imported but signal function not found —
+                # this is a permanent lookup failure, so cache and skip
+                # all subsequent bars for this signal.
                 signal_value = ""
                 status = "not_ready"
                 missing_key = (module_name, signal_name)
@@ -501,6 +515,26 @@ def build_signal_payloads(
                         )
                     )
                 continue
+            except AttributeError as exc:
+                # A bare AttributeError (not SignalFunctionNotFoundError)
+                # means the function was found and called, but raised
+                # AttributeError internally during execution — e.g. an
+                # indicator is not yet ready. This is a transient
+                # execution failure, NOT a permanent lookup failure.
+                # Do NOT cache or skip subsequent bars (#175 P1 fix).
+                signal_value = ""
+                status = "error"
+                failed_key = (module_name, signal_name)
+                if failed_key not in failed_signals:
+                    failed_signals.add(failed_key)
+                    warnings.append(
+                        _warning(
+                            warning_id=f"warning_signal_eval_failed_{signal_name}",
+                            code="SIGNAL_EVALUATION_FAILED",
+                            message=f"Signal `{module_name}.{signal_name}` raised AttributeError during execution: {exc}",
+                            field="signals",
+                        )
+                    )
             except SignalReturnTypeError as exc:
                 # Return value is incompatible — must NOT be silently treated
                 # as "not triggered". Emit a diagnostic and mark as error.
@@ -641,20 +675,44 @@ def build_signal_events(evaluations: Sequence[Mapping[str, Any]]) -> List[Signal
     events: List[SignalEvent] = []
     for signal_key, items in by_key.items():
         previous: Mapping[str, Any] | None = None
+        # Track the last *known-good* evaluation — the most recent
+        # evaluation whose status is neither "error" nor "not_ready".
+        # When a signal recovers from an error/not_ready state, we
+        # compare against this (not against the error bar) to decide
+        # whether the value actually changed (#175 P1 fix).
+        last_known_good: Mapping[str, Any] | None = None
         for item in items:
             current_active = bool(item["active"])
-            previous_active = bool(previous["active"]) if previous is not None else False
             current_value = str(item["value"])
-            previous_value = str(previous["value"]) if previous is not None else ""
             current_status = _evaluation_status(item)
+
+            # Resolve the comparison baseline. When the previous bar
+            # was an error/not_ready, use last_known_good so that
+            # recovery to the same value does not produce a spurious
+            # "triggered" event.
+            if previous is not None and _evaluation_status(previous) in ("error", "not_ready"):
+                baseline = last_known_good
+            else:
+                baseline = previous
+            baseline_active = bool(baseline["active"]) if baseline is not None else False
+            baseline_value = str(baseline["value"]) if baseline is not None else ""
+
             event_type = ""
-            if previous is None and current_active:
+            if baseline is None and current_active:
+                # First known-good activation.
                 event_type = "triggered"
-            elif not previous_active and current_active:
-                event_type = "triggered"
-            elif previous_active and current_active and current_value != previous_value:
+            elif not baseline_active and current_active:
+                # Transition from inactive (or error recovery) to active.
+                if baseline is not None and baseline_value == current_value:
+                    # The signal was active before the error and recovered
+                    # to the same value — it never genuinely deactivated.
+                    # Do not emit a spurious "triggered" event.
+                    event_type = ""
+                else:
+                    event_type = "triggered"
+            elif baseline_active and current_active and current_value != baseline_value:
                 event_type = "switched"
-            elif previous_active and not current_active:
+            elif baseline_active and not current_active:
                 # Only emit "invalidated" when the signal genuinely
                 # transitioned to inactive. An error or not_ready status
                 # means evaluation failed — the signal did not actually
@@ -681,12 +739,14 @@ def build_signal_events(evaluations: Sequence[Mapping[str, Any]]) -> List[Signal
                         reference_id=str(item["reference_id"]),
                         price=float(item["price"]) if item.get("price") is not None else None,
                         meta={
-                            "previous_value": previous_value,
+                            "previous_value": baseline_value,
                             "direction": item.get("direction", ""),
                         },
                     )
                 )
             previous = item
+            if current_status not in ("error", "not_ready"):
+                last_known_good = item
 
     events.sort(key=lambda item: (item.bar_index, item.signal_key, item.event_type))
     return events

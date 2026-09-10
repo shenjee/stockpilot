@@ -1198,6 +1198,324 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(len(eval_warnings), 1)
         self.assertIn("incompatible", eval_warnings[0].message.lower())
 
+    def test_execution_attribute_error_does_not_stop_subsequent_evaluation(self):
+        """A signal function that raises AttributeError during *execution*
+        (e.g. an indicator is not yet ready) must NOT be treated as a
+        permanent function-missing failure. Subsequent bars must still be
+        evaluated (#175 P1 fix: 区分函数查找失败与函数执行异常).
+
+        Reproduces the review scenario: bar 0 raises AttributeError
+        internally, bars 1 and 2 return valid values — the function must
+        be called on all three bars.
+        """
+        strokes = [
+            _stroke("1", "up", "2025-01-01", 10.0, "2025-01-02", 11.0),
+        ]
+        bars_raw = [
+            SimpleNamespace(dt="2025-01-01", close=10.0),
+            SimpleNamespace(dt="2025-01-02", close=11.0),
+            SimpleNamespace(dt="2025-01-03", close=12.0),
+        ]
+
+        class MockAnalyzer:
+            def __init__(self, bars, max_bi_num=50):
+                self.bars_raw = list(bars)
+                self.bi_list = []
+                self.max_bi_num = max_bi_num
+
+            def update(self, bar):
+                if bar not in self.bars_raw:
+                    self.bars_raw.append(bar)
+
+        analyzer = MockAnalyzer(bars_raw)
+
+        call_count = [0]
+
+        def flaky_signal(_analyzer, di=1, **_kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                # Simulate an indicator-not-ready AttributeError raised
+                # *inside* the signal function during execution.
+                raise AttributeError("'NoneType' object has no attribute 'macd'")
+            return {"flaky_signal": "一买_5笔_任意_0"}
+
+        signal_module = SimpleNamespace(flaky_signal=flaky_signal)
+
+        with patch("chantheory.signals.import_module", return_value=signal_module):
+            evaluations, series, events, snapshots, warnings, _ = _build_signal_payloads(
+                strokes=strokes,
+                analyzer=analyzer,
+                index_by_timestamp={
+                    "2025-01-01": 0,
+                    "2025-01-02": 1,
+                    "2025-01-03": 2,
+                },
+                signals_config=[
+                    {
+                        "module": "custom.signals",
+                        "name": "flaky_signal",
+                        "key": "flaky_key",
+                    }
+                ],
+            )
+
+        # The function must have been called on ALL bars — the bar-0
+        # AttributeError must not permanently stop evaluation.
+        self.assertEqual(call_count[0], 3)
+
+        # Bar 0: error (execution failure). Bars 1-2: active.
+        self.assertEqual(len(evaluations), 3)
+        self.assertEqual(evaluations[0]["status"], "error")
+        self.assertEqual(evaluations[1]["status"], "active")
+        self.assertEqual(evaluations[1]["value"], "一买_5笔_任意_0")
+        self.assertEqual(evaluations[2]["status"], "active")
+
+        # The warning must be SIGNAL_EVALUATION_FAILED (execution error),
+        # NOT SIGNAL_FUNCTION_UNAVAILABLE (lookup failure).
+        warning_codes = [w.warning_code for w in warnings]
+        self.assertIn("SIGNAL_EVALUATION_FAILED", warning_codes)
+        self.assertNotIn("SIGNAL_FUNCTION_UNAVAILABLE", warning_codes)
+
+    def test_recovery_from_error_to_same_value_does_not_retrigger(self):
+        """active → error → same-value recovery must not produce a
+        spurious "triggered" event. The signal never genuinely
+        deactivated, so recovery to the same value is a no-op
+        (#175 P1 fix: 跨错误恢复).
+
+        Reproduces the review scenario: signal events were
+        `triggered → triggered` (duplicate trigger on recovery).
+        """
+        strokes = [
+            _stroke("1", "up", "2025-01-01", 10.0, "2025-01-02", 11.0),
+        ]
+        bars_raw = [
+            SimpleNamespace(dt="2025-01-01", close=10.0),
+            SimpleNamespace(dt="2025-01-02", close=11.0),
+            SimpleNamespace(dt="2025-01-03", close=12.0),
+        ]
+
+        class MockAnalyzer:
+            def __init__(self, bars, max_bi_num=50):
+                self.bars_raw = list(bars)
+                self.bi_list = []
+                self.max_bi_num = max_bi_num
+
+            def update(self, bar):
+                if bar not in self.bars_raw:
+                    self.bars_raw.append(bar)
+
+        analyzer = MockAnalyzer(bars_raw)
+
+        call_count = [0]
+
+        def flaky_signal(_analyzer, di=1, **_kwargs):
+            call_count[0] += 1
+            if call_count[0] == 2:
+                # Bar 1: evaluation fails (incompatible return type).
+                return None
+            # Bars 0 and 2: same active value.
+            return {"flaky_signal": "一买_5笔_任意_0"}
+
+        signal_module = SimpleNamespace(flaky_signal=flaky_signal)
+
+        with patch("chantheory.signals.import_module", return_value=signal_module):
+            evaluations, series, events, snapshots, warnings, _ = _build_signal_payloads(
+                strokes=strokes,
+                analyzer=analyzer,
+                index_by_timestamp={
+                    "2025-01-01": 0,
+                    "2025-01-02": 1,
+                    "2025-01-03": 2,
+                },
+                signals_config=[
+                    {
+                        "module": "custom.signals",
+                        "name": "flaky_signal",
+                        "key": "flaky_key",
+                    }
+                ],
+            )
+
+        # Bar 0: active. Bar 1: error. Bar 2: active (same value).
+        self.assertEqual(
+            [e["status"] for e in evaluations],
+            ["active", "error", "active"],
+        )
+
+        # Signal events: exactly ONE "triggered" (bar 0). No duplicate
+        # trigger on bar-2 recovery, no "invalidated" on bar-1 error.
+        event_types = [e.event_type for e in events]
+        self.assertEqual(event_types, ["triggered"])
+
+    def test_recovery_from_error_to_different_value_emits_switched(self):
+        """active → error → different-value recovery emits "switched"
+        (not "triggered"), because the signal was active before the
+        error (#175 P1 fix: 跨错误恢复)."""
+        strokes = [
+            _stroke("1", "up", "2025-01-01", 10.0, "2025-01-02", 11.0),
+        ]
+        bars_raw = [
+            SimpleNamespace(dt="2025-01-01", close=10.0),
+            SimpleNamespace(dt="2025-01-02", close=11.0),
+            SimpleNamespace(dt="2025-01-03", close=12.0),
+        ]
+
+        class MockAnalyzer:
+            def __init__(self, bars, max_bi_num=50):
+                self.bars_raw = list(bars)
+                self.bi_list = []
+                self.max_bi_num = max_bi_num
+
+            def update(self, bar):
+                if bar not in self.bars_raw:
+                    self.bars_raw.append(bar)
+
+        analyzer = MockAnalyzer(bars_raw)
+
+        call_count = [0]
+
+        def flaky_signal(_analyzer, di=1, **_kwargs):
+            call_count[0] += 1
+            if call_count[0] == 2:
+                return None  # Bar 1: error.
+            if call_count[0] == 1:
+                return {"flaky_signal": "一买_5笔_任意_0"}  # Bar 0.
+            return {"flaky_signal": "一买_10笔_任意_0"}  # Bar 2: different value.
+
+        signal_module = SimpleNamespace(flaky_signal=flaky_signal)
+
+        with patch("chantheory.signals.import_module", return_value=signal_module):
+            evaluations, series, events, snapshots, warnings, _ = _build_signal_payloads(
+                strokes=strokes,
+                analyzer=analyzer,
+                index_by_timestamp={
+                    "2025-01-01": 0,
+                    "2025-01-02": 1,
+                    "2025-01-03": 2,
+                },
+                signals_config=[
+                    {
+                        "module": "custom.signals",
+                        "name": "flaky_signal",
+                        "key": "flaky_key",
+                    }
+                ],
+            )
+
+        # Signal events: "triggered" (bar 0) then "switched" (bar 2).
+        event_types = [e.event_type for e in events]
+        self.assertEqual(event_types, ["triggered", "switched"])
+
+    def test_candidate_point_events_suppress_spurious_invalidation_across_error(self):
+        """Candidate point events must not produce a spurious
+        "invalidated" → "triggered" pair when a signal errors and
+        recovers to the same value (#175 P1 fix: 候选点逻辑同步处理).
+
+        Reproduces the review scenario: candidate point events were
+        `triggered → invalidated → triggered` for an active → error →
+        same-value-recovery sequence.
+        """
+        evaluations = [
+            {
+                "signal_key": "second_bs",
+                "signal_name": "cxt_second_bs_V240524",
+                "module": "czsc._native",
+                "timestamp": "2025-01-02",
+                "bar_index": 1,
+                "reference_id": "stroke_1",
+                "price": 10.2,
+                "direction": "down",
+                "value": "二买_任意_任意_0",
+                "active": True,
+                "status": "active",
+            },
+            {
+                "signal_key": "second_bs",
+                "signal_name": "cxt_second_bs_V240524",
+                "module": "czsc._native",
+                "timestamp": "2025-01-03",
+                "bar_index": 2,
+                "reference_id": "stroke_2",
+                "price": 10.1,
+                "direction": "down",
+                "value": "",
+                "active": False,
+                "status": "error",
+            },
+            {
+                "signal_key": "second_bs",
+                "signal_name": "cxt_second_bs_V240524",
+                "module": "czsc._native",
+                "timestamp": "2025-01-04",
+                "bar_index": 3,
+                "reference_id": "stroke_3",
+                "price": 11.4,
+                "direction": "up",
+                "value": "二买_任意_任意_0",
+                "active": True,
+                "status": "active",
+            },
+        ]
+
+        candidate_events = _build_candidate_point_events(evaluations)
+
+        # Exactly ONE "triggered" event (bar 1). No "invalidated" on the
+        # error bar, no duplicate "triggered" on recovery.
+        self.assertEqual([event.event_type for event in candidate_events], ["triggered"])
+        self.assertEqual([event.point_type for event in candidate_events], ["second_buy"])
+
+    def test_candidate_point_events_switch_across_error_recovery(self):
+        """Candidate point events emit "switched" when a signal recovers
+        from an error to a *different* point type (#175 P1 fix)."""
+        evaluations = [
+            {
+                "signal_key": "second_bs",
+                "signal_name": "cxt_second_bs_V240524",
+                "module": "czsc._native",
+                "timestamp": "2025-01-02",
+                "bar_index": 1,
+                "reference_id": "stroke_1",
+                "price": 10.2,
+                "direction": "down",
+                "value": "二买_任意_任意_0",
+                "active": True,
+                "status": "active",
+            },
+            {
+                "signal_key": "second_bs",
+                "signal_name": "cxt_second_bs_V240524",
+                "module": "czsc._native",
+                "timestamp": "2025-01-03",
+                "bar_index": 2,
+                "reference_id": "stroke_2",
+                "price": 10.1,
+                "direction": "down",
+                "value": "",
+                "active": False,
+                "status": "error",
+            },
+            {
+                "signal_key": "second_bs",
+                "signal_name": "cxt_second_bs_V240524",
+                "module": "czsc._native",
+                "timestamp": "2025-01-04",
+                "bar_index": 3,
+                "reference_id": "stroke_3",
+                "price": 11.4,
+                "direction": "up",
+                "value": "二卖_任意_任意_0",
+                "active": True,
+                "status": "active",
+            },
+        ]
+
+        candidate_events = _build_candidate_point_events(evaluations)
+
+        # "triggered" (bar 1) then "switched" (bar 3) — no "invalidated"
+        # on the error bar.
+        self.assertEqual([event.event_type for event in candidate_events], ["triggered", "switched"])
+        self.assertEqual([event.point_type for event in candidate_events], ["second_buy", "second_sell"])
+
     def test_build_signal_payloads_uses_raw_bars_over_truncated_bars_raw(self):
         # Regression: czsc's CZSC.update() truncates analyzer.bars_raw after
         # bi_list forms (keeping only bars from the first stroke's start onward).
