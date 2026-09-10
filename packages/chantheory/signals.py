@@ -97,6 +97,26 @@ from .engine import EngineImportError  # noqa: E402  (circular-safe: engine has 
 
 
 # ---------------------------------------------------------------------------
+# Custom module dispatch (legacy path for non-native signal modules)
+# ---------------------------------------------------------------------------
+
+# Module names that are handled by the native dispatcher. Any other module
+# name triggers the legacy ``import_module`` + ``getattr`` + ``func(analyzer,
+# di=di, **kwargs)`` call path, preserving custom signals_config support.
+_NATIVE_MODULE_NAMES = frozenset({"czsc._native", "czsc.signals", "czsc.signals.cxt"})
+
+
+class SignalReturnTypeError(Exception):
+    """Raised when a signal dispatcher or custom function returns a value
+    that cannot be converted to the ``v1_v2_v3_score`` string format.
+
+    This prevents incompatible return types from being silently treated as
+    "not triggered" (empty string → inactive), which would produce spurious
+    ``invalidated`` events.
+    """
+
+
+# ---------------------------------------------------------------------------
 # Signal configuration normalization
 # ---------------------------------------------------------------------------
 
@@ -202,8 +222,8 @@ def _evaluate_signal_via_dispatcher(
 
     The dispatcher returns a ``list[Signal]``; we take the first result's
     ``value`` attribute, which uses the same ``v1_v2_v3_score`` format as the
-    old OrderedDict values. An empty string is returned when the result list
-    is empty or the value is missing.
+    old OrderedDict values. Raises :class:`SignalReturnTypeError` if the
+    result type is incompatible (prevents silent "not triggered" diagnosis).
     """
     params: Dict[str, Any] = {"di": di}
     params.update(dict(kwargs))
@@ -211,21 +231,72 @@ def _evaluate_signal_via_dispatcher(
     return _extract_signal_value(result)
 
 
-def _extract_signal_value(result: Any) -> str:
-    """Extract the signal value string from a dispatcher result.
+def _evaluate_custom_module_signal(
+    module_name: str,
+    signal_name: str,
+    analyzer: object,
+    di: int,
+    kwargs: Mapping[str, Any],
+    module_cache: Dict[str, object],
+) -> str:
+    """Evaluate a custom Python module signal via the legacy call path.
 
-    Supports both the new ``Signal`` objects (with ``.value`` attribute) and
-    legacy OrderedDict results (for backward compatibility with custom
-    dispatchers that return mappings).
+    Imports *module_name* (cached in *module_cache*), looks up *signal_name*
+    as an attribute, and calls ``func(analyzer, di=di, **kwargs)``. The result
+    is converted to the ``v1_v2_v3_score`` string format via
+    :func:`_extract_signal_value`.
+
+    Raises :class:`SignalReturnTypeError` for incompatible return types.
+    """
+    module = module_cache.get(module_name)
+    if module is None:
+        module = import_module(module_name)
+        module_cache[module_name] = module
+    func = getattr(module, signal_name, None)
+    if func is None:
+        raise AttributeError(
+            f"Signal function `{module_name}.{signal_name}` is not available."
+        )
+    result = func(analyzer, di=di, **dict(kwargs))
+    return _extract_signal_value(result)
+
+
+def _extract_signal_value(result: Any) -> str:
+    """Extract the signal value string from a dispatcher or function result.
+
+    Supports:
+    - New ``Signal`` objects (with ``.value`` attribute) in a list.
+    - Legacy ``OrderedDict`` / mapping results (first value used).
+
+    Raises :class:`SignalReturnTypeError` for incompatible types (``None``,
+    bare strings, lists without ``.value``, etc.) so that the caller can
+    emit a diagnostic warning instead of silently treating the signal as
+    "not triggered".
     """
     if isinstance(result, Mapping) and result:
         return str(next(iter(result.values()), "")).strip()
+    if isinstance(result, str):
+        raise SignalReturnTypeError(
+            f"Signal returned a bare string; expected a list[Signal] or "
+            f"mapping. Got: {result!r}"
+        )
     if isinstance(result, Sequence) and result:
         first = result[0]
         value = getattr(first, "value", None)
         if value is not None:
             return str(value).strip()
-    return ""
+        raise SignalReturnTypeError(
+            f"Signal result element {type(first).__name__} has no `.value` "
+            f"attribute; expected a Signal object."
+        )
+    if result is None:
+        raise SignalReturnTypeError(
+            "Signal returned None; expected a list[Signal] or mapping."
+        )
+    raise SignalReturnTypeError(
+        f"Signal returned incompatible type {type(result).__name__}; "
+        f"expected a list[Signal] or mapping."
+    )
 
 
 def _signal_value_is_active(value: str) -> bool:
@@ -274,7 +345,15 @@ def build_signal_payloads(
     # ``czsc._native.call_signal``; tests inject a mock. A dispatcher failure
     # (e.g. czsc < 1.0 without ``_native``) produces a single diagnostic
     # warning and skips all signal evaluation.
-    if dispatcher is None:
+    #
+    # Only native-module signals (``czsc._native``) use the dispatcher. Custom
+    # module signals (any other module name) use the legacy
+    # ``import_module`` + ``getattr`` + ``func(analyzer, di=di, **kwargs)``
+    # call path, preserving the existing custom signals_config support.
+    has_native_signals = any(
+        str(d["module"]) in _NATIVE_MODULE_NAMES for d in signal_definitions
+    )
+    if has_native_signals and dispatcher is None:
         try:
             dispatcher = _get_default_dispatcher()
         except EngineImportError as exc:
@@ -286,11 +365,21 @@ def build_signal_payloads(
                     field="signals",
                 )
             )
-            return [], [], [], [], warnings, signal_definitions
+            # Custom-module signals can still be evaluated without the native
+            # dispatcher, so we do not return early. If there are no custom
+            # signals, fall through with dispatcher=None (native signals will
+            # be skipped below).
+            if not any(
+                str(d["module"]) not in _NATIVE_MODULE_NAMES for d in signal_definitions
+            ):
+                return [], [], [], [], warnings, signal_definitions
 
     strokes_by_end_ts = {stroke.end_timestamp: stroke for stroke in strokes}
     unknown_signals: set[str] = set()
     failed_signals: set[tuple[str, str]] = set()
+    module_cache: Dict[str, object] = {}
+    missing_modules: set[str] = set()
+    missing_functions: set[tuple[str, str]] = set()
     evaluations: List[Dict[str, Any]] = []
 
     try:
@@ -332,17 +421,38 @@ def build_signal_payloads(
             kwargs = dict(definition.get("kwargs", {}))
             di = int(definition.get("di", 1))
 
-            if signal_name in unknown_signals:
+            is_native = module_name in _NATIVE_MODULE_NAMES
+
+            # Skip signals whose module or function is already known missing.
+            if not is_native and module_name in missing_modules:
+                continue
+            if not is_native and (module_name, signal_name) in missing_functions:
+                continue
+            if is_native and signal_name in unknown_signals:
+                continue
+
+            # Skip native signals when the dispatcher is unavailable.
+            if is_native and dispatcher is None:
                 continue
 
             try:
-                signal_value = _evaluate_signal_via_dispatcher(
-                    dispatcher=dispatcher,
-                    signal_name=signal_name,
-                    analyzer=replay_analyzer,
-                    di=di,
-                    kwargs=kwargs,
-                )
+                if is_native:
+                    signal_value = _evaluate_signal_via_dispatcher(
+                        dispatcher=dispatcher,
+                        signal_name=signal_name,
+                        analyzer=replay_analyzer,
+                        di=di,
+                        kwargs=kwargs,
+                    )
+                else:
+                    signal_value = _evaluate_custom_module_signal(
+                        module_name=module_name,
+                        signal_name=signal_name,
+                        analyzer=replay_analyzer,
+                        di=di,
+                        kwargs=kwargs,
+                        module_cache=module_cache,
+                    )
                 status = "active" if _signal_value_is_active(signal_value) else "inactive"
             except KeyError as exc:
                 # czsc._native.call_signal raises KeyError for unknown signal
@@ -360,7 +470,54 @@ def build_signal_payloads(
                         )
                     )
                 continue
-            except (IndexError, AttributeError) as exc:
+            except ImportError as exc:
+                # Custom module could not be imported.
+                signal_value = ""
+                status = "not_ready"
+                if module_name not in missing_modules:
+                    missing_modules.add(module_name)
+                    warnings.append(
+                        _warning(
+                            warning_id=f"warning_signal_module_missing_{module_name}",
+                            code="SIGNAL_MODULE_UNAVAILABLE",
+                            message=f"Signal module `{module_name}` could not be imported: {exc}",
+                            field="signals",
+                        )
+                    )
+                continue
+            except AttributeError as exc:
+                # Custom module imported but signal function not found.
+                signal_value = ""
+                status = "not_ready"
+                missing_key = (module_name, signal_name)
+                if missing_key not in missing_functions:
+                    missing_functions.add(missing_key)
+                    warnings.append(
+                        _warning(
+                            warning_id=f"warning_signal_function_missing_{signal_name}",
+                            code="SIGNAL_FUNCTION_UNAVAILABLE",
+                            message=f"Signal function `{module_name}.{signal_name}` is not available.",
+                            field="signals",
+                        )
+                    )
+                continue
+            except SignalReturnTypeError as exc:
+                # Return value is incompatible — must NOT be silently treated
+                # as "not triggered". Emit a diagnostic and mark as error.
+                signal_value = ""
+                status = "error"
+                failed_key = (module_name, signal_name)
+                if failed_key not in failed_signals:
+                    failed_signals.add(failed_key)
+                    warnings.append(
+                        _warning(
+                            warning_id=f"warning_signal_eval_failed_{signal_name}",
+                            code="SIGNAL_EVALUATION_FAILED",
+                            message=f"Signal `{module_name}.{signal_name}` returned incompatible type: {exc}",
+                            field="signals",
+                        )
+                    )
+            except IndexError as exc:
                 signal_value = ""
                 status = "not_ready"
                 failed_key = (module_name, signal_name)
@@ -489,6 +646,7 @@ def build_signal_events(evaluations: Sequence[Mapping[str, Any]]) -> List[Signal
             previous_active = bool(previous["active"]) if previous is not None else False
             current_value = str(item["value"])
             previous_value = str(previous["value"]) if previous is not None else ""
+            current_status = _evaluation_status(item)
             event_type = ""
             if previous is None and current_active:
                 event_type = "triggered"
@@ -497,7 +655,15 @@ def build_signal_events(evaluations: Sequence[Mapping[str, Any]]) -> List[Signal
             elif previous_active and current_active and current_value != previous_value:
                 event_type = "switched"
             elif previous_active and not current_active:
-                event_type = "invalidated"
+                # Only emit "invalidated" when the signal genuinely
+                # transitioned to inactive. An error or not_ready status
+                # means evaluation failed — the signal did not actually
+                # deactivate, so we must not produce a spurious
+                # "invalidated" event (#175 DoD: 返回值不兼容诊断).
+                if current_status in ("error", "not_ready"):
+                    event_type = ""
+                else:
+                    event_type = "invalidated"
 
             if event_type:
                 events.append(

@@ -919,6 +919,285 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(len(dispatcher_warnings), 1)
         self.assertIn("call_signal", dispatcher_warnings[0].message)
 
+    def test_custom_module_signal_uses_legacy_import_path(self):
+        """Custom (non-native) module signals use import_module + getattr +
+        func(analyzer, di=di, **kwargs) call path, not the native dispatcher
+        (#175 DoD: 保持自定义 signals_config 调用行为).
+
+        Verifies that a config with ``module: "custom.signals"`` imports the
+        module, calls the function with the old signature, and produces
+        correct signal series/events.
+        """
+        strokes = [
+            _stroke("1", "up", "2025-01-01", 10.0, "2025-01-02", 11.0),
+        ]
+        bars_raw = [
+            SimpleNamespace(dt="2025-01-01", close=10.0),
+            SimpleNamespace(dt="2025-01-02", close=11.0),
+        ]
+
+        class MockAnalyzer:
+            def __init__(self, bars, max_bi_num=50):
+                self.bars_raw = list(bars)
+                self.bi_list = []
+                self.max_bi_num = max_bi_num
+
+            def update(self, bar):
+                if bar not in self.bars_raw:
+                    self.bars_raw.append(bar)
+
+        analyzer = MockAnalyzer(bars_raw)
+
+        call_count = [0]
+
+        def trend_signal(_analyzer, di=1, **_kwargs):
+            call_count[0] += 1
+            return {"trend_signal": "看多_低位_任意_0"}
+
+        signal_module = SimpleNamespace(trend_signal=trend_signal)
+
+        with patch("chantheory.signals.import_module", return_value=signal_module):
+            evaluations, series, events, snapshots, warnings, _ = _build_signal_payloads(
+                strokes=strokes,
+                analyzer=analyzer,
+                index_by_timestamp={"2025-01-01": 0, "2025-01-02": 1},
+                signals_config=[
+                    {
+                        "module": "custom.signals",
+                        "name": "trend_signal",
+                        "key": "trend_bias",
+                    }
+                ],
+            )
+
+        # Custom function was called with the old signature.
+        self.assertEqual(call_count[0], 2)  # once per bar
+        self.assertEqual(len(evaluations), 2)
+        self.assertEqual(evaluations[0]["signal_key"], "trend_bias")
+        self.assertEqual(evaluations[0]["module"], "custom.signals")
+        self.assertEqual(evaluations[0]["value"], "看多_低位_任意_0")
+        self.assertTrue(evaluations[0]["active"])
+        self.assertEqual(evaluations[0]["status"], "active")
+        self.assertEqual([s.signal_key for s in series], ["trend_bias"])
+        self.assertFalse(warnings)
+
+    def test_custom_module_missing_produces_module_unavailable_warning(self):
+        """Custom module that cannot be imported produces
+        SIGNAL_MODULE_UNAVAILABLE, not SIGNAL_FUNCTION_UNAVAILABLE
+        (#175 DoD: 模块缺失诊断)."""
+        strokes = [
+            _stroke("1", "up", "2025-01-01", 10.0, "2025-01-02", 11.0),
+        ]
+        bars_raw = [
+            SimpleNamespace(dt="2025-01-01", close=10.0),
+            SimpleNamespace(dt="2025-01-02", close=11.0),
+        ]
+
+        class MockAnalyzer:
+            def __init__(self, bars, max_bi_num=50):
+                self.bars_raw = list(bars)
+                self.bi_list = []
+                self.max_bi_num = max_bi_num
+
+            def update(self, bar):
+                if bar not in self.bars_raw:
+                    self.bars_raw.append(bar)
+
+        analyzer = MockAnalyzer(bars_raw)
+
+        with patch("chantheory.signals.import_module", side_effect=ImportError("No module named 'nonexistent.signals'")):
+            evaluations, series, events, snapshots, warnings, _ = _build_signal_payloads(
+                strokes=strokes,
+                analyzer=analyzer,
+                index_by_timestamp={"2025-01-01": 0, "2025-01-02": 1},
+                signals_config=[
+                    {
+                        "module": "nonexistent.signals",
+                        "name": "some_signal",
+                        "key": "some_key",
+                    }
+                ],
+            )
+
+        self.assertEqual(evaluations, [])
+        module_warnings = [w for w in warnings if w.warning_code == "SIGNAL_MODULE_UNAVAILABLE"]
+        self.assertEqual(len(module_warnings), 1)
+        self.assertIn("nonexistent.signals", module_warnings[0].message)
+
+    def test_custom_module_function_missing_produces_function_unavailable_warning(self):
+        """Custom module imports but signal function not found produces
+        SIGNAL_FUNCTION_UNAVAILABLE (#175 DoD: 未知信号诊断 for custom modules)."""
+        strokes = [
+            _stroke("1", "up", "2025-01-01", 10.0, "2025-01-02", 11.0),
+        ]
+        bars_raw = [
+            SimpleNamespace(dt="2025-01-01", close=10.0),
+            SimpleNamespace(dt="2025-01-02", close=11.0),
+        ]
+
+        class MockAnalyzer:
+            def __init__(self, bars, max_bi_num=50):
+                self.bars_raw = list(bars)
+                self.bi_list = []
+                self.max_bi_num = max_bi_num
+
+            def update(self, bar):
+                if bar not in self.bars_raw:
+                    self.bars_raw.append(bar)
+
+        analyzer = MockAnalyzer(bars_raw)
+
+        # Module imports fine but doesn't have the signal function.
+        signal_module = SimpleNamespace(other_function=lambda *a, **kw: {})
+
+        with patch("chantheory.signals.import_module", return_value=signal_module):
+            evaluations, series, events, snapshots, warnings, _ = _build_signal_payloads(
+                strokes=strokes,
+                analyzer=analyzer,
+                index_by_timestamp={"2025-01-01": 0, "2025-01-02": 1},
+                signals_config=[
+                    {
+                        "module": "custom.signals",
+                        "name": "missing_signal",
+                        "key": "missing_key",
+                    }
+                ],
+            )
+
+        self.assertEqual(evaluations, [])
+        func_warnings = [w for w in warnings if w.warning_code == "SIGNAL_FUNCTION_UNAVAILABLE"]
+        self.assertEqual(len(func_warnings), 1)
+        self.assertIn("missing_signal", func_warnings[0].message)
+
+    def test_incompatible_return_type_produces_error_not_silent_inactive(self):
+        """Return value incompatible (None, bare string, list without .value)
+        must produce SIGNAL_EVALUATION_FAILED with status "error", not be
+        silently treated as "inactive" (#175 DoD: 返回值不兼容诊断).
+
+        Verifies that a signal that was active on bar 0 and returns an
+        incompatible type on bar 1 does NOT produce a spurious
+        "invalidated" event.
+        """
+        strokes = [
+            _stroke("1", "up", "2025-01-01", 10.0, "2025-01-02", 11.0),
+        ]
+        bars_raw = [
+            SimpleNamespace(dt="2025-01-01", close=10.0),
+            SimpleNamespace(dt="2025-01-02", close=11.0),
+        ]
+
+        class MockAnalyzer:
+            def __init__(self, bars, max_bi_num=50):
+                self.bars_raw = list(bars)
+                self.bi_list = []
+                self.max_bi_num = max_bi_num
+
+            def update(self, bar):
+                if bar not in self.bars_raw:
+                    self.bars_raw.append(bar)
+
+        analyzer = MockAnalyzer(bars_raw)
+
+        # Bar 0: returns a valid mapping (active). Bar 1: returns None.
+        call_count = [0]
+
+        def bad_signal(_analyzer, di=1, **_kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return {"bad_signal": "一买_5笔_任意_0"}
+            return None
+
+        signal_module = SimpleNamespace(bad_signal=bad_signal)
+
+        with patch("chantheory.signals.import_module", return_value=signal_module):
+            evaluations, series, events, snapshots, warnings, _ = _build_signal_payloads(
+                strokes=strokes,
+                analyzer=analyzer,
+                index_by_timestamp={"2025-01-01": 0, "2025-01-02": 1},
+                signals_config=[
+                    {
+                        "module": "custom.signals",
+                        "name": "bad_signal",
+                        "key": "bad_key",
+                    }
+                ],
+            )
+
+        # Bar 0: active. Bar 1: error (not inactive!).
+        self.assertEqual(len(evaluations), 2)
+        self.assertEqual(evaluations[0]["status"], "active")
+        self.assertEqual(evaluations[0]["value"], "一买_5笔_任意_0")
+        self.assertEqual(evaluations[1]["status"], "error")
+        self.assertEqual(evaluations[1]["value"], "")
+
+        # No "invalidated" event — the signal errored, not deactivated.
+        event_types = [e.event_type for e in events]
+        self.assertNotIn("invalidated", event_types)
+
+        # Diagnostic warning emitted.
+        eval_warnings = [w for w in warnings if w.warning_code == "SIGNAL_EVALUATION_FAILED"]
+        self.assertEqual(len(eval_warnings), 1)
+        self.assertIn("incompatible", eval_warnings[0].message.lower())
+
+    def test_incompatible_return_type_via_dispatcher_produces_error(self):
+        """Same as above but via the native dispatcher path — a dispatcher
+        returning None or a bare string must also produce an error, not
+        silent inactive (#175 DoD: 返回值不兼容诊断 for native path)."""
+        strokes = [
+            _stroke("1", "up", "2025-01-01", 10.0, "2025-01-02", 11.0),
+        ]
+        bars_raw = [
+            SimpleNamespace(dt="2025-01-01", close=10.0),
+            SimpleNamespace(dt="2025-01-02", close=11.0),
+        ]
+
+        class MockAnalyzer:
+            def __init__(self, bars, max_bi_num=50):
+                self.bars_raw = list(bars)
+                self.bi_list = []
+                self.max_bi_num = max_bi_num
+
+            def update(self, bar):
+                if bar not in self.bars_raw:
+                    self.bars_raw.append(bar)
+
+        analyzer = MockAnalyzer(bars_raw)
+
+        call_count = [0]
+
+        def bad_dispatch(analyzer, params):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return [_MockSignal(key="cxt_first_buy_V221126", value="一买_5笔_任意_0")]
+            return None  # incompatible return type
+
+        dispatcher = _make_mock_dispatcher({
+            "cxt_first_buy_V221126": bad_dispatch,
+            "cxt_first_sell_V221126": "其他_任意_任意_0",
+            "cxt_second_bs_V240524": "其他_任意_任意_0",
+            "cxt_third_bs_V230319": "其他_任意_任意_0",
+        })
+
+        evaluations, series, events, snapshots, warnings, _ = _build_signal_payloads(
+            strokes=strokes,
+            analyzer=analyzer,
+            index_by_timestamp={"2025-01-01": 0, "2025-01-02": 1},
+            signals_config=None,
+            dispatcher=dispatcher,
+        )
+
+        first_buy_evals = [e for e in evaluations if e["signal_key"] == "first_buy"]
+        self.assertEqual(len(first_buy_evals), 2)
+        self.assertEqual(first_buy_evals[0]["status"], "active")
+        self.assertEqual(first_buy_evals[1]["status"], "error")
+
+        event_types = [e.event_type for e in events if e.signal_key == "first_buy"]
+        self.assertNotIn("invalidated", event_types)
+
+        eval_warnings = [w for w in warnings if w.warning_code == "SIGNAL_EVALUATION_FAILED"]
+        self.assertEqual(len(eval_warnings), 1)
+        self.assertIn("incompatible", eval_warnings[0].message.lower())
+
     def test_build_signal_payloads_uses_raw_bars_over_truncated_bars_raw(self):
         # Regression: czsc's CZSC.update() truncates analyzer.bars_raw after
         # bi_list forms (keeping only bars from the first stroke's start onward).
