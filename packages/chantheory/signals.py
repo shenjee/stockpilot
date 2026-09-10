@@ -128,6 +128,25 @@ class SignalFunctionNotFoundError(AttributeError):
     """
 
 
+class SignalModuleImportError(ImportError):
+    """Raised when a custom signal module cannot be imported.
+
+    Distinguishes **module import failure** (permanent — cache and skip)
+    from an ``ImportError`` raised *inside* a successfully imported signal
+    function during execution (transient — do not cache).
+    """
+
+
+class SignalNameNotFoundError(KeyError):
+    """Raised when the native dispatcher does not know a signal name.
+
+    Distinguishes **dispatcher lookup failure** (permanent — cache and
+    skip) from a ``KeyError`` raised *inside* a signal function during
+    execution (transient — do not cache, and do not poison
+    ``unknown_signals`` shared with native dispatcher names).
+    """
+
+
 # ---------------------------------------------------------------------------
 # Signal configuration normalization
 # ---------------------------------------------------------------------------
@@ -236,10 +255,18 @@ def _evaluate_signal_via_dispatcher(
     ``value`` attribute, which uses the same ``v1_v2_v3_score`` format as the
     old OrderedDict values. Raises :class:`SignalReturnTypeError` if the
     result type is incompatible (prevents silent "not triggered" diagnosis).
+    Raises :class:`SignalNameNotFoundError` when the dispatcher reports an
+    unknown signal name (``KeyError``), so execution-time ``KeyError`` from
+    other paths is not misclassified as a permanent missing signal.
     """
     params: Dict[str, Any] = {"di": di}
     params.update(dict(kwargs))
-    result = dispatcher(signal_name, analyzer, params)
+    try:
+        result = dispatcher(signal_name, analyzer, params)
+    except KeyError as exc:
+        raise SignalNameNotFoundError(
+            f"Signal `{signal_name}` is not registered in the czsc signal dispatcher: {exc}"
+        ) from exc
     return _extract_signal_value(result)
 
 
@@ -258,11 +285,20 @@ def _evaluate_custom_module_signal(
     is converted to the ``v1_v2_v3_score`` string format via
     :func:`_extract_signal_value`.
 
-    Raises :class:`SignalReturnTypeError` for incompatible return types.
+    Raises :class:`SignalModuleImportError` only for confirmed module import
+    failure, :class:`SignalFunctionNotFoundError` only for confirmed function
+    lookup failure, and :class:`SignalReturnTypeError` for incompatible return
+    types. Exceptions raised *inside* ``func(...)`` propagate unchanged so the
+    caller can treat them as transient evaluation failures.
     """
     module = module_cache.get(module_name)
     if module is None:
-        module = import_module(module_name)
+        try:
+            module = import_module(module_name)
+        except ImportError as exc:
+            raise SignalModuleImportError(
+                f"Signal module `{module_name}` could not be imported: {exc}"
+            ) from exc
         module_cache[module_name] = module
     func = getattr(module, signal_name, None)
     if func is None:
@@ -466,9 +502,9 @@ def build_signal_payloads(
                         module_cache=module_cache,
                     )
                 status = "active" if _signal_value_is_active(signal_value) else "inactive"
-            except KeyError as exc:
-                # czsc._native.call_signal raises KeyError for unknown signal
-                # names. Record once and skip for the rest of the replay.
+            except SignalNameNotFoundError as exc:
+                # Native dispatcher unknown signal name — permanent lookup
+                # failure. Cache and skip subsequent bars for this name.
                 signal_value = ""
                 status = "not_ready"
                 if signal_name not in unknown_signals:
@@ -477,13 +513,14 @@ def build_signal_payloads(
                         _warning(
                             warning_id=f"warning_signal_function_missing_{signal_name}",
                             code="SIGNAL_FUNCTION_UNAVAILABLE",
-                            message=f"Signal `{signal_name}` is not registered in the czsc signal dispatcher: {exc}",
+                            message=str(exc),
                             field="signals",
                         )
                     )
                 continue
-            except ImportError as exc:
-                # Custom module could not be imported.
+            except SignalModuleImportError as exc:
+                # Confirmed custom-module import failure — permanent.
+                # Cache and skip subsequent bars for this module.
                 signal_value = ""
                 status = "not_ready"
                 if module_name not in missing_modules:
@@ -492,7 +529,7 @@ def build_signal_payloads(
                         _warning(
                             warning_id=f"warning_signal_module_missing_{module_name}",
                             code="SIGNAL_MODULE_UNAVAILABLE",
-                            message=f"Signal module `{module_name}` could not be imported: {exc}",
+                            message=str(exc),
                             field="signals",
                         )
                     )
@@ -515,13 +552,13 @@ def build_signal_payloads(
                         )
                     )
                 continue
-            except AttributeError as exc:
-                # A bare AttributeError (not SignalFunctionNotFoundError)
-                # means the function was found and called, but raised
-                # AttributeError internally during execution — e.g. an
-                # indicator is not yet ready. This is a transient
-                # execution failure, NOT a permanent lookup failure.
-                # Do NOT cache or skip subsequent bars (#175 P1 fix).
+            except (AttributeError, ImportError, KeyError) as exc:
+                # Bare AttributeError / ImportError / KeyError means the
+                # function was found and called, but raised one of these
+                # during *execution* (e.g. indicator not ready, optional
+                # dependency missing, missing mapping key). Transient —
+                # do NOT cache or skip subsequent bars, and do NOT poison
+                # missing_modules / unknown_signals (#175 P1 fix).
                 signal_value = ""
                 status = "error"
                 failed_key = (module_name, signal_name)
@@ -531,7 +568,10 @@ def build_signal_payloads(
                         _warning(
                             warning_id=f"warning_signal_eval_failed_{signal_name}",
                             code="SIGNAL_EVALUATION_FAILED",
-                            message=f"Signal `{module_name}.{signal_name}` raised AttributeError during execution: {exc}",
+                            message=(
+                                f"Signal `{module_name}.{signal_name}` raised "
+                                f"{type(exc).__name__} during execution: {exc}"
+                            ),
                             field="signals",
                         )
                     )

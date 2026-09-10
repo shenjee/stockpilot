@@ -1,10 +1,10 @@
 # #175 信号接口迁移 — 旧基线差异排查与 #176 待验证清单
 
-- 日期：2026-09-10（复审修复更新）
+- 日期：2026-09-11（复审三轮修复更新）
 - 分支：`upgrade/czsc-1.0.1`
-- 提交：`7c6bae3`（初版）→ `d9770c7`（P1 修复一轮）→ 本轮（P1 修复二轮）
+- 提交：`7c6bae3`（初版）→ `d9770c7`（P1 修复一轮）→ `d8f126a`（P1 修复二轮）→ 本轮（P1 修复三轮：执行期 ImportError/KeyError）
 - 父 issue：#172；本报告对应子任务 #175
-- 环境：`~/.venvs/czsc`（czsc 1.0.1，Python 3.14.5）；`pyproject.toml` pin `czsc==1.0.1`
+- 环境：`~/.venvs/czsc` 实测 **czsc 1.0.1**（Python 3.14）；升级分支 `pyproject.toml` pin `czsc==1.0.1`（#177 确认正式环境与锁文件）
 
 ---
 
@@ -146,6 +146,8 @@ Rust 原生分发器在首根正常求值返回 `其他_任意_任意_0` → 状
 | 未知信号（原生分发器 KeyError） | SIGNAL_FUNCTION_UNAVAILABLE | `test_unknown_signal_name_produces_function_unavailable_warning` |
 | 自定义模块函数缺失（查找失败） | SIGNAL_FUNCTION_UNAVAILABLE | `test_custom_module_function_missing_produces_function_unavailable_warning` |
 | 函数执行中抛 AttributeError（执行失败，非查找失败） | SIGNAL_EVALUATION_FAILED (error) | `test_execution_attribute_error_does_not_stop_subsequent_evaluation` |
+| 函数执行中抛 ImportError（执行失败，非模块缺失） | SIGNAL_EVALUATION_FAILED (error) | `test_execution_import_error_does_not_stop_subsequent_evaluation` |
+| 函数执行中抛 KeyError（执行失败，不污染原生 unknown 缓存） | SIGNAL_EVALUATION_FAILED (error) | `test_execution_key_error_does_not_poison_native_unknown_cache` |
 | 返回值不兼容（None/裸字符串/无 .value） | SIGNAL_EVALUATION_FAILED (error) | `test_incompatible_return_type_produces_error_not_silent_inactive`、`test_incompatible_return_type_via_dispatcher_produces_error` |
 | 求值失败（IndexError/ValueError） | SIGNAL_EVALUATION_FAILED | `test_signal_status_distinguishes_active_inactive_not_ready_error` |
 | 跨错误恢复（同值，不重复触发） | （无事件） | `test_recovery_from_error_to_same_value_does_not_retrigger` |
@@ -155,7 +157,7 @@ Rust 原生分发器在首根正常求值返回 `其他_任意_任意_0` → 状
 
 **关键行为保证：**
 1. 返回值不兼容时状态为 "error"（非 "inactive"），不产生假 invalidated 事件。
-2. 函数执行异常（含 AttributeError）不缓存、不跳过后续 bar，后续 bar 继续求值。
+2. 函数执行异常（含 AttributeError / ImportError / KeyError）不缓存、不跳过后续 bar；仅确认的模块导入/函数查找/分发器未知名失败才缺失缓存。
 3. 跨错误恢复：同值恢复不重复触发（无事件），异值恢复产生 switched（非 triggered）。
 4. 信号事件与候选点事件两条路径统一处理未知状态（error/not_ready）。
 
@@ -193,13 +195,13 @@ Rust 原生分发器在首根正常求值返回 `其他_任意_任意_0` → 状
 
 ## 7. 测试统计
 
-- `packages/chantheory/tests/` 全量：**116 passed**（本轮修复后）
-  - `test_adapters.py`：52 passed（含本轮新增 5 个跨错误恢复回归测试）
+- `packages/chantheory/tests/` 全量：**118 passed**（本轮修复后，以 pytest 收集为准）
+  - `test_adapters.py`：54 passed（含执行期 ImportError/KeyError 回归 2 个）
   - `test_czsc_5m_spike.py`：23 passed（含 7 个 RealEngineSignalTests）
   - `test_normalize.py`：3 passed
   - `test_plotting.py`：1 passed
   - `test_segments.py`：37 passed
 
-注：复审隔离环境曾报告 110 passed（d9770c7 时点），与本仓库环境收集数
-（111，d9770c7 时点）相差 1，疑为隔离环境收集差异；本轮修复后本仓库环境
-收集 116 项全部通过。
+注：此前 unittest 与 pytest 收集数相差 1，原因是 unittest 不收集独立函数
+`test_chan_111_issue()`，pytest 会收集；**不是隔离环境差异**。当前
+`~/.venvs/czsc` 实测为 czsc 1.0.1，与升级分支 pin 一致。

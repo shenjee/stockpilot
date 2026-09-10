@@ -1276,6 +1276,154 @@ class AdapterTests(unittest.TestCase):
         self.assertIn("SIGNAL_EVALUATION_FAILED", warning_codes)
         self.assertNotIn("SIGNAL_FUNCTION_UNAVAILABLE", warning_codes)
 
+    def test_execution_import_error_does_not_stop_subsequent_evaluation(self):
+        """A signal function that raises ImportError during *execution*
+        must NOT be treated as a permanent module-missing failure.
+        Subsequent bars must still be evaluated (#175 P1 fix: 区分模块
+        导入失败与函数执行 ImportError).
+        """
+        strokes = [
+            _stroke("1", "up", "2025-01-01", 10.0, "2025-01-02", 11.0),
+        ]
+        bars_raw = [
+            SimpleNamespace(dt="2025-01-01", close=10.0),
+            SimpleNamespace(dt="2025-01-02", close=11.0),
+            SimpleNamespace(dt="2025-01-03", close=12.0),
+        ]
+
+        class MockAnalyzer:
+            def __init__(self, bars, max_bi_num=50):
+                self.bars_raw = list(bars)
+                self.bi_list = []
+                self.max_bi_num = max_bi_num
+
+            def update(self, bar):
+                if bar not in self.bars_raw:
+                    self.bars_raw.append(bar)
+
+        analyzer = MockAnalyzer(bars_raw)
+
+        call_count = [0]
+
+        def flaky_signal(_analyzer, di=1, **_kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise ImportError("optional dependency 'talib' is not installed")
+            return {"flaky_signal": "一买_5笔_任意_0"}
+
+        signal_module = SimpleNamespace(flaky_signal=flaky_signal)
+
+        with patch("chantheory.signals.import_module", return_value=signal_module):
+            evaluations, series, events, snapshots, warnings, _ = _build_signal_payloads(
+                strokes=strokes,
+                analyzer=analyzer,
+                index_by_timestamp={
+                    "2025-01-01": 0,
+                    "2025-01-02": 1,
+                    "2025-01-03": 2,
+                },
+                signals_config=[
+                    {
+                        "module": "custom.signals",
+                        "name": "flaky_signal",
+                        "key": "flaky_key",
+                    }
+                ],
+            )
+
+        self.assertEqual(call_count[0], 3)
+        self.assertEqual(len(evaluations), 3)
+        self.assertEqual(evaluations[0]["status"], "error")
+        self.assertEqual(evaluations[1]["status"], "active")
+        self.assertEqual(evaluations[2]["status"], "active")
+
+        warning_codes = [w.warning_code for w in warnings]
+        self.assertIn("SIGNAL_EVALUATION_FAILED", warning_codes)
+        self.assertNotIn("SIGNAL_MODULE_UNAVAILABLE", warning_codes)
+
+    def test_execution_key_error_does_not_poison_native_unknown_cache(self):
+        """A custom signal that raises KeyError during *execution* must
+        NOT be recorded as SIGNAL_FUNCTION_UNAVAILABLE, and must NOT
+        poison ``unknown_signals`` so that a same-named native signal is
+        skipped (#175 P1 fix: 区分分发器未知信号与函数执行 KeyError).
+        """
+        strokes = [
+            _stroke("1", "up", "2025-01-01", 10.0, "2025-01-02", 11.0),
+        ]
+        bars_raw = [
+            SimpleNamespace(dt="2025-01-01", close=10.0),
+            SimpleNamespace(dt="2025-01-02", close=11.0),
+            SimpleNamespace(dt="2025-01-03", close=12.0),
+        ]
+
+        class MockAnalyzer:
+            def __init__(self, bars, max_bi_num=50):
+                self.bars_raw = list(bars)
+                self.bi_list = []
+                self.max_bi_num = max_bi_num
+
+            def update(self, bar):
+                if bar not in self.bars_raw:
+                    self.bars_raw.append(bar)
+
+        analyzer = MockAnalyzer(bars_raw)
+
+        custom_call_count = [0]
+
+        def flaky_same_name(_analyzer, di=1, **_kwargs):
+            custom_call_count[0] += 1
+            if custom_call_count[0] == 1:
+                raise KeyError("missing internal mapping key")
+            return {"cxt_first_buy_V221126": "一买_5笔_任意_0"}
+
+        signal_module = SimpleNamespace(cxt_first_buy_V221126=flaky_same_name)
+        native_call_count = [0]
+
+        def dispatcher(name, _analyzer, params=None):
+            native_call_count[0] += 1
+            if name != "cxt_first_buy_V221126":
+                raise AssertionError(f"unexpected native signal: {name}")
+            return [SimpleNamespace(value="其他_任意_任意_0")]
+
+        with patch("chantheory.signals.import_module", return_value=signal_module):
+            evaluations, series, events, snapshots, warnings, _ = _build_signal_payloads(
+                strokes=strokes,
+                analyzer=analyzer,
+                index_by_timestamp={
+                    "2025-01-01": 0,
+                    "2025-01-02": 1,
+                    "2025-01-03": 2,
+                },
+                signals_config=[
+                    {
+                        "module": "custom.signals",
+                        "name": "cxt_first_buy_V221126",
+                        "key": "custom_first_buy",
+                    },
+                    {
+                        "module": "czsc._native",
+                        "name": "cxt_first_buy_V221126",
+                        "key": "native_first_buy",
+                    },
+                ],
+                dispatcher=dispatcher,
+            )
+
+        # Custom function continues after bar-0 KeyError.
+        self.assertEqual(custom_call_count[0], 3)
+        custom_evals = [e for e in evaluations if e["signal_key"] == "custom_first_buy"]
+        self.assertEqual([e["status"] for e in custom_evals], ["error", "active", "active"])
+
+        # Native same-named signal must still be evaluated on every bar.
+        self.assertEqual(native_call_count[0], 3)
+        native_evals = [e for e in evaluations if e["signal_key"] == "native_first_buy"]
+        self.assertEqual(len(native_evals), 3)
+        self.assertTrue(all(e["status"] == "inactive" for e in native_evals))
+
+        warning_codes = [w.warning_code for w in warnings]
+        self.assertIn("SIGNAL_EVALUATION_FAILED", warning_codes)
+        self.assertNotIn("SIGNAL_FUNCTION_UNAVAILABLE", warning_codes)
+
     def test_recovery_from_error_to_same_value_does_not_retrigger(self):
         """active → error → same-value recovery must not produce a
         spurious "triggered" event. The signal never genuinely
