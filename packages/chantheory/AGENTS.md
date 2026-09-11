@@ -38,7 +38,7 @@ Prefer extending existing entry points over adding new top-level APIs unless the
 - Preserve the stable result schema unless the task explicitly calls for a contract change.
 - Prefer conservative degradation with warnings over hard failure where the existing package already follows that pattern.
 - Maintain the validated engine assumptions documented in the package README unless explicitly updating the engine strategy.
-- If touching engine import behavior, be careful not to regress the `numpy.typing` import shim behavior around `czsc`.
+- If touching engine import behavior, keep the `numpy.typing` import shim before `czsc` so the Rust-native extension initializes consistently.
 
 ## File Guidance
 

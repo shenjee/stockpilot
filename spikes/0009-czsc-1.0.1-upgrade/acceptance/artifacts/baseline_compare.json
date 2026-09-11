@@ -1,0 +1,463 @@
+{
+  "environment": {
+    "captured_at_utc": "2026-09-11T01:39:25.667139+00:00",
+    "cpu": "arm",
+    "cpu_count": 12,
+    "czsc": "1.0.1",
+    "formal_env_note": "Formal ~/.venvs/czsc is already on czsc 1.0.1; this is an early environment deviation vs #172 switch order and must be closed by #177.",
+    "git_sha": "52f80259fecdf592095615e07c7dee319375b73e",
+    "load_average": null,
+    "machine": "arm64",
+    "os": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "python": "3.14.5",
+    "python_executable": "/Users/jishen/.venvs/czsc/bin/python"
+  },
+  "gate_note": "#174/#175 not formally accepted yet; this run must not close #176, must not update formal fixtures, and must not enter #177.",
+  "generated_at_utc": "2026-09-11T01:39:28.396142+00:00",
+  "git_sha": "52f80259fecdf592095615e07c7dee319375b73e",
+  "kind": "baseline_behavior_compare",
+  "multi_timeframe": {
+    "available_timeframes": [
+      "5m",
+      "30m"
+    ],
+    "bar_count_by_timeframe": {
+      "30m": 1336,
+      "5m": 548
+    },
+    "base_timeframe": "5m",
+    "level_vs_independent_diff_counts": {
+      "30m": 0,
+      "5m": 0
+    },
+    "level_vs_independent_sample_diffs": {
+      "30m": [],
+      "5m": []
+    },
+    "pass": true,
+    "requested_timeframes": [
+      "5m",
+      "30m"
+    ],
+    "roles": {
+      "30m": "higher",
+      "5m": "base"
+    },
+    "symbol": "600584.SH",
+    "warnings": [
+      {
+        "field": "amount",
+        "id": "multi_timeframe_30m_warning_amount_derived",
+        "message": "Missing amount values are derived with close * volume during Phase 1.",
+        "meta": {
+          "role": "higher",
+          "timeframe": "30m"
+        },
+        "severity": "warning",
+        "warning_code": "AMOUNT_DERIVED"
+      }
+    ]
+  },
+  "scenarios": [
+    {
+      "bar_count": 120,
+      "baseline_output": "daily_synthetic_120_result.json",
+      "baseline_sha256": "acb130f5d0578187e984190cd8399addb3642e99d9719bd2565bd754542e606c",
+      "behavior_diff_count": 0,
+      "behavior_diff_sample": [],
+      "confirmation_queue_count": 5,
+      "confirmation_queue_sample": [
+        {
+          "category": "signal",
+          "left": "not_ready",
+          "path": "$.signal_series[3].points[0].status",
+          "queue_reason": "first_bar_third_bs_status",
+          "reason": "value",
+          "right": "inactive"
+        },
+        {
+          "category": "signal",
+          "left": "",
+          "path": "$.signal_series[3].points[0].value",
+          "queue_reason": "first_bar_third_bs_status",
+          "reason": "value",
+          "right": "其他_任意_任意_0"
+        },
+        {
+          "category": "signal",
+          "left": "not_ready",
+          "path": "$.signal_snapshots[0].statuses.third_bs",
+          "queue_reason": "first_bar_third_bs_status",
+          "reason": "value",
+          "right": "inactive"
+        },
+        {
+          "category": "signal",
+          "left": "",
+          "path": "$.signal_snapshots[0].values.third_bs",
+          "queue_reason": "first_bar_third_bs_status",
+          "reason": "value",
+          "right": "其他_任意_任意_0"
+        },
+        {
+          "category": "warnings",
+          "left": 2,
+          "path": "$.warnings",
+          "queue_reason": "warning_set_change",
+          "reason": "length",
+          "right": 1
+        }
+      ],
+      "diff_by_category": {
+        "migration_provenance": 23,
+        "signal": 4,
+        "warnings": 1
+      },
+      "diff_total": 28,
+      "first_bar_third_bs": {
+        "investigation_note": "Old czsc.signals.cxt third_bs raised IndexError on insufficient structure → adapter status=not_ready + SIGNAL_EVALUATION_FAILED. New Rust dispatcher returns 其他_任意_任意_0 without exception → inactive. Preserving old口径 would require inventing structure-readiness heuristics not present in Signal return values; see probe_first_bar_status.py for adapter-side options.",
+        "new_bar0": {
+          "active": false,
+          "bar_index": 0,
+          "meta": {
+            "direction": ""
+          },
+          "price": 10.1394,
+          "reference_id": "stroke_pending_2024-01-01_2024-01-01",
+          "status": "inactive",
+          "timestamp": "2024-01-01",
+          "value": "其他_任意_任意_0"
+        },
+        "new_has_signal_evaluation_failed": false,
+        "old_bar0": {
+          "active": false,
+          "bar_index": 0,
+          "meta": {
+            "direction": ""
+          },
+          "price": 10.1394,
+          "reference_id": "stroke_pending_2024-01-01_2024-01-01",
+          "status": "not_ready",
+          "timestamp": "2024-01-01",
+          "value": ""
+        },
+        "old_has_signal_evaluation_failed": true,
+        "signal_key": "third_bs",
+        "status_changed": true,
+        "value_changed": true
+      },
+      "input_file": "daily_synthetic_120_rows.json",
+      "input_sha256": "fed13e7c47f19865d582011bb5114c919737b64850acbaa30a6da1ee876f24af",
+      "new_counts": {
+        "candidate_point_events": 4,
+        "divergences": 2,
+        "fractals": 30,
+        "pivot_zones": 2,
+        "plot_primitives": 48,
+        "segments": 1,
+        "signal_events": 4,
+        "strokes": 9,
+        "warnings": 1
+      },
+      "new_signal_active": {
+        "first_buy": 0,
+        "first_sell": 16,
+        "second_bs": 0,
+        "third_bs": 0
+      },
+      "old_counts": {
+        "candidate_point_events": 4,
+        "divergences": 2,
+        "fractals": 30,
+        "pivot_zones": 2,
+        "plot_primitives": 48,
+        "segments": 1,
+        "signal_events": 4,
+        "strokes": 9,
+        "warnings": 2
+      },
+      "old_signal_active": {
+        "first_buy": 0,
+        "first_sell": 16,
+        "second_bs": 0,
+        "third_bs": 0
+      },
+      "pass_strict_behavior": true,
+      "plot_primitive_structure_issues": [],
+      "plot_primitives_pass": true,
+      "scenario_id": "daily_synthetic_120",
+      "symbol": "000001.SZ",
+      "synthetic": true,
+      "timeframe": "day"
+    },
+    {
+      "bar_count": 548,
+      "baseline_output": "5m_real_600584_548_result.json",
+      "baseline_sha256": "56debd2ad67720b7dbe7b8519254b5c0e90d9b593995997fee5e0ba67a1b5d58",
+      "behavior_diff_count": 0,
+      "behavior_diff_sample": [],
+      "confirmation_queue_count": 5,
+      "confirmation_queue_sample": [
+        {
+          "category": "signal",
+          "left": "not_ready",
+          "path": "$.signal_series[3].points[0].status",
+          "queue_reason": "first_bar_third_bs_status",
+          "reason": "value",
+          "right": "inactive"
+        },
+        {
+          "category": "signal",
+          "left": "",
+          "path": "$.signal_series[3].points[0].value",
+          "queue_reason": "first_bar_third_bs_status",
+          "reason": "value",
+          "right": "其他_任意_任意_0"
+        },
+        {
+          "category": "signal",
+          "left": "not_ready",
+          "path": "$.signal_snapshots[0].statuses.third_bs",
+          "queue_reason": "first_bar_third_bs_status",
+          "reason": "value",
+          "right": "inactive"
+        },
+        {
+          "category": "signal",
+          "left": "",
+          "path": "$.signal_snapshots[0].values.third_bs",
+          "queue_reason": "first_bar_third_bs_status",
+          "reason": "value",
+          "right": "其他_任意_任意_0"
+        },
+        {
+          "category": "warnings",
+          "left": 1,
+          "path": "$.warnings",
+          "queue_reason": "warning_set_change",
+          "reason": "length",
+          "right": 0
+        }
+      ],
+      "diff_by_category": {
+        "migration_provenance": 38,
+        "signal": 4,
+        "warnings": 1
+      },
+      "diff_total": 43,
+      "first_bar_third_bs": {
+        "investigation_note": "Old czsc.signals.cxt third_bs raised IndexError on insufficient structure → adapter status=not_ready + SIGNAL_EVALUATION_FAILED. New Rust dispatcher returns 其他_任意_任意_0 without exception → inactive. Preserving old口径 would require inventing structure-readiness heuristics not present in Signal return values; see probe_first_bar_status.py for adapter-side options.",
+        "new_bar0": {
+          "active": false,
+          "bar_index": 0,
+          "meta": {
+            "direction": ""
+          },
+          "price": 42.0,
+          "reference_id": "stroke_pending_2026-06-29 13:25:00_2026-06-29 13:25:00",
+          "status": "inactive",
+          "timestamp": "2026-06-29 13:25:00",
+          "value": "其他_任意_任意_0"
+        },
+        "new_has_signal_evaluation_failed": false,
+        "old_bar0": {
+          "active": false,
+          "bar_index": 0,
+          "meta": {
+            "direction": ""
+          },
+          "price": 42.0,
+          "reference_id": "stroke_pending_2026-06-29 13:25:00_2026-06-29 13:25:00",
+          "status": "not_ready",
+          "timestamp": "2026-06-29 13:25:00",
+          "value": ""
+        },
+        "old_has_signal_evaluation_failed": true,
+        "signal_key": "third_bs",
+        "status_changed": true,
+        "value_changed": true
+      },
+      "input_file": "5m_real_600584_548_rows.json",
+      "input_sha256": "03c5deb34d9adf44f56bd8bf6e8b8d945b7d0927219227055d5e94c1aaccf8d6",
+      "new_counts": {
+        "candidate_point_events": 20,
+        "divergences": 2,
+        "fractals": 38,
+        "pivot_zones": 1,
+        "plot_primitives": 79,
+        "segments": 3,
+        "signal_events": 20,
+        "strokes": 24,
+        "warnings": 0
+      },
+      "new_signal_active": {
+        "first_buy": 0,
+        "first_sell": 46,
+        "second_bs": 38,
+        "third_bs": 0
+      },
+      "old_counts": {
+        "candidate_point_events": 20,
+        "divergences": 2,
+        "fractals": 38,
+        "pivot_zones": 1,
+        "plot_primitives": 79,
+        "segments": 3,
+        "signal_events": 20,
+        "strokes": 24,
+        "warnings": 1
+      },
+      "old_signal_active": {
+        "first_buy": 0,
+        "first_sell": 46,
+        "second_bs": 38,
+        "third_bs": 0
+      },
+      "pass_strict_behavior": true,
+      "plot_primitive_structure_issues": [],
+      "plot_primitives_pass": true,
+      "scenario_id": "5m_real_600584_548",
+      "symbol": "600584.SH",
+      "synthetic": false,
+      "timeframe": "5m"
+    },
+    {
+      "bar_count": 1336,
+      "baseline_output": "30m_real_600584_result.json",
+      "baseline_sha256": "62716e1c7cf1d64fecb32873bbfe441866b016b7c5e3b691e1ec380c8ab34cc0",
+      "behavior_diff_count": 0,
+      "behavior_diff_sample": [],
+      "confirmation_queue_count": 5,
+      "confirmation_queue_sample": [
+        {
+          "category": "signal",
+          "left": "not_ready",
+          "path": "$.signal_series[3].points[0].status",
+          "queue_reason": "first_bar_third_bs_status",
+          "reason": "value",
+          "right": "inactive"
+        },
+        {
+          "category": "signal",
+          "left": "",
+          "path": "$.signal_series[3].points[0].value",
+          "queue_reason": "first_bar_third_bs_status",
+          "reason": "value",
+          "right": "其他_任意_任意_0"
+        },
+        {
+          "category": "signal",
+          "left": "not_ready",
+          "path": "$.signal_snapshots[0].statuses.third_bs",
+          "queue_reason": "first_bar_third_bs_status",
+          "reason": "value",
+          "right": "inactive"
+        },
+        {
+          "category": "signal",
+          "left": "",
+          "path": "$.signal_snapshots[0].values.third_bs",
+          "queue_reason": "first_bar_third_bs_status",
+          "reason": "value",
+          "right": "其他_任意_任意_0"
+        },
+        {
+          "category": "warnings",
+          "left": 2,
+          "path": "$.warnings",
+          "queue_reason": "warning_set_change",
+          "reason": "length",
+          "right": 1
+        }
+      ],
+      "diff_by_category": {
+        "migration_provenance": 256,
+        "signal": 4,
+        "warnings": 1
+      },
+      "diff_total": 261,
+      "first_bar_third_bs": {
+        "investigation_note": "Old czsc.signals.cxt third_bs raised IndexError on insufficient structure → adapter status=not_ready + SIGNAL_EVALUATION_FAILED. New Rust dispatcher returns 其他_任意_任意_0 without exception → inactive. Preserving old口径 would require inventing structure-readiness heuristics not present in Signal return values; see probe_first_bar_status.py for adapter-side options.",
+        "new_bar0": {
+          "active": false,
+          "bar_index": 0,
+          "meta": {
+            "direction": ""
+          },
+          "price": 38.25,
+          "reference_id": "stroke_pending_2026-01-05 10:00:00_2026-01-05 10:00:00",
+          "status": "inactive",
+          "timestamp": "2026-01-05 10:00:00",
+          "value": "其他_任意_任意_0"
+        },
+        "new_has_signal_evaluation_failed": false,
+        "old_bar0": {
+          "active": false,
+          "bar_index": 0,
+          "meta": {
+            "direction": ""
+          },
+          "price": 38.25,
+          "reference_id": "stroke_pending_2026-01-05 10:00:00_2026-01-05 10:00:00",
+          "status": "not_ready",
+          "timestamp": "2026-01-05 10:00:00",
+          "value": ""
+        },
+        "old_has_signal_evaluation_failed": true,
+        "signal_key": "third_bs",
+        "status_changed": true,
+        "value_changed": true
+      },
+      "input_file": "30m_600584_sh_rows.json",
+      "input_sha256": "f60f5b735f07fabb73747fd2f3576ed4d3b293cfcdc2fcab74922bb6289da9d9",
+      "new_counts": {
+        "candidate_point_events": 220,
+        "divergences": 9,
+        "fractals": 417,
+        "pivot_zones": 21,
+        "plot_primitives": 662,
+        "segments": 9,
+        "signal_events": 220,
+        "strokes": 95,
+        "warnings": 1
+      },
+      "new_signal_active": {
+        "first_buy": 111,
+        "first_sell": 102,
+        "second_bs": 161,
+        "third_bs": 205
+      },
+      "old_counts": {
+        "candidate_point_events": 220,
+        "divergences": 9,
+        "fractals": 417,
+        "pivot_zones": 21,
+        "plot_primitives": 662,
+        "segments": 9,
+        "signal_events": 220,
+        "strokes": 95,
+        "warnings": 2
+      },
+      "old_signal_active": {
+        "first_buy": 111,
+        "first_sell": 102,
+        "second_bs": 161,
+        "third_bs": 205
+      },
+      "pass_strict_behavior": true,
+      "plot_primitive_structure_issues": [],
+      "plot_primitives_pass": true,
+      "scenario_id": "30m_real_600584",
+      "symbol": "600584.SH",
+      "synthetic": false,
+      "timeframe": "30m"
+    }
+  ],
+  "summary": {
+    "any_confirmation_queue": true,
+    "multi_timeframe_pass": true,
+    "plot_primitives_all_pass": true,
+    "scenarios_pass_strict_behavior": true
+  },
+  "task": "#176"
+}

@@ -1,0 +1,537 @@
+{
+  "environment_new": {
+    "captured_at_utc": "2026-09-11T01:43:55.085997+00:00",
+    "cpu": "arm",
+    "cpu_count": 12,
+    "czsc": "1.0.1",
+    "formal_env_note": "Formal ~/.venvs/czsc is already on czsc 1.0.1; this is an early environment deviation vs #172 switch order and must be closed by #177.",
+    "git_sha": "52f80259fecdf592095615e07c7dee319375b73e",
+    "load_average": null,
+    "machine": "arm64",
+    "os": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "python": "3.14.5",
+    "python_executable": "/Users/jishen/.venvs/czsc/bin/python"
+  },
+  "gate_note": "Performance regressions: first fix adapter issues; residual user-visible regressions require confirmation. Do not close #176 on this alone while #174/#175 remain open.",
+  "generated_at_utc": "2026-09-11T01:43:54.600200+00:00",
+  "git_sha": "52f80259fecdf592095615e07c7dee319375b73e",
+  "historical_reference_only": "spike 0008 / #173 p95 ~188-195ms (not used as gate)",
+  "kind": "performance_compare",
+  "old_python": "/Users/jishen/.venvs/czsc01012-bench/bin/python",
+  "old_root": "/Users/jishen/development/stockpilot-wt-01012",
+  "samples": 9,
+  "scenarios": [
+    {
+      "bar_count": 120,
+      "measurements": {
+        "engine_update": {
+          "new_1_0_1": {
+            "czsc": "1.0.1",
+            "kind": "engine_update",
+            "timing": {
+              "samples_ms": [
+                0.008,
+                0.007,
+                0.007,
+                0.008,
+                0.018,
+                0.007,
+                0.008,
+                0.009,
+                0.007
+              ],
+              "summary": {
+                "max_ms": 0.018,
+                "mean_ms": 0.009,
+                "p50_ms": 0.008,
+                "p95_ms": 0.018,
+                "samples": 9
+              },
+              "warmup": 1
+            }
+          },
+          "old_0_10_12": {
+            "czsc": "0.10.12",
+            "kind": "engine_update",
+            "timing": {
+              "samples_ms": [
+                0.033,
+                0.028,
+                0.023,
+                0.021,
+                0.026,
+                0.022,
+                0.024,
+                0.025,
+                0.024
+              ],
+              "summary": {
+                "max_ms": 0.033,
+                "mean_ms": 0.025,
+                "p50_ms": 0.024,
+                "p95_ms": 0.033,
+                "samples": 9
+              },
+              "warmup": 1
+            }
+          },
+          "p95_delta_ms": -0.015,
+          "p95_relative_change": -0.4545
+        },
+        "full_analyze": {
+          "new_1_0_1": {
+            "czsc": "1.0.1",
+            "kind": "full_analyze",
+            "timing": {
+              "samples_ms": [
+                39.944,
+                38.763,
+                39.797,
+                39.345,
+                39.41,
+                38.971,
+                39.043,
+                39.327,
+                39.513
+              ],
+              "summary": {
+                "max_ms": 39.944,
+                "mean_ms": 39.346,
+                "p50_ms": 39.345,
+                "p95_ms": 39.944,
+                "samples": 9
+              },
+              "warmup": 1
+            }
+          },
+          "old_0_10_12": {
+            "czsc": "0.10.12",
+            "kind": "full_analyze",
+            "timing": {
+              "samples_ms": [
+                41.654,
+                43.161,
+                41.578,
+                42.07,
+                43.025,
+                41.603,
+                41.51,
+                41.121,
+                40.74
+              ],
+              "summary": {
+                "max_ms": 43.161,
+                "mean_ms": 41.829,
+                "p50_ms": 41.603,
+                "p95_ms": 43.161,
+                "samples": 9
+              },
+              "warmup": 1
+            }
+          },
+          "p95_delta_ms": -3.217,
+          "p95_relative_change": -0.0745
+        },
+        "signal_replay": {
+          "new_1_0_1": {
+            "czsc": "1.0.1",
+            "kind": "signal_replay",
+            "timing": {
+              "samples_ms": [
+                15.57,
+                15.437,
+                15.628,
+                16.236,
+                16.126,
+                16.166,
+                16.456,
+                15.681,
+                15.775
+              ],
+              "summary": {
+                "max_ms": 16.456,
+                "mean_ms": 15.897,
+                "p50_ms": 15.775,
+                "p95_ms": 16.456,
+                "samples": 9
+              },
+              "warmup": 1
+            }
+          },
+          "old_0_10_12": {
+            "czsc": "0.10.12",
+            "kind": "signal_replay",
+            "timing": {
+              "samples_ms": [
+                16.735,
+                17.785,
+                16.75,
+                17.127,
+                16.904,
+                16.397,
+                16.319,
+                17.107,
+                17.144
+              ],
+              "summary": {
+                "max_ms": 17.785,
+                "mean_ms": 16.919,
+                "p50_ms": 16.904,
+                "p95_ms": 17.785,
+                "samples": 9
+              },
+              "warmup": 1
+            }
+          },
+          "p95_delta_ms": -1.329,
+          "p95_relative_change": -0.0747
+        }
+      },
+      "scenario_id": "daily_synthetic_120",
+      "symbol": "000001.SZ",
+      "timeframe": "day"
+    },
+    {
+      "bar_count": 548,
+      "measurements": {
+        "engine_update": {
+          "new_1_0_1": {
+            "czsc": "1.0.1",
+            "kind": "engine_update",
+            "timing": {
+              "samples_ms": [
+                0.009,
+                0.01,
+                0.013,
+                0.008,
+                0.009,
+                0.008,
+                0.007,
+                0.009,
+                0.008
+              ],
+              "summary": {
+                "max_ms": 0.013,
+                "mean_ms": 0.009,
+                "p50_ms": 0.009,
+                "p95_ms": 0.013,
+                "samples": 9
+              },
+              "warmup": 1
+            }
+          },
+          "old_0_10_12": {
+            "czsc": "0.10.12",
+            "kind": "engine_update",
+            "timing": {
+              "samples_ms": [
+                0.027,
+                0.028,
+                0.024,
+                0.031,
+                0.028,
+                0.029,
+                0.04,
+                0.029,
+                0.029
+              ],
+              "summary": {
+                "max_ms": 0.04,
+                "mean_ms": 0.029,
+                "p50_ms": 0.029,
+                "p95_ms": 0.04,
+                "samples": 9
+              },
+              "warmup": 1
+            }
+          },
+          "p95_delta_ms": -0.027,
+          "p95_relative_change": -0.675
+        },
+        "full_analyze": {
+          "new_1_0_1": {
+            "czsc": "1.0.1",
+            "kind": "full_analyze",
+            "timing": {
+              "samples_ms": [
+                239.219,
+                187.964,
+                229.332,
+                186.259,
+                188.861,
+                184.706,
+                188.803,
+                185.654,
+                184.702
+              ],
+              "summary": {
+                "max_ms": 239.219,
+                "mean_ms": 197.278,
+                "p50_ms": 187.964,
+                "p95_ms": 239.219,
+                "samples": 9
+              },
+              "warmup": 1
+            }
+          },
+          "old_0_10_12": {
+            "czsc": "0.10.12",
+            "kind": "full_analyze",
+            "timing": {
+              "samples_ms": [
+                203.796,
+                191.37,
+                191.235,
+                190.832,
+                191.325,
+                190.524,
+                193.163,
+                189.896,
+                192.95
+              ],
+              "summary": {
+                "max_ms": 203.796,
+                "mean_ms": 192.788,
+                "p50_ms": 191.325,
+                "p95_ms": 203.796,
+                "samples": 9
+              },
+              "warmup": 1
+            }
+          },
+          "p95_delta_ms": 35.423,
+          "p95_relative_change": 0.1738
+        },
+        "signal_replay": {
+          "new_1_0_1": {
+            "czsc": "1.0.1",
+            "kind": "signal_replay",
+            "timing": {
+              "samples_ms": [
+                88.822,
+                86.295,
+                88.254,
+                111.614,
+                88.028,
+                86.954,
+                90.291,
+                87.514,
+                83.094
+              ],
+              "summary": {
+                "max_ms": 111.614,
+                "mean_ms": 90.096,
+                "p50_ms": 88.028,
+                "p95_ms": 111.614,
+                "samples": 9
+              },
+              "warmup": 1
+            }
+          },
+          "old_0_10_12": {
+            "czsc": "0.10.12",
+            "kind": "signal_replay",
+            "timing": {
+              "samples_ms": [
+                83.624,
+                85.488,
+                86.612,
+                87.83,
+                90.92,
+                92.019,
+                91.661,
+                93.474,
+                89.518
+              ],
+              "summary": {
+                "max_ms": 93.474,
+                "mean_ms": 89.016,
+                "p50_ms": 89.518,
+                "p95_ms": 93.474,
+                "samples": 9
+              },
+              "warmup": 1
+            }
+          },
+          "p95_delta_ms": 18.14,
+          "p95_relative_change": 0.1941
+        }
+      },
+      "scenario_id": "5m_real_600584_548",
+      "symbol": "600584.SH",
+      "timeframe": "5m"
+    },
+    {
+      "bar_count": 1336,
+      "measurements": {
+        "engine_update": {
+          "new_1_0_1": {
+            "czsc": "1.0.1",
+            "kind": "engine_update",
+            "timing": {
+              "samples_ms": [
+                0.015,
+                0.01,
+                0.009,
+                0.009,
+                0.008,
+                0.008,
+                0.01,
+                0.01,
+                0.01
+              ],
+              "summary": {
+                "max_ms": 0.015,
+                "mean_ms": 0.01,
+                "p50_ms": 0.01,
+                "p95_ms": 0.015,
+                "samples": 9
+              },
+              "warmup": 1
+            }
+          },
+          "old_0_10_12": {
+            "czsc": "0.10.12",
+            "kind": "engine_update",
+            "timing": {
+              "samples_ms": [
+                0.042,
+                0.046,
+                0.068,
+                0.05,
+                0.042,
+                0.039,
+                0.039,
+                0.037,
+                0.093
+              ],
+              "summary": {
+                "max_ms": 0.093,
+                "mean_ms": 0.051,
+                "p50_ms": 0.042,
+                "p95_ms": 0.093,
+                "samples": 9
+              },
+              "warmup": 1
+            }
+          },
+          "p95_delta_ms": -0.078,
+          "p95_relative_change": -0.8387
+        },
+        "full_analyze": {
+          "new_1_0_1": {
+            "czsc": "1.0.1",
+            "kind": "full_analyze",
+            "timing": {
+              "samples_ms": [
+                629.637,
+                587.937,
+                573.192,
+                578.066,
+                570.013,
+                571.987,
+                605.417,
+                573.711,
+                577.812
+              ],
+              "summary": {
+                "max_ms": 629.637,
+                "mean_ms": 585.308,
+                "p50_ms": 577.812,
+                "p95_ms": 629.637,
+                "samples": 9
+              },
+              "warmup": 1
+            }
+          },
+          "old_0_10_12": {
+            "czsc": "0.10.12",
+            "kind": "full_analyze",
+            "timing": {
+              "samples_ms": [
+                526.483,
+                531.907,
+                570.77,
+                531.738,
+                527.494,
+                533.672,
+                540.728,
+                573.445,
+                611.386
+              ],
+              "summary": {
+                "max_ms": 611.386,
+                "mean_ms": 549.736,
+                "p50_ms": 533.672,
+                "p95_ms": 611.386,
+                "samples": 9
+              },
+              "warmup": 1
+            }
+          },
+          "p95_delta_ms": 18.251,
+          "p95_relative_change": 0.0299
+        },
+        "signal_replay": {
+          "new_1_0_1": {
+            "czsc": "1.0.1",
+            "kind": "signal_replay",
+            "timing": {
+              "samples_ms": [
+                348.936,
+                295.169,
+                297.032,
+                300.498,
+                295.542,
+                295.304,
+                316.988,
+                310.166,
+                301.514
+              ],
+              "summary": {
+                "max_ms": 348.936,
+                "mean_ms": 306.794,
+                "p50_ms": 300.498,
+                "p95_ms": 348.936,
+                "samples": 9
+              },
+              "warmup": 1
+            }
+          },
+          "old_0_10_12": {
+            "czsc": "0.10.12",
+            "kind": "signal_replay",
+            "timing": {
+              "samples_ms": [
+                241.891,
+                242.942,
+                237.874,
+                321.231,
+                247.215,
+                242.308,
+                238.382,
+                241.312,
+                276.943
+              ],
+              "summary": {
+                "max_ms": 321.231,
+                "mean_ms": 254.455,
+                "p50_ms": 242.308,
+                "p95_ms": 321.231,
+                "samples": 9
+              },
+              "warmup": 1
+            }
+          },
+          "p95_delta_ms": 27.705,
+          "p95_relative_change": 0.0862
+        }
+      },
+      "scenario_id": "30m_real_600584",
+      "symbol": "600584.SH",
+      "timeframe": "30m"
+    }
+  ],
+  "task": "#176",
+  "warmup": 1
+}

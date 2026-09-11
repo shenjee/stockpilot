@@ -4,7 +4,7 @@ from typing import Any, Dict, Iterable, Mapping, Sequence, Tuple
 
 from .config import ENGINE_NAME, PINNED_ENGINE_VERSION, get_default_max_bi_num, get_default_parameters
 from .describe import build_summary
-from .engine import run_engine as _run_engine
+from .engine import assert_engine_version, run_engine as _run_engine
 from .normalize import NormalizationError, normalize_ohlcv_rows, normalize_tracker_klines
 from .plotting import build_plot_primitives
 from .segments import SEGMENT_MAPPING_STRATEGY, derive_segments
@@ -188,7 +188,7 @@ def analyze_normalized(
             "engine_assumptions": {
                 "engine_version": PINNED_ENGINE_VERSION,
                 "segment_strategy": SEGMENT_MAPPING_STRATEGY,
-                "pivot_zone_strategy": "czsc.utils.sig.get_zs_seq on finished strokes plus chantheory segment pivots",
+                "pivot_zone_strategy": "czsc.zs_list (instance attribute) with get_zs_seq fallback on finished strokes plus chantheory segment pivots",
                 "divergence_strategy": "same_direction_stroke_extension_with_weaker_magnitude_around_pivot_zone",
             },
             "signals": {
@@ -211,6 +211,7 @@ def analyze_normalized(
         return result
 
     try:
+        assert_engine_version()
         analyzer, raw_bars = _run_engine(normalized=normalized, parameters=merged_parameters)
         index_by_timestamp = {bar.timestamp: bar.bar_index for bar in normalized.bars}
         fractals = _map_fractals(analyzer=analyzer, normalized=normalized)
@@ -260,7 +261,28 @@ def analyze_normalized(
             "fractal_count": len(fractals),
             "finished_bi_count": len(strokes),
             "last_bi_extend": _safe_last_bi_extend(analyzer),
+            "min_bi_len": getattr(analyzer, "min_bi_len", merged_parameters.get("min_bi_len")),
+            "min_bi_len_requested": merged_parameters.get("min_bi_len"),
+            "max_bi_num": getattr(analyzer, "max_bi_num", merged_parameters.get("max_bi_num")),
+            "installed_version": PINNED_ENGINE_VERSION,
         }
+        # Warn when the engine's effective min_bi_len diverges from the
+        # requested value (e.g. env-var CZSC_MIN_BI_LEN overrode the kwarg).
+        effective_min_bi_len = getattr(analyzer, "min_bi_len", None)
+        requested_min_bi_len = merged_parameters.get("min_bi_len")
+        if effective_min_bi_len is not None and requested_min_bi_len is not None and effective_min_bi_len != requested_min_bi_len:
+            result.warnings.append(
+                _warning(
+                    warning_id="warning_min_bi_len_drift",
+                    code="MIN_BI_LEN_DRIFT",
+                    message=(
+                        f"czsc effective min_bi_len={effective_min_bi_len} "
+                        f"differs from requested={requested_min_bi_len}; "
+                        "structure may not match the frozen baseline."
+                    ),
+                    field="engine",
+                )
+            )
         result.meta["mapping"] = {
             "fractal_count": len(fractals),
             "stroke_count": len(strokes),
@@ -336,7 +358,7 @@ def _frozen_result_after_normalization_failure(
             "engine_assumptions": {
                 "engine_version": PINNED_ENGINE_VERSION,
                 "segment_strategy": SEGMENT_MAPPING_STRATEGY,
-                "pivot_zone_strategy": "czsc.utils.sig.get_zs_seq on finished strokes plus chantheory segment pivots",
+                "pivot_zone_strategy": "czsc.zs_list (instance attribute) with get_zs_seq fallback on finished strokes plus chantheory segment pivots",
                 "divergence_strategy": "same_direction_stroke_extension_with_weaker_magnitude_around_pivot_zone",
             },
             "signals": {

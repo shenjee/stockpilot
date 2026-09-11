@@ -14,16 +14,16 @@ It is not a reimplementation of Chan Theory core logic. Its job is to:
 
 Phase 2 P1 freezes the adapter contract and validates a working `czsc` path.
 
-- Engine: `czsc==0.10.12`
+- Engine: `czsc==1.0.1`
 - Validation runtime: Python `3.14.5`
-- Why this pin: `0.10.12` is the installed and validated baseline for the current project runtime
-- Import note: load `numpy.typing` before importing `czsc` so rs_czsc-dependent imports initialize consistently
+- Why this pin: upgraded from `0.10.12` after isolation, adapter migration, and regression against the frozen 0.10.12 baseline (see `spikes/0009-czsc-1.0.1-upgrade/`)
+- Import note: load `numpy.typing` before importing `czsc` so the Rust-native extension initializes consistently. `rs_czsc` is no longer a dependency of czsc 1.0.1.
 
 Observed validation result:
 
-- `czsc==0.10.12` installs successfully in the validated project virtualenv
-- the current tracker day-bar payload converts into `czsc.objects.RawBar`
-- `CZSC(raw_bars)` runs successfully for A-share sample data after the `numpy.typing` import shim
+- `czsc==1.0.1` installs on CPython 3.14.5 via the `cp310-abi3` wheel (`czsc._native`)
+- tracker day-bar payloads convert into top-level `czsc.RawBar`
+- `CZSC(raw_bars, max_bi_num=..., min_bi_len=6)` runs successfully for A-share sample data
 
 Phase 2 P2 adds:
 
@@ -118,7 +118,7 @@ P1 freezes the top-level schema and P2 fills the stable structure mapping.
   "timeframe": "day",
   "source": "tencent",
   "engine": "czsc",
-  "engine_version": "0.10.12",
+  "engine_version": "1.0.1",
   "parameters": {
     "max_bi_num": 50,
     "min_bars": 60,
@@ -153,7 +153,7 @@ Multi-timeframe analysis uses a project-owned grouped container instead of leaki
   "symbol": "000001.SZ",
   "source": "tencent",
   "engine": "czsc",
-  "engine_version": "0.10.12",
+  "engine_version": "1.0.1",
   "base_timeframe": "day",
   "timeframes": ["day", "week", "month"],
   "levels": [
@@ -185,12 +185,14 @@ Responsibilities are split as follows:
 - `summary`: short sentences for skills and agents
 - `warnings`: normalization gaps, engine failures, and runtime degradation details
 
+czsc 1.0.1 replaces the old pure-Python `czsc.py` path with `czsc._native`. Project schema, `analyze*` entry points, and candidate-point semantics are unchanged. The 0.10.12 frozen baseline under `spikes/0009-czsc-1.0.1-upgrade/baseline/` is retained for review. `wbt` is a transitive dependency of czsc 1.0.1 and is not declared as a direct project pin.
+
 Current P2 mapping notes:
 
 - `fractals`: mapped from `CZSC.fx_list`
 - `strokes`: mapped from `CZSC.finished_bis`
 - `segments`: derived from same-timeframe finished strokes with a project-side rule requiring odd stroke counts, initial three-stroke overlap, opposite endpoint progression, connected endpoints, and next opposite segment confirmation
-- `pivot_zones`: derived from `czsc.utils.sig.get_zs_seq` on finished strokes
+- `pivot_zones`: mapped from `CZSC.zs_list` (with `czsc.get_zs_seq` fallback) plus project-side segment pivots
 - `divergences`: mapped from same-direction stroke extensions that push beyond a pivot zone on weaker stroke magnitude after a retracement
 - `signal_series` / `signal_events` / `signal_snapshots`: project-owned signal schema built from `signals_config`
 - `candidate_point_events`: project replay of candidate-point trigger, switch, and invalidate history
@@ -199,7 +201,7 @@ Current P2 mapping notes:
 `signals_config` accepts either:
 
 - `None`: use the project default `cxt_*` buy/sell signal set
-- a list of strings: treat each string as a function name under `czsc.signals.cxt`
+- a list of strings: treat each string as a registered native signal name resolved by `czsc._native.call_signal` (historical `czsc.signals.cxt` module names are aliases for the same dispatcher)
 - a list of mappings: each item may provide `module`, `name`, `key`, `kwargs`, and optional `enabled`
 
 Multi-timeframe notes:
@@ -284,5 +286,6 @@ payload = result.to_dict()
 Committed P2 fixtures:
 
 - `packages/chantheory/tests/fixtures/p2_sample_rows.json`
-- `packages/chantheory/tests/fixtures/p2_sample_result.json`
+- `packages/chantheory/tests/fixtures/p2_sample_result.json` (5-bar **boundary** sample: insufficient bars, 0 fractals / 0 strokes; not a structure gold standard)
+- Long frozen structure gold: `spikes/0009-czsc-1.0.1-upgrade/baseline/` (daily 120 / 5m 548 / 30m 1336)
 - `apps/chan-viewer/sample_data/000001_sz_day_rows.json`

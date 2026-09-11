@@ -1,0 +1,138 @@
+{
+  "kind": "t0_assistant_ui_smoke",
+  "git_sha": "761fe5db312765ab302ab9c06637683a0ae0583d",
+  "symbol": "sh.600584",
+  "symbol_input": "600584",
+  "replay_trade_date": "2026-07-14",
+  "runtime_dir": "/Users/jishen/Library/Application Support/stockpilot-t0-assistant/stockpilot",
+  "python": "/Users/jishen/.venvs/czsc/bin/python",
+  "czsc_note": "real PythonServiceHost; overlays via czsc from T0_PYTHON env",
+  "no_real_trades": true,
+  "started_at": "2026-09-11T04:37:49.962Z",
+  "finished_at": "2026-09-11T04:38:01.985Z",
+  "total_latency_ms": 12021,
+  "blockers": [],
+  "surface": "replay",
+  "status": "pass",
+  "steps": [
+    {
+      "step": "enter_replay_mode",
+      "at": "2026-09-11T04:37:57.239Z",
+      "result": "ok",
+      "latency_ms": 76,
+      "screenshot": "/Users/jishen/development/stockpilot/spikes/0009-czsc-1.0.1-upgrade/acceptance/artifacts/ui-smoke/replay/01_replay_setup.png",
+      "trade_date": "2026-07-14"
+    },
+    {
+      "step": "begin_replay",
+      "at": "2026-09-11T04:37:58.194Z",
+      "result": "ok",
+      "latency_ms": 955,
+      "screenshot": "/Users/jishen/development/stockpilot/spikes/0009-czsc-1.0.1-upgrade/acceptance/artifacts/ui-smoke/replay/02_replay_started.png",
+      "ui": {
+        "securityName": "长电科技",
+        "canvasCount": 21,
+        "chartPanelCount": 3,
+        "feedback": null,
+        "replayActive": true,
+        "replaySetup": false,
+        "stepLabel": "前进 5 分钟",
+        "stepDisabled": false,
+        "rangeValue": 1784021400000,
+        "rangeMin": 1784021400000,
+        "rangeMax": 1784041200000,
+        "shownTime": "09:30",
+        "modeLivePressed": "false",
+        "modeReplayPressed": "true",
+        "shellClass": "shell replay-mode"
+      }
+    },
+    {
+      "step": "step_forward",
+      "at": "2026-09-11T04:37:59.544Z",
+      "result": "ok",
+      "latency_ms": 1350,
+      "screenshot": "/Users/jishen/development/stockpilot/spikes/0009-czsc-1.0.1-upgrade/acceptance/artifacts/ui-smoke/replay/03_replay_step_forward.png",
+      "ui": {
+        "securityName": "长电科技",
+        "canvasCount": 21,
+        "chartPanelCount": 3,
+        "feedback": null,
+        "replayActive": true,
+        "replaySetup": false,
+        "stepLabel": "前进 5 分钟",
+        "stepDisabled": false,
+        "rangeValue": 1784021700000,
+        "rangeMin": 1784021400000,
+        "rangeMax": 1784041200000,
+        "shownTime": "09:35",
+        "modeLivePressed": "false",
+        "modeReplayPressed": "true",
+        "shellClass": "shell replay-mode"
+      },
+      "note": "推进 (前进 N 分钟); no obvious hang observed if latency_ms finite"
+    },
+    {
+      "step": "step_forward_2",
+      "at": "2026-09-11T04:38:00.317Z",
+      "result": "ok",
+      "latency_ms": null
+    },
+    {
+      "step": "seek_backward",
+      "at": "2026-09-11T04:38:00.381Z",
+      "result": "ok",
+      "latency_ms": 64,
+      "screenshot": "/Users/jishen/development/stockpilot/spikes/0009-czsc-1.0.1-upgrade/acceptance/artifacts/ui-smoke/replay/04_replay_seek_back.png",
+      "ui": {
+        "securityName": "长电科技",
+        "canvasCount": 21,
+        "chartPanelCount": 3,
+        "feedback": null,
+        "replayActive": true,
+        "replaySetup": false,
+        "stepLabel": "前进 5 分钟",
+        "stepDisabled": false,
+        "rangeValue": 1784021400000,
+        "rangeMin": 1784021400000,
+        "rangeMax": 1784041200000,
+        "shownTime": "09:30",
+        "modeLivePressed": "false",
+        "modeReplayPressed": "true",
+        "shellClass": "shell replay-mode"
+      },
+      "seek": {
+        "before": 1784022000000,
+        "after": 1784021400000,
+        "target": 1784021400000,
+        "shownTimeBefore": "09:40",
+        "shownTimeAfter": "09:30"
+      },
+      "note": "回退 via progress seek (no dedicated step-back button)"
+    },
+    {
+      "step": "back_to_live",
+      "at": "2026-09-11T04:38:01.985Z",
+      "result": "ok",
+      "latency_ms": 1604,
+      "screenshot": "/Users/jishen/development/stockpilot/spikes/0009-czsc-1.0.1-upgrade/acceptance/artifacts/ui-smoke/replay/05_back_to_live.png",
+      "ui": {
+        "securityName": "长电科技",
+        "canvasCount": 42,
+        "chartPanelCount": 6,
+        "feedback": null,
+        "replayActive": false,
+        "replaySetup": false,
+        "stepLabel": null,
+        "stepDisabled": null,
+        "rangeValue": null,
+        "rangeMin": null,
+        "rangeMax": null,
+        "shownTime": null,
+        "modeLivePressed": "true",
+        "modeReplayPressed": "false",
+        "shellClass": "shell"
+      }
+    }
+  ]
+}

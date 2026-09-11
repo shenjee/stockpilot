@@ -3,406 +3,461 @@
   "timeframe": "day",
   "source": "tencent",
   "engine": "czsc",
-  "engine_version": "0.10.12",
+  "engine_version": "1.0.1",
   "parameters": {
     "max_bi_num": 50,
-    "min_bars": 10,
+    "min_bi_len": 6,
+    "min_bars": 60,
     "strict_validation": true,
     "derive_amount_from_close_volume": true
   },
-  "fractals": [
-    {
-      "id": "fractal_2025-01-02_bottom",
-      "fractal_type": "bottom",
-      "bar_index": 1,
-      "timestamp": "2025-01-02",
-      "price": 9.7,
-      "confirmed": true,
-      "source": "czsc",
-      "meta": {
-        "raw_mark": "D"
-      }
-    },
-    {
-      "id": "fractal_2025-01-03_top",
-      "fractal_type": "top",
-      "bar_index": 2,
-      "timestamp": "2025-01-03",
-      "price": 10.9,
-      "confirmed": true,
-      "source": "czsc",
-      "meta": {
-        "raw_mark": "G"
-      }
-    },
-    {
-      "id": "fractal_2025-01-06_bottom",
-      "fractal_type": "bottom",
-      "bar_index": 3,
-      "timestamp": "2025-01-06",
-      "price": 10.0,
-      "confirmed": true,
-      "source": "czsc",
-      "meta": {
-        "raw_mark": "D"
-      }
-    },
-    {
-      "id": "fractal_2025-01-07_top",
-      "fractal_type": "top",
-      "bar_index": 4,
-      "timestamp": "2025-01-07",
-      "price": 11.3,
-      "confirmed": false,
-      "source": "czsc",
-      "meta": {
-        "raw_mark": "G"
-      }
-    }
-  ],
-  "strokes": [
-    {
-      "id": "stroke_2025-01-02_2025-01-03",
-      "direction": "up",
-      "start_fractal_id": "fractal_2025-01-02_bottom",
-      "end_fractal_id": "fractal_2025-01-03_top",
-      "start_timestamp": "2025-01-02",
-      "end_timestamp": "2025-01-03",
-      "start_price": 9.7,
-      "end_price": 10.9,
-      "confirmed": true,
-      "meta": {
-        "high": 10.9,
-        "low": 9.7,
-        "raw_direction": "Up"
-      }
-    },
-    {
-      "id": "stroke_2025-01-03_2025-01-06",
-      "direction": "down",
-      "start_fractal_id": "fractal_2025-01-03_top",
-      "end_fractal_id": "fractal_2025-01-06_bottom",
-      "start_timestamp": "2025-01-03",
-      "end_timestamp": "2025-01-06",
-      "start_price": 10.9,
-      "end_price": 10.0,
-      "confirmed": true,
-      "meta": {
-        "high": 10.9,
-        "low": 10.0,
-        "raw_direction": "Down"
-      }
-    },
-    {
-      "id": "stroke_2025-01-06_2025-01-07",
-      "direction": "up",
-      "start_fractal_id": "fractal_2025-01-06_bottom",
-      "end_fractal_id": "fractal_2025-01-07_top",
-      "start_timestamp": "2025-01-06",
-      "end_timestamp": "2025-01-07",
-      "start_price": 10.0,
-      "end_price": 11.3,
-      "confirmed": true,
-      "meta": {
-        "high": 11.3,
-        "low": 10.0,
-        "raw_direction": "Up"
-      }
-    }
-  ],
-  "segments": [
-    {
-      "id": "segment_001_2025-01-02_2025-01-07",
-      "direction": "up",
-      "stroke_ids": [
-        "stroke_2025-01-02_2025-01-03",
-        "stroke_2025-01-03_2025-01-06",
-        "stroke_2025-01-06_2025-01-07"
-      ],
-      "start_timestamp": "2025-01-02",
-      "end_timestamp": "2025-01-07",
-      "start_price": 9.7,
-      "end_price": 11.3,
-      "confirmed": true,
-      "meta": {
-        "mapping_strategy": "chan_extreme_endpoint_overlap_confirmation",
-        "window_size": 3
-      }
-    }
-  ],
-  "pivot_zones": [
-    {
-      "id": "pivot_zone_001_2025-01-02_2025-01-07",
-      "start_timestamp": "2025-01-02",
-      "end_timestamp": "2025-01-07",
-      "high": 11.0,
-      "low": 10.0,
-      "segment_ids": [
-        "segment_001_2025-01-02_2025-01-07"
-      ],
-      "level": "stroke",
-      "active": true,
-      "meta": {
-        "mapping_strategy": "czsc_get_zs_seq",
-        "gg": 11.3,
-        "dd": 9.7,
-        "zz": 10.5
-      }
-    }
-  ],
+  "fractals": [],
+  "strokes": [],
+  "segments": [],
+  "pivot_zones": [],
   "divergences": [],
-  "structure_alerts": [
+  "structure_alerts": [],
+  "signal_series": [
     {
-      "id": "alert_unstable_tail_stroke_2025-01-06_2025-01-07",
-      "alert_type": "unstable_tail_stroke",
-      "severity": "info",
-      "timestamp": "2025-01-07",
-      "related_ids": [
-        "stroke_2025-01-06_2025-01-07"
+      "signal_key": "first_buy",
+      "signal_name": "cxt_first_buy_V221126",
+      "module": "czsc._native",
+      "latest_value": "其他_任意_任意_0",
+      "latest_timestamp": "2025-01-07",
+      "points": [
+        {
+          "timestamp": "2025-01-01",
+          "bar_index": 0,
+          "value": "其他_任意_任意_0",
+          "active": false,
+          "status": "inactive",
+          "price": 10.4,
+          "reference_id": "stroke_pending_2025-01-01_2025-01-01",
+          "meta": {
+            "direction": ""
+          }
+        },
+        {
+          "timestamp": "2025-01-02",
+          "bar_index": 1,
+          "value": "其他_任意_任意_0",
+          "active": false,
+          "status": "inactive",
+          "price": 9.8,
+          "reference_id": "stroke_pending_2025-01-02_2025-01-02",
+          "meta": {
+            "direction": ""
+          }
+        },
+        {
+          "timestamp": "2025-01-03",
+          "bar_index": 2,
+          "value": "其他_任意_任意_0",
+          "active": false,
+          "status": "inactive",
+          "price": 10.8,
+          "reference_id": "stroke_pending_2025-01-03_2025-01-03",
+          "meta": {
+            "direction": ""
+          }
+        },
+        {
+          "timestamp": "2025-01-06",
+          "bar_index": 3,
+          "value": "其他_任意_任意_0",
+          "active": false,
+          "status": "inactive",
+          "price": 10.1,
+          "reference_id": "stroke_pending_2025-01-06_2025-01-06",
+          "meta": {
+            "direction": ""
+          }
+        },
+        {
+          "timestamp": "2025-01-07",
+          "bar_index": 4,
+          "value": "其他_任意_任意_0",
+          "active": false,
+          "status": "inactive",
+          "price": 11.2,
+          "reference_id": "stroke_pending_2025-01-07_2025-01-07",
+          "meta": {
+            "direction": ""
+          }
+        }
       ],
-      "message": "The latest stroke is still extending and should be treated as unstable.",
       "meta": {
-        "direction": "up"
+        "active_point_count": 0
       }
     },
     {
-      "id": "alert_active_pivot_zone_pivot_zone_001_2025-01-02_2025-01-07",
-      "alert_type": "active_pivot_zone",
-      "severity": "info",
-      "timestamp": "2025-01-07",
-      "related_ids": [
-        "pivot_zone_001_2025-01-02_2025-01-07"
+      "signal_key": "first_sell",
+      "signal_name": "cxt_first_sell_V221126",
+      "module": "czsc._native",
+      "latest_value": "其他_任意_任意_0",
+      "latest_timestamp": "2025-01-07",
+      "points": [
+        {
+          "timestamp": "2025-01-01",
+          "bar_index": 0,
+          "value": "其他_任意_任意_0",
+          "active": false,
+          "status": "inactive",
+          "price": 10.4,
+          "reference_id": "stroke_pending_2025-01-01_2025-01-01",
+          "meta": {
+            "direction": ""
+          }
+        },
+        {
+          "timestamp": "2025-01-02",
+          "bar_index": 1,
+          "value": "其他_任意_任意_0",
+          "active": false,
+          "status": "inactive",
+          "price": 9.8,
+          "reference_id": "stroke_pending_2025-01-02_2025-01-02",
+          "meta": {
+            "direction": ""
+          }
+        },
+        {
+          "timestamp": "2025-01-03",
+          "bar_index": 2,
+          "value": "其他_任意_任意_0",
+          "active": false,
+          "status": "inactive",
+          "price": 10.8,
+          "reference_id": "stroke_pending_2025-01-03_2025-01-03",
+          "meta": {
+            "direction": ""
+          }
+        },
+        {
+          "timestamp": "2025-01-06",
+          "bar_index": 3,
+          "value": "其他_任意_任意_0",
+          "active": false,
+          "status": "inactive",
+          "price": 10.1,
+          "reference_id": "stroke_pending_2025-01-06_2025-01-06",
+          "meta": {
+            "direction": ""
+          }
+        },
+        {
+          "timestamp": "2025-01-07",
+          "bar_index": 4,
+          "value": "其他_任意_任意_0",
+          "active": false,
+          "status": "inactive",
+          "price": 11.2,
+          "reference_id": "stroke_pending_2025-01-07_2025-01-07",
+          "meta": {
+            "direction": ""
+          }
+        }
       ],
-      "message": "An active pivot zone is present in the latest mapped structure.",
       "meta": {
-        "level": "stroke"
+        "active_point_count": 0
+      }
+    },
+    {
+      "signal_key": "second_bs",
+      "signal_name": "cxt_second_bs_V240524",
+      "module": "czsc._native",
+      "latest_value": "其他_任意_任意_0",
+      "latest_timestamp": "2025-01-07",
+      "points": [
+        {
+          "timestamp": "2025-01-01",
+          "bar_index": 0,
+          "value": "其他_任意_任意_0",
+          "active": false,
+          "status": "inactive",
+          "price": 10.4,
+          "reference_id": "stroke_pending_2025-01-01_2025-01-01",
+          "meta": {
+            "direction": ""
+          }
+        },
+        {
+          "timestamp": "2025-01-02",
+          "bar_index": 1,
+          "value": "其他_任意_任意_0",
+          "active": false,
+          "status": "inactive",
+          "price": 9.8,
+          "reference_id": "stroke_pending_2025-01-02_2025-01-02",
+          "meta": {
+            "direction": ""
+          }
+        },
+        {
+          "timestamp": "2025-01-03",
+          "bar_index": 2,
+          "value": "其他_任意_任意_0",
+          "active": false,
+          "status": "inactive",
+          "price": 10.8,
+          "reference_id": "stroke_pending_2025-01-03_2025-01-03",
+          "meta": {
+            "direction": ""
+          }
+        },
+        {
+          "timestamp": "2025-01-06",
+          "bar_index": 3,
+          "value": "其他_任意_任意_0",
+          "active": false,
+          "status": "inactive",
+          "price": 10.1,
+          "reference_id": "stroke_pending_2025-01-06_2025-01-06",
+          "meta": {
+            "direction": ""
+          }
+        },
+        {
+          "timestamp": "2025-01-07",
+          "bar_index": 4,
+          "value": "其他_任意_任意_0",
+          "active": false,
+          "status": "inactive",
+          "price": 11.2,
+          "reference_id": "stroke_pending_2025-01-07_2025-01-07",
+          "meta": {
+            "direction": ""
+          }
+        }
+      ],
+      "meta": {
+        "active_point_count": 0
+      }
+    },
+    {
+      "signal_key": "third_bs",
+      "signal_name": "cxt_third_bs_V230319",
+      "module": "czsc._native",
+      "latest_value": "其他_任意_任意_0",
+      "latest_timestamp": "2025-01-07",
+      "points": [
+        {
+          "timestamp": "2025-01-01",
+          "bar_index": 0,
+          "value": "其他_任意_任意_0",
+          "active": false,
+          "status": "inactive",
+          "price": 10.4,
+          "reference_id": "stroke_pending_2025-01-01_2025-01-01",
+          "meta": {
+            "direction": ""
+          }
+        },
+        {
+          "timestamp": "2025-01-02",
+          "bar_index": 1,
+          "value": "其他_任意_任意_0",
+          "active": false,
+          "status": "inactive",
+          "price": 9.8,
+          "reference_id": "stroke_pending_2025-01-02_2025-01-02",
+          "meta": {
+            "direction": ""
+          }
+        },
+        {
+          "timestamp": "2025-01-03",
+          "bar_index": 2,
+          "value": "其他_任意_任意_0",
+          "active": false,
+          "status": "inactive",
+          "price": 10.8,
+          "reference_id": "stroke_pending_2025-01-03_2025-01-03",
+          "meta": {
+            "direction": ""
+          }
+        },
+        {
+          "timestamp": "2025-01-06",
+          "bar_index": 3,
+          "value": "其他_任意_任意_0",
+          "active": false,
+          "status": "inactive",
+          "price": 10.1,
+          "reference_id": "stroke_pending_2025-01-06_2025-01-06",
+          "meta": {
+            "direction": ""
+          }
+        },
+        {
+          "timestamp": "2025-01-07",
+          "bar_index": 4,
+          "value": "其他_任意_任意_0",
+          "active": false,
+          "status": "inactive",
+          "price": 11.2,
+          "reference_id": "stroke_pending_2025-01-07_2025-01-07",
+          "meta": {
+            "direction": ""
+          }
+        }
+      ],
+      "meta": {
+        "active_point_count": 0
       }
     }
   ],
+  "signal_events": [],
+  "signal_snapshots": [
+    {
+      "id": "signal_snapshot_0_stroke_pending_2025-01-01_2025-01-01",
+      "timestamp": "2025-01-01",
+      "bar_index": 0,
+      "values": {
+        "first_buy": "其他_任意_任意_0",
+        "first_sell": "其他_任意_任意_0",
+        "second_bs": "其他_任意_任意_0",
+        "third_bs": "其他_任意_任意_0"
+      },
+      "active_signals": {},
+      "statuses": {
+        "first_buy": "inactive",
+        "first_sell": "inactive",
+        "second_bs": "inactive",
+        "third_bs": "inactive"
+      },
+      "reference_id": "stroke_pending_2025-01-01_2025-01-01",
+      "price": 10.4,
+      "meta": {
+        "signal_names": {
+          "first_buy": "cxt_first_buy_V221126",
+          "first_sell": "cxt_first_sell_V221126",
+          "second_bs": "cxt_second_bs_V240524",
+          "third_bs": "cxt_third_bs_V230319"
+        }
+      }
+    },
+    {
+      "id": "signal_snapshot_1_stroke_pending_2025-01-02_2025-01-02",
+      "timestamp": "2025-01-02",
+      "bar_index": 1,
+      "values": {
+        "first_buy": "其他_任意_任意_0",
+        "first_sell": "其他_任意_任意_0",
+        "second_bs": "其他_任意_任意_0",
+        "third_bs": "其他_任意_任意_0"
+      },
+      "active_signals": {},
+      "statuses": {
+        "first_buy": "inactive",
+        "first_sell": "inactive",
+        "second_bs": "inactive",
+        "third_bs": "inactive"
+      },
+      "reference_id": "stroke_pending_2025-01-02_2025-01-02",
+      "price": 9.8,
+      "meta": {
+        "signal_names": {
+          "first_buy": "cxt_first_buy_V221126",
+          "first_sell": "cxt_first_sell_V221126",
+          "second_bs": "cxt_second_bs_V240524",
+          "third_bs": "cxt_third_bs_V230319"
+        }
+      }
+    },
+    {
+      "id": "signal_snapshot_2_stroke_pending_2025-01-03_2025-01-03",
+      "timestamp": "2025-01-03",
+      "bar_index": 2,
+      "values": {
+        "first_buy": "其他_任意_任意_0",
+        "first_sell": "其他_任意_任意_0",
+        "second_bs": "其他_任意_任意_0",
+        "third_bs": "其他_任意_任意_0"
+      },
+      "active_signals": {},
+      "statuses": {
+        "first_buy": "inactive",
+        "first_sell": "inactive",
+        "second_bs": "inactive",
+        "third_bs": "inactive"
+      },
+      "reference_id": "stroke_pending_2025-01-03_2025-01-03",
+      "price": 10.8,
+      "meta": {
+        "signal_names": {
+          "first_buy": "cxt_first_buy_V221126",
+          "first_sell": "cxt_first_sell_V221126",
+          "second_bs": "cxt_second_bs_V240524",
+          "third_bs": "cxt_third_bs_V230319"
+        }
+      }
+    },
+    {
+      "id": "signal_snapshot_3_stroke_pending_2025-01-06_2025-01-06",
+      "timestamp": "2025-01-06",
+      "bar_index": 3,
+      "values": {
+        "first_buy": "其他_任意_任意_0",
+        "first_sell": "其他_任意_任意_0",
+        "second_bs": "其他_任意_任意_0",
+        "third_bs": "其他_任意_任意_0"
+      },
+      "active_signals": {},
+      "statuses": {
+        "first_buy": "inactive",
+        "first_sell": "inactive",
+        "second_bs": "inactive",
+        "third_bs": "inactive"
+      },
+      "reference_id": "stroke_pending_2025-01-06_2025-01-06",
+      "price": 10.1,
+      "meta": {
+        "signal_names": {
+          "first_buy": "cxt_first_buy_V221126",
+          "first_sell": "cxt_first_sell_V221126",
+          "second_bs": "cxt_second_bs_V240524",
+          "third_bs": "cxt_third_bs_V230319"
+        }
+      }
+    },
+    {
+      "id": "signal_snapshot_4_stroke_pending_2025-01-07_2025-01-07",
+      "timestamp": "2025-01-07",
+      "bar_index": 4,
+      "values": {
+        "first_buy": "其他_任意_任意_0",
+        "first_sell": "其他_任意_任意_0",
+        "second_bs": "其他_任意_任意_0",
+        "third_bs": "其他_任意_任意_0"
+      },
+      "active_signals": {},
+      "statuses": {
+        "first_buy": "inactive",
+        "first_sell": "inactive",
+        "second_bs": "inactive",
+        "third_bs": "inactive"
+      },
+      "reference_id": "stroke_pending_2025-01-07_2025-01-07",
+      "price": 11.2,
+      "meta": {
+        "signal_names": {
+          "first_buy": "cxt_first_buy_V221126",
+          "first_sell": "cxt_first_sell_V221126",
+          "second_bs": "cxt_second_bs_V240524",
+          "third_bs": "cxt_third_bs_V230319"
+        }
+      }
+    }
+  ],
+  "candidate_point_events": [],
   "candidate_buy_points": [],
   "candidate_sell_points": [],
-  "plot_primitives": [
-    {
-      "id": "primitive_fractal_2025-01-02_bottom",
-      "type": "marker",
-      "layer": "fractals",
-      "x": "2025-01-02",
-      "y": 9.7,
-      "x1": "",
-      "y1": null,
-      "x2": "",
-      "y2": null,
-      "style": "triangle_up",
-      "color": "#16A34A",
-      "text": "B",
-      "meta": {
-        "reference_type": "fractal",
-        "reference_id": "fractal_2025-01-02_bottom",
-        "confirmed": true
-      }
-    },
-    {
-      "id": "primitive_fractal_2025-01-03_top",
-      "type": "marker",
-      "layer": "fractals",
-      "x": "2025-01-03",
-      "y": 10.9,
-      "x1": "",
-      "y1": null,
-      "x2": "",
-      "y2": null,
-      "style": "triangle_down",
-      "color": "#DC2626",
-      "text": "T",
-      "meta": {
-        "reference_type": "fractal",
-        "reference_id": "fractal_2025-01-03_top",
-        "confirmed": true
-      }
-    },
-    {
-      "id": "primitive_fractal_2025-01-06_bottom",
-      "type": "marker",
-      "layer": "fractals",
-      "x": "2025-01-06",
-      "y": 10.0,
-      "x1": "",
-      "y1": null,
-      "x2": "",
-      "y2": null,
-      "style": "triangle_up",
-      "color": "#16A34A",
-      "text": "B",
-      "meta": {
-        "reference_type": "fractal",
-        "reference_id": "fractal_2025-01-06_bottom",
-        "confirmed": true
-      }
-    },
-    {
-      "id": "primitive_fractal_2025-01-07_top",
-      "type": "marker",
-      "layer": "fractals",
-      "x": "2025-01-07",
-      "y": 11.3,
-      "x1": "",
-      "y1": null,
-      "x2": "",
-      "y2": null,
-      "style": "triangle_down",
-      "color": "#DC2626",
-      "text": "T",
-      "meta": {
-        "reference_type": "fractal",
-        "reference_id": "fractal_2025-01-07_top",
-        "confirmed": false
-      }
-    },
-    {
-      "id": "primitive_stroke_2025-01-02_2025-01-03",
-      "type": "line",
-      "layer": "strokes",
-      "x": "",
-      "y": null,
-      "x1": "2025-01-02",
-      "y1": 9.7,
-      "x2": "2025-01-03",
-      "y2": 10.9,
-      "style": "solid",
-      "color": "#2563EB",
-      "text": "",
-      "meta": {
-        "reference_type": "stroke",
-        "reference_id": "stroke_2025-01-02_2025-01-03",
-        "confirmed": true
-      }
-    },
-    {
-      "id": "primitive_stroke_2025-01-03_2025-01-06",
-      "type": "line",
-      "layer": "strokes",
-      "x": "",
-      "y": null,
-      "x1": "2025-01-03",
-      "y1": 10.9,
-      "x2": "2025-01-06",
-      "y2": 10.0,
-      "style": "solid",
-      "color": "#F97316",
-      "text": "",
-      "meta": {
-        "reference_type": "stroke",
-        "reference_id": "stroke_2025-01-03_2025-01-06",
-        "confirmed": true
-      }
-    },
-    {
-      "id": "primitive_stroke_2025-01-06_2025-01-07",
-      "type": "line",
-      "layer": "strokes",
-      "x": "",
-      "y": null,
-      "x1": "2025-01-06",
-      "y1": 10.0,
-      "x2": "2025-01-07",
-      "y2": 11.3,
-      "style": "solid",
-      "color": "#2563EB",
-      "text": "",
-      "meta": {
-        "reference_type": "stroke",
-        "reference_id": "stroke_2025-01-06_2025-01-07",
-        "confirmed": true
-      }
-    },
-    {
-      "id": "primitive_segment_001_2025-01-02_2025-01-07",
-      "type": "line",
-      "layer": "segments",
-      "x": "",
-      "y": null,
-      "x1": "2025-01-02",
-      "y1": 9.7,
-      "x2": "2025-01-07",
-      "y2": 11.3,
-      "style": "dashed",
-      "color": "#7C3AED",
-      "text": "",
-      "meta": {
-        "reference_type": "segment",
-        "reference_id": "segment_001_2025-01-02_2025-01-07",
-        "confirmed": true
-      }
-    },
-    {
-      "id": "primitive_pivot_zone_001_2025-01-02_2025-01-07",
-      "type": "box",
-      "layer": "pivot_zones",
-      "x": "",
-      "y": null,
-      "x1": "2025-01-02",
-      "y1": 11.0,
-      "x2": "2025-01-07",
-      "y2": 10.0,
-      "style": "fill",
-      "color": "#F59E0B",
-      "text": "Pivot Zone",
-      "meta": {
-        "reference_type": "pivot_zone",
-        "reference_id": "pivot_zone_001_2025-01-02_2025-01-07",
-        "active": true,
-        "level": "stroke"
-      }
-    },
-    {
-      "id": "primitive_alert_unstable_tail_stroke_2025-01-06_2025-01-07",
-      "type": "label",
-      "layer": "alerts",
-      "x": "2025-01-07",
-      "y": 11.3,
-      "x1": "",
-      "y1": null,
-      "x2": "",
-      "y2": null,
-      "style": "solid",
-      "color": "#0F766E",
-      "text": "The latest stroke is still extending and should be treated as unstable.",
-      "meta": {
-        "reference_type": "structure_alert",
-        "reference_id": "alert_unstable_tail_stroke_2025-01-06_2025-01-07",
-        "related_ids": [
-          "stroke_2025-01-06_2025-01-07"
-        ]
-      }
-    },
-    {
-      "id": "primitive_alert_active_pivot_zone_pivot_zone_001_2025-01-02_2025-01-07",
-      "type": "label",
-      "layer": "alerts",
-      "x": "2025-01-07",
-      "y": 11.3,
-      "x1": "",
-      "y1": null,
-      "x2": "",
-      "y2": null,
-      "style": "solid",
-      "color": "#0F766E",
-      "text": "An active pivot zone is present in the latest mapped structure.",
-      "meta": {
-        "reference_type": "structure_alert",
-        "reference_id": "alert_active_pivot_zone_pivot_zone_001_2025-01-02_2025-01-07",
-        "related_ids": [
-          "pivot_zone_001_2025-01-02_2025-01-07"
-        ]
-      }
-    }
-  ],
+  "plot_primitives": [],
   "summary": [
     "000001.SZ normalized 5 day bars for Phase 2 analysis.",
-    "czsc 0.10.12 mapped 4 fractals and 3 finished strokes.",
-    "Phase 2 produced 1 segments and 1 pivot zones.",
-    "The latest confirmed stroke points up into 2025-01-07.",
-    "The newest structure is still extending, so the tail should be treated as unstable."
+    "czsc 1.0.1 mapped 0 fractals and 0 finished strokes.",
+    "Signal replay tracks 4 series, 5 snapshots, and 0 transition events."
   ],
   "warnings": [
     {
@@ -417,61 +472,82 @@
       "id": "warning_insufficient_bars",
       "warning_code": "INSUFFICIENT_BARS",
       "severity": "warning",
-      "message": "Only 5 bars are available; at least 10 bars are recommended for more stable Chan structure mapping.",
+      "message": "Only 5 bars are available; at least 60 bars are recommended for more stable Chan structure mapping.",
       "field": "bars",
-      "meta": {}
-    },
-    {
-      "id": "warning_unstable_tail_stroke",
-      "warning_code": "UNSTABLE_TAIL_STROKE",
-      "severity": "warning",
-      "message": "The latest stroke is extending, so the most recent structure remains unstable.",
-      "field": "strokes",
-      "meta": {}
-    },
-    {
-      "id": "warning_divergence_conservative_empty",
-      "warning_code": "DIVERGENCE_CONSERVATIVE_EMPTY",
-      "severity": "info",
-      "message": "Divergences remain conservatively empty in Phase 2 until a stable project rule is finalized.",
-      "field": "divergences",
       "meta": {}
     }
   ],
   "meta": {
     "bar_count": 5,
-    "input_fields": [
-      "date",
-      "open",
-      "close",
-      "high",
-      "low",
-      "volume"
-    ],
-    "gaps": [
-      "Current tracker K-lines do not persist amount/turnover directly.",
-      "Current repo flow only fetches day bars; minute and higher-period aggregation are future work.",
-      "Adjustment mode is implicit in provider usage and not yet carried in the normalized schema."
-    ],
+    "input_fields": [],
+    "gaps": [],
     "engine_probe": {
       "status": "ok",
       "raw_bar_count": 5,
-      "fractal_count": 4,
-      "finished_bi_count": 3,
-      "last_bi_extend": true
+      "fractal_count": 0,
+      "finished_bi_count": 0,
+      "last_bi_extend": false,
+      "min_bi_len": 6,
+      "min_bi_len_requested": 6,
+      "max_bi_num": 50,
+      "installed_version": "1.0.1"
     },
     "engine_assumptions": {
-      "engine_version": "0.10.12",
-      "segment_strategy": "chan_extreme_endpoint_overlap_confirmation",
-      "pivot_zone_strategy": "czsc.utils.sig.get_zs_seq on finished strokes",
-      "divergence_strategy": "conservative_empty_until project-level rule is finalized"
+      "engine_version": "1.0.1",
+      "segment_strategy": "chan_feature_sequence_gap_fractal_confirmation",
+      "pivot_zone_strategy": "czsc.zs_list (instance attribute) with get_zs_seq fallback on finished strokes plus chantheory segment pivots",
+      "divergence_strategy": "same_direction_stroke_extension_with_weaker_magnitude_around_pivot_zone"
+    },
+    "signals": {
+      "status": "ok",
+      "config": [
+        {
+          "module": "czsc._native",
+          "name": "cxt_first_buy_V221126",
+          "key": "first_buy",
+          "di": 1,
+          "kwargs": {}
+        },
+        {
+          "module": "czsc._native",
+          "name": "cxt_first_sell_V221126",
+          "key": "first_sell",
+          "di": 1,
+          "kwargs": {}
+        },
+        {
+          "module": "czsc._native",
+          "name": "cxt_second_bs_V240524",
+          "key": "second_bs",
+          "di": 1,
+          "kwargs": {}
+        },
+        {
+          "module": "czsc._native",
+          "name": "cxt_third_bs_V230319",
+          "key": "third_bs",
+          "di": 1,
+          "kwargs": {}
+        }
+      ],
+      "evaluation_count": 20,
+      "series_count": 4,
+      "event_count": 0,
+      "snapshot_count": 5,
+      "candidate_point_event_count": 0
     },
     "mapping": {
-      "fractal_count": 4,
-      "stroke_count": 3,
-      "segment_count": 1,
-      "pivot_zone_count": 1,
-      "divergence_count": 0
+      "fractal_count": 0,
+      "stroke_count": 0,
+      "segment_count": 0,
+      "pivot_zone_count": 0,
+      "stroke_pivot_zone_count": 0,
+      "segment_pivot_zone_count": 0,
+      "divergence_count": 0,
+      "signal_series_count": 4,
+      "signal_event_count": 0,
+      "signal_snapshot_count": 5,
+      "candidate_point_event_count": 0
     }
   }
 }

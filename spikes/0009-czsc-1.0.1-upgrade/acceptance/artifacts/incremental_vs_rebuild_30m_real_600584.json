@@ -1,0 +1,11 @@
+{
+  "bar_count": 1336,
+  "failure_count": 0,
+  "failures": [],
+  "pass": true,
+  "scenario_id": "30m_real_600584",
+  "steps_checked": 136,
+  "symbol": "600584.SH",
+  "timeframe": "30m",
+  "warm_count": 1200
+}

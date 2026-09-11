@@ -1,0 +1,104 @@
+{
+  "kind": "t0_assistant_ui_smoke",
+  "git_sha": "761fe5db312765ab302ab9c06637683a0ae0583d",
+  "symbol": "sh.600584",
+  "symbol_input": "600584",
+  "replay_trade_date": "2026-07-14",
+  "runtime_dir": "/Users/jishen/Library/Application Support/stockpilot-t0-assistant/stockpilot",
+  "python": "/Users/jishen/.venvs/czsc/bin/python",
+  "czsc_note": "real PythonServiceHost; overlays via czsc from T0_PYTHON env",
+  "no_real_trades": true,
+  "started_at": "2026-09-11T04:37:49.962Z",
+  "finished_at": "2026-09-11T04:38:01.985Z",
+  "total_latency_ms": 12021,
+  "blockers": [],
+  "surface": "live",
+  "status": "pass",
+  "steps": [
+    {
+      "step": "python_service_ready",
+      "at": "2026-09-11T04:37:50.802Z",
+      "result": "ok",
+      "latency_ms": 564,
+      "note": "state=ready"
+    },
+    {
+      "step": "workbench_ready",
+      "at": "2026-09-11T04:37:51.040Z",
+      "result": "ok",
+      "latency_ms": 1076
+    },
+    {
+      "step": "live_load",
+      "at": "2026-09-11T04:37:53.077Z",
+      "result": "ok",
+      "latency_ms": 2037,
+      "screenshot": "/Users/jishen/development/stockpilot/spikes/0009-czsc-1.0.1-upgrade/acceptance/artifacts/ui-smoke/live/01_live_600584_loaded.png",
+      "ui": {
+        "securityName": "长电科技",
+        "canvasCount": 42,
+        "chartPanelCount": 6,
+        "feedback": null,
+        "replayActive": false,
+        "replaySetup": false,
+        "stepLabel": null,
+        "stepDisabled": null,
+        "rangeValue": null,
+        "rangeMin": null,
+        "rangeMax": null,
+        "shownTime": null,
+        "modeLivePressed": "true",
+        "modeReplayPressed": "false",
+        "shellClass": "shell"
+      }
+    },
+    {
+      "step": "symbol_switch",
+      "at": "2026-09-11T04:37:54.843Z",
+      "result": "ok",
+      "latency_ms": 1766,
+      "screenshot": "/Users/jishen/development/stockpilot/spikes/0009-czsc-1.0.1-upgrade/acceptance/artifacts/ui-smoke/live/02_live_symbol_switch_600000.png",
+      "ui": {
+        "securityName": "浦发银行",
+        "canvasCount": 42,
+        "chartPanelCount": 6,
+        "feedback": null,
+        "replayActive": false,
+        "replaySetup": false,
+        "stepLabel": null,
+        "stepDisabled": null,
+        "rangeValue": null,
+        "rangeMin": null,
+        "rangeMax": null,
+        "shownTime": null,
+        "modeLivePressed": "true",
+        "modeReplayPressed": "false",
+        "shellClass": "shell"
+      }
+    },
+    {
+      "step": "symbol_switch_back",
+      "at": "2026-09-11T04:37:57.163Z",
+      "result": "ok",
+      "latency_ms": 2319,
+      "screenshot": "/Users/jishen/development/stockpilot/spikes/0009-czsc-1.0.1-upgrade/acceptance/artifacts/ui-smoke/live/03_live_back_600584.png",
+      "ui": {
+        "securityName": "长电科技",
+        "canvasCount": 42,
+        "chartPanelCount": 6,
+        "feedback": null,
+        "replayActive": false,
+        "replaySetup": false,
+        "stepLabel": null,
+        "stepDisabled": null,
+        "rangeValue": null,
+        "rangeMin": null,
+        "rangeMax": null,
+        "shownTime": null,
+        "modeLivePressed": "true",
+        "modeReplayPressed": "false",
+        "shellClass": "shell"
+      }
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "bar_count": 120,
+  "failure_count": 0,
+  "failures": [],
+  "pass": true,
+  "scenario_id": "daily_synthetic_120",
+  "steps_checked": 80,
+  "symbol": "000001.SZ",
+  "timeframe": "day",
+  "warm_count": 40
+}

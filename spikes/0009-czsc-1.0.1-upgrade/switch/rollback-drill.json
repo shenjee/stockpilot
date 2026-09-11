@@ -1,0 +1,25 @@
+{
+  "captured_at": "2026-09-11T05:33:33.185755+00:00",
+  "result": "PASS",
+  "command": "python spikes/0009-czsc-1.0.1-upgrade/acceptance/verify_rollback.py --old-code-root /Users/jishen/development/stockpilot-wt-01012",
+  "python": "3.14.5",
+  "executable": "/Users/jishen/.venvs/czsc-rollback-drill-177/bin/python",
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "machine": "arm64",
+  "czsc": "0.10.12",
+  "rs_czsc": "0.1.26.post260402",
+  "old_code_root": "/Users/jishen/development/stockpilot-wt-01012",
+  "old_code_sha": "2883f34e956e49372f69c379b0ef45f8e63c929c",
+  "old_code_pyproject_pin": "czsc==0.10.12",
+  "verify": "generate_baseline.py --verify: all 6 files match committed checksums",
+  "venv": "/Users/jishen/.venvs/czsc-rollback-drill-177",
+  "not_used": [
+    "~/.venvs/czsc (formal, already 1.0.1; not downgraded)",
+    "~/.venvs/czsc01012-bench (existing bench; not treated as proof of restore steps)"
+  ],
+  "limitations": [
+    "This drill installed czsc==0.10.12 from PyPI into a fresh venv; it did not replay baseline/pip-freeze-prod-0.10.12.txt as a lock.",
+    "The freeze snapshot of the old formal env is not a complete reproducible environment.",
+    "Passing this drill proves: old code SHA + czsc 0.10.12 + frozen samples reproduce the committed baseline checksums."
+  ]
+}
