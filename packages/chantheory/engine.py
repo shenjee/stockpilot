@@ -45,7 +45,9 @@ def assert_engine_version() -> str:
 
 
 def load_czsc() -> Tuple[object, object, object]:
-    # Load numpy.typing first so rs_czsc-backed imports initialize consistently.
+    # Load numpy.typing first. czsc 1.0.1 no longer depends on rs_czsc; the
+    # shim is retained so import order stays stable across the Rust-native
+    # extension initialization.
     import_module("numpy.typing")
     try:
         czsc = import_module("czsc")

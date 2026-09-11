@@ -4,10 +4,12 @@ Scripts and artifacts for czsc 1.0.1 regression / performance / downstream smoke
 
 ## Gate
 
-While #174/#175 are not accepted: do **not** close #176, do **not** update formal
-fixtures, do **not** start #177. Record git SHA on every artifact; re-run after
-PR #179 review changes. Live / Replay / chan-viewer UI smoke evidence is under
-`artifacts/ui-smoke/`; confirmed behavior/perf items no longer block closure.
+While #174/#175/#176 acceptance is in progress on the upgrade branch:
+record git SHA on every artifact; re-run after review changes. Live /
+Replay / chan-viewer UI smoke evidence is under `artifacts/ui-smoke/`.
+Formal fixture updates belong to #176 wrap-up on the same branch.
+#177 pre-merge switch plan and rollback drill live under `../switch/`.
+Do not treat issue CLOSED state as the acceptance decision.
 
 ## Commands
 

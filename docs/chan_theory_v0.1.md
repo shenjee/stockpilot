@@ -192,7 +192,7 @@ Phase 2 的 `candidate_buy_points` 和 `candidate_sell_points` 只表示结构�
   "timeframe": "day",
   "source": "tencent",
   "engine": "czsc",
-  "engine_version": "0.10.12",
+  "engine_version": "1.0.1",
   "parameters": {
     "max_bi_num": 50,
     "min_bars": 60
@@ -623,7 +623,7 @@ Phase 2 中，Streamlit 应承担：
 
 ## 12. 风险与约束
 
-- Phase 2 当前锁定 `czsc==0.10.12`，后续升级必须重新记录兼容性假设和回归结果
+- Phase 2 当前锁定 `czsc==1.0.1`（由 0.10.12 升级；隔离验证、适配与回归见 `spikes/0009-czsc-1.0.1-upgrade/`）。后续升级必须重新记录兼容性假设和回归结果
 - `czsc` 的内部对象和命名不应直接成为上层长期依赖
 - A 股本地数据格式、复权方式、周期定义需要先做兼容性验证
 - 多周期结果和背驰判断在 Phase 2 应保持保守，不追求一步到位
@@ -632,7 +632,7 @@ Phase 2 中，Streamlit 应承担：
 
 ## 13. 本版本的结论
 
-- Phase 2 采用 `czsc==0.10.12` 作为当前锁定的底层缠论引擎
+- Phase 2 采用 `czsc==1.0.1` 作为当前锁定的底层缠论引擎
 - 项目不从零自研完整缠论核心算法
 - 项目必须保留自己的 `chantheory` 适配层
 - 图形化结果是主输出，文字是辅助输出

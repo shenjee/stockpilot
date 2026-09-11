@@ -1,0 +1,18 @@
+{
+  "captured_at": "2026-09-11T05:09:00.477940+00:00",
+  "purpose": "Pre-#177 snapshot of the already-upgraded formal venv (early deviation vs #172 switch order). Not a complete old-environment backup.",
+  "python": "3.14.5",
+  "executable": "/Users/jishen/.venvs/czsc/bin/python",
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "machine": "arm64",
+  "upgrade_branch_sha": "f0ae42aca26fc8d22bfe5ec92fbeb8428b47e3de",
+  "czsc": "1.0.1",
+  "wbt": "0.9.0",
+  "rs_czsc": "0.1.26.post260402",
+  "czsc_min_bi_len_env": "<unset>",
+  "CZSC_MIN_BI_LEN_env": "<unset>",
+  "czsc__file": "/Users/jishen/.venvs/czsc/lib/python3.14/site-packages/czsc/__init__.py",
+  "czsc__native": true,
+  "rs_czsc_required_by": "none (pip show Required-by empty; czsc 1.0.1 does not depend on it; stockpilot code does not import it)",
+  "deviation_note": "Formal ~/.venvs/czsc was already on czsc 1.0.1 before #177. Original 0.10.12 formal env was overwritten. Recovery materials: baseline/pip-freeze-prod-0.10.12.txt (snapshot, not a lock) and isolated rollback drill venv."
+}

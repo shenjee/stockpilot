@@ -17,6 +17,7 @@ from chantheory.adapters import (
     _map_pending_stroke,
     _map_strokes,
     _normalize_signals_config,
+    analyze,
     analyze_multi_timeframe_tracker_klines,
     analyze_normalized,
     analyze_tracker_klines,
@@ -30,7 +31,7 @@ from chantheory.structure_mapping import (
 )
 from chantheory.schema import AnalysisResult, AnalysisWarning, Segment, Stroke
 from chantheory.segments import SEGMENT_MAPPING_STRATEGY
-from chantheory.config import get_default_max_bi_num
+from chantheory.config import PINNED_ENGINE_VERSION, get_default_max_bi_num
 
 
 class _MockSignal:
@@ -1949,8 +1950,42 @@ class AdapterTests(unittest.TestCase):
         fixture_path = Path(__file__).resolve().parent / "fixtures" / "p2_sample_result.json"
         payload = json.loads(fixture_path.read_text())
 
-        self.assertEqual(payload["engine_version"], "0.10.12")
-        self.assertEqual(payload["meta"]["engine_assumptions"]["engine_version"], "0.10.12")
+        self.assertEqual(payload["engine_version"], PINNED_ENGINE_VERSION)
+        self.assertEqual(
+            payload["meta"]["engine_assumptions"]["engine_version"],
+            PINNED_ENGINE_VERSION,
+        )
+        self.assertEqual(payload["meta"]["engine_probe"]["installed_version"], PINNED_ENGINE_VERSION)
+
+    def test_short_p2_sample_is_boundary_and_matches_real_engine(self):
+        """5-bar p2_sample is a boundary fixture, not structure gold.
+
+        Real czsc 1.0.1 yields 0 fractals / 0 strokes and INSUFFICIENT_BARS.
+        Long frozen samples under spikes/0009-czsc-1.0.1-upgrade/baseline/
+        remain the structure gold standard.
+        """
+        fixture_dir = Path(__file__).resolve().parent / "fixtures"
+        rows = json.loads((fixture_dir / "p2_sample_rows.json").read_text())
+        payload = json.loads((fixture_dir / "p2_sample_result.json").read_text())
+        result = analyze(
+            rows=rows,
+            symbol="000001.SZ",
+            timeframe="day",
+            source="tencent",
+            strict=True,
+        )
+
+        self.assertEqual(result.engine_version, PINNED_ENGINE_VERSION)
+        self.assertEqual(len(result.fractals), 0)
+        self.assertEqual(len(result.strokes), 0)
+        self.assertTrue(any(item.warning_code == "INSUFFICIENT_BARS" for item in result.warnings))
+        self.assertEqual(len(payload["fractals"]), 0)
+        self.assertEqual(len(payload["strokes"]), 0)
+        self.assertEqual(
+            [item["warning_code"] for item in payload["warnings"]],
+            [item.warning_code for item in result.warnings],
+        )
+        self.assertEqual(result.to_dict()["engine_version"], payload["engine_version"])
 
     def test_adapter_emits_both_stroke_and_segment_pivot_zones_with_input_isolation(self):
         # 构造 12 根交替笔，形成 4 个交替段（up/down/up/down），

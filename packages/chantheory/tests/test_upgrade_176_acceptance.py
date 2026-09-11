@@ -1,4 +1,10 @@
-"""#176 acceptance-focused regressions (does not update formal fixtures)."""
+"""#176 acceptance-focused regressions for long frozen samples.
+
+Short-sample formal fixture ``p2_sample_result.json`` is a boundary case
+(0 fractals / 0 strokes) and is covered in ``test_adapters``. Structure
+gold remains the three frozen long samples under
+``spikes/0009-czsc-1.0.1-upgrade/baseline/``.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +13,7 @@ import unittest
 from pathlib import Path
 
 from packages.chantheory import analyze, analyze_multi_timeframe
-from packages.chantheory.config import DEFAULT_SIGNALS_CONFIG
+from packages.chantheory.config import DEFAULT_SIGNALS_CONFIG, PINNED_ENGINE_VERSION
 
 ROOT = Path(__file__).resolve().parents[3]
 INPUTS = ROOT / "spikes" / "0009-czsc-1.0.1-upgrade" / "baseline" / "inputs"
@@ -105,7 +111,7 @@ class BaselineCountSmokeTests(unittest.TestCase):
                 )
                 self.assertEqual(len(result.fractals), fractals)
                 self.assertEqual(len(result.strokes), strokes)
-                self.assertEqual(result.engine_version, "1.0.1")
+                self.assertEqual(result.engine_version, PINNED_ENGINE_VERSION)
 
 
 if __name__ == "__main__":

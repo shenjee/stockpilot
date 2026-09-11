@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT / "packages"))
 sys.path.insert(0, str(SPIKE))
 
 from chantheory.config import get_freq_name
-from chantheory.engine import run_engine
+from chantheory.engine import load_czsc, run_engine
 from comparator import compare_results, semantic_diff, semantic_payload
 from experiment import (
     ClosedBarProjection,
@@ -162,6 +162,38 @@ class RebuildAndIncrementalTests(unittest.TestCase):
         # Confirmed last bi endpoints (same bi as the excluded case).
         self.assertEqual(str(getattr(bi_list_conf[-1], "sdt", None)), "2026-06-30 10:45:00")
         self.assertEqual(str(getattr(bi_list_conf[-1], "edt", None)), "2026-06-30 14:00:00")
+
+    def test_same_timestamp_update_replaces_last_bar_in_place(self):
+        """#174 DoD: same-dt K-line update replaces the last bar in place.
+
+        Production Live/Replay still full-rebuilds (ADR 0008); duplicate
+        timestamps are resolved in normalize (keep last) before rebuild.
+        This assertion covers the native CZSC.update same-dt path so a
+        future append-instead-of-replace cannot pass unnoticed.
+        """
+        normalized = normalize_rows(self.warm[:80])
+        analyzer, _ = run_engine(normalized, {"max_bi_num": 500})
+        before_count = len(analyzer.bars_raw)
+        last = analyzer.bars_raw[-1]
+        last_dt = last.dt
+        last_close = float(last.close)
+        RawBar, _, _ = load_czsc()
+        updated = RawBar(
+            symbol=last.symbol,
+            id=getattr(last, "id", before_count - 1),
+            dt=last_dt,
+            freq=last.freq,
+            open=float(last.open),
+            close=last_close + 0.5,
+            high=max(float(last.high), last_close + 0.5),
+            low=float(last.low),
+            vol=float(last.vol),
+            amount=float(last.amount),
+        )
+        analyzer.update(updated)
+        self.assertEqual(len(analyzer.bars_raw), before_count)
+        self.assertEqual(analyzer.bars_raw[-1].dt, last_dt)
+        self.assertAlmostEqual(float(analyzer.bars_raw[-1].close), last_close + 0.5, places=6)
 
     def test_zs_list_matches_get_zs_seq_on_finished_bis(self):
         """czsc 1.0.1 exposes zs_list as a CZSC instance attribute and

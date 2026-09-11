@@ -762,7 +762,7 @@ def build_mapping_warnings(result: AnalysisResult, analyzer: object) -> List[Ana
                 warning_id="warning_segments_unavailable",
                 code="SEGMENTS_UNAVAILABLE",
                 message=(
-                    "czsc 0.10.12 does not expose a first-class segment list, and the current "
+                    "czsc does not expose a first-class segment list, and the current "
                     "input does not yet support the conservative project segment mapping."
                 ),
                 field="segments",
