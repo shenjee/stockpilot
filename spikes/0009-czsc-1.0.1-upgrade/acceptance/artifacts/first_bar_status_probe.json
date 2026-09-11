@@ -1,0 +1,115 @@
+{
+  "czsc_signals_note": "CzscSignals/BarGenerator unused in production; not adapted.",
+  "environment": {
+    "captured_at_utc": "2026-09-11T01:38:52.670387+00:00",
+    "cpu": "arm",
+    "cpu_count": 12,
+    "czsc": "1.0.1",
+    "formal_env_note": "Formal ~/.venvs/czsc is already on czsc 1.0.1; this is an early environment deviation vs #172 switch order and must be closed by #177.",
+    "git_sha": "52f80259fecdf592095615e07c7dee319375b73e",
+    "load_average": null,
+    "machine": "arm64",
+    "os": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "python": "3.14.5",
+    "python_executable": "/Users/jishen/.venvs/czsc/bin/python"
+  },
+  "generated_at_utc": "2026-09-11T01:38:52.639354+00:00",
+  "git_sha": "52f80259fecdf592095615e07c7dee319375b73e",
+  "kind": "first_bar_status_investigation",
+  "probes": [
+    {
+      "adapter_point0_status": "inactive",
+      "adapter_point0_value": "其他_任意_任意_0",
+      "bar_count": 1,
+      "bi_count": 0,
+      "finished_bi_count": 0,
+      "fx_count": 0,
+      "native_call_error": null,
+      "native_value": "其他_任意_任意_0",
+      "prefix": 1,
+      "warnings": [
+        "INSUFFICIENT_BARS"
+      ]
+    },
+    {
+      "adapter_point0_status": "inactive",
+      "adapter_point0_value": "其他_任意_任意_0",
+      "bar_count": 2,
+      "bi_count": 0,
+      "finished_bi_count": 0,
+      "fx_count": 0,
+      "native_call_error": null,
+      "native_value": "其他_任意_任意_0",
+      "prefix": 2,
+      "warnings": [
+        "INSUFFICIENT_BARS"
+      ]
+    },
+    {
+      "adapter_point0_status": "inactive",
+      "adapter_point0_value": "其他_任意_任意_0",
+      "bar_count": 5,
+      "bi_count": 0,
+      "finished_bi_count": 0,
+      "fx_count": 0,
+      "native_call_error": null,
+      "native_value": "其他_任意_任意_0",
+      "prefix": 5,
+      "warnings": [
+        "INSUFFICIENT_BARS"
+      ]
+    },
+    {
+      "adapter_point0_status": "inactive",
+      "adapter_point0_value": "其他_任意_任意_0",
+      "bar_count": 10,
+      "bi_count": 0,
+      "finished_bi_count": 0,
+      "fx_count": 0,
+      "native_call_error": null,
+      "native_value": "其他_任意_任意_0",
+      "prefix": 10,
+      "warnings": [
+        "INSUFFICIENT_BARS"
+      ]
+    },
+    {
+      "adapter_point0_status": "inactive",
+      "adapter_point0_value": "其他_任意_任意_0",
+      "bar_count": 30,
+      "bi_count": 0,
+      "finished_bi_count": 0,
+      "fx_count": 1,
+      "native_call_error": null,
+      "native_value": "其他_任意_任意_0",
+      "prefix": 30,
+      "warnings": [
+        "INSUFFICIENT_BARS"
+      ]
+    },
+    {
+      "adapter_point0_status": "inactive",
+      "adapter_point0_value": "其他_任意_任意_0",
+      "bar_count": 50,
+      "bi_count": 1,
+      "finished_bi_count": 1,
+      "fx_count": 1,
+      "native_call_error": null,
+      "native_value": "其他_任意_任意_0",
+      "prefix": 50,
+      "warnings": [
+        "INSUFFICIENT_BARS",
+        "SEGMENTS_UNAVAILABLE"
+      ]
+    }
+  ],
+  "recommendation": {
+    "always_returns_inactive_value_on_probed_prefixes": true,
+    "can_preserve_via_native_exception": false,
+    "can_preserve_without_heuristic": false,
+    "possible_adapter_heuristic": "Map inactive→not_ready when finished_bis below a signal-specific threshold (e.g. third_bs needs many bis). This invents readiness rules not returned by 1.0.1 Signal objects and risks false not_ready after engine becomes capable earlier. Not recommended unless product explicitly wants old failure mode.",
+    "recommended_action": "Treat as upstream behavior change requiring #172-style user confirmation. Do not silently invent readiness heuristics. Document sample evidence."
+  },
+  "scenario": "5m_real_600584_548",
+  "task": "#176"
+}

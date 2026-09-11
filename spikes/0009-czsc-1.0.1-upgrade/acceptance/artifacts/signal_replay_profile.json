@@ -1,0 +1,419 @@
+{
+  "cprofile_artifact": "signal_replay_cprofile.txt",
+  "environment": {
+    "captured_at_utc": "2026-09-11T02:00:03.858993+00:00",
+    "cpu": "arm",
+    "cpu_count": 12,
+    "czsc": "1.0.1",
+    "formal_env_note": "Formal ~/.venvs/czsc is already on czsc 1.0.1; this is an early environment deviation vs #172 switch order and must be closed by #177.",
+    "git_sha": "52f80259fecdf592095615e07c7dee319375b73e",
+    "load_average": null,
+    "machine": "arm64",
+    "os": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "python": "3.14.5",
+    "python_executable": "/Users/jishen/.venvs/czsc/bin/python"
+  },
+  "findings": {
+    "adapter_conversion_dominant": false,
+    "conclusion": "Signal-replay wall time is dominated by adapter to_timestamp helpers in the bar loop / pending-bi path (also confirmed by cProfile). Native call_signal and list[Signal]→string conversion are small. No duplicate bar×signal evaluation. Per acceptance guidance, do not refactor architecture to reclaim tens of ms; keep full rebuild.",
+    "dispatcher_dominant": false,
+    "duplicate_replay_detected": false,
+    "post_process_dominant": false,
+    "to_timestamp_dominant": true
+  },
+  "gate_note": "Evidence only; absolute 5m cost already accepted. Do not close #176 until UI smoke + #174/#175 gates clear. No architecture refactor for tens of ms.",
+  "generated_at_utc": "2026-09-11T02:00:03.827747+00:00",
+  "git_sha": "52f80259fecdf592095615e07c7dee319375b73e",
+  "kind": "signal_replay_profile",
+  "round_details": [
+    {
+      "accounted_ms": 72.462,
+      "bar_count": 548,
+      "buckets": {
+        "build_events": {
+          "calls": 1,
+          "mean_us_per_call": 655.083,
+          "ms": 0.655
+        },
+        "build_series": {
+          "calls": 1,
+          "mean_us_per_call": 1691.5,
+          "ms": 1.692
+        },
+        "build_snapshots": {
+          "calls": 1,
+          "mean_us_per_call": 1987.458,
+          "ms": 1.987
+        },
+        "dispatcher_call_signal": {
+          "calls": 2192,
+          "mean_us_per_call": 3.15,
+          "ms": 6.904
+        },
+        "engine_update": {
+          "calls": 547,
+          "mean_us_per_call": 2.139,
+          "ms": 1.17
+        },
+        "extract_signal_value": {
+          "calls": 2192,
+          "mean_us_per_call": 1.015,
+          "ms": 2.225
+        },
+        "to_timestamp": {
+          "calls": 1038,
+          "mean_us_per_call": 55.712,
+          "ms": 57.829
+        }
+      },
+      "dispatcher_calls": 2192,
+      "engine_update_calls": 547,
+      "evaluation_rows": 2192,
+      "expected_native_eval_calls": 2192,
+      "notes": [
+        "dispatcher share is upstream call_signal wall time under bar-by-bar replay.",
+        "extract_signal_value is adapter conversion of list[Signal] → string.",
+        "to_timestamp is adapter helper used per bar / pending bi endpoint.",
+        "engine_update is CZSC.update during signal replay (same bars as full rebuild path).",
+        "residual covers remaining Python loop / status mapping / bookkeeping."
+      ],
+      "residual_adapter_ms": 14.496,
+      "residual_share": 0.1667,
+      "shares": {
+        "build_events": 0.0075,
+        "build_series": 0.0195,
+        "build_snapshots": 0.0229,
+        "dispatcher_call_signal": 0.0794,
+        "engine_update": 0.0135,
+        "extract_signal_value": 0.0256,
+        "to_timestamp": 0.665
+      },
+      "signal_definition_count": 4,
+      "total_ms": 86.957
+    },
+    {
+      "accounted_ms": 73.693,
+      "bar_count": 548,
+      "buckets": {
+        "build_events": {
+          "calls": 1,
+          "mean_us_per_call": 766.125,
+          "ms": 0.766
+        },
+        "build_series": {
+          "calls": 1,
+          "mean_us_per_call": 2882.75,
+          "ms": 2.883
+        },
+        "build_snapshots": {
+          "calls": 1,
+          "mean_us_per_call": 1963.791,
+          "ms": 1.964
+        },
+        "dispatcher_call_signal": {
+          "calls": 2192,
+          "mean_us_per_call": 2.733,
+          "ms": 5.991
+        },
+        "engine_update": {
+          "calls": 547,
+          "mean_us_per_call": 2.123,
+          "ms": 1.161
+        },
+        "extract_signal_value": {
+          "calls": 2192,
+          "mean_us_per_call": 0.978,
+          "ms": 2.144
+        },
+        "to_timestamp": {
+          "calls": 1038,
+          "mean_us_per_call": 56.632,
+          "ms": 58.784
+        }
+      },
+      "dispatcher_calls": 2192,
+      "engine_update_calls": 547,
+      "evaluation_rows": 2192,
+      "expected_native_eval_calls": 2192,
+      "notes": [
+        "dispatcher share is upstream call_signal wall time under bar-by-bar replay.",
+        "extract_signal_value is adapter conversion of list[Signal] → string.",
+        "to_timestamp is adapter helper used per bar / pending bi endpoint.",
+        "engine_update is CZSC.update during signal replay (same bars as full rebuild path).",
+        "residual covers remaining Python loop / status mapping / bookkeeping."
+      ],
+      "residual_adapter_ms": 14.636,
+      "residual_share": 0.1657,
+      "shares": {
+        "build_events": 0.0087,
+        "build_series": 0.0326,
+        "build_snapshots": 0.0222,
+        "dispatcher_call_signal": 0.0678,
+        "engine_update": 0.0131,
+        "extract_signal_value": 0.0243,
+        "to_timestamp": 0.6655
+      },
+      "signal_definition_count": 4,
+      "total_ms": 88.329
+    },
+    {
+      "accounted_ms": 98.882,
+      "bar_count": 548,
+      "buckets": {
+        "build_events": {
+          "calls": 1,
+          "mean_us_per_call": 698.958,
+          "ms": 0.699
+        },
+        "build_series": {
+          "calls": 1,
+          "mean_us_per_call": 2000.25,
+          "ms": 2.0
+        },
+        "build_snapshots": {
+          "calls": 1,
+          "mean_us_per_call": 28591.875,
+          "ms": 28.592
+        },
+        "dispatcher_call_signal": {
+          "calls": 2192,
+          "mean_us_per_call": 2.717,
+          "ms": 5.955
+        },
+        "engine_update": {
+          "calls": 547,
+          "mean_us_per_call": 2.103,
+          "ms": 1.15
+        },
+        "extract_signal_value": {
+          "calls": 2192,
+          "mean_us_per_call": 0.97,
+          "ms": 2.126
+        },
+        "to_timestamp": {
+          "calls": 1038,
+          "mean_us_per_call": 56.224,
+          "ms": 58.36
+        }
+      },
+      "dispatcher_calls": 2192,
+      "engine_update_calls": 547,
+      "evaluation_rows": 2192,
+      "expected_native_eval_calls": 2192,
+      "notes": [
+        "dispatcher share is upstream call_signal wall time under bar-by-bar replay.",
+        "extract_signal_value is adapter conversion of list[Signal] → string.",
+        "to_timestamp is adapter helper used per bar / pending bi endpoint.",
+        "engine_update is CZSC.update during signal replay (same bars as full rebuild path).",
+        "residual covers remaining Python loop / status mapping / bookkeeping."
+      ],
+      "residual_adapter_ms": 14.448,
+      "residual_share": 0.1275,
+      "shares": {
+        "build_events": 0.0062,
+        "build_series": 0.0176,
+        "build_snapshots": 0.2523,
+        "dispatcher_call_signal": 0.0525,
+        "engine_update": 0.0102,
+        "extract_signal_value": 0.0188,
+        "to_timestamp": 0.515
+      },
+      "signal_definition_count": 4,
+      "total_ms": 113.331
+    },
+    {
+      "accounted_ms": 72.613,
+      "bar_count": 548,
+      "buckets": {
+        "build_events": {
+          "calls": 1,
+          "mean_us_per_call": 877.666,
+          "ms": 0.878
+        },
+        "build_series": {
+          "calls": 1,
+          "mean_us_per_call": 2283.792,
+          "ms": 2.284
+        },
+        "build_snapshots": {
+          "calls": 1,
+          "mean_us_per_call": 1964.875,
+          "ms": 1.965
+        },
+        "dispatcher_call_signal": {
+          "calls": 2192,
+          "mean_us_per_call": 2.789,
+          "ms": 6.113
+        },
+        "engine_update": {
+          "calls": 547,
+          "mean_us_per_call": 2.089,
+          "ms": 1.143
+        },
+        "extract_signal_value": {
+          "calls": 2192,
+          "mean_us_per_call": 0.965,
+          "ms": 2.116
+        },
+        "to_timestamp": {
+          "calls": 1038,
+          "mean_us_per_call": 55.987,
+          "ms": 58.115
+        }
+      },
+      "dispatcher_calls": 2192,
+      "engine_update_calls": 547,
+      "evaluation_rows": 2192,
+      "expected_native_eval_calls": 2192,
+      "notes": [
+        "dispatcher share is upstream call_signal wall time under bar-by-bar replay.",
+        "extract_signal_value is adapter conversion of list[Signal] → string.",
+        "to_timestamp is adapter helper used per bar / pending bi endpoint.",
+        "engine_update is CZSC.update during signal replay (same bars as full rebuild path).",
+        "residual covers remaining Python loop / status mapping / bookkeeping."
+      ],
+      "residual_adapter_ms": 14.48,
+      "residual_share": 0.1663,
+      "shares": {
+        "build_events": 0.0101,
+        "build_series": 0.0262,
+        "build_snapshots": 0.0226,
+        "dispatcher_call_signal": 0.0702,
+        "engine_update": 0.0131,
+        "extract_signal_value": 0.0243,
+        "to_timestamp": 0.6673
+      },
+      "signal_definition_count": 4,
+      "total_ms": 87.093
+    },
+    {
+      "accounted_ms": 71.719,
+      "bar_count": 548,
+      "buckets": {
+        "build_events": {
+          "calls": 1,
+          "mean_us_per_call": 661.5,
+          "ms": 0.661
+        },
+        "build_series": {
+          "calls": 1,
+          "mean_us_per_call": 1886.417,
+          "ms": 1.886
+        },
+        "build_snapshots": {
+          "calls": 1,
+          "mean_us_per_call": 1854.166,
+          "ms": 1.854
+        },
+        "dispatcher_call_signal": {
+          "calls": 2192,
+          "mean_us_per_call": 2.711,
+          "ms": 5.943
+        },
+        "engine_update": {
+          "calls": 547,
+          "mean_us_per_call": 2.04,
+          "ms": 1.116
+        },
+        "extract_signal_value": {
+          "calls": 2192,
+          "mean_us_per_call": 0.99,
+          "ms": 2.171
+        },
+        "to_timestamp": {
+          "calls": 1038,
+          "mean_us_per_call": 55.961,
+          "ms": 58.088
+        }
+      },
+      "dispatcher_calls": 2192,
+      "engine_update_calls": 547,
+      "evaluation_rows": 2192,
+      "expected_native_eval_calls": 2192,
+      "notes": [
+        "dispatcher share is upstream call_signal wall time under bar-by-bar replay.",
+        "extract_signal_value is adapter conversion of list[Signal] → string.",
+        "to_timestamp is adapter helper used per bar / pending bi endpoint.",
+        "engine_update is CZSC.update during signal replay (same bars as full rebuild path).",
+        "residual covers remaining Python loop / status mapping / bookkeeping."
+      ],
+      "residual_adapter_ms": 14.277,
+      "residual_share": 0.166,
+      "shares": {
+        "build_events": 0.0077,
+        "build_series": 0.0219,
+        "build_snapshots": 0.0216,
+        "dispatcher_call_signal": 0.0691,
+        "engine_update": 0.013,
+        "extract_signal_value": 0.0252,
+        "to_timestamp": 0.6755
+      },
+      "signal_definition_count": 4,
+      "total_ms": 85.996
+    }
+  ],
+  "rounds": 5,
+  "scenario_id": "5m_real_600584_548",
+  "summary": {
+    "dispatcher_call_signal": {
+      "max_ms": 6.904,
+      "mean_ms": 6.181,
+      "min_ms": 5.943,
+      "p50_ms": 5.991,
+      "p95_ms": 6.904
+    },
+    "engine_update": {
+      "max_ms": 1.17,
+      "mean_ms": 1.148,
+      "min_ms": 1.116,
+      "p50_ms": 1.15,
+      "p95_ms": 1.17
+    },
+    "extract_signal_value": {
+      "max_ms": 2.225,
+      "mean_ms": 2.156,
+      "min_ms": 2.116,
+      "p50_ms": 2.144,
+      "p95_ms": 2.225
+    },
+    "mean_share": {
+      "dispatcher_call_signal": 0.0669,
+      "engine_update": 0.0124,
+      "extract_signal_value": 0.0234,
+      "post_process": 0.11,
+      "residual_adapter": 0.1567,
+      "to_timestamp": 0.6307
+    },
+    "post_process_series_events_snapshots": {
+      "max_ms": 31.291,
+      "mean_ms": 10.153,
+      "min_ms": 4.334,
+      "p50_ms": 5.127,
+      "p95_ms": 31.291
+    },
+    "residual_adapter": {
+      "max_ms": 14.636,
+      "mean_ms": 14.467,
+      "min_ms": 14.277,
+      "p50_ms": 14.48,
+      "p95_ms": 14.636
+    },
+    "rounds": 5,
+    "to_timestamp": {
+      "max_ms": 58.784,
+      "mean_ms": 58.235,
+      "min_ms": 57.829,
+      "p50_ms": 58.115,
+      "p95_ms": 58.784
+    },
+    "total": {
+      "max_ms": 113.331,
+      "mean_ms": 92.341,
+      "min_ms": 85.996,
+      "p50_ms": 87.093,
+      "p95_ms": 113.331
+    }
+  },
+  "task": "#176",
+  "warmup": 1
+}
