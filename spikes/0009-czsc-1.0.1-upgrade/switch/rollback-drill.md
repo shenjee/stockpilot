@@ -11,7 +11,7 @@
 
 1. `python3.14 -m venv`（Python 3.14.5）
 2. `pip install czsc==0.10.12`（由 PyPI 解析依赖，顺带装入 `rs-czsc`）
-3. 使用旧代码树 `/Users/jishen/development/stockpilot-wt-01012` @ `2883f34`（`pyproject.toml` pin `czsc==0.10.12`）
+3. 使用旧代码树 `/Users/jishen/development/stockpilot-wt-01012` @ `2883f34e956e49372f69c379b0ef45f8e63c929c`（`pyproject.toml` pin `czsc==0.10.12`）。回退目标是这个 SHA，不是 `origin/main`（合入后 main 为 1.0.1）。
 4. `python .../generate_baseline.py --verify`
 
 `--verify` 对三个冻结场景生成临时输出，与已提交 `checksums.sha256` 比较：**6/6 OK**。
@@ -27,4 +27,5 @@
 ## 复现限制
 
 本演练证明的是：**旧代码 SHA + `czsc==0.10.12` + 冻结样本** 能复现 #173 金标校验和。  
-它不证明可以用一份 freeze 在任意机器上一键重建 2026-09 的原正式 venv。
+它不证明可以用一份 freeze 在任意机器上一键重建 2026-09 的原正式 venv。  
+它也不证明应用已切到恢复环境：Live / Replay / chan-viewer 必须按 `README.md` §6 D/E，从 `$OLD_ROOT` 用恢复 venv / `T0_PYTHON` 启动，并核验进程解释器与单/多周期 `engine_version`。本演练未执行完整应用恢复。
