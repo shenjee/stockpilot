@@ -4,16 +4,22 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
-OUT = Path(__file__).resolve().parent / "artifacts" / "ui-smoke" / "chan-viewer"
+OUT = Path(
+    os.environ.get(
+        "UI_SMOKE_OUT",
+        str(Path(__file__).resolve().parent / "artifacts" / "ui-smoke" / "chan-viewer"),
+    )
+)
 OUT.mkdir(parents=True, exist_ok=True)
 
-BASE = "http://127.0.0.1:8501"
+BASE = os.environ.get("CHAN_VIEWER_URL", "http://127.0.0.1:8501")
 
 
 def git_sha() -> str:
@@ -126,13 +132,15 @@ def main() -> int:
         body = page.inner_text("body")
         day_ok = ("600584" in body) or ("长电" in body)
         has_chart = _chart_frame(page) is not None
+        engine_in_summary = "czsc 1.0.1" in body
         steps.append(
             {
                 "step": "run_day",
                 "screenshot": str(shot1.relative_to(REPO)),
                 "has_chart": has_chart,
+                "engine_version_in_summary": engine_in_summary,
                 "run_latency_ms": run_ms,
-                "result": "ok" if day_ok and has_chart else "fail",
+                "result": "ok" if day_ok and has_chart and engine_in_summary else "fail",
             }
         )
 
@@ -210,7 +218,7 @@ def main() -> int:
     failed = [s for s in steps if s.get("result") == "fail"]
     report = {
         "surface": "chan-viewer",
-        "task": "#176",
+        "task": os.environ.get("UI_SMOKE_TASK", "#176"),
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "git_sha": git_sha(),
         "fixed_input": {

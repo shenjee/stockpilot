@@ -1,0 +1,22 @@
+{
+  "captured_at": "2026-09-11T16:51:12+00:00",
+  "purpose": "#177 post-merge formal switch facts. Merged main + ~/.venvs/czsc. Not a lock file.",
+  "merge_commit": "e28737965a6362cfb09885ae32c26dd68faba14a",
+  "pr": 179,
+  "python": "3.14.5",
+  "executable": "/Users/jishen/.venvs/czsc/bin/python",
+  "prefix": "/Users/jishen/.venvs/czsc",
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "declared_pin": "czsc==1.0.1",
+  "PINNED_ENGINE_VERSION": "1.0.1",
+  "czsc": "1.0.1",
+  "wbt": "0.9.0",
+  "rs_czsc": null,
+  "rs_czsc_action": "uninstalled (Required-by empty; czsc 1.0.1 does not depend on it; repo production paths do not import it)",
+  "pip_check": "No broken requirements found.",
+  "install_command": "python -m pip install -e \".[dev]\"",
+  "czsc__file__": "/Users/jishen/.venvs/czsc/lib/python3.14/site-packages/czsc/__init__.py",
+  "czsc__native": true,
+  "freeze": "pip-freeze-formal-post-switch-1.0.1.txt",
+  "probe": "formal-switch-probe.json"
+}
