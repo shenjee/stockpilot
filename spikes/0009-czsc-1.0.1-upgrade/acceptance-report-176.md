@@ -205,17 +205,32 @@ ADR 0008 全量重建策略不变。
 | chan-viewer | `apps/chan-viewer/tests` | PASS |
 | 引擎 5m spike | `test_czsc_5m_spike` | PASS |
 
-### 6.2 手动 UI（仍待补证据）— 关闭 #176 前置
+### 6.2 UI 冒烟证据（已完成）
 
-三个界面须**分别**留证据；并确认 **推进 / 回退 / 切换无明显卡顿**。
+固定标的：`600584` / 长电科技；不下单。产物目录：`acceptance/artifacts/ui-smoke/{live,replay,chan-viewer}/`。  
+被测代码 SHA：`52f8025`；本轮 UI 脚本与证据相对验收入库 `d3de234` / SHA 回填 `761fe5d` 的增量提交。
 
-| 面 | 建议步骤 | 卡顿检查 | 证据状态 |
-|---|---|---|---|
-| Live | `apps/t0-assistant` → `npm start`，标的 `600584.SH`，不下单；动态 K 仅展示 | 标的切换、会话切换无可见卡顿 | **待补** |
-| Replay | 同标的按时间推进；候选点触发/切换/失效与回退重建 | 逐步推进、回退重建无可见卡顿 | **待补** |
-| chan-viewer | `streamlit run apps/chan-viewer/app.py`；日线/分钟 overlay；合成日线标注 synthetic | 周期/标的切换无可见卡顿 | **待补** |
+#### Live（PASS）
 
-证据建议：截图或短录屏 + 记录时间戳/git SHA，写入本报告本节或 issue 评论。
+- 脚本：`acceptance/ui_smoke_t0_electron.mjs`（真实 `PythonServiceHost` + `T0_PYTHON=~/.venvs/czsc/bin/python`）
+- 证据：`artifacts/ui-smoke/live/evidence.json` + `01_live_600584_loaded.png` / `02_live_symbol_switch_600000.png` / `03_live_back_600584.png`
+- 步骤：服务就绪 → 加载 600584 → 切换 600000 → 切回 600584；可见笔/候选点 overlay；**未下单**
+- 响应：各步约 0.5–2.3s；无明显卡顿
+
+#### Replay（PASS）
+
+- 同一 Electron 脚本；回放日 **2026-07-14**（覆盖冻结 5m 窗口）
+- 证据：`artifacts/ui-smoke/replay/evidence.json` + `01` 设置 / `02` 开始 / `03` 推进 / `04` 回退 / `05` 回 Live
+- 步骤：进入回放 → 开始回放 → **前进**（推进）×2 → **seek 回退** → 切回实盘
+- 响应：推进 ~1.4s；回退 seek ~64ms；回 Live ~1.6s；无明显卡顿
+
+#### chan-viewer（PASS）
+
+- 脚本：`acceptance/ui_smoke_chan_viewer.py`（Playwright；需 `streamlit` 已在 `:8501`）
+- 固定输入：600584，日期 **2026-06-29 ~ 2026-07-14**
+- 证据：`artifacts/ui-smoke/chan-viewer/ui_smoke_chan_viewer.json` + 日线 / 切 5 分 / 切 30 分 / 切标的往返截图
+- 步骤：选股 → 运行日线 → 周期切换（5 分 / 30 分）→ 标的切换往返
+- 响应：单次分析约 10s（含拉数）；自动化全程无明显挂起（推进/回退不适用于本面）
 
 ---
 
@@ -259,11 +274,11 @@ ADR 0008 全量重建策略不变。
 | 首根 not_ready→inactive | **已确认接受**（限定范围） |
 | 性能（绝对可接受；多轮无稳定相对回退） | **已确认；证据已补** |
 | 下游自动化 | 通过 |
-| 下游手动 UI（含推进/回退/切换响应） | **进行中 / 待补证据** |
-| #174/#175 正式验收 | **未通过** |
+| 下游手动 UI（含推进/回退/切换响应） | **已通过**（§6.2） |
+| #174/#175 正式验收 | **未通过（仍阻塞关闭）** |
 | 正式 fixture | **未更新（正确）** |
-| 验收脚本/报告入库 | **本轮提交；SHA 回填见文首** |
-| 关闭 #176 | **保持打开** |
+| 验收脚本/报告入库 | 已入库；UI 证据为本轮增量提交 |
+| 关闭 #176 | **保持打开**（等 #174/#175） |
 | #177 / #172 完成 | **未获准 / 未完成** |
 
 ---
@@ -282,5 +297,7 @@ python spikes/0009-czsc-1.0.1-upgrade/acceptance/benchmark_compare.py --multi-ro
   --scenario 5m_real_600584_548 --scenario daily_synthetic_120
 python spikes/0009-czsc-1.0.1-upgrade/acceptance/profile_signal_replay.py
 python spikes/0009-czsc-1.0.1-upgrade/acceptance/downstream_smoke.py
+python spikes/0009-czsc-1.0.1-upgrade/acceptance/ui_smoke_chan_viewer.py
+# Live/Replay: see acceptance/README.md (Electron + T0_PYTHON)
 python -m unittest packages.chantheory.tests.test_upgrade_176_acceptance
 ```

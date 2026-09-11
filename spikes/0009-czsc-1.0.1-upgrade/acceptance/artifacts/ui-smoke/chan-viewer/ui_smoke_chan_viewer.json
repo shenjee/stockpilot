@@ -1,0 +1,67 @@
+{
+  "surface": "chan-viewer",
+  "task": "#176",
+  "generated_at_utc": "2026-09-11T04:29:26.459354+00:00",
+  "git_sha": "761fe5db312765ab302ab9c06637683a0ae0583d",
+  "fixed_input": {
+    "symbol": "600584.SH / 长电科技",
+    "start": "2026-06-29",
+    "end": "2026-07-14",
+    "note": "Date window covers frozen #173 5m sample; live Tencent fetch via app"
+  },
+  "steps": [
+    {
+      "step": "select_symbol",
+      "input": "600584",
+      "selected_text": "证券搜索\noption 600584 长电科技, selected.\n600584 长电科技",
+      "result": "ok"
+    },
+    {
+      "step": "set_dates",
+      "input": {
+        "start": "2026-06-29",
+        "end": "2026-07-14"
+      },
+      "result": "set"
+    },
+    {
+      "step": "run_day",
+      "screenshot": "spikes/0009-czsc-1.0.1-upgrade/acceptance/artifacts/ui-smoke/chan-viewer/01_day_600584.png",
+      "has_chart": true,
+      "run_latency_ms": 10047,
+      "result": "ok"
+    },
+    {
+      "step": "switch_timeframe_5m",
+      "switched_via_ui": true,
+      "screenshot": "spikes/0009-czsc-1.0.1-upgrade/acceptance/artifacts/ui-smoke/chan-viewer/02_switch_5m.png",
+      "latency_ms": 10031,
+      "chart_text_snippet": "Bear Div\nBull Div\nBear Div\nBull Div\nBear Div\nBull Div\nBear Div\nBull Div\nBear Div\nBull Div\nBull Div\nBear Div\nBear Div\nBull Div\nBear Div\nBear Div\nBull Div\nBull Div\nBear Div\nBear Div\nBull Div\n↑3B\n↑3B\n↑2B, 3B\n↑3B\n↑2B\n↑2B\n↑2B\n↑3B\n↑3B\n↑3B\n↑3B\n↑3B",
+      "result": "ok"
+    },
+    {
+      "step": "switch_timeframe_30m",
+      "switched_via_ui": true,
+      "screenshot": "spikes/0009-czsc-1.0.1-upgrade/acceptance/artifacts/ui-smoke/chan-viewer/03_switch_30m.png",
+      "latency_ms": 10039,
+      "result": "ok"
+    },
+    {
+      "step": "switch_symbol_and_back",
+      "screenshots": [
+        "spikes/0009-czsc-1.0.1-upgrade/acceptance/artifacts/ui-smoke/chan-viewer/04_switch_symbol_600000.png",
+        "spikes/0009-czsc-1.0.1-upgrade/acceptance/artifacts/ui-smoke/chan-viewer/05_switch_back_600584.png"
+      ],
+      "latency_ms": 24392,
+      "result": "ok"
+    },
+    {
+      "step": "responsiveness",
+      "total_wall_ms": 61372,
+      "result": "no_obvious_hang_during_automation",
+      "note": "推进/回退不适用 chan-viewer；覆盖运行、周期切换、标的切换响应"
+    }
+  ],
+  "pass": true,
+  "failed_steps": []
+}
