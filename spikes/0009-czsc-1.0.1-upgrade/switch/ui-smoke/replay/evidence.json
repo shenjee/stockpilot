@@ -1,0 +1,223 @@
+{
+  "kind": "t0_assistant_ui_smoke",
+  "git_sha": "e28737965a6362cfb09885ae32c26dd68faba14a",
+  "symbol": "sh.600584",
+  "symbol_input": "600584",
+  "replay_trade_date": "2026-07-14",
+  "runtime_dir": "/Users/jishen/Library/Application Support/stockpilot-t0-assistant/stockpilot",
+  "python": "/Users/jishen/.venvs/czsc/bin/python",
+  "czsc_note": "real PythonServiceHost; overlays via czsc from T0_PYTHON env",
+  "expected_engine_version": "1.0.1",
+  "live_chan_versions": [
+    {
+      "key": "t0_app_v2:live-1-31cd38d572b740b38418b6c9260bce0b",
+      "event_type": "workbench_snapshot",
+      "schema_version": "t0_app_v2",
+      "session_id": "live-1-31cd38d572b740b38418b6c9260bce0b",
+      "engine_version_5m": "1.0.1",
+      "engine_version_30m": "1.0.1"
+    }
+  ],
+  "replay_chan_versions": [
+    {
+      "key": "t0_app_v2:live-1-31cd38d572b740b38418b6c9260bce0b",
+      "event_type": "workbench_snapshot",
+      "schema_version": "t0_app_v2",
+      "session_id": "live-1-31cd38d572b740b38418b6c9260bce0b",
+      "engine_version_5m": "1.0.1",
+      "engine_version_30m": "1.0.1"
+    },
+    {
+      "key": "t0_app_v2:live-2-841b91f23b29432c89ce4d86f5e781df",
+      "event_type": "workbench_snapshot",
+      "schema_version": "t0_app_v2",
+      "session_id": "live-2-841b91f23b29432c89ce4d86f5e781df",
+      "engine_version_5m": "1.0.1",
+      "engine_version_30m": "1.0.1"
+    },
+    {
+      "key": "t0_app_v2:live-3-b18381d228744a27945316c2550a2ed6",
+      "event_type": "workbench_snapshot",
+      "schema_version": "t0_app_v2",
+      "session_id": "live-3-b18381d228744a27945316c2550a2ed6",
+      "engine_version_5m": "1.0.1",
+      "engine_version_30m": "1.0.1"
+    },
+    {
+      "key": "t0_replay_v2:replay-fdb65eadcf824b2b996d96f86f9137cb",
+      "event_type": "workbench_snapshot",
+      "schema_version": "t0_replay_v2",
+      "session_id": "replay-fdb65eadcf824b2b996d96f86f9137cb",
+      "engine_version_5m": "1.0.1",
+      "engine_version_30m": "1.0.1"
+    }
+  ],
+  "no_real_trades": true,
+  "started_at": "2026-09-11T16:49:30.087Z",
+  "finished_at": "2026-09-11T16:49:41.736Z",
+  "total_latency_ms": 11647,
+  "blockers": [],
+  "surface": "replay",
+  "status": "pass",
+  "steps": [
+    {
+      "step": "enter_replay_mode",
+      "at": "2026-09-11T16:49:37.842Z",
+      "result": "ok",
+      "latency_ms": 87,
+      "screenshot": "/Users/jishen/development/stockpilot/spikes/0009-czsc-1.0.1-upgrade/switch/ui-smoke/replay/01_replay_setup.png",
+      "trade_date": "2026-07-14"
+    },
+    {
+      "step": "begin_replay",
+      "at": "2026-09-11T16:49:38.542Z",
+      "result": "ok",
+      "latency_ms": 700,
+      "screenshot": "/Users/jishen/development/stockpilot/spikes/0009-czsc-1.0.1-upgrade/switch/ui-smoke/replay/02_replay_started.png",
+      "ui": {
+        "securityName": "长电科技",
+        "canvasCount": 21,
+        "chartPanelCount": 3,
+        "feedback": null,
+        "replayActive": true,
+        "replaySetup": false,
+        "stepLabel": "前进 5 分钟",
+        "stepDisabled": false,
+        "rangeValue": 1784021400000,
+        "rangeMin": 1784021400000,
+        "rangeMax": 1784041200000,
+        "shownTime": "09:30",
+        "modeLivePressed": "false",
+        "modeReplayPressed": "true",
+        "shellClass": "shell replay-mode"
+      }
+    },
+    {
+      "step": "engine_version",
+      "at": "2026-09-11T16:49:38.542Z",
+      "result": "ok",
+      "chan_versions": [
+        {
+          "key": "t0_app_v2:live-1-31cd38d572b740b38418b6c9260bce0b",
+          "event_type": "workbench_snapshot",
+          "schema_version": "t0_app_v2",
+          "session_id": "live-1-31cd38d572b740b38418b6c9260bce0b",
+          "engine_version_5m": "1.0.1",
+          "engine_version_30m": "1.0.1"
+        },
+        {
+          "key": "t0_app_v2:live-2-841b91f23b29432c89ce4d86f5e781df",
+          "event_type": "workbench_snapshot",
+          "schema_version": "t0_app_v2",
+          "session_id": "live-2-841b91f23b29432c89ce4d86f5e781df",
+          "engine_version_5m": "1.0.1",
+          "engine_version_30m": "1.0.1"
+        },
+        {
+          "key": "t0_app_v2:live-3-b18381d228744a27945316c2550a2ed6",
+          "event_type": "workbench_snapshot",
+          "schema_version": "t0_app_v2",
+          "session_id": "live-3-b18381d228744a27945316c2550a2ed6",
+          "engine_version_5m": "1.0.1",
+          "engine_version_30m": "1.0.1"
+        },
+        {
+          "key": "t0_replay_v2:replay-fdb65eadcf824b2b996d96f86f9137cb",
+          "event_type": "workbench_snapshot",
+          "schema_version": "t0_replay_v2",
+          "session_id": "replay-fdb65eadcf824b2b996d96f86f9137cb",
+          "engine_version_5m": "1.0.1",
+          "engine_version_30m": "1.0.1"
+        }
+      ],
+      "expected": "1.0.1"
+    },
+    {
+      "step": "step_forward",
+      "at": "2026-09-11T16:49:39.360Z",
+      "result": "ok",
+      "latency_ms": 818,
+      "screenshot": "/Users/jishen/development/stockpilot/spikes/0009-czsc-1.0.1-upgrade/switch/ui-smoke/replay/03_replay_step_forward.png",
+      "ui": {
+        "securityName": "长电科技",
+        "canvasCount": 21,
+        "chartPanelCount": 3,
+        "feedback": null,
+        "replayActive": true,
+        "replaySetup": false,
+        "stepLabel": "前进 5 分钟",
+        "stepDisabled": false,
+        "rangeValue": 1784021700000,
+        "rangeMin": 1784021400000,
+        "rangeMax": 1784041200000,
+        "shownTime": "09:35",
+        "modeLivePressed": "false",
+        "modeReplayPressed": "true",
+        "shellClass": "shell replay-mode"
+      },
+      "note": "推进 (前进 N 分钟); no obvious hang observed if latency_ms finite"
+    },
+    {
+      "step": "step_forward_2",
+      "at": "2026-09-11T16:49:40.066Z",
+      "result": "ok",
+      "latency_ms": null
+    },
+    {
+      "step": "seek_backward",
+      "at": "2026-09-11T16:49:40.137Z",
+      "result": "ok",
+      "latency_ms": 71,
+      "screenshot": "/Users/jishen/development/stockpilot/spikes/0009-czsc-1.0.1-upgrade/switch/ui-smoke/replay/04_replay_seek_back.png",
+      "ui": {
+        "securityName": "长电科技",
+        "canvasCount": 21,
+        "chartPanelCount": 3,
+        "feedback": null,
+        "replayActive": true,
+        "replaySetup": false,
+        "stepLabel": "前进 5 分钟",
+        "stepDisabled": false,
+        "rangeValue": 1784021400000,
+        "rangeMin": 1784021400000,
+        "rangeMax": 1784041200000,
+        "shownTime": "09:30",
+        "modeLivePressed": "false",
+        "modeReplayPressed": "true",
+        "shellClass": "shell replay-mode"
+      },
+      "seek": {
+        "before": 1784022000000,
+        "after": 1784021400000,
+        "target": 1784021400000,
+        "shownTimeBefore": "09:40",
+        "shownTimeAfter": "09:30"
+      },
+      "note": "回退 via progress seek (no dedicated step-back button)"
+    },
+    {
+      "step": "back_to_live",
+      "at": "2026-09-11T16:49:41.736Z",
+      "result": "ok",
+      "latency_ms": 1599,
+      "screenshot": "/Users/jishen/development/stockpilot/spikes/0009-czsc-1.0.1-upgrade/switch/ui-smoke/replay/05_back_to_live.png",
+      "ui": {
+        "securityName": "长电科技",
+        "canvasCount": 42,
+        "chartPanelCount": 6,
+        "feedback": null,
+        "replayActive": false,
+        "replaySetup": false,
+        "stepLabel": null,
+        "stepDisabled": null,
+        "rangeValue": null,
+        "rangeMin": null,
+        "rangeMax": null,
+        "shownTime": null,
+        "modeLivePressed": "true",
+        "modeReplayPressed": "false",
+        "shellClass": "shell"
+      }
+    }
+  ]
+}

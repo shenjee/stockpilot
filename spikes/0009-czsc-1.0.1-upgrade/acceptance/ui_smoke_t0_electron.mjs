@@ -24,8 +24,11 @@ import { app, BrowserWindow, ipcMain } from "electron";
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "../../..");
 const appRoot = resolve(repoRoot, "apps/t0-assistant");
-const liveOut = resolve(scriptDir, "artifacts/ui-smoke/live");
-const replayOut = resolve(scriptDir, "artifacts/ui-smoke/replay");
+const smokeRoot = resolve(
+  process.env.UI_SMOKE_ROOT || resolve(scriptDir, "artifacts/ui-smoke"),
+);
+const liveOut = resolve(smokeRoot, "live");
+const replayOut = resolve(smokeRoot, "replay");
 
 const SYMBOL = "600584";
 const SYMBOL_ALT = "600000";
@@ -183,6 +186,41 @@ async function inspectUi(window) {
       };
     })()
   `);
+}
+
+function extractChanVersions(gateway) {
+  const out = [];
+  const envelopes = gateway?.lastEnvelopeByKey;
+  if (!envelopes || typeof envelopes.entries !== "function") return out;
+  for (const [key, envelope] of envelopes.entries()) {
+    const payload = envelope?.payload ?? {};
+    const snapshot = payload.snapshot ?? payload;
+    out.push({
+      key,
+      event_type: envelope?.event_type ?? null,
+      schema_version: envelope?.schema_version ?? null,
+      session_id: envelope?.session_id ?? snapshot?.session?.session_id ?? null,
+      engine_version_5m: snapshot?.chan_analysis?.engine_version ?? null,
+      engine_version_30m: snapshot?.chan_analysis_30m?.engine_version ?? null,
+    });
+  }
+  return out;
+}
+
+function assertEngineVersions(entries, expected) {
+  const missing = [];
+  for (const entry of entries) {
+    if (entry.engine_version_5m && entry.engine_version_5m !== expected) {
+      missing.push(`${entry.key} 5m=${entry.engine_version_5m}`);
+    }
+    if (entry.engine_version_30m && entry.engine_version_30m !== expected) {
+      missing.push(`${entry.key} 30m=${entry.engine_version_30m}`);
+    }
+  }
+  const hasAny =
+    entries.some((e) => e.engine_version_5m === expected) &&
+    entries.some((e) => e.engine_version_30m === expected);
+  return { hasAny, missing };
 }
 
 async function capture(window, outDir, filename) {
@@ -388,6 +426,9 @@ async function main() {
   const blockers = [];
   let liveStatus = "fail";
   let replayStatus = "fail";
+  let liveChanVersions = [];
+  let replayChanVersions = [];
+  const expectedEngine = process.env.EXPECT_ENGINE_VERSION || "";
   let window;
   let serviceHost;
   let gateway;
@@ -521,6 +562,25 @@ async function main() {
       liveStatus = "pass";
     }
 
+    liveChanVersions = extractChanVersions(gateway);
+    const liveEngine = expectedEngine
+      ? assertEngineVersions(liveChanVersions, expectedEngine)
+      : { hasAny: true, missing: [] };
+    recordStep(liveSteps, "engine_version", {
+      result:
+        !expectedEngine || (liveEngine.hasAny && liveEngine.missing.length === 0)
+          ? "ok"
+          : "fail",
+      chan_versions: liveChanVersions,
+      expected: expectedEngine || null,
+    });
+    if (expectedEngine && (!liveEngine.hasAny || liveEngine.missing.length)) {
+      blockers.push(
+        `Live engine_version not ${expectedEngine}: ${JSON.stringify(liveChanVersions)}`,
+      );
+      liveStatus = "fail";
+    }
+
     // Symbol switch (best-effort) then back to 600584.
     try {
       const switchStart = Date.now();
@@ -584,6 +644,24 @@ async function main() {
     });
     if (!ui.replayActive) {
       blockers.push("Replay did not become active after 开始回放");
+    }
+
+    replayChanVersions = extractChanVersions(gateway);
+    const replayEngine = expectedEngine
+      ? assertEngineVersions(replayChanVersions, expectedEngine)
+      : { hasAny: true, missing: [] };
+    recordStep(replaySteps, "engine_version", {
+      result:
+        !expectedEngine || (replayEngine.hasAny && replayEngine.missing.length === 0)
+          ? "ok"
+          : "fail",
+      chan_versions: replayChanVersions,
+      expected: expectedEngine || null,
+    });
+    if (expectedEngine && (!replayEngine.hasAny || replayEngine.missing.length)) {
+      blockers.push(
+        `Replay engine_version not ${expectedEngine}: ${JSON.stringify(replayChanVersions)}`,
+      );
     }
 
     const stepStart = Date.now();
@@ -700,6 +778,9 @@ async function main() {
       runtime_dir: runtimeDir,
       python: pythonExecutable,
       czsc_note: "real PythonServiceHost; overlays via czsc from T0_PYTHON env",
+      expected_engine_version: expectedEngine || null,
+      live_chan_versions: liveChanVersions,
+      replay_chan_versions: replayChanVersions,
       no_real_trades: true,
       started_at: startedAt,
       finished_at: finishedAt,

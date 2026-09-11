@@ -1,0 +1,40 @@
+{
+  "ok": true,
+  "captured_at": "2026-09-11T08:05:12.277845+00:00",
+  "purpose": "#177 post-merge formal switch probe",
+  "git_sha": "e28737965a6362cfb09885ae32c26dd68faba14a",
+  "origin_main": "e28737965a6362cfb09885ae32c26dd68faba14a",
+  "python": "3.14.5",
+  "executable": "/Users/jishen/.venvs/czsc/bin/python",
+  "prefix": "/Users/jishen/.venvs/czsc",
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "declared_pin": "czsc==1.0.1",
+  "PINNED_ENGINE_VERSION": "1.0.1",
+  "czsc": "1.0.1",
+  "wbt": "0.9.0",
+  "rs_czsc": null,
+  "czsc__file__": "/Users/jishen/.venvs/czsc/lib/python3.14/site-packages/czsc/__init__.py",
+  "czsc__native": true,
+  "chantheory__file__": "/Users/jishen/development/stockpilot/packages/chantheory/__init__.py",
+  "structure_counts": {
+    "5m": {
+      "fractals": 38,
+      "strokes": 24
+    },
+    "30m": {
+      "fractals": 417,
+      "strokes": 95
+    }
+  },
+  "engine_versions": {
+    "analyze_5m": "1.0.1",
+    "analyze_30m": "1.0.1",
+    "analyze_day": "1.0.1",
+    "analyze_multi_timeframe": "1.0.1",
+    "t0_pipeline_5m": "1.0.1",
+    "t0_pipeline_30m": "1.0.1",
+    "multi_level_5m": "1.0.1",
+    "multi_level_30m": "1.0.1"
+  },
+  "errors": []
+}

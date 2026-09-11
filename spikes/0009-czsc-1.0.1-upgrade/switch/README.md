@@ -1,9 +1,9 @@
-# #177 合入前切换方案与回退演练
+# #177 切换方案、回退演练与正式切换结果
 
-父 issue：#172。本目录只覆盖**合入 main 之前**可完成的部分。  
-正式运行验证、会话重启后的最小冒烟、以及是否卸载 `rs_czsc` 的执行结果，在合入后再补，**不得**用本目录关闭 #177 / #172。
+父 issue：#172。合入前方案与隔离回退演练仍以本文 §1–§6 为准。  
+正式运行验证已在 PR #179 合入后补齐，结论见 `switch-result-177.md`。
 
-合并 PR #179 时：**不要**写 `Closes #177` 或 `Closes #172`。
+合并说明里不要写 `Closes #177` / `Closes #172`；也不要写 “Do not close #177”（GitHub 会把其中的 `close #177` 当成关闭关键字）。
 
 ---
 
@@ -72,15 +72,17 @@
 
 ---
 
-## 5. 合入后正式执行清单（#177 未完成项）
+## 5. 合入后正式执行清单（已完成）
 
-1. 合并 `upgrade/czsc-1.0.1` 一次进入 main（此时 main pin 才变为 1.0.1）。
+PR #179 squash 合入 `e287379`。执行记录：`switch-result-177.md`、`formal-env-facts-post-177.json`、`formal-switch-probe.json`、`ui-smoke/`。
+
+1. 合并 `upgrade/czsc-1.0.1` 一次进入 main（main pin 现为 `czsc==1.0.1`）。
 2. 记录合并 SHA、解释器路径、`czsc.__version__`、`PINNED_ENGINE_VERSION`、`wbt`。
-3. 按需 `pip uninstall rs_czsc`，再 `pip check`。
+3. 卸载残留 `rs_czsc`，`pip check` 通过。
 4. 重启 Live / Replay / chan-viewer 相关进程。
-5. 最小冒烟：Live、Replay、chan-viewer 各走关键路径；核验单周期与 `analyze_multi_timeframe` 溯源。
-6. 复用 #176 深度证据；仅当本轮又改了行为/依赖时重跑受影响项。
-7. 把切换结果写回本目录 / #177，**然后**才关闭 #177 与 #172。
+5. 最小冒烟：Live、Replay、chan-viewer 关键路径通过；单周期与 `analyze_multi_timeframe` 溯源均为 `1.0.1`。
+6. 复用 #176 深度证据；本轮只卸载残留包并重跑最小冒烟 / 下游自动化，未改行为代码。
+7. 切换结果写回本目录后，再关闭 #177 与 #172。
 
 ---
 

@@ -1,0 +1,58 @@
+{
+  "kind": "t0_service_smoke",
+  "task": "#177",
+  "git_sha": "e28737965a6362cfb09885ae32c26dd68faba14a",
+  "python": "/Users/jishen/.venvs/czsc/bin/python",
+  "port": 57440,
+  "runtime_dir": "/Users/jishen/Library/Application Support/stockpilot-t0-assistant/stockpilot",
+  "started_at": "2026-09-11T16:49:28.286320+00:00",
+  "no_real_trades": true,
+  "errors": [
+    "replay 5m=None",
+    "replay 30m=None"
+  ],
+  "python_service_ready": true,
+  "select_security": {
+    "accepted": true,
+    "error": null,
+    "http_status": null,
+    "session_id": "live-1-903dba2bace6454d8887a659566dd7f9",
+    "data_keys": [
+      "security",
+      "session_id"
+    ]
+  },
+  "live": {
+    "versions": {
+      "5m": "1.0.1",
+      "30m": "1.0.1",
+      "symbol": "sh.600584",
+      "session_id": "live-1-903dba2bace6454d8887a659566dd7f9"
+    },
+    "accepted": true,
+    "http_status": null,
+    "error": null
+  },
+  "begin_replay": {
+    "keys": [
+      "operation_id",
+      "request_id",
+      "service_generation",
+      "session_id"
+    ],
+    "session_id": "replay-cc31c735b6bd4ca9a5c44934349f2f22",
+    "error_code": null
+  },
+  "replay": {
+    "versions": {
+      "5m": null,
+      "30m": null,
+      "symbol": null,
+      "session_id": null
+    }
+  },
+  "ok": false,
+  "finished_at": "2026-09-11T16:49:32.089244+00:00",
+  "service_stdout_tail": "",
+  "service_stderr_tail": ""
+}
