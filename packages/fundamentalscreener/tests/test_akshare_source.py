@@ -1523,7 +1523,78 @@ class AkShareCompanyLayerTests(unittest.TestCase):
 
     def test_get_financial_metrics_empty_codes(self) -> None:
         src = AkShareFundamentalDataSource(akshare=_build_company_fake_akshare())
-        self.assertEqual(src.get_financial_metrics([], "2026-06-19"), [])
+        rows = src.get_financial_metrics([], "2026-06-19")
+        self.assertEqual(rows, [])
+        self.assertEqual(rows.fetch_report.requested_count, 0)
+        self.assertEqual(rows.fetch_report.failed_count, 0)
+
+    def test_company_paths_report_partial_and_total_failure(self) -> None:
+        """三条逐证券路径都保留成功行，并给出失败证券。"""
+
+        fake = _build_company_fake_akshare()
+
+        def _daily(symbol, start_date, end_date, adjust=""):
+            if "600001" in symbol:
+                raise RuntimeError("daily down")
+            return _FakeAkshare.stock_zh_a_daily(fake, symbol, start_date, end_date, adjust)
+
+        def _valuation(symbol, indicator, period="全部"):
+            if symbol == "600001":
+                raise RuntimeError("valuation down")
+            return _FakeAkshare.stock_zh_valuation_baidu(fake, symbol, indicator, period)
+
+        def _financial(symbol, start_year="1900"):
+            if symbol == "600001":
+                raise RuntimeError("financial down")
+            return _FakeAkshare.stock_financial_analysis_indicator(fake, symbol, start_year)
+
+        fake.stock_zh_a_daily = _daily
+        fake.stock_zh_valuation_baidu = _valuation
+        fake.stock_financial_analysis_indicator = _financial
+        src = AkShareFundamentalDataSource(akshare=fake, today="2026-06-19")
+
+        daily = src.get_company_daily_snapshot("2026-06-19", codes=["600001", "002371"])
+        self.assertEqual([row["code"] for row in daily], ["002371"])
+        self.assertEqual(daily.fetch_report.requested_count, 2)
+        self.assertEqual(daily.fetch_report.succeeded_count, 1)
+        self.assertEqual(daily.fetch_report.failed_count, 1)
+        self.assertEqual(daily.fetch_report.failures[0]["code"], "600001")
+        self.assertIn("RuntimeError: daily down", daily.fetch_report.failures[0]["error"])
+
+        empty_daily = src.get_company_daily_snapshot("2026-06-19", codes=[])
+        self.assertEqual(empty_daily.fetch_report.requested_count, 0)
+        self.assertEqual(empty_daily.fetch_report.failed_count, 0)
+
+        missing = src.get_company_daily_snapshot("2026-06-19", codes=["300001"])
+        self.assertEqual(list(missing), [])
+        self.assertEqual(missing.fetch_report.requested_count, 1)
+        self.assertEqual(missing.fetch_report.empty_count, 1)
+        self.assertEqual(missing.fetch_report.failed_count, 0)
+
+        valuation = src.get_company_valuation_history(
+            ["600001", "002371"], "2026-06-01", "2026-06-19"
+        )
+        self.assertTrue(valuation)
+        self.assertTrue(all(row["code"] == "002371" for row in valuation))
+        self.assertEqual(valuation.fetch_report.failed_count, 1)
+        self.assertEqual(valuation.fetch_report.succeeded_count, 1)
+        self.assertIn("valuation down", valuation.fetch_report.failures[0]["error"])
+
+        financial = src.get_financial_metrics(["600001", "002371"], "2026-06-19")
+        self.assertTrue(financial)
+        self.assertTrue(all(row["code"] == "002371" for row in financial))
+        self.assertEqual(financial.fetch_report.failed_count, 1)
+        self.assertIn("financial down", financial.fetch_report.failures[0]["error"])
+
+        def _always_fail(*_args, **_kwargs):
+            raise RuntimeError("all down")
+
+        fake.stock_zh_a_daily = _always_fail
+        failed = src.get_company_daily_snapshot("2026-06-19", codes=["002371"])
+        self.assertEqual(list(failed), [])
+        self.assertEqual(failed.fetch_report.requested_count, 1)
+        self.assertEqual(failed.fetch_report.failed_count, 1)
+        self.assertEqual(failed.fetch_report.empty_count, 0)
 
     def test_company_layer_failure_preserves_sector_cache(self) -> None:
         # 公司层失败不应影响板块层已写入的缓存。

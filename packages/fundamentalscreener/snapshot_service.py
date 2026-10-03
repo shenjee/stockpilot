@@ -216,7 +216,15 @@ def _build_task_failure_reason(
     required_tasks: Sequence[str],
     prefix: str,
     empty_label: str,
-) -> str:
+) -> tuple[str, str]:
+    """Return ``(reason, reason_code)`` for required tasks only.
+
+    ``sync_failed`` means a required task did not fully succeed. ``empty_required``
+    means those tasks succeeded but wrote no rows. Callers use the code to avoid
+    describing a legitimate empty result as a fetch failure. Non-required task
+    failures stay on ``refresh_result.status`` and do not block this check.
+    """
+
     by_task = {task["task"]: task for task in tasks}
     failed = [
         f"{task}: {by_task.get(task, {}).get('error', 'unknown')}"
@@ -230,13 +238,13 @@ def _build_task_failure_reason(
         and int(by_task.get(task, {}).get("row_count", 0) or 0) == 0
     ]
     if not failed and not empty:
-        return ""
+        return "", ""
     reason = prefix
     if failed:
         reason += f": failed=[{', '.join(failed)}]"
     if empty:
         reason += f": {empty_label}={empty}"
-    return reason
+    return reason, "sync_failed" if failed else "empty_required"
 
 
 def refresh_market_data(
@@ -256,6 +264,7 @@ def refresh_market_data(
 
     refresh_result_dict: Optional[Dict[str, Any]] = None
     sync_error = ""
+    sync_reason_code = ""
     try:
         active_source = source if source is not None else build_default_source()
         conn = connect(db)
@@ -272,7 +281,7 @@ def refresh_market_data(
                 sector_ids=sync_sector_ids,
             )
             refresh_result_dict = result.to_dict()
-            sync_error = _build_task_failure_reason(
+            sync_error, sync_reason_code = _build_task_failure_reason(
                 result.tasks,
                 LIGHT_REQUIRED_TASKS,
                 prefix="sync did not satisfy required tasks",
@@ -282,6 +291,7 @@ def refresh_market_data(
             conn.close()
     except Exception as exc:
         sync_error = str(exc)
+        sync_reason_code = "sync_failed"
 
     load_result = load_snapshot_from_db(
         db,
@@ -301,7 +311,7 @@ def refresh_market_data(
             metadata=load_result.metadata,
             quality_report=load_result.quality_report,
             status=status,
-            reason_code="sync_failed" if sync_error else "",
+            reason_code=sync_reason_code if sync_error else "",
             reason=sync_error,
             refresh_result=refresh_result_dict,
         )
@@ -310,7 +320,7 @@ def refresh_market_data(
         if sync_error:
             return SnapshotResult(
                 status="no_cache",
-                reason_code="sync_failed",
+                reason_code=sync_reason_code or "sync_failed",
                 reason=sync_error,
                 refresh_result=refresh_result_dict,
             )
@@ -324,7 +334,7 @@ def refresh_market_data(
 
     return SnapshotResult(
         status="no_cache",
-        reason_code="sync_failed" if sync_error else "no_cache",
+        reason_code=sync_reason_code if sync_error else "no_cache",
         reason=sync_error,
         refresh_result=refresh_result_dict,
     )
@@ -400,6 +410,7 @@ def refresh_sector_detail_snapshot(
 
     refresh_result_dict: Optional[Dict[str, Any]] = None
     sync_error = ""
+    sync_reason_code = ""
     try:
         active_source = source if source is not None else build_default_source()
         conn = connect(db)
@@ -414,16 +425,19 @@ def refresh_sector_detail_snapshot(
                 sector_ids=[sector_id],
             )
             refresh_result_dict = result.to_dict()
-            sync_error = _build_task_failure_reason(
+            sync_error, sync_reason_code = _build_task_failure_reason(
                 result.tasks,
                 DETAIL_REQUIRED_TASKS,
                 prefix="sync did not satisfy detail required tasks",
                 empty_label="empty",
             )
+            if sync_reason_code == "sync_failed":
+                sync_reason_code = "detail_sync_failed"
         finally:
             conn.close()
     except Exception as exc:
         sync_error = str(exc)
+        sync_reason_code = "detail_sync_failed"
 
     load_result = load_snapshot_from_db(
         db,
@@ -440,11 +454,11 @@ def refresh_sector_detail_snapshot(
         if sync_error:
             if not has_company_data:
                 status = "no_cache"
-                reason_code = "detail_sync_failed"
+                reason_code = sync_reason_code or "detail_sync_failed"
                 reason = sync_error
             else:
                 status = "refresh_failed"
-                reason_code = "detail_sync_failed"
+                reason_code = sync_reason_code or "detail_sync_failed"
                 reason = sync_error
         elif load_result.metadata:
             quality_status = load_result.metadata.data_quality_status or "ok"
@@ -467,7 +481,7 @@ def refresh_sector_detail_snapshot(
             return SectorDetailSnapshotResult(
                 sector_id=sector_id,
                 status="no_cache",
-                reason_code="detail_sync_failed",
+                reason_code=sync_reason_code or "detail_sync_failed",
                 reason=sync_error,
                 refresh_result=refresh_result_dict,
             )
@@ -482,7 +496,7 @@ def refresh_sector_detail_snapshot(
     return SectorDetailSnapshotResult(
         sector_id=sector_id,
         status="no_cache",
-        reason_code="detail_sync_failed" if sync_error else "no_cache",
+        reason_code=sync_reason_code if sync_error else "no_cache",
         reason=sync_error,
         refresh_result=refresh_result_dict,
     )

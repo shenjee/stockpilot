@@ -15,6 +15,10 @@ from tempfile import TemporaryDirectory
 from typing import Any, Dict, List
 
 from packages.fundamentalscreener.data_sources import FakeFundamentalDataSource
+from packages.fundamentalscreener.data_sources.fetch_report import (
+    CodeFetchReport,
+    ReportedRows,
+)
 from packages.fundamentalscreener.sqlite_schema import connect, init_db
 from packages.fundamentalscreener.sync import main, sync_all
 
@@ -411,6 +415,169 @@ class SyncCliTests(unittest.TestCase):
             payload = json.loads(out.getvalue())
             self.assertGreater(payload["failure_count"], 0)
 
+    def test_sync_cli_legitimate_empty_company_result_returns_rc0(self) -> None:
+        # 请求了证券但源没有区间数据：任务 success，不因 row_count=0 返回 rc=1。
+        source = _make_source()
+        source.get_company_daily_snapshot = lambda trade_date, codes=None: ReportedRows(
+            [],
+            CodeFetchReport(requested_count=1, empty_count=1),
+        )
+        with TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "fundamental.sqlite"
+            out = io.StringIO()
+            with redirect_stdout(out):
+                rc = main(
+                    [
+                        "sync",
+                        "--db",
+                        str(db_path),
+                        "--date",
+                        "2026-06-19",
+                        "--classification-system",
+                        "em_industry",
+                        "--codes",
+                        "002371",
+                    ],
+                    source=source,
+                )
+            self.assertEqual(rc, 0)
+            payload = json.loads(out.getvalue())
+            self.assertEqual(payload["status"], "success")
+            daily = next(t for t in payload["tasks"] if t["task"] == "get_company_daily_snapshot")
+            self.assertTrue(daily["success"])
+            self.assertEqual(daily["status"], "success")
+            self.assertEqual(daily["requested_count"], 1)
+            self.assertEqual(daily["empty_count"], 1)
+            self.assertEqual(daily["row_count"], 0)
+            self.assertIsNone(daily["error"])
+
+    def test_sync_cli_partial_company_failure_returns_rc1_and_keeps_rows(self) -> None:
+        # 一只证券抛错、另一只有数据：不能报全成功；已写入行保留。
+        with TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "fundamental.sqlite"
+            conn = connect(str(db_path))
+            try:
+                first = sync_all(
+                    conn,
+                    _make_source(),
+                    analysis_date="2026-06-19",
+                    classification_system="em_industry",
+                    codes=["002371"],
+                )
+            finally:
+                conn.close()
+            self.assertEqual(first.status, "success")
+            conn = connect(str(db_path))
+            try:
+                cached = conn.execute(
+                    "SELECT COUNT(*) FROM company_daily_snapshot"
+                ).fetchone()[0]
+            finally:
+                conn.close()
+            self.assertGreater(cached, 0)
+
+            source = _make_source()
+            source.get_company_daily_snapshot = lambda trade_date, codes=None: ReportedRows(
+                [
+                    {
+                        "code": "600584",
+                        "trade_date": trade_date,
+                        "close": 20.0,
+                        "turnover_amount": 1.0,
+                        "turnover_rate": 0.01,
+                        "market_cap": 2.0,
+                    }
+                ],
+                CodeFetchReport(
+                    requested_count=2,
+                    succeeded_count=1,
+                    failed_count=1,
+                    failures=(
+                        {"code": "002371", "error": "RuntimeError: boom"},
+                    ),
+                ),
+            )
+            out = io.StringIO()
+            with redirect_stdout(out):
+                rc = main(
+                    [
+                        "sync",
+                        "--db",
+                        str(db_path),
+                        "--date",
+                        "2026-06-19",
+                        "--classification-system",
+                        "em_industry",
+                        "--codes",
+                        "002371,600584",
+                    ],
+                    source=source,
+                )
+            self.assertEqual(rc, 1)
+            payload = json.loads(out.getvalue())
+            self.assertEqual(payload["status"], "partial")
+            self.assertGreater(payload["failure_count"], 0)
+            daily = next(t for t in payload["tasks"] if t["task"] == "get_company_daily_snapshot")
+            self.assertFalse(daily["success"])
+            self.assertEqual(daily["status"], "partial")
+            self.assertEqual(daily["failed_count"], 1)
+            self.assertIn("002371", daily["failures"][0]["code"])
+            self.assertIsNotNone(daily["error"])
+            conn = connect(str(db_path))
+            try:
+                self.assertGreaterEqual(
+                    conn.execute("SELECT COUNT(*) FROM company_daily_snapshot").fetchone()[0],
+                    cached,
+                )
+                log = conn.execute(
+                    "SELECT success, error, details FROM data_fetch_log "
+                    "WHERE fetch_run_id = ? AND task = 'get_company_daily_snapshot'",
+                    (payload["fetch_run_id"],),
+                ).fetchone()
+            finally:
+                conn.close()
+            self.assertEqual(log[0], 0)
+            self.assertIsNotNone(log[1])
+            logged_details = json.loads(log[2])
+            self.assertEqual(logged_details["failures"][0]["code"], "002371")
+            self.assertIn("RuntimeError: boom", logged_details["failures"][0]["error"])
+
+    def test_sync_cli_all_requested_codes_failed_returns_rc1(self) -> None:
+        source = _make_source()
+        source.get_financial_metrics = lambda codes, as_of_date: ReportedRows(
+            [],
+            CodeFetchReport(
+                requested_count=1,
+                failed_count=1,
+                failures=({"code": "002371", "error": "RuntimeError: boom"},),
+            ),
+        )
+        with TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "fundamental.sqlite"
+            out = io.StringIO()
+            with redirect_stdout(out):
+                rc = main(
+                    [
+                        "sync",
+                        "--db",
+                        str(db_path),
+                        "--date",
+                        "2026-06-19",
+                        "--classification-system",
+                        "em_industry",
+                        "--codes",
+                        "002371",
+                    ],
+                    source=source,
+                )
+            self.assertEqual(rc, 1)
+            payload = json.loads(out.getvalue())
+            self.assertEqual(payload["status"], "partial")
+            financial = next(t for t in payload["tasks"] if t["task"] == "get_financial_metrics")
+            self.assertEqual(financial["status"], "failed")
+            self.assertFalse(financial["success"])
+            self.assertEqual(financial["error"][:12], "fetch_failed")
+
     def test_quality_cli_returns_real_report(self) -> None:
         # Phase 6D：quality 命令读取 SQLite 并输出结构化质量报告。
         # 先 sync 一批数据，再运行 quality。
@@ -442,6 +609,48 @@ class SyncCliTests(unittest.TestCase):
 
 
 class SyncPkValidationTests(unittest.TestCase):
+    def test_persist_exception_retains_fetch_facts_and_rolls_back(self) -> None:
+        from packages.fundamentalscreener.sync_persistence import _run_task
+
+        conn = connect(":memory:")
+        self.addCleanup(conn.close)
+        init_db(conn)
+        conn.execute("CREATE TABLE rollback_probe (value TEXT)")
+        with conn:
+            conn.execute("INSERT INTO rollback_probe VALUES ('cached')")
+        report = CodeFetchReport(
+            requested_count=3, succeeded_count=1, empty_count=1, failed_count=1,
+            failures=({"code": "000002", "error": "RuntimeError: unavailable"},),
+        )
+
+        def persist(rows):
+            conn.execute("UPDATE rollback_probe SET value = 'new'")
+            raise RuntimeError("write unavailable")
+
+        task = _run_task(
+            conn, fetch_run_id="persist-error", source_name="fake",
+            task="get_company_daily_snapshot",
+            fetch=lambda: ReportedRows([{"code": "000001"}], report),
+            persist=persist,
+        )
+        self.assertEqual(task["status"], "failed")
+        self.assertFalse(task["success"])
+        self.assertEqual(task["row_count"], 0)
+        self.assertIn("persist_failed: write unavailable", task["error"])
+        log = conn.execute(
+            "SELECT success, row_count, error, details FROM data_fetch_log "
+            "WHERE fetch_run_id = 'persist-error'"
+        ).fetchone()
+        self.assertEqual(tuple(log[:3]), (0, 0, task["error"]))
+        details = json.loads(log["details"])
+        self.assertEqual(details["status"], "failed")
+        for key, value in report.as_dict().items():
+            self.assertEqual(task[key], value)
+            self.assertEqual(details[key], value)
+        self.assertEqual(
+            conn.execute("SELECT value FROM rollback_probe").fetchone()[0], "cached",
+        )
+
     """P1 回归：缺失主键的行不能被静默写成 PK='' 的"成功缓存"。"""
 
     def test_missing_sector_id_rejected_not_silently_written(self) -> None:
@@ -511,8 +720,10 @@ class SyncPkValidationTests(unittest.TestCase):
                 classification_system="em_industry",
             )
             sector_task = next(t for t in result.tasks if t["task"] == "list_sectors")
-            # 有 1 行写入成功 → 任务仍记为 success，但 rejections > 0。
-            self.assertTrue(sector_task["success"], msg=sector_task)
+            # 有效行保留，但部分拒绝不再记为无条件全成功。
+            self.assertFalse(sector_task["success"], msg=sector_task)
+            self.assertEqual(sector_task["status"], "partial")
+            self.assertIn("partial_rows_rejected", sector_task["error"])
             self.assertEqual(sector_task["row_count"], 1)
             self.assertEqual(sector_task["rejections"], 1)
 
@@ -529,6 +740,13 @@ class SyncPkValidationTests(unittest.TestCase):
             )
             details = json.loads(cur.fetchone()[0])
             self.assertEqual(details["rejected_count"], 1)
+            self.assertEqual(details["status"], "partial")
+            logged = conn.execute(
+                "SELECT success FROM data_fetch_log "
+                "WHERE fetch_run_id = ? AND task = 'list_sectors'",
+                (result.fetch_run_id,),
+            ).fetchone()
+            self.assertEqual(logged[0], 0)
         finally:
             conn.close()
 

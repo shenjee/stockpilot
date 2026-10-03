@@ -256,6 +256,31 @@ def load_latest_snapshot(
     )
 
 
+def _cache_usable_sync_notice(refresh_result: Optional[Dict[str, Any]]) -> str:
+    """Describe a partial or failed sync when cached data can still be shown."""
+
+    if not isinstance(refresh_result, dict):
+        return ""
+    if refresh_result.get("status") not in ("partial", "failed"):
+        return ""
+    parts = []
+    for task in refresh_result.get("tasks") or []:
+        task_status = task.get("status")
+        if task_status in ("partial", "failed") or not task.get("success", True):
+            failed_codes = [
+                item.get("code")
+                for item in (task.get("failures") or [])
+                if item.get("code")
+            ]
+            summary = task.get("error") or task_status
+            if failed_codes:
+                summary = f"{summary} [{', '.join(failed_codes)}]"
+            parts.append(f"{task.get('task')}: {summary}")
+    if not parts:
+        return "部分采集未完成，当前缓存仍可用于分析。"
+    return "部分采集未完成，当前缓存仍可用于分析：" + "；".join(parts)
+
+
 def refresh_market_data(
     db_path: Optional[Path | str] = None,
     analysis_date: Optional[str] = None,
@@ -277,14 +302,20 @@ def refresh_market_data(
         source=source,
     )
     message = ""
-    if result.status == "refresh_failed":
+    if result.status == "refresh_failed" and result.reason_code == "empty_required":
+        message = f"本次没有取到新的必需数据，展示最近可用缓存：{result.reason}"
+    elif result.status == "refresh_failed":
         message = f"数据刷新失败，展示最近可用缓存：{result.reason}"
     elif result.status == "invalid":
         message = result.reason
+    elif result.status == "no_cache" and result.reason_code == "empty_required":
+        message = "暂无本地数据，请点击获取数据。"
     elif result.status == "no_cache" and result.reason:
         message = f"数据刷新失败且无可用缓存。原因：{result.reason}"
     elif result.status == "no_cache":
         message = "数据刷新失败且无可用缓存。"
+    elif result.status in ("ok", "degraded", "stale"):
+        message = _cache_usable_sync_notice(result.refresh_result)
     return FrontendSnapshotResult(
         snapshot=result.snapshot,
         metadata=result.metadata,
@@ -420,10 +451,14 @@ def refresh_sector_detail(
     if result.status in ("refresh_failed", "no_cache") and result.reason:
         status = "refresh_failed" if has_displayable_detail else "no_cache"
 
-    if status == "refresh_failed":
+    if status == "refresh_failed" and result.reason_code == "empty_required":
+        message = f"本次没有取到新的板块成分数据，展示最近可用缓存：{result.reason}"
+    elif status == "refresh_failed":
         message = f"板块数据刷新失败，展示最近可用缓存：{result.reason}"
     elif status == "invalid":
         message = result.reason
+    elif status == "no_cache" and result.reason_code == "empty_required":
+        message = "暂无该板块的成分数据。"
     elif status == "no_cache" and result.reason:
         if detail is not None:
             message = f"板块详情刷新失败且无可用成分股数据。原因：{result.reason}"
@@ -432,7 +467,7 @@ def refresh_sector_detail(
     elif status == "no_cache":
         message = "暂无本地数据，请先获取数据。"
     else:
-        message = ""
+        message = _cache_usable_sync_notice(result.refresh_result)
 
     return SectorDetailResult(
         detail=detail,

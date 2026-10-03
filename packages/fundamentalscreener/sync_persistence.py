@@ -4,8 +4,15 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from .data_sources.fetch_report import CodeFetchReport
 from .lineage import now_cn_isoformat
 from .financial_pit import prepare_write, record_evidence, valid_date
+from .sync_outcome import (
+    STATUS_FAILED,
+    STATUS_PARTIAL,
+    STATUS_SUCCESS,
+    classify_completed_task,
+)
 
 
 def _ts() -> str:
@@ -319,6 +326,76 @@ def _summarize_row(row: Dict[str, Any]) -> Dict[str, Any]:
     return {key: row.get(key) for key in keep if key in row}
 
 
+def _task_error(
+    status: str,
+    *,
+    report: Optional[CodeFetchReport],
+    rejections: int,
+) -> Optional[str]:
+    if report is not None and report.failed_count > 0:
+        prefix = "fetch_failed" if status == STATUS_FAILED else "partial_fetch_failed"
+        message = (
+            f"{prefix}: {report.failed_count}/{report.requested_count} code(s) failed"
+        )
+        if rejections > 0:
+            message += f"; {rejections} row(s) failed validation"
+        return message
+    if status == STATUS_FAILED and rejections > 0:
+        return f"all_rows_rejected: {rejections} row(s) failed validation"
+    if status == STATUS_PARTIAL and rejections > 0:
+        return f"partial_rows_rejected: {rejections} row(s) failed validation"
+    return None
+
+
+def _task_details(
+    status: str,
+    *,
+    report: Optional[CodeFetchReport],
+    rejections: int,
+    rejected: Sequence[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    details: Dict[str, Any] = {}
+    if report is not None:
+        details.update(report.as_dict())
+    if rejections > 0:
+        details["rejected_count"] = rejections
+        details["rejected_sample"] = [
+            {"reason": item["reason"], "row": _summarize_row(item["row"])}
+            for item in list(rejected)[:20]
+        ]
+    if not details and status == STATUS_SUCCESS:
+        return None
+    details["status"] = status
+    return details
+
+
+def _task_payload(
+    *,
+    task: str,
+    status: str,
+    row_count: int,
+    error: Optional[str],
+    rejections: int = 0,
+    report: Optional[CodeFetchReport] = None,
+) -> Dict[str, Any]:
+    report_fields = report.as_dict() if report is not None else {
+        "requested_count": None,
+        "succeeded_count": None,
+        "empty_count": None,
+        "failed_count": None,
+        "failures": [],
+    }
+    return {
+        "task": task,
+        "success": status == STATUS_SUCCESS,
+        "status": status,
+        "row_count": row_count,
+        "error": error,
+        "rejections": rejections,
+        **report_fields,
+    }
+
+
 def _run_task(
     conn,
     *,
@@ -332,8 +409,13 @@ def _run_task(
 
     started_at = _ts()
     try:
-        rows = list(fetch())
+        fetched = fetch()
+        report = getattr(fetched, "fetch_report", None)
+        if report is not None and not isinstance(report, CodeFetchReport):
+            report = None
+        rows = list(fetched)
     except Exception as exc:  # noqa: BLE001
+        error = f"fetch_failed: {exc}"
         finished_at = _ts()
         with conn:
             _log_fetch(
@@ -345,18 +427,20 @@ def _run_task(
                 finished_at=finished_at,
                 success=False,
                 row_count=0,
-                error=f"fetch_failed: {exc}",
+                error=error,
+                details={"status": STATUS_FAILED},
             )
-        return {
-            "task": task,
-            "success": False,
-            "row_count": 0,
-            "error": f"fetch_failed: {exc}",
-        }
+        return _task_payload(
+            task=task,
+            status=STATUS_FAILED,
+            row_count=0,
+            error=error,
+        )
     try:
         with conn:
             result = persist(rows)
     except Exception as exc:  # noqa: BLE001
+        error = f"persist_failed: {exc}"
         finished_at = _ts()
         with conn:
             _log_fetch(
@@ -368,31 +452,33 @@ def _run_task(
                 finished_at=finished_at,
                 success=False,
                 row_count=0,
-                error=f"persist_failed: {exc}",
+                error=error,
+                details=_task_details(
+                    STATUS_FAILED, report=report, rejections=0, rejected=(),
+                ),
             )
-        return {
-            "task": task,
-            "success": False,
-            "row_count": 0,
-            "error": f"persist_failed: {exc}",
-        }
+        return _task_payload(
+            task=task,
+            status=STATUS_FAILED,
+            row_count=0,
+            error=error,
+            report=report,
+        )
 
     written = int(result.written or 0)
     rejections = int(result.rejections or 0)
-    success = not (written == 0 and rejections > 0)
-    error: Optional[str] = None
-    details: Optional[Dict[str, Any]] = None
-    if rejections > 0:
-        sample = [
-            {"reason": item["reason"], "row": _summarize_row(item["row"])}
-            for item in result.rejected[:20]
-        ]
-        details = {
-            "rejected_count": rejections,
-            "rejected_sample": sample,
-        }
-        if not success:
-            error = f"all_rows_rejected: {rejections} row(s) failed validation"
+    status = classify_completed_task(
+        report=report,
+        written=written,
+        rejections=rejections,
+    )
+    error = _task_error(status, report=report, rejections=rejections)
+    details = _task_details(
+        status,
+        report=report,
+        rejections=rejections,
+        rejected=result.rejected,
+    )
 
     finished_at = _ts()
     with conn:
@@ -403,15 +489,16 @@ def _run_task(
             task=task,
             started_at=started_at,
             finished_at=finished_at,
-            success=success,
+            success=status == STATUS_SUCCESS,
             row_count=written,
             error=error,
             details=details,
         )
-    return {
-        "task": task,
-        "success": success,
-        "row_count": written,
-        "error": error,
-        "rejections": rejections,
-    }
+    return _task_payload(
+        task=task,
+        status=status,
+        row_count=written,
+        error=error,
+        rejections=rejections,
+        report=report,
+    )

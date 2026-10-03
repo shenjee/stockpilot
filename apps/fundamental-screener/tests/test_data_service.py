@@ -400,6 +400,28 @@ class _FakeRefreshSourceDetailFail(_FakeRefreshSource):
         raise RuntimeError("fake constituents failure")
 
 
+class _FakePartialCompanySource(_FakeRefreshSource):
+    """一只证券抓取失败，其余证券仍返回行情。"""
+
+    def get_company_daily_snapshot(self, trade_date, codes=None):
+        from fundamentalscreener.data_sources.fetch_report import (
+            CodeFetchReport,
+            ReportedRows,
+        )
+
+        rows = super().get_company_daily_snapshot(trade_date, codes)
+        kept = [row for row in rows if row.get("code") != "600584"]
+        return ReportedRows(
+            kept,
+            CodeFetchReport(
+                requested_count=2,
+                succeeded_count=1 if kept else 0,
+                failed_count=1,
+                failures=({"code": "600584", "error": "RuntimeError: boom"},),
+            ),
+        )
+
+
 class _FakeRefreshSourceUniverseFail(_FakeRefreshSource):
     """``get_stock_universe`` 抛异常，轻量任务正常（§15.9.4a 测试用）。
 
@@ -684,7 +706,8 @@ class RefreshMarketDataTests(unittest.TestCase):
             )
             self.assertEqual(result.status, "no_cache")
             self.assertIsNone(result.snapshot)
-            self.assertTrue(result.message, "should have a failure message")
+            self.assertIn("暂无", result.message)
+            self.assertNotIn("失败", result.message)
         finally:
             if os.path.exists(db_path):
                 os.unlink(db_path)
@@ -925,6 +948,29 @@ class RefreshMarketDataNonLightFailureTests(unittest.TestCase):
                 f"expected first screen usable, got {result.status}: {result.message}",
             )
             self.assertIsNotNone(result.snapshot)
+        finally:
+            if os.path.exists(db_path):
+                os.unlink(db_path)
+
+    def test_partial_company_failure_keeps_screen_and_reports_sync_status(self) -> None:
+        """公司层部分失败不把首屏判成无缓存，但同步结论不再是全成功。"""
+
+        db_fd, db_path = tempfile.mkstemp(suffix=".sqlite")
+        os.close(db_fd)
+        try:
+            result = refresh_market_data(
+                db_path=db_path,
+                analysis_date="2026-06-19",
+                codes=["002371"],
+                source=_FakePartialCompanySource(),
+            )
+            self.assertIn(result.status, ("ok", "degraded", "stale"))
+            self.assertIsNotNone(result.snapshot)
+            self.assertTrue(result.snapshot.sectors)
+            self.assertEqual(result.refresh_result["status"], "partial")
+            self.assertIn("部分采集未完成", result.message)
+            self.assertIn("600584", result.message)
+            self.assertNotIn("暂无", result.message)
         finally:
             if os.path.exists(db_path):
                 os.unlink(db_path)

@@ -20,8 +20,10 @@ Phase 6B+6C 实现：
   任务事务；任务失败时写入 ``data_fetch_log`` 的失败行并继续下一任务。
 - 所有采集写入必须带 ``source`` / ``fetch_run_id`` / ``source_updated_at`` /
   ``created_at`` / ``updated_at``。
-- rc=0 要求 Phase 6B 必需的板块层任务全部成功且写入行数 > 0；公司层任务失败也会
-  导致 rc=1，但公司层 0 行成功不阻塞板块层判定。
+- rc=0 要求每个任务 ``status=success``，且轻量/重量必需任务写入行数 > 0。
+  公司层未请求或合法空结果（无异常的 0 行）是 success，不单独导致 rc=1。
+  任一任务 partial 或 failed 为 rc=1。必需板块任务 0 行仍为 rc=1，与公司层
+  合法空结果不是同一条规则。参数或依赖错误仍为 rc=2。
 """
 
 from __future__ import annotations
@@ -64,6 +66,7 @@ from .sync_fetchers import (
     fetch_sectors,
     fetch_stock_universe,
 )
+from .sync_outcome import aggregate_status, sum_count
 from .sync_persistence import (
     _run_task,
     _ts,
@@ -125,14 +128,23 @@ class SyncResult:
     def row_count(self) -> int:
         return sum(int(t.get("row_count", 0) or 0) for t in self.tasks)
 
+    @property
+    def status(self) -> str:
+        return aggregate_status(self.tasks)
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "fetch_run_id": self.fetch_run_id,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
+            "status": self.status,
             "success_count": self.success_count,
             "failure_count": self.failure_count,
             "row_count": self.row_count,
+            "requested_count": sum_count(self.tasks, "requested_count"),
+            "succeeded_count": sum_count(self.tasks, "succeeded_count"),
+            "empty_count": sum_count(self.tasks, "empty_count"),
+            "failed_count": sum_count(self.tasks, "failed_count"),
             "tasks": list(self.tasks),
         }
 
@@ -540,11 +552,10 @@ def main(
         payload["benchmark"] = args.benchmark
         sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2))
         sys.stdout.write("\n")
-        # rc=0 要求轻量必需任务全部成功且写入行数 > 0，且无任何子任务失败。
-        # §15.9.4a: 成分股属重量层，从 REQUIRED_PHASE_6B_TASKS 移至独立校验。
-        # 全量同步（sector_ids is None）时仍要求成分股成功且有行；按需加载
-        # （sector_ids 非空）时成分股为用户显式请求的板块，同样要求成功。
-        # JSON 始终输出便于排查。akshare 缺失/口径不支持在前面已返回 rc=2。
+        # rc=0：全部任务 status=success，且轻量/重量必需任务写入行数 > 0。
+        # 公司层合法空结果或未请求保持 success，不因 row_count=0 变成 rc=1。
+        # 必需板块任务 0 行仍是 rc=1。任一 partial/failed 使 failure_count>0，
+        # 因此也是 rc=1。akshare 缺失/口径不支持在前面已返回 rc=2。
         return compute_sync_exit_code(
             result.tasks,
             result.failure_count,

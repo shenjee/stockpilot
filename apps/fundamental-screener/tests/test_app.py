@@ -271,6 +271,35 @@ class AppSmokeTests(unittest.TestCase):
         self.assertTrue(recorder.dataframes, "should render tables from old cache")
         self.assertEqual(recorder.errors, [])
 
+    def test_partial_sync_notice_shows_warning_without_hiding_table(self) -> None:
+        """缓存足够时仍渲染表格，并提示同步没有全成功。"""
+
+        recorder = _Recorder()
+        try:
+            app = _load_app(recorder)
+        except ModuleNotFoundError as exc:
+            self.skipTest(f"missing dependency: {exc}")
+            return
+
+        from services.data_service import FrontendSnapshotResult
+
+        snapshot_result = _make_ok_result(app)
+        app.load_or_refresh_snapshot = lambda refresh=False, **kw: FrontendSnapshotResult(
+            snapshot=snapshot_result.snapshot,
+            status="ok",
+            message="部分采集未完成，当前缓存仍可用于分析：get_company_daily_snapshot",
+        )
+
+        try:
+            app.main()
+        except ModuleNotFoundError as exc:
+            self.skipTest(f"missing dependency: {exc}")
+            return
+
+        self.assertTrue(recorder.warnings, "expected warning for partial sync")
+        self.assertTrue(recorder.dataframes, "usable cache should still render")
+        self.assertEqual(recorder.errors, [])
+
     def test_ui_does_not_expose_fixture_sqlite_or_path(self) -> None:
         """UI 不出现 fixture、SQLite、数据库路径（docs §2.4）。"""
 
