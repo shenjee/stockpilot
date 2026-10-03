@@ -1456,6 +1456,18 @@ class AkShareCompanyLayerTests(unittest.TestCase):
         self.assertIsNone(q1["free_cashflow"])
         self.assertIsNone(q1["accounts_receivable_yoy"])
 
+    def test_debt_mapping_rejects_non_equivalent_and_unverified_fields(self):
+        for value in (15, 0, None, "--", "bad", -5, float("inf"), float("nan")):
+            with self.subTest(value=value):
+                fake = _FakeAkshare(financial_map={"002371": _FakeDataFrame([{
+                    "日期": "2026-03-31", "长期负债比率(%)": value,
+                    # Even a plausible name is not a verified source contract.
+                    "有息负债率(%)": 30,
+                }])})
+                rows = AkShareFundamentalDataSource(akshare=fake).get_financial_metrics(
+                    ["002371"], "2026-06-19")
+                self.assertIsNone(rows[0]["interest_bearing_debt_ratio"])
+
     def test_historical_request_does_not_backdate_live_financial_values(self) -> None:
         from unittest.mock import patch
         fake = _build_company_fake_akshare()

@@ -228,7 +228,8 @@ class DbSnapshotLineageTests(unittest.TestCase):
                  revenue_yoy=.3, net_profit_yoy=.3, deducted_net_profit_yoy=.3,
                  gross_margin=.5, net_margin=.3, roe=.3,
                  operating_cashflow_to_profit=1.5, free_cashflow=1e9,
-                 debt_to_asset=.1, interest_bearing_debt_ratio=.05,
+                 # Current AkShare source has no equivalent debt field (#183).
+                 debt_to_asset=.1, interest_bearing_debt_ratio=None,
                  accounts_receivable_yoy=.05, inventory_yoy=.05,
                  gross_margin_yoy_change=.05)
             for code in ("002371", "600584", "000001")
@@ -401,6 +402,40 @@ class DbSnapshotLineageTests(unittest.TestCase):
                 self.assertTrue(any("financial_pit_disclosure_unverified" in w for w in data["warnings"]))
                 self.assertEqual(data["snapshot"]["data_quality_status"], "degraded")
                 self.assertTrue(data["snapshot"]["quality_report_id"])
+
+    def test_ignored_debt_preserves_priority_but_other_warnings_still_degrade(self):
+        from packages.fundamentalscreener.sqlite_repository import SqliteFundamentalRepository
+        self._replace_with_current_financials("estimated")
+        before = self._historical_screen()
+        self.assertEqual(before["snapshot"]["data_quality_status"], "ok")
+        self.assertTrue(before["candidates"]["priority"])
+        conn = connect(str(self._db_path))
+        try:
+            with conn:
+                conn.execute("UPDATE financial_metrics SET interest_bearing_debt_ratio=.3 "
+                             "WHERE code='002371'")
+            repo = SqliteFundamentalRepository(self._db_path, "2026-06-19")
+            repo.load_snapshot()
+            ignored = [i for i in repo.quality_report.issues
+                       if i.code == "interest_bearing_debt_cache_ignored"]
+            self.assertEqual(len(ignored), 1)
+            self.assertEqual(ignored[0].level, "info")
+            self.assertIn("杠杆分量权重仍为15%", ignored[0].message)
+            after = self._historical_screen()
+            self.assertEqual(after["snapshot"]["data_quality_status"], "ok")
+            self.assertEqual(after["candidates"], before["candidates"])
+            self.assertTrue(any("interest_bearing_debt_cache_ignored" in w
+                                for w in after["warnings"]))
+            # A separate coverage warning must still downgrade the full snapshot.
+            with conn:
+                conn.execute("DELETE FROM financial_metrics WHERE code != '002371'")
+            degraded = self._historical_screen()
+            self.assertEqual(degraded["snapshot"]["data_quality_status"], "degraded")
+            self.assertEqual(degraded["candidates"]["priority"], [])
+            self.assertTrue(any("interest_bearing_debt_cache_ignored" in w
+                                for w in degraded["warnings"]))
+        finally:
+            conn.close()
 
     def test_current_disclosure_info_preserves_priority_and_all_cli_notices(self):
         from packages.fundamentalscreener.sqlite_repository import SqliteFundamentalRepository

@@ -62,6 +62,23 @@ def _run_expect_failure(argv: List[str]) -> tuple[int, str, str]:
 
 
 class CLISmokeTests(unittest.TestCase):
+    def test_sqlite_debt_quarantine_is_visible_in_cli(self):
+        import tempfile
+        from packages.fundamentalscreener.sqlite_schema import connect, init_db
+        from packages.fundamentalscreener.tests.test_sqlite_repository import _populate_db
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "financial.sqlite")
+            conn = connect(path)
+            init_db(conn)
+            _populate_db(conn)
+            conn.execute("UPDATE financial_metrics SET interest_bearing_debt_ratio = .3")
+            conn.commit()
+            conn.close()
+            payload = _run(["financials", "--db", path, "--date", "2026-06-19",
+                            "--codes", "002371"])
+            self.assertTrue(any("interest_bearing_debt_cache_ignored" in w
+                                for w in payload["warnings"]))
+
     def test_fixture_exists(self) -> None:
         self.assertTrue(FIXTURE.exists(), f"fixture missing: {FIXTURE}")
 

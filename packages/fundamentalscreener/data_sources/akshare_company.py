@@ -252,7 +252,9 @@ def get_financial_metrics(
                     ),
                     "free_cashflow": None,
                     "debt_to_asset": pct_to_ratio(r.get("资产负债率(%)")),
-                    "interest_bearing_debt_ratio": pct_to_ratio(r.get("长期负债比率(%)")),
+                    # This endpoint has no verified interest-bearing debt ratio.
+                    # Long-term liabilities classify maturity, not interest cost.
+                    "interest_bearing_debt_ratio": None,
                     "accounts_receivable_yoy": None,
                     "inventory_yoy": None,
                     "gross_margin_yoy_change": None,

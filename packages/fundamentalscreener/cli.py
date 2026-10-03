@@ -331,12 +331,12 @@ def _build_snapshot_dict(args: argparse.Namespace, repo: Optional[Repository]) -
     ).to_dict()
 
 
-def _append_pit_warnings(payload, repo):
+def _append_financial_quality_warnings(payload, repo):
     if isinstance(repo, SqliteFundamentalRepository):
         payload.warnings.extend(
             f"{issue.code}: {issue.message}"
             for issue in repo.quality_report.issues
-            if issue.code.startswith("financial_pit_")
+            if issue.code.startswith(("financial_pit_", "interest_bearing_debt_"))
         )
 
 
@@ -374,7 +374,7 @@ def _cmd_sectors(args: argparse.Namespace) -> str:
         payload.sectors = list(ordered)
         payload.chart_series = list(result.chart_series)
         payload.warnings.extend(result.warnings)
-    _append_pit_warnings(payload, repo)
+    _append_financial_quality_warnings(payload, repo)
     payload.snapshot = _build_snapshot_dict(args, repo)
     return format_output(payload.to_dict(), args.fmt)
 
@@ -394,7 +394,7 @@ def _cmd_sector_detail(args: argparse.Namespace) -> str:
     )
     if repo is None:
         payload.warnings.append("no_data_source: pass --fixture or --db to load market data")
-        _append_pit_warnings(payload, repo)
+        _append_financial_quality_warnings(payload, repo)
         payload.snapshot = _build_snapshot_dict(args, repo)
         return format_output(payload.to_dict(), args.fmt)
 
@@ -402,7 +402,7 @@ def _cmd_sector_detail(args: argparse.Namespace) -> str:
     target = repo.find_sector(args.sector)
     if target is None:
         payload.warnings.append(f"sector_not_found: {args.sector}")
-        _append_pit_warnings(payload, repo)
+        _append_financial_quality_warnings(payload, repo)
         payload.snapshot = _build_snapshot_dict(args, repo)
         return format_output(payload.to_dict(), args.fmt)
 
@@ -416,7 +416,7 @@ def _cmd_sector_detail(args: argparse.Namespace) -> str:
     payload.sectors = target_entries
     payload.chart_series = target_series
     payload.warnings.extend(result.warnings)
-    _append_pit_warnings(payload, repo)
+    _append_financial_quality_warnings(payload, repo)
     payload.snapshot = _build_snapshot_dict(args, repo)
     return format_output(payload.to_dict(), args.fmt)
 
@@ -453,7 +453,7 @@ def _cmd_companies(args: argparse.Namespace) -> str:
         companies=companies,
         warnings=warnings,
     )
-    _append_pit_warnings(payload, repo)
+    _append_financial_quality_warnings(payload, repo)
     payload.snapshot = _build_snapshot_dict(args, repo)
     return format_output(payload.to_dict(), args.fmt)
 
@@ -481,7 +481,7 @@ def _cmd_financials(args: argparse.Namespace) -> str:
         companies=companies,
         warnings=warnings,
     )
-    _append_pit_warnings(payload, repo)
+    _append_financial_quality_warnings(payload, repo)
     payload.snapshot = _build_snapshot_dict(args, repo)
     return format_output(payload.to_dict(), args.fmt)
 
@@ -509,7 +509,7 @@ def _cmd_valuations(args: argparse.Namespace) -> str:
         companies=companies,
         warnings=warnings,
     )
-    _append_pit_warnings(payload, repo)
+    _append_financial_quality_warnings(payload, repo)
     payload.snapshot = _build_snapshot_dict(args, repo)
     return format_output(payload.to_dict(), args.fmt)
 
@@ -545,7 +545,7 @@ def _cmd_screen(args: argparse.Namespace) -> str:
         warnings=warnings,
         generated_at=_now_iso(),
     )
-    _append_pit_warnings(payload, repo)
+    _append_financial_quality_warnings(payload, repo)
     payload.snapshot = _build_snapshot_dict(args, repo)
     return format_output(payload.to_dict(), args.fmt)
 

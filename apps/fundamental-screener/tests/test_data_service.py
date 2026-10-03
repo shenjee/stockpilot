@@ -228,6 +228,31 @@ class SqliteDataSourceTests(unittest.TestCase):
             f"expected non-invalid status, got {result.metadata.data_quality_status}",
         )
 
+    def test_debt_quality_message_and_missing_value_reach_display_rows(self):
+        from fundamentalscreener.sync_task_builders import build_financial_metrics_persist
+        conn = connect(self.db_path)
+        with conn:
+            row = dict(code="002371", report_period="2026Q1", period_type="quarterly",
+                       period_end_date="2026-03-31", disclosure_date="2026-04-30",
+                       as_of_date="2026-06-19", debt_to_asset=.5,
+                       interest_bearing_debt_ratio=.3)
+            build_financial_metrics_persist(conn, source_name="akshare_ths",
+                fetch_run_id="debt-test", analysis_date="2026-06-19")([row])
+        conn.close()
+        result = load_snapshot_from_db(self.db_path, "2026-06-19")
+        board = build_sector_board(result.snapshot, metadata=result.metadata,
+                                   quality_report=result.quality_report)
+        issue = next(i for i in board.quality_issues
+                     if i["code"] == "interest_bearing_debt_cache_ignored")
+        self.assertIn("已忽略", issue["message"])
+        self.assertEqual(issue["level"], "info")
+        self.assertIn("杠杆分量权重仍为15%", issue["message"])
+        self.assertIn("整个杠杆分量缺失时", issue["message"])
+        detail = build_sector_detail(result.snapshot, result.snapshot.sectors[0].sector_id)
+        row = next(r for r in financials_to_rows(detail.financials) if r["code"] == "002371")
+        self.assertIsNone(row["interest_bearing_debt_ratio"])
+        self.assertIn("missing_field: interest_bearing_debt_ratio", row["warnings"])
+
     def test_board_exposes_estimated_financial_disclosure(self):
         from fundamentalscreener.sync_task_builders import build_financial_metrics_persist
         conn = connect(self.db_path)
