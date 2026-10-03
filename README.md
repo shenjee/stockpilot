@@ -97,6 +97,24 @@ python -m packages.fundamentalscreener.cli screen --format json
 - Apps should render and orchestrate shared logic, not duplicate screening or structure-analysis rules.
 - Skills should keep runtime-specific scripting inside `skills/`, while shared analysis logic stays in `packages/`.
 
+### Compatible Python imports
+
+`marketdata`, `chantheory`, and `fundamentalscreener` are compatibility names for
+their respective `packages.*` implementations. Each pair, including lazily
+imported submodules, shares module objects, classes, exceptions, and process
+state. The canonical class `__module__` uses `packages.*`. Both import orders,
+root wrappers, and existing `sys.path` setups that put `packages/` first remain
+supported. The neutral `packages/_import_aliases.py` mechanism runs at package
+initialization boundaries; it does not make Chan Theory or Fundamental Screener
+depend on market data.
+
+The skill's `_standalone_marketdata` copy is independent. Without StockPilot
+installed, its wrappers use that copy; with an editable or regular installation,
+they use the shared implementation. Standalone tests run in fresh `-I -S`
+interpreters against temporary skill directories, without host editable finders.
+See [import compatibility verification](docs/import_compatibility.md) for the
+entry-point inventory, installation matrix, and regression results.
+
 ## Development Entry Points
 
 Use the validated environment from `AGENTS.md` before running Python commands:
