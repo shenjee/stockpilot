@@ -220,7 +220,9 @@ def get_financial_metrics(
                     "period_end_date": period_end,
                     "disclosure_date": disclosure_date,
                     "period_type": derive_period_type(period_end),
-                    "as_of_date": as_of_date,
+                    # The endpoint returns current values, not historical versions.
+                    "as_of_date": max(as_of_date, fetched_at[:10]),
+                    "_disclosure_date_basis": "estimated",
                     "revenue_yoy": pct_to_ratio(r.get("主营业务收入增长率(%)")),
                     "net_profit_yoy": pct_to_ratio(r.get("净利润增长率(%)")),
                     "deducted_net_profit_yoy": None,

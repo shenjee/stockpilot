@@ -237,12 +237,27 @@ class DbSnapshotLineageTests(unittest.TestCase):
         # fetch_run_id 应来自 data_fetch_log
         self.assertTrue(snap["fetch_run_id"])
 
-    def test_db_data_quality_status_ok(self) -> None:
+    def test_db_legacy_financials_report_unverified_pit(self) -> None:
         d = _run([
             "sectors", "--db", str(self._db_path),
             "--date", "2026-06-19", "--format", "json",
         ])
-        self.assertEqual(d["snapshot"]["data_quality_status"], "ok")
+        self.assertEqual(d["snapshot"]["data_quality_status"], "degraded")
+        self.assertTrue(any("financial_pit_disclosure_unverified" in w for w in d["warnings"]))
+
+    def test_all_cli_consumers_preserve_pit_warnings(self):
+        commands = [
+            ["sectors"], ["sector-detail", "--sector", "BK0001"],
+            ["companies", "--sector", "BK0001"],
+            ["financials", "--codes", "002371"],
+            ["valuations", "--codes", "002371"], ["screen"],
+        ]
+        for command in commands:
+            with self.subTest(command=command):
+                data = _run(command + ["--db", str(self._db_path), "--date", "2026-06-19", "--format", "json"])
+                self.assertTrue(any("financial_pit_disclosure_unverified" in w for w in data["warnings"]))
+                self.assertEqual(data["snapshot"]["data_quality_status"], "degraded")
+                self.assertTrue(data["snapshot"]["quality_report_id"])
 
     def test_screen_db_priority_empty_when_degraded(self) -> None:
         """degraded 状态下 priority 桶应为空。"""

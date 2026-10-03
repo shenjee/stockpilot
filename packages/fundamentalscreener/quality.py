@@ -603,6 +603,8 @@ def run_quality_checks(
                 },
             )
 
+    from .financial_pit import add_quality_issues
+    add_quality_issues(conn, report, analysis_date, classification_system)
     return report
 
 

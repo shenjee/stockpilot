@@ -7,7 +7,7 @@ Phase 6D 目标：让真实数据通过 repository 进入现有 core 和 CLI/JSO
 - 所有时变数据按 ``analysis_date`` 截断（docs §20）：
   - 行情/估值：``trade_date <= analysis_date``
   - 板块成分/股票池：``as_of_date <= analysis_date``
-  - 财务：``disclosure_date <= analysis_date``（point-in-time）
+  - 财务：``disclosure_date <= analysis_date AND as_of_date <= analysis_date``（point-in-time）
 - 质量状态为 ``invalid`` 时不生成 ``MarketSnapshot``，抛 ``QualityInvalidError``。
 - ``metadata`` / ``quality_report`` 在 ``load_snapshot()`` 时一并生成，供 CLI
   透传到 JSON 顶层 ``snapshot`` 对象。
@@ -42,24 +42,10 @@ from .repositories import (
     ValuationData,
 )
 from .sqlite_schema import connect, init_db
+# Keep value selection, quality evidence and snapshot lineage aligned.
+from .financial_pit import FINANCIAL_DEDUP_ORDER as _FINANCIAL_DEDUP_ORDER
 
 PathLike = Union[str, Path, sqlite3.Connection]
-
-# Financial dedup ORDER BY — shared by _load_financials, _extract_source_set,
-# and _latest_fetch_run_id to ensure lineage describes exactly the rows selected.
-_FINANCIAL_DEDUP_ORDER = (
-    "period_end_date DESC,"
-    " CASE period_type"
-    "   WHEN 'annual' THEN 1"
-    "   WHEN 'semiannual' THEN 2"
-    "   WHEN 'quarterly' THEN 3"
-    "   WHEN 'quarter' THEN 3"
-    "   WHEN 'first_quarter' THEN 4"
-    "   ELSE 5"
-    " END,"
-    " disclosure_date DESC,"
-    " source_updated_at DESC"
-)
 
 
 class QualityInvalidError(Exception):

@@ -692,3 +692,120 @@ class BenchmarkTableTests(unittest.TestCase):
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
+
+
+class FinancialPitSyncTests(unittest.TestCase):
+    """#181: sync observations must not rewrite the past."""
+
+    def setUp(self):
+        from packages.fundamentalscreener.sqlite_schema import connect, init_db
+        self.conn = connect(":memory:")
+        init_db(self.conn)
+        self.addCleanup(self.conn.close)
+        self.row = dict(code="000001", report_period="2026Q1",
+                        period_end_date="2026-03-31", disclosure_date="2026-04-30",
+                        period_type="quarterly", roe=0.12)
+
+    def persist(self, day, **changes):
+        from unittest.mock import patch
+        from packages.fundamentalscreener.sync_task_builders import build_financial_metrics_persist
+        row = dict(self.row, as_of_date=day, **changes)
+        with patch("packages.fundamentalscreener.sync_persistence._ts", return_value=day + "T16:00:00+08:00"):
+            with self.conn:
+                return build_financial_metrics_persist(
+                    self.conn, source_name="test", fetch_run_id="fetch-" + day,
+                    analysis_date=day)([row])
+
+    def financials(self, day):
+        from packages.fundamentalscreener.sqlite_repository import SqliteFundamentalRepository
+        return SqliteFundamentalRepository(self.conn, day)._load_financials(self.conn, {"000001"})
+
+    def test_same_value_repeat_preserves_history_and_refreshes_audit(self):
+        self.persist("2026-05-01")
+        self.assertEqual(len(self.financials("2026-05-15")), 1)
+        self.persist("2026-09-30")
+        self.assertEqual(self.financials("2026-05-15")[0].roe, .12)
+        self.assertEqual(len(self.financials("2026-09-30")), 1)
+        row = self.conn.execute("SELECT * FROM financial_metrics").fetchone()
+        self.assertEqual(row["as_of_date"], "2026-05-01")
+        self.assertEqual(row["created_at"][:10], "2026-05-01")
+        self.assertEqual(row["updated_at"][:10], "2026-09-30")
+        self.assertEqual(row["fetch_run_id"], "fetch-2026-09-30")
+
+    def test_revision_cannot_leak_and_loss_survives_repeat(self):
+        from packages.fundamentalscreener.financial_pit import read_evidence
+        self.persist("2026-05-01")
+        self.persist("2026-09-30", roe=.08)
+        self.assertEqual(self.financials("2026-05-15"), [])
+        self.assertEqual(self.financials("2026-09-30")[0].roe, .08)
+        self.persist("2026-10-01", roe=.08)
+        self.assertEqual(self.financials("2026-05-15"), [])
+        row = self.conn.execute("SELECT * FROM financial_metrics").fetchone()
+        evidence = read_evidence(self.conn, row)
+        self.assertEqual(evidence["unavailable_from"], "2026-05-01")
+        self.assertEqual(evidence["unavailable_before"], "2026-09-30")
+        self.assertEqual(row["as_of_date"], "2026-09-30")
+
+    def test_revision_with_backdated_source_visibility_uses_observation_day(self):
+        from unittest.mock import patch
+        from packages.fundamentalscreener.sync_task_builders import build_financial_metrics_persist
+        self.persist("2026-05-01")
+        with patch("packages.fundamentalscreener.sync_persistence._ts", return_value="2026-09-30T12:00:00+08:00"):
+            build_financial_metrics_persist(self.conn, source_name="test", fetch_run_id="revision",
+                                            analysis_date="2026-05-01")(
+                [dict(self.row, as_of_date="2026-05-01", roe=.08)])
+        self.assertEqual(self.financials("2026-05-15"), [])
+        self.assertEqual(self.financials("2026-09-30")[0].roe, .08)
+
+    def test_every_value_and_null_change_is_a_revision(self):
+        from packages.fundamentalscreener.sync_persistence import _FINANCIAL_COLUMNS
+        for column in _FINANCIAL_COLUMNS[6:19]:
+            with self.subTest(column=column):
+                self.conn.execute("DELETE FROM financial_metrics")
+                self.conn.execute("DELETE FROM data_fetch_log")
+                self.persist("2026-05-01", **{column: None})
+                self.persist("2026-09-30", **{column: .2})
+                self.assertEqual(self.financials("2026-05-15"), [])
+                self.persist("2026-10-01", **{column: None})
+                self.assertEqual(self.financials("2026-09-30"), [])
+
+    def test_future_disclosure_excluded_even_if_observed(self):
+        self.persist("2026-05-01", disclosure_date="2026-05-20")
+        self.assertEqual(self.financials("2026-05-15"), [])
+        self.assertEqual(len(self.financials("2026-05-20")), 1)
+
+    def test_unknown_and_invalid_disclosures_rejected(self):
+        for value in (None, "", "unknown", "2026-02-30"):
+            with self.subTest(value=value):
+                result = self.persist("2026-05-01", disclosure_date=value)
+                self.assertEqual(result.written, 0)
+                self.assertEqual(result.rejections, 1)
+        self.assertEqual(self.financials("2026-05-15"), [])
+
+    def test_legacy_adoption_is_conservative_and_repeatable(self):
+        from packages.fundamentalscreener.financial_pit import read_evidence
+        self.persist("2026-05-01")
+        self.conn.execute("DELETE FROM data_fetch_log")
+        self.conn.execute("UPDATE financial_metrics SET updated_at = '2026-06-01'")
+        self.persist("2026-09-30")
+        self.assertEqual(self.financials("2026-05-15"), [])
+        self.assertEqual(len(self.financials("2026-06-01")), 1)
+        self.persist("2026-10-01")
+        row = self.conn.execute("SELECT * FROM financial_metrics").fetchone()
+        self.assertEqual(row["as_of_date"], "2026-06-01")
+        self.assertTrue(read_evidence(self.conn, row)["legacy_unverified"])
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM financial_metrics").fetchone()[0], 1)
+
+    def test_evidence_rolls_back_with_value_write(self):
+        from packages.fundamentalscreener.sync_task_builders import build_financial_metrics_persist
+        with self.assertRaises(RuntimeError):
+            with self.conn:
+                build_financial_metrics_persist(self.conn, source_name="test", fetch_run_id="rollback",
+                                                analysis_date="2026-05-01")([self.row])
+                raise RuntimeError("rollback")
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM financial_metrics").fetchone()[0], 0)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM data_fetch_log").fetchone()[0], 0)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -207,6 +207,7 @@ INDEX_STATEMENTS: Tuple[str, ...] = (
     "ON company_valuation_history (trade_date)",
     "CREATE INDEX IF NOT EXISTS ix_financial_metrics_disclosure "
     "ON financial_metrics (code, disclosure_date)",
+    "CREATE INDEX IF NOT EXISTS ix_data_fetch_log_task ON data_fetch_log (task, id)",
     "CREATE INDEX IF NOT EXISTS ix_data_fetch_log_run "
     "ON data_fetch_log (fetch_run_id)",
 )

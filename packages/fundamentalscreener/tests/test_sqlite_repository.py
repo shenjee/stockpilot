@@ -208,6 +208,38 @@ class SqliteRepositoryTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_pit_estimate_and_lost_history_are_visible_without_future_lineage(self):
+        from unittest.mock import patch
+        from packages.fundamentalscreener.sync_task_builders import build_financial_metrics_persist
+        conn = connect(":memory:")
+        self.addCleanup(conn.close)
+        init_db(conn)
+        _populate_db(conn)
+        conn.execute("DELETE FROM financial_metrics WHERE code = '002371'")
+        row = dict(code="002371", report_period="2026Q1", period_type="quarterly",
+                   period_end_date="2026-03-31", disclosure_date="2026-04-30",
+                   as_of_date="2026-05-01", roe=.12, _disclosure_date_basis="estimated")
+        for day, value in [("2026-05-01", .12), ("2026-09-30", .08), ("2026-10-01", .08)]:
+            with patch("packages.fundamentalscreener.sync_persistence._ts", return_value=day + "T12:00:00+08:00"):
+                build_financial_metrics_persist(conn, source_name="pit-test", fetch_run_id="pit-" + day,
+                                                analysis_date=day)([dict(row, roe=value)])
+            repo = SqliteFundamentalRepository(conn, "2026-06-19")
+            snapshot = repo.load_snapshot()
+            if day == "2026-05-01":
+                self.assertIn("002371", [f.code for f in snapshot.financials])
+                issue = next(i for i in repo.quality_report.issues
+                             if i.code == "financial_pit_disclosure_estimated")
+                self.assertEqual(issue.details["disclosure_basis"], "estimated")
+                self.assertEqual(issue.details["fetch_run_id"], "pit-2026-05-01")
+            else:
+                self.assertNotIn("002371", [f.code for f in snapshot.financials])
+                issue = next(i for i in repo.quality_report.issues
+                             if i.code == "financial_pit_history_unavailable")
+                self.assertEqual(issue.entity_id, "002371")
+                self.assertEqual(issue.details["unavailable_before"], "2026-09-30")
+                self.assertEqual(repo.metadata.source_set.to_dict()["financial"], "akshare_em")
+                self.assertNotEqual(repo.metadata.fetch_run_id, "pit-" + day)
+
     def test_valuations_include_computed_percentiles(self) -> None:
         """估值数据包含基于本地历史计算的 pe_percentile / pb_percentile。"""
         conn = self._setup_db()
@@ -262,7 +294,10 @@ class SqliteRepositoryTests(unittest.TestCase):
             snapshot = repo.load_snapshot()
             report = repo.quality_report
             self.assertEqual(report.status, snapshot.data_quality_status)
-            self.assertEqual(snapshot.data_quality_status, "ok")
+            self.assertEqual(snapshot.data_quality_status, "degraded")
+            issues = [i for i in report.issues if i.code == "financial_pit_disclosure_unverified"]
+            self.assertTrue(issues)
+            self.assertTrue(all(i.details["legacy_unverified"] for i in issues))
         finally:
             conn.close()
 

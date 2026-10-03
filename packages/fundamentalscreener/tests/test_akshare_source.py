@@ -1456,6 +1456,18 @@ class AkShareCompanyLayerTests(unittest.TestCase):
         self.assertIsNone(q1["free_cashflow"])
         self.assertIsNone(q1["accounts_receivable_yoy"])
 
+    def test_historical_request_does_not_backdate_live_financial_values(self) -> None:
+        from unittest.mock import patch
+        fake = _build_company_fake_akshare()
+        src = AkShareFundamentalDataSource(akshare=fake)
+        with patch("packages.fundamentalscreener.data_sources.akshare_source.now_cn_isoformat",
+                   return_value="2026-09-30T12:00:00+08:00"):
+            rows = src.get_financial_metrics(["002371"], "2026-06-19")
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertEqual(row["as_of_date"], "2026-09-30")
+            self.assertEqual(row["_disclosure_date_basis"], "estimated")
+
     def test_get_financial_metrics_annual_period_type(self) -> None:
         fake = _build_company_fake_akshare()
         src = AkShareFundamentalDataSource(akshare=fake)

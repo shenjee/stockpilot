@@ -1433,3 +1433,10 @@ docs/fundamental_screener_streamlit_frontend_plan.md
 - 是否有数据缺失或降级。
 
 如果某个 Phase 做不到，不要跳过，要说明阻塞原因。
+
+## #181 财务 PIT 修复补记
+
+早期阶段勾选的“按日期过滤”仅证明 SQL 截断存在，不代表披露日期已核实或财务版本可复现。
+当前实现的同值/修订写入、估算披露、旧库按行兼容与历史限制，以
+[最小 PIT 保证](fundamental_screener_mvp.md#1541-财报-pit-的最小保证与限制181) 为准。
+实时 AkShare 请求历史日期不会获取历史版本；实际可见日不早于抓取日。

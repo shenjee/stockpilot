@@ -196,8 +196,8 @@ class QualityCheckTests(unittest.TestCase):
         finally:
             conn.close()
 
-    def test_good_data_is_ok(self) -> None:
-        """数据齐全：65 天日线 + 成分股 + 成分股行情 + benchmark → ok。"""
+    def test_complete_data_with_unverified_legacy_financials_is_degraded(self) -> None:
+        """数据齐全不等于披露证据齐全：旧财务行应明确降级。"""
         conn = self._setup_db()
         try:
             _insert_sector(conn, "BK0001", "半导体")
@@ -209,7 +209,9 @@ class QualityCheckTests(unittest.TestCase):
             _insert_financial(conn, "002371", "2026-04-28")
             _insert_valuation(conn, "002371", "2026-06-19")
             report = run_quality_checks(conn, "2026-06-19", "em_industry", "hs300")
-            self.assertEqual(report.status, "ok")
+            self.assertEqual(report.status, "degraded")
+            issue = next(i for i in report.issues if i.code == "financial_pit_disclosure_unverified")
+            self.assertTrue(issue.details["legacy_unverified"])
         finally:
             conn.close()
 
