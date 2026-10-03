@@ -13,6 +13,7 @@ from typing import Any, Mapping, Sequence
 from .lineage import now_cn_isoformat
 
 _PK = ("code", "report_period", "period_type", "disclosure_date")
+_SELECTION_COLUMNS = ("period_end_date", "period_type", "disclosure_date", "source_updated_at")
 FINANCIAL_DEDUP_ORDER = (
     "period_end_date DESC,"
     " CASE period_type"
@@ -83,6 +84,20 @@ def prepare_write(
             row["as_of_date"] = max(old_date, row["as_of_date"], row["updated_at"][:10])
             details["revised"] = True
         if previous_date < row["as_of_date"]:
+            # Keep only the lost version's ordering metadata, not its values.
+            # A correction to period_end_date must not change whether the old
+            # version would have outranked the available report at that time.
+            intervals = details.setdefault("unavailable_selections", [])
+            if not intervals and details.get("unavailable_from"):
+                intervals.append({
+                    "from_date": details["unavailable_from"],
+                    "before_date": details["unavailable_before"],
+                    **{k: old[k] for k in _SELECTION_COLUMNS},
+                })
+            intervals.append({
+                "from_date": previous_date, "before_date": row["as_of_date"],
+                **{k: old[k] for k in _SELECTION_COLUMNS},
+            })
             details["unavailable_from"] = min(
                 details.get("unavailable_from", previous_date), previous_date,
             )
@@ -101,6 +116,37 @@ def record_evidence(conn: sqlite3.Connection, row: dict, details: dict) -> None:
     )
 
 
+def _missing_selection_matters(conn, row, evidence, selected, analysis_date):
+    intervals = evidence.get("unavailable_selections")
+    if not intervals:
+        # Compatibility with evidence recorded before selection metadata was
+        # saved: use the retained report fields, without inventing old values.
+        intervals = [{"from_date": evidence.get("unavailable_from", "9999-12-31"),
+                      "before_date": evidence.get("unavailable_before", "0001-01-01"),
+                      **{k: row[k] for k in _SELECTION_COLUMNS}}]
+    current = selected.get(row["code"])
+    columns = ", ".join(_SELECTION_COLUMNS)
+    placeholders = ", ".join("?" for _ in _SELECTION_COLUMNS)
+    for lost in intervals:
+        if not (lost["from_date"] <= analysis_date < lost["before_date"]
+                and lost["disclosure_date"] <= analysis_date):
+            continue
+        if current is None:
+            return True
+        # Reuse exactly the repository order, including report-type priority
+        # and disclosure/source-update ties, rather than comparing dates alone.
+        winner = conn.execute(
+            f"WITH candidates ({columns}, missing) AS ("
+            f"SELECT {placeholders}, 1 UNION ALL SELECT {placeholders}, 0) "
+            f"SELECT missing FROM candidates ORDER BY {FINANCIAL_DEDUP_ORDER} LIMIT 1",
+            tuple(lost[k] for k in _SELECTION_COLUMNS)
+            + tuple(current[k] for k in _SELECTION_COLUMNS),
+        ).fetchone()[0]
+        if winner:
+            return True
+    return False
+
+
 def add_quality_issues(conn, report, analysis_date: str, classification_system: str) -> None:
     """Describe selected rows and lost history within the requested universe."""
     cur = conn.execute(
@@ -113,27 +159,29 @@ def add_quality_issues(conn, report, analysis_date: str, classification_system: 
     )
     columns = [d[0] for d in cur.description]
     rows = [dict(zip(columns, r)) for r in cur.fetchall()]
-    selected = {tuple(r) for r in conn.execute(
-        "SELECT code, report_period, period_type, disclosure_date FROM ("
+    cur = conn.execute(
+        "SELECT * FROM ("
         " SELECT *, ROW_NUMBER() OVER (PARTITION BY code ORDER BY "
         + FINANCIAL_DEDUP_ORDER + ") AS rn FROM financial_metrics"
         " WHERE disclosure_date <= ? AND as_of_date <= ?) WHERE rn = 1",
         (analysis_date, analysis_date),
-    )}
+    )
+    selected_columns = [d[0] for d in cur.description]
+    selected = {r[0]: dict(zip(selected_columns, r)) for r in cur.fetchall()}
     for row in rows:
         evidence = read_evidence(conn, row)
         details = dict(evidence or {"disclosure_basis": "unknown", "legacy_unverified": True})
         details.update(source=row["source"], fetch_run_id=row["fetch_run_id"],
                        report_period=row["report_period"], as_of_date=row["as_of_date"])
-        if evidence and (evidence.get("unavailable_from", "9999-12-31") <= analysis_date
-                         < evidence.get("unavailable_before", "0001-01-01")):
+        if evidence and _missing_selection_matters(conn, row, evidence, selected, analysis_date):
             report.add_issue(
                 "financial_pit_history_unavailable", "warning",
                 f"{row['code']} {row['report_period']}: 该时点的旧财务值无法恢复；"
                 "修订值未用于此历史日期，可能仅能使用更早报告期。",
                 entity_type="company", entity_id=row["code"], details=details,
             )
-        if tuple(row[k] for k in _PK) not in selected:
+        current = selected.get(row["code"])
+        if current is None or any(row[k] != current[k] for k in _PK):
             continue
         basis = details["disclosure_basis"]
         code = "financial_pit_disclosure_estimated" if basis == "estimated" else "financial_pit_disclosure_unverified"

@@ -249,6 +249,120 @@ class DbSnapshotLineageTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def _sync_financial_rows(self, day, rows):
+        from unittest.mock import patch
+        from packages.fundamentalscreener.sync_task_builders import build_financial_metrics_persist
+        conn = connect(str(self._db_path))
+        try:
+            with conn, patch("packages.fundamentalscreener.sync_persistence._ts",
+                             return_value=day + "T16:00:00+08:00"):
+                build_financial_metrics_persist(conn, source_name="akshare_em", fetch_run_id="pit-" + day,
+                                                analysis_date=day)(rows)
+        finally:
+            conn.close()
+
+    def _historical_screen(self):
+        return _run(["screen", "--db", str(self._db_path), "--date", "2026-06-19", "--format", "json"])
+
+    def test_older_report_revision_does_not_degrade_selected_newer_report(self):
+        from packages.fundamentalscreener.sqlite_repository import SqliteFundamentalRepository
+        self._replace_with_current_financials("estimated")
+        old = dict(self._current_financial_rows("estimated")[0], report_period="2025A",
+                   period_type="annual", period_end_date="2025-12-31",
+                   disclosure_date="2026-04-15", as_of_date="2026-05-01", roe=.2)
+        self._sync_financial_rows("2026-05-01", [old])
+        before = self._historical_screen()
+        self.assertTrue(before["candidates"]["priority"])
+        self._sync_financial_rows("2026-09-30", [dict(old, roe=.08)])
+        after = self._historical_screen()
+        self.assertEqual(after["snapshot"]["data_quality_status"], "ok")
+        self.assertEqual(after["candidates"], before["candidates"])
+        self.assertEqual(after["snapshot"]["source_set"], before["snapshot"]["source_set"])
+        self.assertEqual(after["snapshot"]["fetch_run_id"], before["snapshot"]["fetch_run_id"])
+        self.assertFalse(any("financial_pit_history_unavailable" in w for w in after["warnings"]))
+        repo = SqliteFundamentalRepository(self._db_path, "2026-06-19")
+        self.assertEqual(next(f.roe for f in repo.load_snapshot().financials if f.code == "002371"), .3)
+
+    def test_selected_report_revision_still_warns_when_falling_back(self):
+        from packages.fundamentalscreener.sqlite_repository import SqliteFundamentalRepository
+        self._replace_with_current_financials("estimated")
+        old = dict(self._current_financial_rows("estimated")[0], report_period="2025A",
+                   period_type="annual", period_end_date="2025-12-31",
+                   disclosure_date="2026-04-15", as_of_date="2026-05-01", roe=.2)
+        self._sync_financial_rows("2026-05-01", [old])
+        self._sync_financial_rows("2026-09-30", [dict(self._current_financial_rows("estimated")[0], roe=.08)])
+        repo = SqliteFundamentalRepository(self._db_path, "2026-06-19")
+        snapshot = repo.load_snapshot()
+        self.assertEqual(next(f.roe for f in snapshot.financials if f.code == "002371"), .2)
+        issue = next(i for i in repo.quality_report.issues if i.code == "financial_pit_history_unavailable")
+        self.assertEqual(issue.details["report_period"], "2026Q1")
+        self.assertEqual(issue.level, "warning")
+        data = self._historical_screen()
+        self.assertEqual(data["snapshot"]["data_quality_status"], "degraded")
+        self.assertEqual(data["candidates"]["priority"], [])
+        self.assertTrue(any("financial_pit_history_unavailable" in w for w in data["warnings"]))
+
+    def test_missing_report_uses_same_report_type_order_as_repository(self):
+        from packages.fundamentalscreener.sqlite_repository import SqliteFundamentalRepository
+        for retained_type, missing_type, expected_status in (
+            ("annual", "quarterly", "ok"), ("quarterly", "annual", "degraded"),
+        ):
+            with self.subTest(retained=retained_type, missing=missing_type):
+                self._replace_with_current_financials("estimated")
+                conn = connect(str(self._db_path))
+                with conn:
+                    conn.execute("DELETE FROM financial_metrics")
+                conn.close()
+                current = [dict(r, report_period="2025A" if retained_type == "annual" else "2025Q4",
+                                period_type=retained_type, period_end_date="2025-12-31")
+                           for r in self._current_financial_rows("estimated")]
+                self._sync_financial_rows("2026-06-19", current)
+                missing = dict(current[0], report_period="2025A" if missing_type == "annual" else "2025Q4",
+                               period_type=missing_type, disclosure_date="2026-04-15",
+                               as_of_date="2026-05-01", roe=.2)
+                self._sync_financial_rows("2026-05-01", [missing])
+                self._sync_financial_rows("2026-09-30", [dict(missing, roe=.08)])
+                repo = SqliteFundamentalRepository(self._db_path, "2026-06-19")
+                repo.load_snapshot()
+                self.assertEqual(repo.quality_report.status, expected_status)
+                gaps = [i for i in repo.quality_report.issues if i.code == "financial_pit_history_unavailable"]
+                self.assertEqual(bool(gaps), missing_type == "annual")
+
+    def test_period_end_correction_compares_lost_versions_order(self):
+        for old_end, new_end, expected_status in (
+            ("2025-12-31", "2026-04-30", "ok"),
+            ("2026-04-30", "2025-12-31", "degraded"),
+        ):
+            with self.subTest(old_end=old_end):
+                self._replace_with_current_financials("estimated")
+                row = dict(self._current_financial_rows("estimated")[0], report_period="corrected",
+                           period_end_date=old_end, as_of_date="2026-05-01", roe=.2)
+                self._sync_financial_rows("2026-05-01", [row])
+                self._sync_financial_rows("2026-09-30", [dict(row, period_end_date=new_end)])
+                data = self._historical_screen()
+                self.assertEqual(data["snapshot"]["data_quality_status"], expected_status)
+                self.assertEqual(bool(data["candidates"]["priority"]), expected_status == "ok")
+
+    def test_prior_evidence_gap_survives_another_revision(self):
+        from packages.fundamentalscreener.financial_pit import read_evidence
+        from packages.fundamentalscreener.sqlite_repository import SqliteFundamentalRepository
+        self._replace_with_current_financials("estimated")
+        row = self._current_financial_rows("estimated")[0]
+        self._sync_financial_rows("2026-09-30", [dict(row, roe=.08)])
+        # Simulate evidence from the prior release, before ordering was saved.
+        conn = connect(str(self._db_path))
+        with conn:
+            financial = conn.execute("SELECT * FROM financial_metrics WHERE code='002371'").fetchone()
+            details = read_evidence(conn, financial)
+            details.pop("unavailable_selections")
+            conn.execute("UPDATE data_fetch_log SET details=? WHERE task LIKE 'financial_pit:%' AND fetch_run_id=?",
+                         (json.dumps(details), financial["fetch_run_id"]))
+        conn.close()
+        self._sync_financial_rows("2026-10-01", [dict(row, roe=.09)])
+        repo = SqliteFundamentalRepository(self._db_path, "2026-06-19")
+        repo.load_snapshot()
+        self.assertTrue(any(i.code == "financial_pit_history_unavailable" for i in repo.quality_report.issues))
+
     def test_sectors_db_has_real_lineage(self) -> None:
         d = _run([
             "sectors", "--db", str(self._db_path),
