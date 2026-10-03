@@ -132,7 +132,7 @@ def derive_report_period(period_end_date: str) -> str:
 
 
 def estimate_disclosure_date(period_end_date: str) -> str:
-    """估算财报最晚披露日（监管截止日），用于 point-in-time 过滤。"""
+    """按报告期估算披露日；不是实际公告证据，不能单独证明 PIT 可见性。"""
 
     year = int(period_end_date[:4])
     month = period_end_date[5:7]

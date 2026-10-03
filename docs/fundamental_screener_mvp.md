@@ -714,9 +714,9 @@ classification_system = "em_industry"
 | --- | --- |
 | `report_period` | 财报报告期，例如 `2026Q1`、`2025A` |
 | `period_end_date` | 报告期截止日 |
-| `disclosure_date` | 公告或披露日期，用于避免未来函数 |
+| `disclosure_date` | 源提供或估算的披露日期；是否有公告证据须结合 PIT 质量说明，不能单凭该字段证明历史可见 |
 | `period_type` | `quarterly | semiannual | annual | ttm` |
-| `as_of_date` | 当前记录对分析系统可见的日期 |
+| `as_of_date` | 当前财务数值版本的可见日期；同值同步保留，修订后按新观察时间保守推进 |
 
 `company_valuation_history` 至少需要 `trade_date`、`code`、`market`、`pe`、`pb`、`ps`、`dividend_yield`、`source`、`fetch_run_id`。PE/PB 历史分位应基于本地保存的日度估值历史计算，而不是只保存最新快照。
 
@@ -735,6 +735,59 @@ classification_system = "em_industry"
 - 负 PE、亏损公司、停牌、ST、退市风险、缺失估值字段必须显式标记，不应用 0 替代。
 - `MarketSnapshot.date` 是分析日期，不等于财报报告期，也不等于采集时间。
 
+### 15.4.1 财报 PIT 的最小保证与限制（#181）
+
+PIT（Point-in-Time）要求分析日不能读取当时尚不可用的财务数值版本。
+当前 AkShare 财务接口只返回当前数值与报告期，并没有已核实的公告日期或完整修订历史。
+过去将报告期估算日当成真实披露证据、把查询日期当成实时抓取数据的历史可见日，
+均不满足这个要求。本轮处理不等同于完整历史回测数据库。
+
+| 项目 | 实现规则 |
+| --- | --- |
+| 主键 | 保留 `(code, report_period, period_type, disclosure_date)`，无新公开字段或数据表 |
+| 同值同步 | NULL 安全比较全部财务数值与报告期截止日；已有证据时保留 `as_of_date`，更新 `fetch_run_id`、`source_updated_at`、`updated_at`，保留 `created_at` |
+| 来源改变 | 仅来源字符串变化不视为数值修订，不推进 `as_of_date`；当前来源与来源变更记录更新到采集日志证据 |
+| 值修订 | 覆盖当前行，但可见日不早于原可见日、源提供可见日和本次实际观察日；旧值不可恢复，不给新值保留旧日期 |
+| 实时抓取 | AkShare `as_of_date` 不早于实际抓取日；即使传入历史分析日期，也不会把当前财务值倒填到过去 |
+| 披露依据 | AkShare 的日期为 `estimated`；未提供新依据时沿用已有证据，首次写入缺省为 `source_provided`。仅有日期字符串不自动视为已核实公告；空值或非法日期拒绝写入并记录 rejection |
+| 证据保存 | 内部适配提示 `_disclosure_date_basis` 不进入公开结果或财务表；写入现有 `data_fetch_log.details`，以 `financial_pit:<主键JSON>` 任务名记录，与财务值同事务提交 |
+| 旧库兼容 | 未携带证据的旧行读取时明确 `legacy_unverified`；首次重新同步取原可见日与已有源/更新审计日期的较晚者作为旧值证据下限，再按同值/修订规则处理。后续重复处理不再推进同值可见日 |
+| 历史缺口 | 日志记录缺失区间与被覆盖版本的排序依据；仅当该缺口可能改变分析日选取结果（无可用财报或回退到排序更低的财报）时 warning。已有更优的完整财报时，旧报告期修订不使快照降级 |
+
+旧库不删除、不倒填更早日期，也不把 `created_at` 当成当前修订值首次可见的证明。
+兼容处理在财务记录重新同步时按行执行，不要求全库迁移；仅增加日志查询索引。
+未重新同步的旧数据只是带限制的旧记录，不能声称已经验证其历史 PIT 正确性。
+日志必须随数据库保留；丢失日志会退回保守的旧库处理。
+`legacy_unverified` 是持续的证据限制：保守采纳只确认当前值的可见性下限，
+不会恢复缺失的历史证据。后续同值同步或数值修订均保留此标记与 warning；
+本轮没有自动解除该状态的机制。
+缺口影响判断复用 repository 的报告期截止日、报告类型、披露日和源更新时间排序。
+`unavailable_selections` 仅保存每段缺口的日期和原排序依据，不保存旧财务数值；
+因此截止日更正后也能判断旧版本是否影响历史选取。兼容此前仅有缺口区间的日志时，
+使用保留的报告字段判断，不编造旧值；此前已经丢失的排序更正也无法恢复。
+
+限制通过现有 `QualityIssue.details` 暴露，含来源、批次、报告期、可见日及披露依据。
+CLI 的现有 `warnings` 字段显示相同说明，App 的“质量问题”显示结构化记录，
+快照的 `quality_report_id` / `data_quality_status` 与其对应。
+有记录可见性证据时，估算/源提供但未核实的披露日期属于常态 `info`，
+仍展示在质量问题、CLI `warnings` 与 App 中，不会单独使快照降级或清空当日 `priority`。
+旧库证据不足（`legacy_unverified`）与无法恢复的历史缺口继续使用 `warning`，
+按既有质量规则使快照降级并限制 `priority`。未来修订的批次不成为历史快照实际使用财务行的 lineage。
+
+时间精度为自然日，不提供盘中公告时刻语义。缺少完整版本库时，后续修订可能让过去
+原可见数据变为“不可恢复”，这是明确披露的限制；同值重复抓取则不会造成该变化。
+本轮不处理页面日期回退（#18），也不保证股票池、行业成分等其他链路的完整历史可复现性。
+
+验证基线：`6f3a9c6`；修复前 5/1 入库、9/30 同值同步使 5/15 查询从 1 条变 0 条。
+回归覆盖修复后同值仍为 1 条、修订值只在新日期可见、NULL 与报告期截止日变化、
+仅来源变化时历史可见性稳定、缺省披露依据沿用、未来/未知披露、历史实时抓取、
+旧库幂等兼容及持续警告、事务回滚，以及 CLI/App 的质量与 lineage 透传。
+正常财报披露说明以 info 透传，并验证当日 screen 的非空 priority 不被清空。
+另覆盖无关旧报告期修订保持历史快照及非空 priority、实际回退保留 warning、
+同截止日的报告类型优先级、截止日更正的原排序依据和此前日志的缺口兼容。
+最新在 `~/.venvs/czsc` 验证：包内 `unittest discover` 331 项、App 40 项全部通过，共 371 项。
+未调用真实网络财务接口，未迁移用户实际数据库，未进行浏览器端人工验收。
+
 ### 15.5 数据源抽象
 
 真实数据源应先进入数据源抽象层，再由同步脚本写入 SQLite。第一版接口至少覆盖：
@@ -748,7 +801,7 @@ classification_system = "em_industry"
 | `get_stock_universe(as_of_date)` | 获取股票池、市场、上市状态 |
 | `get_company_daily_snapshot(trade_date, codes=None)` | 获取公司日度行情与交易快照；`codes=None` 全市场，非空时仅抓指定 codes（§15.9.5） |
 | `get_company_valuation_history(codes, start_date, end_date)` | 获取或生成估值历史 |
-| `get_financial_metrics(codes, as_of_date)` | 获取 point-in-time 可用的财务指标 |
+| `get_financial_metrics(codes, as_of_date)` | 获取财务指标与可见日期；实时源不提供历史版本，由 repository 按分析日过滤 |
 
 ### 15.6 质量检查
 
@@ -788,7 +841,7 @@ classification_system = "em_industry"
 
 - 行情/估值：`trade_date <= analysis_date`。
 - 板块成分、股票池、上市状态：`as_of_date <= analysis_date`，或 `valid_from <= analysis_date < valid_to`。
-- 财务数据：`availability_date <= analysis_date`。`availability_date` 通常取 `disclosure_date` / `announcement_date` 中可证明市场可见的日期。
+- 财务数据：同时满足 `disclosure_date <= analysis_date` 和 `as_of_date <= analysis_date`；概念上的 `availability_date` 至少受这两个日期约束。估算披露日不构成公告证据，实际限制见 §15.4.1。
 
 `source_set` 记录本次快照实际使用的数据源集合及其角色，例如 `sector=akshare_em`、`quote=tencent`、`financial=akshare_em`。质量状态统一为：
 

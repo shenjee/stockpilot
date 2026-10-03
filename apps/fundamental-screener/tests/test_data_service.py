@@ -228,6 +228,26 @@ class SqliteDataSourceTests(unittest.TestCase):
             f"expected non-invalid status, got {result.metadata.data_quality_status}",
         )
 
+    def test_board_exposes_estimated_financial_disclosure(self):
+        from fundamentalscreener.sync_task_builders import build_financial_metrics_persist
+        conn = connect(self.db_path)
+        with conn:
+            row = dict(code="002371", report_period="2026Q1", period_type="quarterly",
+                       period_end_date="2026-03-31", disclosure_date="2026-04-30",
+                       as_of_date="2026-06-19", roe=.12, _disclosure_date_basis="estimated")
+            build_financial_metrics_persist(conn, source_name="test", fetch_run_id="pit-test",
+                                            analysis_date="2026-06-19")([row])
+        conn.close()
+        result = load_snapshot_from_db(self.db_path, "2026-06-19")
+        board = build_sector_board(result.snapshot, metadata=result.metadata,
+                                   quality_report=result.quality_report)
+        issue = next(i for i in board.quality_issues if i["code"] == "financial_pit_disclosure_estimated")
+        self.assertEqual(issue["details"]["disclosure_basis"], "estimated")
+        self.assertEqual(issue["details"]["fetch_run_id"], "pit-test")
+        self.assertIn("估算", issue["message"])
+        self.assertEqual(issue["level"], "info")
+        self.assertEqual(board.data_quality_status, result.quality_report.status)
+
     def test_build_sector_board_propagates_lineage_from_sqlite(self) -> None:
         result = load_snapshot_from_db(self.db_path, "2026-06-19")
         board = build_sector_board(

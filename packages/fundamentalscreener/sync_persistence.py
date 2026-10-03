@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .lineage import now_cn_isoformat
+from .financial_pit import prepare_write, record_evidence, valid_date
 
 
 def _ts() -> str:
@@ -44,9 +45,18 @@ def _upsert(
         f"INSERT INTO {table} ({columns}) VALUES ({placeholders}) "
         f"ON CONFLICT({pk}) DO UPDATE SET {update_sql}"
     )
+    if table == "financial_metrics" and not conn.in_transaction:
+        # Start before the evidence read: a concurrent writer must not turn a
+        # stale comparison into an UPSERT that backdates a revised value.
+        conn.execute("BEGIN")
     for row in rows:
+        evidence = None
+        if table == "financial_metrics":
+            row, evidence = prepare_write(conn, row, _FINANCIAL_VALUE_COLUMNS)
         values = tuple(row.get(c) for c in column_order)
         conn.execute(sql, values)
+        if evidence is not None:
+            record_evidence(conn, row, evidence)
         count += 1
     return count
 
@@ -156,6 +166,14 @@ _FINANCIAL_COLUMNS = (
     "created_at",
     "updated_at",
 )
+# All value-bearing fields; audit/visibility/source fields are compared separately.
+_FINANCIAL_VALUE_COLUMNS = tuple(
+    column for column in _FINANCIAL_COLUMNS
+    if column not in {
+        "code", "report_period", "period_type", "disclosure_date", "as_of_date",
+        "source", "fetch_run_id", "source_updated_at", "created_at", "updated_at",
+    }
+)
 _BENCHMARK_COLUMNS = (
     "benchmark",
     "trade_date",
@@ -218,6 +236,10 @@ def _validate_required(
         ]
         if missing:
             rejected.append({"reason": f"missing_pk: {','.join(missing)}", "row": dict(row)})
+        elif table == "financial_metrics" and any(
+            not valid_date(row.get(k)) for k in ("period_end_date", "disclosure_date", "as_of_date")
+        ):
+            rejected.append({"reason": "invalid_financial_date", "row": dict(row)})
         else:
             accepted.append(row)
     return accepted, rejected
@@ -370,7 +392,7 @@ def _run_task(
             "rejected_sample": sample,
         }
         if not success:
-            error = f"all_rows_rejected: {rejections} row(s) missing required PK fields"
+            error = f"all_rows_rejected: {rejections} row(s) failed validation"
 
     finished_at = _ts()
     with conn:
