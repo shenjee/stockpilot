@@ -63,7 +63,8 @@ def prepare_write(
     details = dict(evidence or {})
     details.update(
         key={k: row[k] for k in _PK},
-        disclosure_basis=row.get("_disclosure_date_basis", "source_provided"),
+        disclosure_basis=(row.get("_disclosure_date_basis")
+                          or details.get("disclosure_basis", "source_provided")),
     )
     if old:
         previous_date = old["as_of_date"]
@@ -71,9 +72,11 @@ def prepare_write(
         if not evidence:
             details["legacy_unverified"] = True
         same = all(old[k] == row.get(k) for k in value_columns)
-        # Source changes cannot establish that two separately obtained versions
-        # had identical historical availability.
-        same = same and old["source"] == row["source"]
+        if old["source"] != row["source"]:
+            details["source_change"] = {
+                "from_source": old["source"], "to_source": row["source"],
+                "observed_at": row["updated_at"],
+            }
         if same:
             row["as_of_date"] = old_date
         else:
@@ -135,7 +138,7 @@ def add_quality_issues(conn, report, analysis_date: str, classification_system: 
         basis = details["disclosure_basis"]
         code = "financial_pit_disclosure_estimated" if basis == "estimated" else "financial_pit_disclosure_unverified"
         report.add_issue(
-            code, "warning",
+            code, "warning" if details.get("legacy_unverified") else "info",
             f"{row['code']} {row['report_period']}: "
             + ("披露日期由报告期估算，并非已核实公告日。" if basis == "estimated"
                else "披露日期尚无已核实公告证据。")

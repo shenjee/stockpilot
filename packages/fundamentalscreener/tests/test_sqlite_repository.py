@@ -231,12 +231,14 @@ class SqliteRepositoryTests(unittest.TestCase):
                              if i.code == "financial_pit_disclosure_estimated")
                 self.assertEqual(issue.details["disclosure_basis"], "estimated")
                 self.assertEqual(issue.details["fetch_run_id"], "pit-2026-05-01")
+                self.assertEqual(issue.level, "info")
             else:
                 self.assertNotIn("002371", [f.code for f in snapshot.financials])
                 issue = next(i for i in repo.quality_report.issues
                              if i.code == "financial_pit_history_unavailable")
                 self.assertEqual(issue.entity_id, "002371")
                 self.assertEqual(issue.details["unavailable_before"], "2026-09-30")
+                self.assertEqual(issue.level, "warning")
                 self.assertEqual(repo.metadata.source_set.to_dict()["financial"], "akshare_em")
                 self.assertNotEqual(repo.metadata.fetch_run_id, "pit-" + day)
 

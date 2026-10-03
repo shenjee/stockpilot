@@ -256,7 +256,7 @@ def build_financial_metrics_persist(
             "report_period": str(row.get("report_period", "")),
             "period_end_date": str(row.get("period_end_date", "")),
             "disclosure_date": str(row.get("disclosure_date") or ""),
-            "_disclosure_date_basis": row.get("_disclosure_date_basis", "source_provided"),
+            "_disclosure_date_basis": row.get("_disclosure_date_basis"),
             "period_type": str(row.get("period_type", "annual")),
             "as_of_date": str(row.get("as_of_date", analysis_date)),
             "revenue_yoy": row.get("revenue_yoy"),

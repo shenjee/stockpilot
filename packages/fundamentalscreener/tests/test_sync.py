@@ -690,10 +690,6 @@ class BenchmarkTableTests(unittest.TestCase):
             conn.close()
 
 
-if __name__ == "__main__":  # pragma: no cover
-    unittest.main()
-
-
 class FinancialPitSyncTests(unittest.TestCase):
     """#181: sync observations must not rewrite the past."""
 
@@ -706,14 +702,14 @@ class FinancialPitSyncTests(unittest.TestCase):
                         period_end_date="2026-03-31", disclosure_date="2026-04-30",
                         period_type="quarterly", roe=0.12)
 
-    def persist(self, day, **changes):
+    def persist(self, day, source_name="test", **changes):
         from unittest.mock import patch
         from packages.fundamentalscreener.sync_task_builders import build_financial_metrics_persist
         row = dict(self.row, as_of_date=day, **changes)
         with patch("packages.fundamentalscreener.sync_persistence._ts", return_value=day + "T16:00:00+08:00"):
             with self.conn:
                 return build_financial_metrics_persist(
-                    self.conn, source_name="test", fetch_run_id="fetch-" + day,
+                    self.conn, source_name=source_name, fetch_run_id="fetch-" + day,
                     analysis_date=day)([row])
 
     def financials(self, day):
@@ -745,6 +741,51 @@ class FinancialPitSyncTests(unittest.TestCase):
         self.assertEqual(evidence["unavailable_from"], "2026-05-01")
         self.assertEqual(evidence["unavailable_before"], "2026-09-30")
         self.assertEqual(row["as_of_date"], "2026-09-30")
+
+    def test_source_change_preserves_same_value_visibility(self):
+        from packages.fundamentalscreener.financial_pit import read_evidence
+        self.persist("2026-05-01", source_name="old-source", _disclosure_date_basis="estimated")
+        self.persist("2026-09-30", source_name="new-source")
+        self.assertEqual(self.financials("2026-05-15")[0].roe, .12)
+        row = self.conn.execute("SELECT * FROM financial_metrics").fetchone()
+        evidence = read_evidence(self.conn, row)
+        self.assertEqual(row["as_of_date"], "2026-05-01")
+        self.assertEqual(row["source"], "new-source")
+        self.assertEqual(evidence["source_change"]["from_source"], "old-source")
+        self.assertEqual(evidence["source_change"]["to_source"], "new-source")
+        self.assertEqual(evidence["disclosure_basis"], "estimated")
+        self.assertNotIn("revised", evidence)
+        self.assertNotIn("unavailable_from", evidence)
+
+    def test_omitted_disclosure_basis_preserves_existing_evidence(self):
+        from packages.fundamentalscreener.financial_pit import read_evidence
+        self.persist("2026-05-01", _disclosure_date_basis="estimated")
+        # Both same values and revised values retain the recorded basis.
+        self.persist("2026-09-30")
+        row = self.conn.execute("SELECT * FROM financial_metrics").fetchone()
+        self.assertEqual(read_evidence(self.conn, row)["disclosure_basis"], "estimated")
+        self.persist("2026-10-01", roe=.08, _disclosure_date_basis=None)
+        row = self.conn.execute("SELECT * FROM financial_metrics").fetchone()
+        self.assertEqual(read_evidence(self.conn, row)["disclosure_basis"], "estimated")
+
+    def test_explicit_disclosure_basis_updates_evidence(self):
+        from packages.fundamentalscreener.financial_pit import read_evidence
+        self.persist("2026-05-01", _disclosure_date_basis="estimated")
+        self.persist("2026-09-30", _disclosure_date_basis="source_provided")
+        row = self.conn.execute("SELECT * FROM financial_metrics").fetchone()
+        self.assertEqual(row["as_of_date"], "2026-05-01")
+        self.assertEqual(read_evidence(self.conn, row)["disclosure_basis"], "source_provided")
+
+    def test_period_end_change_is_a_revision(self):
+        from packages.fundamentalscreener.financial_pit import read_evidence
+        self.persist("2026-05-01")
+        self.persist("2026-09-30", period_end_date="2026-03-30")
+        self.assertEqual(self.financials("2026-05-15"), [])
+        self.assertEqual(self.financials("2026-09-30")[0].roe, .12)
+        row = self.conn.execute("SELECT * FROM financial_metrics").fetchone()
+        self.assertEqual(row["period_end_date"], "2026-03-30")
+        self.assertEqual(row["as_of_date"], "2026-09-30")
+        self.assertTrue(read_evidence(self.conn, row)["revised"])
 
     def test_revision_with_backdated_source_visibility_uses_observation_day(self):
         from unittest.mock import patch

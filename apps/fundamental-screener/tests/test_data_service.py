@@ -245,7 +245,8 @@ class SqliteDataSourceTests(unittest.TestCase):
         self.assertEqual(issue["details"]["disclosure_basis"], "estimated")
         self.assertEqual(issue["details"]["fetch_run_id"], "pit-test")
         self.assertIn("估算", issue["message"])
-        self.assertEqual(board.data_quality_status, "degraded")
+        self.assertEqual(issue["level"], "info")
+        self.assertEqual(board.data_quality_status, result.quality_report.status)
 
     def test_build_sector_board_propagates_lineage_from_sqlite(self) -> None:
         result = load_snapshot_from_db(self.db_path, "2026-06-19")
