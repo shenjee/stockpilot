@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
+from .fetch_report import CodeFetchTracker, ReportedRows
+
 
 def get_stock_universe(
     *,
@@ -105,22 +107,26 @@ def get_company_daily_snapshot(
     now_isoformat: Callable[[], str],
     all_codes: Callable[[], List[str]],
     fetch_code_daily: Callable[[str, str], Optional[Dict[str, Any]]],
-) -> List[Dict[str, Any]]:
+) -> ReportedRows:
     if codes is None:
         codes = all_codes()
     fetched_at = now_isoformat()
+    tracker = CodeFetchTracker()
     rows: List[Dict[str, Any]] = []
     for code in codes:
-        if not code:
+        if not tracker.start(code):
             continue
         try:
             daily = fetch_code_daily(code, trade_date)
-        except Exception:
+        except Exception as exc:
+            tracker.record_failure(code, exc)
             continue
         if not daily:
+            tracker.record_empty()
             continue
+        tracker.record_success()
         rows.append(daily | {"code": code, "source_updated_at": fetched_at})
-    return rows
+    return tracker.finish(rows)
 
 
 def fetch_baidu_indicator(
@@ -152,22 +158,25 @@ def get_company_valuation_history(
     now_isoformat: Callable[[], str],
     fetch_baidu_indicator: Callable[[str, str], Dict[str, Optional[float]]],
     derive_market: Callable[[str], Optional[str]],
-) -> List[Dict[str, Any]]:
+) -> ReportedRows:
     fetched_at = now_isoformat()
+    tracker = CodeFetchTracker()
     rows: List[Dict[str, Any]] = []
     for code in codes:
-        if not code:
+        if not tracker.start(code):
             continue
         try:
             pe_map = fetch_baidu_indicator(code, "市盈率(TTM)")
             pb_map = fetch_baidu_indicator(code, "市净率")
-        except Exception:
+        except Exception as exc:
+            tracker.record_failure(code, exc)
             continue
+        code_rows: List[Dict[str, Any]] = []
         all_dates = sorted(set(pe_map.keys()) | set(pb_map.keys()))
         for d in all_dates:
             if d < start_date or d > end_date:
                 continue
-            rows.append(
+            code_rows.append(
                 {
                     "code": code,
                     "trade_date": d,
@@ -179,7 +188,12 @@ def get_company_valuation_history(
                     "source_updated_at": fetched_at,
                 }
             )
-    return rows
+        if not code_rows:
+            tracker.record_empty()
+            continue
+        tracker.record_success()
+        rows.extend(code_rows)
+    return tracker.finish(rows)
 
 
 def get_financial_metrics(
@@ -193,19 +207,23 @@ def get_financial_metrics(
     derive_report_period: Callable[[str], str],
     derive_period_type: Callable[[str], str],
     pct_to_ratio: Callable[[Any], Optional[float]],
-) -> List[Dict[str, Any]]:
+) -> ReportedRows:
     start_year = str(int(as_of_date[:4]) - 5)
     fetched_at = now_isoformat()
+    tracker = CodeFetchTracker()
     rows: List[Dict[str, Any]] = []
     for code in codes:
-        if not code:
+        if not tracker.start(code):
             continue
         try:
             df = ak.stock_financial_analysis_indicator(symbol=code, start_year=start_year)
-        except Exception:
+        except Exception as exc:
+            tracker.record_failure(code, exc)
             continue
         if df is None or len(df) == 0:
+            tracker.record_empty()
             continue
+        code_rows: List[Dict[str, Any]] = []
         for r in df.to_dict(orient="records"):
             period_end = normalize_date(r.get("日期"))
             if not period_end:
@@ -213,7 +231,7 @@ def get_financial_metrics(
             disclosure_date = estimate_disclosure_date(period_end)
             if disclosure_date > as_of_date:
                 continue
-            rows.append(
+            code_rows.append(
                 {
                     "code": code,
                     "report_period": derive_report_period(period_end),
@@ -241,7 +259,12 @@ def get_financial_metrics(
                     "source_updated_at": fetched_at,
                 }
             )
-    return rows
+        if not code_rows:
+            tracker.record_empty()
+            continue
+        tracker.record_success()
+        rows.extend(code_rows)
+    return tracker.finish(rows)
 
 
 __all__ = [

@@ -88,7 +88,13 @@ def compute_sync_exit_code(
     light_required_tasks: Sequence[str],
     detail_required_tasks: Sequence[str],
 ) -> int:
-    """Return the CLI rc for a sync run based on required task success."""
+    """Return the CLI rc for a sync run.
+
+    0: every task is fully successful, and each required sector task wrote at
+    least one row. Legitimate empty company results stay successful, so they
+    do not by themselves select this branch's failure path.
+    1: any task is partial or failed, or a required sector task wrote 0 rows.
+    """
 
     by_task = {str(task["task"]): task for task in tasks}
     required_tasks = list(light_required_tasks)

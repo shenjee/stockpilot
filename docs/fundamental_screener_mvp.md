@@ -698,6 +698,24 @@ classification_system = "em_industry"
 | `financial_metrics` | 公司财务指标，按报告期和披露日保存 ROE、毛利率、净利率、成长、现金流、负债等 |
 | `data_fetch_log` | 采集任务、来源、时间、状态、错误信息、行数、`fetch_run_id` |
 
+同步汇总和 `data_fetch_log` 使用同一套任务状态，不新增日志列。诊断放在现有 `details`：
+
+| 状态 | 含义 | `success` | CLI |
+| --- | --- | --- | --- |
+| `success` | 全部请求成功。未请求，或请求后没有异常、只是没有区间数据，也属于 success | 1 | 若轻量/重量必需任务都有写入行，rc=0 |
+| `partial` | 部分证券抓取失败，或只有部分行通过写入校验；已写入的有效行保留 | 0 | rc=1 |
+| `failed` | 整次抓取或整批写入失败，已有缓存不删除 | 0 | rc=1 |
+
+公司日快照、估值历史、财务三条路径都记录请求数、成功数、合法空结果数、失败数和逐证券原因。必需板块任务（板块列表、板块日线、基准、以及详情里的成分股）写入 0 行时，即使任务本身是 success，CLI 仍返回 rc=1，界面按「暂无必需数据」而不是「抓取失败」提示。参数或依赖错误仍是 rc=2。
+
+计数按每个公司采集任务中的证券请求计，不是 HTTP 调用数，也不是跨任务去重证券数：
+`requested_count = succeeded_count + empty_count + failed_count`，其中 `succeeded_count`
+只计返回数据的请求，合法空结果单列为 `empty_count`。`failures` 保存证券 `code`
+和异常 `error`；写入异常回滚时仍保留已取得的抓取事实。没有逐证券报告的批量任务
+计数为 `null`，整次同步计数仅汇总已报告部分；原有 `success_count` / `failure_count`
+仍按任务计，后者包括 partial 任务。整次同步全部任务成功为 success、全部失败为
+failed，其余为 partial；这一采集状态与必需数据是否足够展示分别判断。
+
 关键表必须带可追溯字段：
 
 | 字段 | 适用表 | 说明 |

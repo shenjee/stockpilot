@@ -483,8 +483,11 @@ def main() -> None:
         st.error(_t("加载数据失败。", "Failed to load data."))
         return
 
-    # 刷新失败但有旧缓存：展示旧缓存 + 失败提示
-    if result.status == "refresh_failed":
+    # 刷新失败但有旧缓存：展示旧缓存 + 失败提示。
+    # 首屏缓存足够、但公司层等非必需任务未全成功时，同样提示，避免把部分失败显示成全成功。
+    if result.status == "refresh_failed" or (
+        result.status in ("ok", "degraded", "stale") and result.message
+    ):
         st.warning(result.message)
 
     # degraded / stale 质量提示
@@ -611,7 +614,7 @@ def main() -> None:
         # §15.9.4b: 展示详情层失败原因，不静默吞掉 no_cache / invalid。
         # refresh_sector_detail 在成分股同步失败且无旧缓存时返回 no_cache，
         # 旧代码只处理 refresh_failed，导致 no_cache 静默落到"没有公司数据"。
-        if detail_result.status in ("refresh_failed", "no_cache", "invalid"):
+        if detail_result.status in ("refresh_failed", "no_cache", "invalid") or detail_result.message:
             st.warning(detail_result.message)
 
     st.markdown(
