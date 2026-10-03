@@ -50,6 +50,21 @@ def _make_snapshot(financials: List[FinancialData]) -> MarketSnapshot:
 
 
 class ComputeFinancialQualityTests(unittest.TestCase):
+    def test_debt_missing_is_renormalized_not_zero_and_true_value_is_used(self):
+        cases = [(None, 50.0), (0.0, 75.0), (0.3, 37.5)]
+        for ratio, expected in cases:
+            with self.subTest(ratio=ratio):
+                result = compute_financial_quality(_make_snapshot([
+                    FinancialData(code="A", debt_to_asset=0.5,
+                                  interest_bearing_debt_ratio=ratio)
+                ]), ["A"]).companies[0]
+                self.assertEqual(result.score, expected)
+                self.assertEqual("missing_field: interest_bearing_debt_ratio" in
+                                 result.warnings, ratio is None)
+        empty = compute_financial_quality(_make_snapshot([FinancialData(code="A")]),
+                                          ["A"]).companies[0]
+        self.assertIsNone(empty.score)
+
     def test_score_independent_of_cohort_size(self) -> None:
         # 同样的财务数据，单条查询和批量查询应得到同样的 score（阈值打分不依赖 cohort）。
         f = FinancialData(

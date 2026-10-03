@@ -129,6 +129,63 @@ def _populate_db(conn, analysis_date: str = "2026-06-19") -> None:
 
 
 class SqliteRepositoryTests(unittest.TestCase):
+    def test_legacy_debt_quarantine_reaches_ranking_and_preserves_raw_cache(self):
+        from packages.fundamentalscreener.company_ranking import compute_company_ranking
+        from packages.fundamentalscreener.financial_quality import compute_financial_quality
+        from dataclasses import replace
+
+        for source in ("akshare", "akshare_ths", "akshare_em", "verified_provider"):
+            with self.subTest(source=source):
+                conn = self._setup_db()
+                try:
+                    conn.execute("UPDATE financial_metrics SET source = ?, "
+                                 "interest_bearing_debt_ratio = 0.3", (source,))
+                    repo = SqliteFundamentalRepository(conn, analysis_date="2026-06-19",
+                            classification_system="em_industry", benchmark="hs300")
+                    snapshot = repo.load_snapshot()
+                    expected = 0.3 if source == "verified_provider" else None
+                    self.assertTrue(all(f.interest_bearing_debt_ratio == expected
+                                        for f in snapshot.financials))
+                    issues = [i for i in repo.quality_report.issues
+                              if i.code == "interest_bearing_debt_cache_ignored"]
+                    self.assertEqual(len(issues), 0 if expected else 2)
+                    self.assertEqual(conn.execute("SELECT interest_bearing_debt_ratio "
+                                                  "FROM financial_metrics LIMIT 1").fetchone()[0], 0.3)
+                    ranking = compute_company_ranking(snapshot, "BK0001")
+                    fin = compute_financial_quality(snapshot, ["002371"]).companies[0]
+                    entry = next(c for c in ranking.companies if c.code == "002371")
+                    self.assertEqual(entry.financial_quality_score, fin.score)
+                    self.assertEqual("missing_field: interest_bearing_debt_ratio" in
+                                     ranking.financials["002371"].warnings, expected is None)
+                    # Exact expected composite: original weighting and rounding remain intact.
+                    from packages.fundamentalscreener.company_ranking import _aggregate_combined
+                    self.assertEqual(entry.combined_score, round(_aggregate_combined(
+                        entry.leader_score, entry.attention_score, fin.score,
+                        entry.valuation_score), 2))
+                    if expected is None:
+                        contaminated = replace(snapshot, financials=[
+                            replace(f, interest_bearing_debt_ratio=0.3) for f in snapshot.financials])
+                        old = compute_company_ranking(contaminated, "BK0001")
+                        self.assertNotEqual(entry.combined_score,
+                            next(c.combined_score for c in old.companies if c.code == "002371"))
+                finally:
+                    conn.close()
+
+    def test_debt_quality_only_describes_selected_visible_constituents(self):
+        conn = self._setup_db()
+        try:
+            conn.execute("UPDATE financial_metrics SET interest_bearing_debt_ratio = 0.3, "
+                         "as_of_date = '2026-07-01' WHERE code = '600584'")
+            repo = SqliteFundamentalRepository(conn, analysis_date="2026-06-19",
+                    classification_system="em_industry", benchmark="hs300")
+            repo.load_snapshot()
+            issues = [i for i in repo.quality_report.issues
+                      if i.code.startswith("interest_bearing_debt_")]
+            self.assertEqual([(i.entity_id, i.code, i.level) for i in issues],
+                             [("002371", "interest_bearing_debt_unavailable", "info")])
+        finally:
+            conn.close()
+
     """验证 SqliteFundamentalRepository 的核心组装能力。"""
 
     def _setup_db(self):

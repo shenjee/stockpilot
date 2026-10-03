@@ -30,6 +30,7 @@ from .lineage import (
 )
 from .config import PERCENTILE_CONFIG
 from .percentile import compute_valuation_percentiles
+from .financial_debt import UNVERIFIED_DEBT_SOURCES
 from .quality import QualityReport, run_quality_checks
 from .repositories import (
     BenchmarkData,
@@ -349,7 +350,7 @@ class SqliteFundamentalRepository(Repository):
             "SELECT code, revenue_yoy, net_profit_yoy, deducted_net_profit_yoy, "
             "gross_margin, net_margin, roe, operating_cashflow_to_profit, "
             "free_cashflow, debt_to_asset, interest_bearing_debt_ratio, "
-            "accounts_receivable_yoy, inventory_yoy, gross_margin_yoy_change "
+            "accounts_receivable_yoy, inventory_yoy, gross_margin_yoy_change, source "
             "FROM ("
             "  SELECT *, ROW_NUMBER() OVER ("
             f"    PARTITION BY code ORDER BY {_FINANCIAL_DEDUP_ORDER}"
@@ -376,7 +377,11 @@ class SqliteFundamentalRepository(Repository):
                     operating_cashflow_to_profit=_opt_float(r[7]),
                     free_cashflow=_opt_float(r[8]),
                     debt_to_asset=_opt_float(r[9]),
-                    interest_bearing_debt_ratio=_opt_float(r[10]),
+                    # Quarantine the old non-equivalent mapping without changing
+                    # cached raw values or their PIT visibility evidence.
+                    interest_bearing_debt_ratio=(
+                        None if r[14] in UNVERIFIED_DEBT_SOURCES else _opt_float(r[10])
+                    ),
                     accounts_receivable_yoy=_opt_float(r[11]),
                     inventory_yoy=_opt_float(r[12]),
                     gross_margin_yoy_change=_opt_float(r[13]),

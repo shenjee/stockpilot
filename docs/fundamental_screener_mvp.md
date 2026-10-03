@@ -984,3 +984,66 @@ Fundamental Screener 的第一原则是：
 - 哪些公司存在明显异常或需要谨慎。
 
 这些问题都应优先通过表格、排序、分位数、评分和异常标记来回答。
+
+## 有息负债率来源与缓存隔离（#183）
+
+2026-10-03 复核：`stock_financial_analysis_indicator` 是新浪财务指标接口，
+[AkShare 官方输出字段说明](https://akshare.akfamily.xyz/data/stock/stock.html#财务指标)
+列有 `长期负债比率(%)`，未列出等价有息负债率；本地 AkShare 1.18.64 实现
+也只是解析上游表格，不能提供等价口径证据。长期负债按期限分类，有息负债按
+是否计息分类，不能互换。本次不接入未经核实的新字段，也不跨接口拼接估算。
+将来接入真实来源必须核实分子、分母、单位和报告期，并同步更新缓存隔离规则。
+其他数据源按现有契约提供的真实 `interest_bearing_debt_ratio`（小数比例，
+如 0.30 表示 30%）仍正常参与计算。
+
+修复前，只含 `长期负债比率(%)=15` 的源记录会生成有息负债率 0.15；
+修复后为 `None`，即便源记录额外出现未经核实的同名字段，也不自动采用。
+缺失、异常或零值的长期负债字段均不能推导有息负债率。评分公式和权重不变：
+资产负债率 0.50 且有息负债率缺失时，杠杆分为 50；错误填零时为 75；
+真实有息负债率 0.30 时为 37.5。资产负债率可用时，杠杆分量权重仍为 15%；
+整个杠杆分量缺失时，财务总分才按剩余分量
+权重重新归一。财务条目的 `warnings` 保留 `missing_field: interest_bearing_debt_ratio`。
+
+缓存处置采用读取时定向隔离：SQLite 中 `source` 为 `akshare`、`akshare_ths`、
+`akshare_em` 的该字段统一按缺失读取。这些标签对应当前及历史 AkShare 采集
+路径；不能仅依据标签中的 ths/em 判断财务接口。原始缓存、其他字段、披露日、
+版本可见日和血缘证据不修改，也无需全库重建。仅对本次分析实际选中的可见
+成分股财报出质量提示：非空旧值为 `interest_bearing_debt_cache_ignored`
+（info，错误输入已屏蔽，不单独使快照降级或清空 priority）；空值为
+`interest_bearing_debt_unavailable`（info，不单独降级）。提示包含公司、报告期、
+来源及采集批次。CLI 顶层 warnings 和界面“质量问题”同步展示；财务表显示缺失。
+读取保护是完整的即时处置，不依赖重新联网。正常后续同步会写入空值；若由此
+构成财报数值修订，仍遵守 #181 的版本可见规则，不倒填旧时点。
+
+实际调用面：产品默认真实采集 → `sync` 财务持久化 →
+`SqliteFundamentalRepository` → `compute_financial_quality` →
+`compute_company_ranking` / `screen`；Streamlit 的 `build_sector_board` 展示质量
+问题，`build_sector_detail` 展示排名和财务表；CLI 各分析命令透传质量提示。
+2026-10-03 只读检查本机默认 `stockpilot/db/fundamental_data.sqlite`：
+7,143 条财务记录均来自 `akshare_ths`，其中 3,855 条该字段非空，属于定向隔离范围。
+此数量是所有缓存报告记录数，不等于当次受影响公司数。可按以下只读查询盘点其他库：
+
+```sql
+SELECT source, COUNT(*) AS cached_rows,
+       COUNT(interest_bearing_debt_ratio) AS quarantined_rows
+FROM financial_metrics
+WHERE source IN ('akshare', 'akshare_ths', 'akshare_em')
+GROUP BY source;
+```
+
+严重度判断：已确认本地默认产品入口存在静默影响筛选排序的数据正确性问题；
+外部使用面尚未确认，暂不定为 P1，也不添加 P1 标签。不据此推断外部部署规模或用户交易损失。尚未验证其他机器
+缓存、定制来源标签及线上访问量；定制导入若使用其他来源标签，需按真实来源另行
+核实，不能无差别清空所有数据源。
+
+回归覆盖源字段/异常输入、真实值和缺失重归一、旧缓存读取隔离与原值保留、
+时点过滤、最终财务分和综合分、CLI 提示、前端质量信息和财务表缺失值。
+另有端到端筛选回归：单条非空旧值被屏蔽后，质量保持 ok，完整候选分组与
+该值原本为空时一致；另有财务覆盖率 warning 时仍降级并清空 priority。
+历史时点测试的当前 AkShare 样本同步改为缺失，避免继续把旧错误映射当作有效输入。
+
+本次验证结果：项目环境下运行 `python -m pytest -q packages/fundamentalscreener/tests
+apps/fundamental-screener/tests`，378 项测试和 54 个子测试通过（独立 #183 分支基于 main，不包含 #182 的新增测试）。真实默认缓存经只读
+备份到内存后，以库内最新财务可见日 2026-07-02 和 ths_industry 组装快照：选中
+276 家公司财报，185 条非空旧值被屏蔽并产生提示，输出有息负债率均为空。
+原始数据库未修改；该缓存日期不代表 2026-10-03 实时行情。
