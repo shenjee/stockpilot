@@ -1,5 +1,8 @@
 import { EventEmitter } from "node:events";
 
+export const RESTART_REQUIRED_MESSAGE =
+  "应用内部服务异常，成交记录可能未更新。请退出应用后重新打开。";
+
 const ALLOWED_COMMANDS = new Set([
   "search_securities",
   "resolve_security_identity",
@@ -107,6 +110,7 @@ export class BackendGateway extends EventEmitter {
     this.maxReconnectAttempts = maxReconnectAttempts;
     this.reconnectBackoffMs = reconnectBackoffMs;
     this.maxEventBuffer = maxEventBuffer;
+    this.restartRequiredStatus = null;
     this.connection = null;
     this.socket = null;
     this.closed = true;
@@ -121,6 +125,9 @@ export class BackendGateway extends EventEmitter {
   }
 
   start(connection) {
+    // A lost service stream is terminal for this app lifetime. Ordinary host
+    // readiness/retry must not make the UI appear recovered.
+    if (this.restartRequiredStatus) return;
     this.close();
     this.connection = Object.freeze({ ...connection });
     this.closed = false;
@@ -132,6 +139,13 @@ export class BackendGateway extends EventEmitter {
 
   async invoke(command, request) {
     if (!ALLOWED_COMMANDS.has(command)) throw new Error(`Safe Bridge command is not allowed: ${command}`);
+    if (this.restartRequiredStatus) {
+      return synchronousFailure(command, request, {
+        ...serviceUnavailable(request?.request_id),
+        retryable: false,
+        message: RESTART_REQUIRED_MESSAGE,
+      });
+    }
     if (!this.connection || this.closed) return synchronousFailure(command, request);
     const controller = new AbortController();
     this.pendingRequests.add(controller);
@@ -230,10 +244,16 @@ export class BackendGateway extends EventEmitter {
   }
 
   #enqueue(envelope) {
+    if (this.closed) return;
     if (envelope.service_generation !== this.connection?.service_generation) return;
     if (this.pendingEvents.length >= this.maxEventBuffer) {
+      const discarded = [...this.pendingEvents, envelope];
+      if (discarded.some((pending) => !pending.session_id)) {
+        this.#stopIncompleteStream("service event buffer overflow");
+        return;
+      }
       const affected = new Map();
-      for (const pending of [...this.pendingEvents, envelope]) {
+      for (const pending of discarded) {
         if (!pending.session_id) continue;
         affected.set(`${pending.schema_version}:${pending.session_id}`, pending);
       }
@@ -255,7 +275,22 @@ export class BackendGateway extends EventEmitter {
         const key = `${envelope.schema_version}:${envelope.session_id ?? "service"}`;
         const currentRevision = this.baselines.get(key);
         if (currentRevision !== undefined && envelope.revision <= currentRevision) continue;
+        // Initialization is a watermark, not a new broadcast. Even a +1
+        // watermark on reconnect means one service fact was missed.
+        if (!envelope.session_id && envelope.event_type === "service_status"
+            && currentRevision !== undefined && envelope.revision > currentRevision) {
+          this.#stopIncompleteStream(
+            `service messages missed before reconnect: last ${currentRevision}, watermark ${envelope.revision}`,
+          );
+          break;
+        }
         if (currentRevision !== undefined && envelope.revision > currentRevision + 1) {
+          if (!envelope.session_id) {
+            this.#stopIncompleteStream(
+              `service revision gap: expected ${currentRevision + 1}, received ${envelope.revision}`,
+            );
+            break;
+          }
           void this.#rebaseline(envelope);
           continue;
         }
@@ -272,12 +307,25 @@ export class BackendGateway extends EventEmitter {
     }
   }
 
+  #stopIncompleteStream(reason) {
+    if (this.restartRequiredStatus) return;
+    this.restartRequiredStatus = Object.freeze({
+      state: "failed",
+      service_generation: this.connection?.service_generation ?? 0,
+      message: RESTART_REQUIRED_MESSAGE,
+    });
+    this.close();
+    this.emit("diagnostic", { stream: "stderr", message: reason });
+    this.emit("service-status", this.restartRequiredStatus);
+  }
+
   async #rebaseline(envelope) {
     if (!envelope.session_id) return;
     const replay = envelope.schema_version === "t0_replay_v2";
     const key = `${envelope.schema_version}:${envelope.session_id}`;
     if (this.rebaselining.has(key)) return;
     this.rebaselining.add(key);
+    const connection = this.connection;
     try {
       const command = replay ? "get_replay_snapshot" : "get_live_snapshot";
       const response = await this.invoke(command, {
@@ -286,6 +334,11 @@ export class BackendGateway extends EventEmitter {
         session_id: envelope.session_id,
         ...(replay ? {} : { command, payload: {} }),
       });
+      // The HTTP snapshot belongs to this service connection, not its socket.
+      // Reconnect coalesces with this in-flight request, so keep its response
+      // across socket replacement. A stopped stream or restarted service still
+      // invalidates it.
+      if (this.closed || this.connection !== connection) return;
       if (response?.accepted === false || response?.error_code) {
         throw new Error(
           `snapshot request rejected: ${response.error?.error_code ?? response.error_code}`,

@@ -1,4 +1,5 @@
 export async function retryDesktopService(serviceHost, gateway) {
+  if (gateway.restartRequiredStatus) return gateway.restartRequiredStatus;
   if (serviceHost.state === "ready") {
     const connection = serviceHost.connectionInfo();
     if (!connection) {

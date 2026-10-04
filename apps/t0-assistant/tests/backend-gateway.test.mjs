@@ -647,3 +647,189 @@ test("managed Python service authenticates transport and rejects an unknown Live
     await host.stop();
   }
 });
+
+const restartMessage = "应用内部服务异常，成交记录可能未更新。请退出应用后重新打开。";
+function serviceEvent(revision, generation = 4) {
+  return {
+    schema_version: "t0_app_v2", service_generation: generation,
+    session_id: null, revision, event_type: "trades_changed", payload: {},
+  };
+}
+
+test("service gap stops the stream and remains terminal across readiness and retry", async () => {
+  const { retryDesktopService } = await import("../electron/service-retry.mjs");
+  const gateway = new BackendGateway({ WebSocketImpl: DelayedCloseWebSocket,
+    fetchImpl: async () => { throw new Error("must not send after failure"); } });
+  const events = [], statuses = [], diagnostics = [];
+  gateway.on("app-event", event => events.push(event.revision));
+  gateway.on("service-status", status => statuses.push(status));
+  gateway.on("diagnostic", value => diagnostics.push(value.message));
+  gateway.start(connection);
+  const socket = FakeWebSocket.instances.at(-1);
+  socket.open();
+  for (const revision of [0, 1, 1, 0, 3, 4]) socket.message(serviceEvent(revision));
+  await tick();
+  assert.deepEqual(events, [0, 1]);
+  assert.equal(socket.closeRequested, true);
+  assert.equal(statuses.at(-1).message, restartMessage);
+  assert.ok(diagnostics.some(message => message.includes("expected 2, received 3")));
+  socket.open(); // late notifications cannot resurrect the failed socket
+  socket.finishClose();
+  gateway.start({ ...connection, service_generation: 5 });
+  assert.equal(FakeWebSocket.instances.at(-1), socket);
+  assert.equal(gateway.reconnectTimer, null);
+  assert.equal(statuses.at(-1).state, "failed");
+  const status = await retryDesktopService({ start() { throw new Error("must not restart"); } }, gateway);
+  assert.equal(status, gateway.restartRequiredStatus);
+  const failure = await gateway.invoke("create_trade", { request_id: "unconfirmed" });
+  assert.equal(failure.accepted, false);
+  assert.equal(failure.error.retryable, false);
+  assert.equal(failure.error.message, restartMessage);
+  gateway.close();
+});
+
+test("overflow losing a service event fails explicitly even with Session events queued", async () => {
+  const gateway = new BackendGateway({ WebSocketImpl: FakeWebSocket, maxEventBuffer: 2 });
+  const events = [];
+  gateway.on("app-event", event => events.push(event));
+  gateway.start(connection);
+  const socket = FakeWebSocket.instances.at(-1);
+  socket.message(serviceEvent(0));
+  socket.message({ ...serviceEvent(1), session_id: "live-1" });
+  socket.message(serviceEvent(2));
+  await tick();
+  assert.deepEqual(events, []);
+  assert.equal(gateway.restartRequiredStatus.message, restartMessage);
+  assert.equal(gateway.closed, true);
+  assert.equal(gateway.reconnectTimer, null);
+});
+
+test("a fresh app accepts the startup baseline and facts; generation and duplicate gates remain", async () => {
+  const gateway = new BackendGateway({ WebSocketImpl: FakeWebSocket });
+  const events = [];
+  gateway.on("app-event", event => events.push([event.service_generation, event.revision]));
+  gateway.start(connection);
+  let socket = FakeWebSocket.instances.at(-1);
+  socket.message(serviceEvent(8));
+  socket.message(serviceEvent(8));
+  socket.message(serviceEvent(7));
+  socket.message(serviceEvent(9));
+  await tick();
+  gateway.start({ ...connection, service_generation: 5 });
+  socket = FakeWebSocket.instances.at(-1);
+  socket.message(serviceEvent(10, 4));
+  socket.message(serviceEvent(0, 5));
+  socket.message(serviceEvent(1, 5));
+  await tick();
+  assert.deepEqual(events, [[4, 8], [4, 9], [5, 0], [5, 1]]);
+  assert.equal(gateway.restartRequiredStatus, null);
+  gateway.close();
+});
+
+test("an in-flight Session snapshot cannot publish after service stream failure", async () => {
+  let resolveFetch;
+  const gateway = new BackendGateway({ WebSocketImpl: FakeWebSocket,
+    fetchImpl: () => new Promise(resolve => { resolveFetch = resolve; }) });
+  const events = [];
+  gateway.on("app-event", event => events.push(event));
+  gateway.start(connection);
+  const socket = FakeWebSocket.instances.at(-1);
+  socket.message({ ...serviceEvent(0), session_id: "live-1" });
+  socket.message({ ...serviceEvent(2), session_id: "live-1" });
+  socket.message(serviceEvent(0));
+  socket.message(serviceEvent(2));
+  await tick();
+  const count = events.length;
+  resolveFetch({ ok: true, json: async () => ({ data: { session: { revision: 9 } } }) });
+  await tick();
+  assert.equal(events.length, count);
+  assert.equal(gateway.restartRequiredStatus.message, restartMessage);
+});
+
+test("existing reconnect stops at a service gap instead of starting another recovery loop", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const gateway = new BackendGateway({ WebSocketImpl: FakeWebSocket, reconnectBackoffMs: [10] });
+  gateway.start(connection);
+  let socket = FakeWebSocket.instances.at(-1);
+  socket.open();
+  socket.message(serviceEvent(0));
+  socket.message(serviceEvent(1));
+  await tick();
+  socket.close();
+  t.mock.timers.tick(10);
+  const next = FakeWebSocket.instances.at(-1);
+  assert.notEqual(next, socket);
+  next.open();
+  // Even ONE missed broadcast cannot be replaced by the handshake watermark:
+  // its revision is contiguous, but it contains no authoritative trade facts.
+  next.message({ ...serviceEvent(2), event_type: "service_status" });
+  await tick();
+  assert.equal(gateway.restartRequiredStatus.message, restartMessage);
+  t.mock.timers.tick(10_000);
+  assert.equal(FakeWebSocket.instances.at(-1), next);
+  assert.equal(gateway.socket, null);
+  gateway.close();
+});
+
+for (const schema of ["t0_app_v2", "t0_replay_v2"]) {
+  test(`${schema} in-flight Session snapshot survives a same-generation socket reconnect`, async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    let resolveFetch;
+    const requests = [];
+    const gateway = new BackendGateway({
+      WebSocketImpl: FakeWebSocket,
+      reconnectBackoffMs: [10],
+      fetchImpl: (_url, options) => {
+        requests.push(JSON.parse(options.body));
+        return new Promise(resolve => { resolveFetch = resolve; });
+      },
+    });
+    t.after(() => gateway.close());
+    const replay = schema === "t0_replay_v2";
+    const events = [], snapshots = [];
+    gateway.on(replay ? "replay-event" : "app-event", event => events.push(event));
+    gateway.on("replay-snapshot", snapshot => snapshots.push(snapshot));
+    gateway.start(connection);
+    const first = FakeWebSocket.instances.at(-1);
+    first.open();
+    const event = revision => ({ ...serviceEvent(revision), schema_version: schema,
+      session_id: "paused-session", event_type: "session_status", payload: { state: "paused" } });
+    first.message(event(0));
+    first.message(event(2));
+    await tick();
+    assert.equal(requests.length, 1);
+    first.close();
+    t.mock.timers.tick(10);
+    const second = FakeWebSocket.instances.at(-1);
+    assert.notEqual(first, second);
+    second.open();
+    assert.equal(requests.length, 1, "reconnect coalesces with the pending snapshot request");
+    const snapshot = { session: { session_id: "paused-session", revision: 2, state: "paused" } };
+    resolveFetch({ ok: true, json: async () => replay ? snapshot : { data: snapshot } });
+    await tick();
+    assert.deepEqual(events.map(item => item.revision), [0, 2]);
+    assert.equal(events.at(-1).event_type, "workbench_snapshot");
+    assert.equal(gateway.baselines.get(`${schema}:paused-session`), 2);
+    assert.deepEqual(snapshots, replay ? [snapshot] : []);
+    assert.equal(gateway.restartRequiredStatus, null);
+  });
+}
+
+test("a snapshot from a replaced service generation is still discarded", async (t) => {
+  let resolveFetch;
+  const gateway = new BackendGateway({ WebSocketImpl: FakeWebSocket,
+    fetchImpl: () => new Promise(resolve => { resolveFetch = resolve; }) });
+  t.after(() => gateway.close());
+  const events = [];
+  gateway.on("app-event", event => events.push(event));
+  gateway.start(connection);
+  const socket = FakeWebSocket.instances.at(-1);
+  socket.message({ ...serviceEvent(0), session_id: "old-session" });
+  socket.message({ ...serviceEvent(2), session_id: "old-session" });
+  await tick();
+  gateway.start({ ...connection, service_generation: 5 });
+  resolveFetch({ ok: true, json: async () => ({ data: { session: { revision: 2 } } }) });
+  await tick();
+  assert.equal(events.length, 1);
+  assert.equal(gateway.baselines.has("t0_app_v2:old-session"), false);
+});

@@ -121,7 +121,7 @@ App.tsx
   └─ SynchronizedChartGroup.ts → 多图联动
 ```
 
-后端推送 **完整快照 + 带 revision 的增量事件**。前端用 `revision` / `service_generation` 去重；revision 跳变过大时重新拉取 `get_live_snapshot`。事件语义见 [`apps/t0-assistant/contracts/README.md`](../../apps/t0-assistant/contracts/README.md)。
+后端推送 **完整快照 + 带 revision 的增量事件**。前端用 `revision` / `service_generation` 去重；Session revision 缺口沿用现有快照恢复；服务级消息缺口或缓冲溢出丢失服务事件时停止事件流，提示“应用内部服务异常，成交记录可能未更新。请退出应用后重新打开。”，不新增服务级自动恢复。普通 connected 状态和界面刷新不能清除该提示；界面刷新复用主进程已有连接。事件语义见 [`apps/t0-assistant/contracts/README.md`](../../apps/t0-assistant/contracts/README.md)。
 
 UI 布局与图表组职责见 [`ui_layout_spec.md`](./ui_layout_spec.md)。
 

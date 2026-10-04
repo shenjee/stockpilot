@@ -57,9 +57,10 @@ paths, and SQLite implementation fields may not cross this boundary.
   later `operation_failed` event, which must carry that same identifier.
 - Events carry `service_generation`, `session_id` (or explicit `null` for
   service/preference scope), and a monotonic `revision`. Consumers discard an
-  older generation, wrong Session, or `revision <= current_revision`. A jump
-  greater than one triggers `get_live_snapshot`; there is no inferred `gap`
-  event.
+  older generation, wrong Session, or `revision <= current_revision`. A Session
+  revision jump greater than one triggers its existing snapshot rebaseline;
+  there is no inferred `gap` event. Service-scoped message loss instead stops
+  the event stream and requires quitting and reopening the app (Issue #186).
 - Workbench and CZSC events are authoritative full replacements. Market and
   ordinary indicator events are typed updates. Failed refreshes do not publish
   empty facts over the last successful state.
@@ -140,6 +141,37 @@ paths, and SQLite implementation fields may not cross this boundary.
   tests.
 - Preference events report persisted copies and their own revision. React
   remains authoritative for current layout and chart interaction state.
+
+## Service event ordering and internal failures (#186)
+
+Service broadcasts use one delivery counter per `service_generation`. The
+initial watermark is 0; each broadcast increments it by one. A new connection
+receives a `service_status` carrying the current watermark, without consuming
+another broadcast revision. Subscription and baseline enqueueing are atomic;
+the subscriber is registered before acknowledging the WebSocket upgrade.
+Broadcast revision allocation and enqueueing also share that lock. Socket I/O
+runs outside it. Session revisions and `payload.trade_revision` are unchanged.
+
+A service-scoped revision gap or buffer overflow discarding service messages
+makes the stream unusable for the current app lifetime. On an existing
+connection's reconnect, an initialization watermark newer than the last accepted
+revision also proves service message loss, even when it is only one higher. The gateway closes it,
+stops forwarding events and accepting domain commands, and records diagnostic
+details. Main retains the failed status across readiness notifications, retry,
+and interface reload; Renderer shows this persistent, non-dismissable notice
+without a retry action:
+
+> 应用内部服务异常，成交记录可能未更新。请退出应用后重新打开。
+
+Ordinary `connected`/`ready` notifications do not clear this notice. No service
+snapshot compensation, command replay or new automatic recovery protocol is
+introduced. Existing Session rebaseline and ordinary bounded reconnect behavior
+remain in place outside this terminal failure path. An unconfirmed in-flight
+trade command may or may not have saved; it is never automatically resubmitted.
+After quitting and reopening, existing startup/list commands load persisted
+facts. View → Reload only reloads Renderer and reuses the main-process connection;
+it neither creates a second connection nor clears a terminal failure. Two-client
+tests exercise the server boundary, not a new multi-window product feature.
 
 ## Historical snapshot command
 

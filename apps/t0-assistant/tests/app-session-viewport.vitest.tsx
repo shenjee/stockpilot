@@ -240,6 +240,10 @@ function createAppBridge() {
 
   return {
     bridge,
+    emitServiceStatus(status) {
+      Object.assign(serviceStatus, status);
+      emit("service_status", serviceStatus);
+    },
     latestReplay() {
       return replaySessions.at(-1) ?? null;
     },
@@ -500,4 +504,25 @@ describe("App session-switch initialViewport commits", () => {
     expect(lastMount("five_minute").initialViewport).toBeNull();
     expect(lastMount("thirty_minute").initialViewport).toBeNull();
   });
+});
+
+
+it("keeps the internal-service restart notice across connected status and interface reload", async () => {
+  const { RESTART_REQUIRED_MESSAGE } = await import("../electron/backend-gateway.mjs");
+  const { harness, view } = await bootLiveWorkbench();
+  await act(async () => harness.emitServiceStatus({
+    state: "failed", message: RESTART_REQUIRED_MESSAGE,
+  }));
+  expect(screen.getByRole("alert").textContent).toBe(RESTART_REQUIRED_MESSAGE);
+  expect(screen.queryByRole("button", { name: "重试" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "关闭提示" })).toBeNull();
+  await act(async () => harness.emitServiceStatus({ state: "connected", message: "connected" }));
+  expect(screen.getByRole("alert").textContent).toBe(RESTART_REQUIRED_MESSAGE);
+  await act(async () => harness.emitServiceStatus({ state: "ready", message: "ready" }));
+  expect(screen.getByRole("alert").textContent).toBe(RESTART_REQUIRED_MESSAGE);
+  // Main retains the terminal status for getServiceStatus on interface reload.
+  await act(async () => harness.emitServiceStatus({ state: "failed", message: RESTART_REQUIRED_MESSAGE }));
+  view.unmount();
+  render(await loadApp());
+  await waitFor(() => expect(screen.getByRole("alert").textContent).toBe(RESTART_REQUIRED_MESSAGE));
 });

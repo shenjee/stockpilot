@@ -199,6 +199,10 @@ export function App() {
   const [searchMessage, setSearchMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [restoreMessage, setRestoreMessage] = useState<string | null>(null);
+  // Sticky until the application is reopened; ordinary connected/ready
+  // notifications must never conceal a known incomplete service event stream.
+  const [restartRequired, setRestartRequired] = useState<ServiceStatus | null>(null);
+  const restartRequiredRef = useRef<ServiceStatus | null>(null);
   const [backgroundError, setBackgroundError] =
     useState<ApplicationError | null>(null);
   const [activeFailure, setActiveFailure] = useState<ActiveFailure | null>(
@@ -376,6 +380,13 @@ export function App() {
       return;
     }
     const updateServiceStatus = (next: ServiceStatus) => {
+      if (restartRequiredRef.current) return;
+      if (next.state === "failed" && next.message === RESTART_REQUIRED_MESSAGE) {
+        restartRequiredRef.current = next;
+        setRestartRequired(next);
+        setStatus(next);
+        return;
+      }
       const generationChanged =
         serviceGeneration.current > 0 &&
         next.service_generation > 0 &&
@@ -1905,7 +1916,7 @@ export function App() {
       data-testid="shell"
       className={[
         "shell",
-        backgroundError || activeFailure ? "has-feedback" : "",
+        restartRequired || backgroundError || activeFailure ? "has-feedback" : "",
         replayMode ? "replay-mode" : "",
       ]
         .filter(Boolean)
@@ -1922,7 +1933,12 @@ export function App() {
         onMode={selectMode}
       />
 
-      {(activeFailure || backgroundError) && (
+      {restartRequired && (
+        <section className="feedback-banner" role="alert">
+          <span>{restartRequired.message}</span>
+        </section>
+      )}
+      {!restartRequired && (activeFailure || backgroundError) && (
         <section
           className="feedback-banner"
           role={activeFailure ? "alert" : "status"}
@@ -2825,6 +2841,11 @@ function preferencesFromResponse(response: unknown) {
     ? (candidate as Parameters<typeof applyWorkbenchPreferences>[1])
     : null;
 }
+
+// Keep the wire status shape unchanged. This exact product message identifies
+// the terminal stream failure; tested against the main-process gateway output.
+const RESTART_REQUIRED_MESSAGE =
+  "应用内部服务异常，成交记录可能未更新。请退出应用后重新打开。";
 
 function serviceStatusError(status: ServiceStatus): ApplicationError {
   return {
