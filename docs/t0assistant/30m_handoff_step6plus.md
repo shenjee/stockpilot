@@ -1,5 +1,9 @@
 # 30 分钟 K 线功能 — 开发交接 Prompt（Step 6+）
 
+> **历史交接记录**：以下分支、进度、环境与“唯一权威基线”措辞仅反映当时交接状态，
+> 不代表当前实现或验收结论。现行入口见[文档权威与证据导航](../documentation_guide.md)；
+> 公共字段以[契约目录](../../apps/t0-assistant/contracts/README.md)为准。
+
 > 本文件是 30m K 线功能（Issue #168）已完成步骤的交接文档，供新 thread 继续开发。
 > 唯一权威基线：`docs/t0assistant/30m_chart_feature_design.md`（commit `886cce9`，已冻结全部决策）。
 > 导航摘要：`docs/t0assistant/30m_dev_handoff.md`，与设计稿冲突时以设计稿为准。

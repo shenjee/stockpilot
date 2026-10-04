@@ -14,7 +14,7 @@ C4-style view expressed in Mermaid.
 ```mermaid
 graph TD
     User[User / Developer]
-    Runtime[Codex / Skill Runtime]
+    Runtime[Local App / CLI / Skill Execution]
     Repo[StockPilot Source Repository]
     Workspace[Local Workspace]
     RuntimeData[Local Runtime Data]
@@ -23,7 +23,7 @@ graph TD
     FundamentalProviders[External Fundamental Data Providers]
 
     User -->|reads, edits, runs| Repo
-    User -->|runs apps, CLI, skills| Runtime
+    User -->|runs Streamlit, Electron T+0, CLI, skills| Runtime
     Runtime -->|loads code from| Workspace
     Workspace -->|contains checked-out code from| Repo
 
@@ -41,7 +41,7 @@ graph TD
 StockPilot is the system inside the `Local Workspace`. It includes:
 
 - reusable domain packages under `packages/`
-- local Streamlit apps under `apps/`
+- local Streamlit apps and the Electron/React/Python T+0 desktop app under `apps/`
 - installable skill bundles under `skills/`
 - documentation under `docs/`
 
@@ -50,10 +50,11 @@ checkout used by developers, tests, CLI commands, and local app runs.
 
 ## External Actors And Systems
 
-- `User / Developer`: reads docs, runs commands, uses Streamlit apps, and may
+- `User / Developer`: reads docs, runs commands, uses Streamlit or T+0 desktop apps, and may
   install the skill into an agent runtime.
-- `Codex / Skill Runtime`: executes the project code locally and mediates calls
-  to apps, CLI modules, and skill scripts.
+- `Local App / CLI / Skill Execution`: local execution environments; apps and
+  CLIs can run directly without an agent runtime. T+0 process boundaries are
+  detailed in the [container view](c4-container.md).
 - `External Market Data Providers`: currently represent Tencent-backed quote/K-
   line access and similar market-data integrations.
 - `External Fundamental Data Providers`: currently represent AkShare-backed

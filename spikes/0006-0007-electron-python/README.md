@@ -5,8 +5,8 @@ implement the T+0 backend or freeze any business payload.
 
 | Phase | ADR | Question | Report |
 | --- | --- | --- | --- |
-| A — Process lifecycle | [ADR 0006](../../../docs/adr/0006-electron-managed-python-process.md) | Can Electron reliably own one Python child process: readiness, crash, bounded restart, clean shutdown, generation, disposable Replay state? | [`docs/spikes/0006-electron-managed-python-process.md`](../../../docs/spikes/0006-electron-managed-python-process.md) |
-| B — Local transport | [ADR 0007](../../../docs/adr/0007-local-python-transport.md) | HTTP + WebSocket vs HTTP + SSE; ephemeral loopback port + per-launch credential; generation/revision/snapshot; reconnect; bounded buffer; cancellation; shutdown in-flight. | [`docs/spikes/0007-local-python-transport.md`](../../../docs/spikes/0007-local-python-transport.md) |
+| A — Process lifecycle | [ADR 0006](../../docs/adr/0006-electron-managed-python-process.md) | Can Electron reliably own one Python child process: readiness, crash, bounded restart, clean shutdown, generation, disposable Replay state? | [`docs/spikes/0006-electron-managed-python-process.md`](../../docs/spikes/0006-electron-managed-python-process.md) |
+| B — Local transport | [ADR 0007](../../docs/adr/0007-local-python-transport.md) | HTTP + WebSocket vs HTTP + SSE; ephemeral loopback port + per-launch credential; generation/revision/snapshot; reconnect; bounded buffer; cancellation; shutdown in-flight. | [`docs/spikes/0007-local-python-transport.md`](../../docs/spikes/0007-local-python-transport.md) |
 
 ## What is here
 

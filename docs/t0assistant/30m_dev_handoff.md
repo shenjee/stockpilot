@@ -1,5 +1,9 @@
 # 30 分钟 K 线功能 — 开发交接总结
 
+> **历史交接记录**：以下分支、进度、环境与“唯一权威基线”措辞仅反映当时交接状态，
+> 不代表当前实现或验收结论。现行入口见[文档权威与证据导航](../documentation_guide.md)；
+> 公共字段以[契约目录](../../apps/t0-assistant/contracts/README.md)为准。
+
 > 本文是设计讨论结束后的开发交接索引。唯一权威基线是
 > `docs/t0assistant/30m_chart_feature_design.md`（commit `886cce9`，已冻结全部决策）。
 > 本文只做导航与摘要，与设计稿冲突时以设计稿为准。
