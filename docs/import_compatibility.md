@@ -1,8 +1,28 @@
 # Python import compatibility — issue #184
 
-Verified on 2026-10-03 from baseline `94c8479`, using `~/.venvs/czsc`.
+Current base: `158173c` (includes #182 and the merged #183). Rebased on
+2026-10-04 using `~/.venvs/czsc`; only the #184 implementation commit was replayed.
+`git range-diff` confirmed the implementation patch was identical before the
+verification-record update. The four old #183 conflict files are not in this PR.
 
-## Failure before the change
+## Post-rebase verification (2026-10-04)
+
+All requested affected suites were rerun on the rebased branch:
+
+| Suite | Tests | Result |
+| --- | ---: | --- |
+| `packages/marketdata/tests` | 185 | Pass; includes 11 import-identity tests / 29 probes |
+| `skills/china-stock-analysis/tests` | 13 | Pass; includes 9 compatibility tests / 8 isolated standalone checks |
+| `packages/fundamentalscreener/tests` | 342 | Pass; includes main's #182 coverage |
+| `apps/fundamental-screener/tests` | 43 | Pass; includes main's #182 coverage |
+| **Post-rebase rerun total** | **583** | **Pass** |
+
+Short-name and canonical CLI `--help` output was also rechecked and matched.
+The previous 1,466-test complete Python run and JS/TS results below remain
+historical evidence against `94c8479`; they are not claimed as a new full run
+against `158173c`. Unaffected suites and JS/TS were not rerun for this rebase.
+
+## Failure before the change (original baseline `94c8479`)
 
 `marketdata.provider_result.MarketDataResult` and
 `packages.marketdata.provider_result.MarketDataResult` were different classes.
@@ -42,7 +62,7 @@ market-data package merely to set up aliases.
 | --- | --- | --- |
 | Fundamental Screener CLI / sync console scripts | `packages.fundamentalscreener.cli:main` / `.sync:main` | Full CLI and sync Python tests; installed CLI help; canonical `sectors --format json` and short-name `screen --format json` parse successfully; short/canonical help output matches. |
 | Chan Viewer Streamlit app | App inserts `packages/`; short `chantheory`, `marketdata`, and their children in app/services/UI modules | All 37 app tests, including app import with Streamlit stub; 122 Chan Theory tests. |
-| Fundamental Screener Streamlit app | App inserts `packages/`; short `fundamentalscreener` and children in app/services | All 41 app tests, including import and `main()` smoke with recorded/stubbed UI and data services. |
+| Fundamental Screener Streamlit app | App inserts `packages/`; short `fundamentalscreener` and children in app/services | All 43 app tests after rebase, including import and `main()` smoke with recorded/stubbed UI and data services. |
 | China stock analysis Skill | Flat provider/runtime/repository/service wrappers prefer `marketdata.*`; fallback `_standalone_marketdata.*` | Wrapper object identity; cold-wrapper editable and regular-install tests; all 8 standalone behavior checks in isolated processes. |
 | T+0 desktop/backend | Canonical `packages.marketdata.*`, `packages.chantheory.*`, `packages.t0assistant.*` | Backend `service.py --help`; all 104 app/backend Python tests and 479 Node tests, including real authenticated local-service startup/shutdown and transport; 617 T+0 package tests. |
 
@@ -82,8 +102,9 @@ package loaded, and every loaded standalone module file lies in the temporary
 scripts directory. All assertions from the original eight standalone test
 bodies are preserved; their AST assertion-call lists were compared during review.
 
-## Full local regression
+## Original full local regression (2026-10-03, base `94c8479`)
 
+These are the pre-rebase results; the latest rerun counts are listed above.
 Python suites run separately to retain their existing discovery/import setup:
 
 | Suite | Tests | Result |
