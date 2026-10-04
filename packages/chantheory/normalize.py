@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from math import isfinite
 from typing import Iterable, List, Mapping, MutableMapping, Optional, Sequence
 
 from .config import MARKET_SUFFIX, TIMEFRAME_TO_CZSC_FREQ, TRACKER_GAPS, TRACKER_REQUIRED_FIELDS
@@ -60,8 +61,21 @@ def normalize_ohlcv_rows(
     warnings: List[AnalysisWarning] = []
     deduped: MutableMapping[str, Mapping[str, object]] = {}
 
-    for row in rows_list:
-        timestamp = _extract_timestamp(row)
+    for source_index, row in enumerate(rows_list):
+        try:
+            timestamp = _extract_timestamp(row)
+        except NormalizationError as exc:
+            if strict:
+                raise
+            warnings.append(
+                _warning(
+                    warning_id=f"warning_invalid_timestamp_{source_index}",
+                    code="INVALID_BAR",
+                    message=str(exc),
+                    field="timestamp",
+                )
+            )
+            continue
         if timestamp in deduped:
             warnings.append(
                 _warning(
@@ -73,7 +87,7 @@ def normalize_ohlcv_rows(
             )
         deduped[timestamp] = row
 
-    normalized_rows = sorted(deduped.values(), key=_extract_timestamp)
+    normalized_rows = [deduped[timestamp] for timestamp in sorted(deduped)]
     normalized_bars: List[NormalizedBar] = []
     derived_amount_warning_added = False
 
@@ -142,6 +156,8 @@ def _normalize_row(
     amount_derived = False
     if amount is None:
         amount = close_price * volume
+        if not isfinite(amount):
+            raise NormalizationError(f"Derived amount must be finite at {timestamp}.")
         amount_derived = True
 
     if high_price < max(open_price, close_price, low_price):
@@ -207,9 +223,12 @@ def _extract_optional_float(row: Mapping[str, object], *keys: str) -> Optional[f
         if value in (None, ""):
             continue
         try:
-            return float(value)
-        except (TypeError, ValueError) as exc:
+            number = float(value)
+        except (TypeError, ValueError, OverflowError) as exc:
             raise NormalizationError(f"Invalid numeric value for {key}: {value!r}") from exc
+        if not isfinite(number):
+            raise NormalizationError(f"Numeric value for {key} must be finite: {value!r}")
+        return number
     return None
 
 
