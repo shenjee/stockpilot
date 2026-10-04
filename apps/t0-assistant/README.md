@@ -68,7 +68,7 @@ From the repository root:
 
 ```bash
 source ~/.venvs/czsc/bin/activate
-python -m unittest discover -s apps/t0-assistant/tests -p 'test_*.py'
+python apps/t0-assistant/tests/run_required_python.py apps/t0-assistant/tests
 cd apps/t0-assistant
 npm test
 npm run smoke
@@ -82,11 +82,19 @@ The smoke suite is offline with respect to market services. CI reports four
 independent tracks so failures are attributable without reading unrelated logs:
 
 ```text
-Python smoke     contracts plus the formal loopback service bootstrap
+Python smoke     marketdata, t0assistant, chantheory, indicators, CI gates, formal service lifecycle
 Renderer smoke   TypeScript checking, production Vite build, and App React integration tests
 Electron smoke   Python service host lifecycle and bounded shutdown
 Contract smoke   Python JSON Schema validation plus Node fixture consumption
 ```
+
+Each required Python target logs its discovery count and fails when empty or
+entirely skipped. Node targets run in separate processes with per-file test
+counts; React targets verify Vitest's reported counts. Missing targets, empty
+files, failed discovery, and test failures cannot pass the gate. Typechecking
+and production builds remain compiler checks rather than counted test suites.
+See [the CI coverage and acceptance matrix](../../docs/t0assistant/ci_coverage.md)
+for exact targets, trigger paths, and modules outside this workflow.
 
 Electron GUI launch remains a manual smoke; the automated Electron track tests
 the headless process-host lifecycle without opening a window.
