@@ -896,44 +896,30 @@ class _Handler(BaseHTTPRequestHandler):
             ).digest()
         ).decode()
         protocol = f"stockpilot-auth.{getattr(self.server, 'token', '')}"
-        self.send_response(HTTPStatus.SWITCHING_PROTOCOLS)
-        self.send_header("Upgrade", "websocket")
-        self.send_header("Connection", "Upgrade")
-        self.send_header("Sec-WebSocket-Accept", accept)
-        self.send_header("Sec-WebSocket-Protocol", protocol)
-        self.end_headers()
-
         publisher = getattr(self.server, "event_publisher", None)
-        # Subscribe BEFORE claiming/sending the connect service_status revision.
-        # A renderer that immediately issues list_trades after receiving
-        # connected must not miss the authoritative trades_changed published in
-        # the tiny window between the handshake and the subscription.
-        subscriber = publisher.subscribe() if publisher is not None else None
-        # Claim the connect service_status revision from the publisher so the
-        # service-scoped (session_id: null) revision sequence is single-sourced
-        # and gap-free; fall back to 0 when no publisher is wired (contract-only
-        # tests). The renderer's gateway seeds its gate from this revision.
-        service_revision = publisher.claim() if publisher is not None else 0
-        self._send_websocket_text(
-            json.dumps(
-                {
+        subscriber = publisher.subscribe(initialize=True) if publisher is not None else None
+        self.server.websocket_connected()
+        try:
+            # Register and queue the baseline BEFORE the client can observe
+            # the upgrade and immediately issue a command that publishes facts.
+            self.send_response(HTTPStatus.SWITCHING_PROTOCOLS)
+            self.send_header("Upgrade", "websocket")
+            self.send_header("Connection", "Upgrade")
+            self.send_header("Sec-WebSocket-Accept", accept)
+            self.send_header("Sec-WebSocket-Protocol", protocol)
+            self.end_headers()
+            if publisher is None:
+                self._send_websocket_text(json.dumps({
                     "schema_version": "t0_app_v2",
-                    "service_generation": getattr(
-                        self.server, "service_generation", 1
-                    ),
+                    "service_generation": self.server.service_generation,
                     "session_id": None,
-                    "revision": service_revision,
+                    "revision": 0,
                     "event_type": "service_status",
                     "payload": {
                         "state": "connected",
                         "message": "本地服务事件通道已连接",
                     },
-                },
-                ensure_ascii=False,
-            )
-        )
-        self.server.websocket_connected()
-        try:
+                }, ensure_ascii=False))
             while not self.server.shutdown_event.is_set():
                 if subscriber is not None and not self._drain_websocket_events(
                     subscriber, publisher

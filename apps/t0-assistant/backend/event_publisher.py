@@ -4,17 +4,11 @@ The formal Python service pushes authoritative ``t0_app_v2`` event envelopes
 to connected renderers over the ``/events`` WebSocket. ``EventPublisher`` owns
 two distinct concerns:
 
-* **Delivery revision** (the envelope ``revision``): a single monotonic counter
-  for every ``session_id: null`` envelope published within one
-  ``service_generation``. The renderer's :class:`BackendGateway` gates
-  ``session_id: null`` envelopes by ``revision`` on the ``t0_app_v2:service``
-  key and *drops* an event whose revision is ``<=`` the last seen or has a gap
-  (``> last + 1``); service-scoped events cannot be re-baselined. The publisher
-  therefore claims revisions in strict ``+1`` order, starting at ``0`` for the
-  connect ``service_status`` and continuing ``1, 2, ...`` for each
-  ``trades_changed`` (and any future service-scoped event), so every published
-  envelope passes the gate. The counter never resets within a process; a Python
-  restart produces a new ``service_generation`` and a fresh counter.
+* **Delivery revision** (the envelope ``revision``): a process-wide counter
+  for service broadcasts. Revision 0 is the initial watermark. Connecting
+  clients receive the current watermark without consuming a revision.
+  Subscription, initialization and broadcast enqueueing share one lock, so
+  every subscriber sees its baseline before all subsequent broadcasts.
 * **Trade revision** (``payload.trade_revision``): owned by
   :class:`~packages.t0assistant.trading.api.TradeCommandApi`, not here. The
   publisher only carries it through unchanged.
@@ -43,9 +37,7 @@ class EventPublisher:
         ):
             raise ValueError("service_generation must be a positive integer")
         self._service_generation = service_generation
-        # Last claimed service-scoped revision. The first claim() returns 0
-        # (the connect service_status); subsequent claims are 1, 2, ...
-        self._last_revision = -1
+        self._last_revision = 0
         self._subscribers: set[Queue] = set()
         self._lock = Lock()
 
@@ -53,20 +45,27 @@ class EventPublisher:
     def service_generation(self) -> int:
         return self._service_generation
 
-    def claim(self) -> int:
-        """Claim and return the next monotonic service-scoped revision.
+    def subscribe(self, *, initialize: bool = False) -> Queue:
+        """Register a queue, optionally seeding its service watermark atomically.
 
-        Used by the WebSocket handler for the connect ``service_status`` so the
-        service-scoped revision sequence stays single-sourced and gap-free.
+        The WebSocket registers before acknowledging the HTTP upgrade. Thus a
+        command issued on socket open cannot publish before subscription.
+        Initialization does not consume a broadcast revision.
         """
-        with self._lock:
-            self._last_revision += 1
-            return self._last_revision
-
-    def subscribe(self) -> Queue:
-        """Register a new subscriber queue (one per WebSocket connection)."""
         queue: Queue = Queue()
         with self._lock:
+            if initialize:
+                queue.put({
+                    "schema_version": "t0_app_v2",
+                    "service_generation": self._service_generation,
+                    "session_id": None,
+                    "revision": self._last_revision,
+                    "event_type": "service_status",
+                    "payload": {
+                        "state": "connected",
+                        "message": "本地服务事件通道已连接",
+                    },
+                })
             self._subscribers.add(queue)
         return queue
 
@@ -88,22 +87,25 @@ class EventPublisher:
         without ``operation_id`` when it is ``None`` so they satisfy the frozen
         ``event_envelope`` schema (``additionalProperties: false``).
         """
-        revision = self.claim()
-        envelope: dict[str, Any] = {
-            "schema_version": "t0_app_v2",
-            "service_generation": self._service_generation,
-            "session_id": session_id,
-            "revision": revision,
-            "event_type": event_type,
-            "payload": payload,
-        }
-        if operation_id is not None:
-            envelope["operation_id"] = operation_id
+        # Unbounded subscriber queues never wait for a network write. Keep the
+        # entire allocation/enqueue operation under the lock: allocating first
+        # and enqueueing later allows another publisher to overtake this event.
         with self._lock:
-            subscribers = list(self._subscribers)
-        for queue in subscribers:
-            queue.put(envelope)
-        return revision
+            self._last_revision += 1
+            revision = self._last_revision
+            envelope: dict[str, Any] = {
+                "schema_version": "t0_app_v2",
+                "service_generation": self._service_generation,
+                "session_id": session_id,
+                "revision": revision,
+                "event_type": event_type,
+                "payload": payload,
+            }
+            if operation_id is not None:
+                envelope["operation_id"] = operation_id
+            for queue in self._subscribers:
+                queue.put(envelope)
+            return revision
 
     def publish_envelope(self, envelope: dict[str, Any]) -> None:
         """Broadcast an already-revisioned Session envelope.

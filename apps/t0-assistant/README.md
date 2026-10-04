@@ -126,3 +126,19 @@ suite; reserve the target-viewport gate for a compatible macOS runner.
   Replay data.
 - Packaging, signing, notarization, and installed-App acceptance are tracked by
   issue #87 and are not performed by `npm start`.
+
+## Internal service event failures
+
+View → Reload refreshes the interface and reuses the main-process event
+connection. It is not an application restart or a second-connection trigger.
+If service messages are lost and the stream cannot reliably continue, the app
+stops that stream and shows:
+
+> 应用内部服务异常，成交记录可能未更新。请退出应用后重新打开。
+
+The notice persists across ordinary readiness/connected notifications and
+interface reload. Quit the application fully, then reopen it to load saved
+trades through the normal startup path. An unconfirmed submission must be
+checked after reopening; the app does not automatically resubmit it. This is
+an internal service problem, not an Internet connectivity warning. See the
+[ordering and failure contract](contracts/README.md#service-event-ordering-and-internal-failures-186).

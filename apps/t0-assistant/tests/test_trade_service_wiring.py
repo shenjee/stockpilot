@@ -30,6 +30,9 @@ import tempfile
 import threading
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from queue import Queue
+from unittest.mock import patch
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -39,7 +42,7 @@ import sys
 
 sys.path.insert(0, str(APP_ROOT))
 
-from backend.service import create_server  # noqa: E402
+from backend.service import create_server, _Handler  # noqa: E402
 from packages.t0assistant.repositories import (  # noqa: E402
     SqliteTradeRepository,
     open_app_database,
@@ -177,8 +180,6 @@ class TradeServiceWiringTest(unittest.TestCase):
         )
         self.thread.start()
         self.base_url = f"http://127.0.0.1:{self.server.server_port}"
-        # Give the server a moment to accept connections.
-        time.sleep(0.2)
 
     def tearDown(self) -> None:
         self.server.shutdown()
@@ -204,6 +205,80 @@ class TradeServiceWiringTest(unittest.TestCase):
             payload = json.load(error)
             error.close()
             return error.code, payload
+
+    def test_second_connection_and_reopen_read_saved_facts(self) -> None:
+        first = _WebSocketClient("127.0.0.1", self.server.server_port, "wiring-token")
+        self.addCleanup(first.close)
+        self.assertEqual(first.recv_text()["revision"], 0)
+        status, response = self._post("create_trade", {"trade": _draft()}, "create-before-second")
+        self.assertEqual(status, 200)
+        self.assertTrue(response["accepted"])
+        saved = first.recv_text()
+        self.assertEqual(saved["revision"], 1)
+        second = _WebSocketClient("127.0.0.1", self.server.server_port, "wiring-token")
+        self.addCleanup(second.close)
+        self.assertEqual(second.recv_text()["revision"], 1)
+        self._post("list_trades", {
+            "trade_scope": "real", "symbol": "sh.600584", "trade_date": "2026-07-24",
+        }, "second-list")
+        self.assertEqual(first.recv_text()["revision"], 2)
+        self.assertEqual(second.recv_text()["revision"], 2)
+        first.close()
+        second.close()
+        # Rebuild the service and repository against the saved database. A fresh
+        # app uses the existing list_trades command, with no recovery protocol.
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=2)
+        self._database.close()
+        self._database = open_app_database(self.db_path)
+        self.publisher = EventPublisher(service_generation=8)
+        api = TradeCommandApi(
+            TradeService(SqliteTradeRepository(self._database), eligibility=AllowAllEligibility()),
+            service_generation=8, publisher=self.publisher,
+        )
+        self.server = create_server("127.0.0.1", 0, "wiring-token", 8,
+                                    trade_api=api, event_publisher=self.publisher)
+        self.thread = threading.Thread(target=self.server.serve_forever,
+                                       kwargs={"poll_interval": 0.05}, daemon=True)
+        self.thread.start()
+        self.base_url = f"http://127.0.0.1:{self.server.server_port}"
+        reopened = _WebSocketClient("127.0.0.1", self.server.server_port, "wiring-token")
+        self.addCleanup(reopened.close)
+        status = reopened.recv_text()
+        self.assertEqual((status["service_generation"], status["revision"]), (8, 0))
+        self._post("list_trades", {
+            "trade_scope": "real", "symbol": "sh.600584", "trade_date": "2026-07-24",
+        }, "normal-startup-list")
+        facts = reopened.recv_text()
+        self.assertEqual(facts["revision"], 1)
+        self.assertEqual(facts["payload"]["trades"], saved["payload"]["trades"])
+
+    def test_publish_while_upgrade_handler_is_paused(self) -> None:
+        upgraded, release = threading.Event(), threading.Event()
+        original = _Handler.end_headers
+
+        def pause_after_upgrade(handler):
+            original(handler)
+            if handler.path == "/events":
+                upgraded.set()
+                if not release.wait(3):
+                    raise AssertionError("test did not release upgrade handler")
+
+        with patch.object(_Handler, "end_headers", pause_after_upgrade):
+            client = _WebSocketClient("127.0.0.1", self.server.server_port, "wiring-token")
+            try:
+                self.assertTrue(upgraded.wait(2))
+                self._post("list_trades", {
+                    "trade_scope": "real", "symbol": "sh.600584", "trade_date": "2026-07-24",
+                }, "during-upgrade")
+                release.set()
+                baseline, fact = client.recv_text(), client.recv_text()
+                self.assertEqual((baseline["event_type"], baseline["revision"]), ("service_status", 0))
+                self.assertEqual((fact["event_type"], fact["revision"]), ("trades_changed", 1))
+            finally:
+                release.set()
+                client.close()
 
     def test_list_create_update_delete_publish_authoritative_trades_changed(self) -> None:
         client = _WebSocketClient("127.0.0.1", self.server.server_port, "wiring-token")
@@ -505,6 +580,98 @@ class TradeServiceWiringTest(unittest.TestCase):
             1,
         )
 
+
+
+class _ObservedLock:
+    """Signal lock entry attempts so race tests need no scheduling sleeps."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.attempts = Queue()
+
+    def __enter__(self):
+        self.attempts.put(threading.current_thread().name)
+        self.lock.acquire()
+
+    def __exit__(self, *_):
+        self.lock.release()
+
+
+class PublisherOrderingTest(unittest.TestCase):
+    def test_overlapping_initialization_and_publish_share_one_order(self):
+        publisher = EventPublisher(service_generation=7)
+        old = publisher.subscribe(initialize=True)
+        self.assertEqual(old.get_nowait()["revision"], 0)
+        publisher._lock = lock = _ObservedLock()
+        entered, release = threading.Event(), threading.Event()
+
+        class PausedInitialization(Queue):
+            def put(self, envelope, *args, **kwargs):
+                if envelope["event_type"] == "service_status":
+                    entered.set()
+                    if not release.wait(3):
+                        raise AssertionError("initialization was not released")
+                super().put(envelope, *args, **kwargs)
+
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            try:
+                with patch("backend.event_publisher.Queue", PausedInitialization):
+                    first = pool.submit(publisher.subscribe, initialize=True)
+                    self.assertTrue(entered.wait(2))
+                    lock.attempts.get(timeout=2)
+                second = pool.submit(publisher.subscribe, initialize=True)
+                broadcast = pool.submit(publisher.publish, event_type="trades_changed", payload={})
+                lock.attempts.get(timeout=2)
+                lock.attempts.get(timeout=2)
+                self.assertFalse(second.done())
+                self.assertFalse(broadcast.done())
+            finally:
+                release.set()
+            one, two = first.result(timeout=2), second.result(timeout=2)
+            self.assertEqual(broadcast.result(timeout=2), 1)
+        self.assertEqual(old.get_nowait()["revision"], 1)
+        self.assertEqual([one.get_nowait()["revision"], one.get_nowait()["revision"]], [0, 1])
+        # The second subscriber may linearize immediately before or after the
+        # broadcast; either way its baseline plus subsequent events is intact.
+        baseline = two.get_nowait()
+        self.assertEqual(baseline["event_type"], "service_status")
+        if baseline["revision"] == 0:
+            self.assertEqual(two.get_nowait()["revision"], 1)
+        else:
+            self.assertEqual(baseline["revision"], 1)
+        self.assertTrue(two.empty())
+        self.assertTrue(one.empty())
+
+    def test_concurrent_broadcast_cannot_overtake_enqueue(self):
+        publisher = EventPublisher(service_generation=7)
+        subscriber = publisher.subscribe()
+        entered, release = threading.Event(), threading.Event()
+        original = subscriber.put
+
+        def pause_first(envelope):
+            if envelope["payload"]["label"] == "first":
+                entered.set()
+                if not release.wait(3):
+                    raise AssertionError("publication was not released")
+            original(envelope)
+
+        publisher._lock = lock = _ObservedLock()
+        with patch.object(subscriber, "put", pause_first), ThreadPoolExecutor(max_workers=2) as pool:
+            try:
+                first = pool.submit(publisher.publish, event_type="trades_changed", payload={"label": "first"})
+                self.assertTrue(entered.wait(2))
+                lock.attempts.get(timeout=2)
+                second = pool.submit(publisher.publish, event_type="trades_changed", payload={"label": "second"})
+                lock.attempts.get(timeout=2)
+                self.assertFalse(second.done())
+            finally:
+                release.set()
+            self.assertEqual((first.result(timeout=2), second.result(timeout=2)), (1, 2))
+        self.assertEqual(
+            [(item["revision"], item["payload"]["label"])
+             for item in [subscriber.get_nowait(), subscriber.get_nowait()]],
+            [(1, "first"), (2, "second")],
+        )
 
 if __name__ == "__main__":
     unittest.main()

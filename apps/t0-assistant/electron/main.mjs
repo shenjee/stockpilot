@@ -54,7 +54,7 @@ function createWindow() {
 }
 
 serviceHost.on("status", (status) => {
-  send("bridge:service-status", status);
+  send("bridge:service-status", gateway.restartRequiredStatus ?? status);
   if (status.state === "ready") {
     const connection = serviceHost.connectionInfo();
     if (connection) gateway.start(connection);
@@ -77,7 +77,7 @@ gateway.on("replay-snapshot", (snapshot) => send("bridge:replay-snapshot", snaps
 gateway.on("diagnostic", ({ stream, message }) => recordDiagnostic(stream, message));
 
 ipcMain.handle("bridge:invoke", (_event, command, request) => {
-  if (command === "get_service_status") return serviceHost.rendererStatus();
+  if (command === "get_service_status") return gateway.restartRequiredStatus ?? serviceHost.rendererStatus();
   if (command === "retry_service") {
     return retryDesktopService(serviceHost, gateway);
   }
