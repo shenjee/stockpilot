@@ -86,10 +86,33 @@ Normalized internal bar:
 Normalization rules:
 
 - sort bars by timestamp ascending
-- keep the last row when timestamps are duplicated
+- keep the last row when normalized timestamps are duplicated, before numeric validation;
+  an invalid last row does not fall back to an earlier duplicate
 - preserve source bars without project-side inclusion removal
 - derive `amount` with `close * volume` when the source omits it
-- reject invalid price geometry in strict mode
+- require finite prices, volume, and supplied or derived amount (including numeric
+  strings); reject NaN, either infinity, conversion overflow, and derived amount overflow
+- reject invalid price geometry and negative volume
+- with `strict=True` (the default), raise `NormalizationError` for invalid records
+  or no valid bars
+- with `strict=False`, skip missing/invalid timestamps before sorting and deduplication;
+  skip invalid numeric records after deduplication, emitting `INVALID_BAR` warnings
+  for either case; all-invalid input returns empty bars with warnings
+- preserve `bar_index` as the position in the sorted, deduplicated sequence of rows
+  with valid timestamps; numeric-invalid rows can leave gaps in these indices
+
+These are defensive public-interface guarantees (#187). Numeric finiteness and
+lenient timestamp handling address separate concerns; constructed bad inputs do
+not establish an incident in normal Tencent data. The viewer defaults to strict
+validation, and T+0 calls `analyze()` with its strict default.
+
+The request date range is validated upstream, and minute timestamps are parsed
+before range filtering. Daily response dates remain strings without per-record
+format validation; SQLite text range filtering is not a format check. No actual
+invalid daily dates or non-finite quotes were confirmed in the reviewed source
+pipeline. Volume NaN/infinity is skipped by the provider's integer conversion,
+and SQLite rejects NaN prices via NOT NULL constraints, but those protections do
+not cover direct normalization calls or every non-finite field.
 
 ## Timeframe Mapping
 
@@ -106,7 +129,8 @@ Project timeframe to `czsc` mapping:
 | `week` | `W` |
 | `month` | `M` |
 
-Current repo validation only covers day bars because `china-stock-analysis` persists day K-lines today.
+Shared market data supports day and minute K-line persistence. Frozen regression
+fixtures cover daily, 5m, and 30m inputs (see Fixtures below).
 
 ## Result Schema
 
@@ -244,6 +268,10 @@ Style rules:
 
 ## Current Data Fit
 
+Shared market data persists day and minute bars with optional `amount`.
+Normalization preserves supplied finite amount values and derives `amount` with
+`close * volume` only when absent.
+
 Current `china-stock-analysis` day-bar records already provide:
 
 - `date`
@@ -253,17 +281,16 @@ Current `china-stock-analysis` day-bar records already provide:
 - `low`
 - `volume`
 
-Current gaps against ideal `czsc` input metadata:
+Remaining gaps in the normalized input contract:
 
-- no persisted `amount` field, so P1 derives it
 - no explicit adjustment flag in normalized output yet
 - no formal trading-calendar or suspension handling contract yet
-- no repo-level minute bar persistence yet
 
 ## Error And Degradation Rules
 
 - strict normalization raises `NormalizationError`
-- non-strict normalization should prefer warnings over hard failure
+- non-strict normalization skips records with invalid timestamps or numeric data
+  with `INVALID_BAR` warnings; unsupported timeframes remain batch errors
 - engine import or runtime failure returns the frozen schema with empty structure arrays
 - skills and report generators should consume `summary` and `warnings`, not raw `czsc` objects
 
