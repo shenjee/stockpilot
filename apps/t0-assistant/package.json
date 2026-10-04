@@ -10,10 +10,10 @@
     "typecheck": "tsc -p renderer/tsconfig.json",
     "start": "npm run build && electron .",
     "test": "node --test tests/*.test.mjs && npm run test:app",
-    "test:app": "vitest run --config vitest.config.ts",
-    "test:contracts": "node --test tests/replay-contract.test.mjs tests/fake-safe-bridge.test.mjs tests/historical-snapshot-contract.test.mjs",
+    "test:app": "node tests/run-required-tests.mjs vitest",
+    "test:contracts": "node tests/run-required-tests.mjs node tests/replay-contract.test.mjs tests/fake-safe-bridge.test.mjs tests/historical-snapshot-contract.test.mjs",
     "smoke:renderer": "npm run typecheck && npm run build",
-    "smoke:electron": "node --test tests/python-service-host.test.mjs tests/backend-gateway.test.mjs",
+    "smoke:electron": "node tests/run-required-tests.mjs node tests/python-service-host.test.mjs tests/backend-gateway.test.mjs",
     "acceptance:target-viewports": "npm run build && electron tests/target-viewport.electron.mjs",
     "smoke": "npm run smoke:renderer && npm run smoke:electron && npm run test:contracts"
   },
