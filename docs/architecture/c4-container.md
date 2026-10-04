@@ -58,7 +58,6 @@ graph TD
     MarketData --> MarketProviders
     FundamentalCore --> SQLite
     FundamentalCore --> FundamentalProviders
-    FundamentalCore --> MarketProviders
     Skill --> RuntimeData
     Skill --> MarketProviders
     RuntimeData -->|contains| SQLite
@@ -69,6 +68,11 @@ and dependency verification are outside #191. No application imports its market
 services from the skill. Chan's `services/market_service.py` imports `marketdata`;
 T+0 backend assembly imports `packages.marketdata` and `packages.t0assistant`.
 The shared T+0 `runtime/pipeline.py` calls Chan Theory and indicators.
+
+Fundamental Screener obtains company daily quotes and the CSI 300 benchmark
+through AkShare's Sina-backed `stock_zh_a_daily` and `stock_zh_index_daily`
+adapters. These belong to its external provider integration, not the Tencent
+market-data path used by `packages/marketdata`.
 
 ## Container Responsibilities
 
