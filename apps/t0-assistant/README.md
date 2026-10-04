@@ -6,7 +6,7 @@ market data, Replay sessions and playback, persisted real trades,
 preferences, authenticated loopback transport, bounded restart, and graceful
 shutdown.
 
-W0 integration coordinator: **Codex**, acting in the repository's integration
+Historical W0 integration coordinator: **Codex**, acting in the repository's integration
 owner role for T0-001, T0-002, and T0-056. Public contract changes remain
 integration-owned after W0.
 
@@ -105,7 +105,9 @@ It verifies the three workbench layouts, fixed market sidebar, aligned chart
 rows, Replay controls, overlay trade drawer, preference-preserving layout
 changes, and absence of horizontal scrolling. Physical-device readability and
 Canvas crosshair behavior remain manual acceptance items documented in
-`docs/t0assistant/t0_054_acceptance.md`.
+the [historical T0-054 record](https://github.com/shenjee/stockpilot/blob/e754d9f79515a17a93447bbd1516245d8cd6e35f/docs/t0assistant/t0_054_acceptance.md).
+That report was later deleted; its device checklists were unchecked. See the
+[evidence guide](../../docs/documentation_guide.md) for provenance and limitations.
 
 The service-host tests require permission to spawn the configured Python
 interpreter and bind an ephemeral `127.0.0.1` port. The target-viewport command

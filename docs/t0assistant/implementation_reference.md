@@ -193,7 +193,9 @@ npm run smoke
 npm run acceptance:target-viewports
 ```
 
-Smoke 套件分四条独立轨道：Python、Renderer、Electron 进程宿主、Contract。视口验收细节见 [`t0_054_acceptance.md`](./t0_054_acceptance.md)。
+CI 分四条独立轨道：Python、Renderer、Electron 进程宿主、Contract。`npm run smoke` 本身只运行 Renderer 构建/类型检查、Electron 宿主和 Node 契约，不含 Python 与 App Vitest；完整范围见 [CI 覆盖矩阵](./ci_coverage.md)。
+
+视口验收的原始细节见 [T0-054 历史验收记录](https://github.com/shenjee/stockpilot/blob/e754d9f79515a17a93447bbd1516245d8cd6e35f/docs/t0assistant/t0_054_acceptance.md)。该历史记录的物理设备清单仍未勾选，不能据此认定当前版本已完成手工验收；见[证据状态与现行入口](../documentation_guide.md)。
 
 ## 8. 代码阅读索引
 

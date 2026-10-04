@@ -12,6 +12,9 @@ current StockPilot repository.
 
 ## Container View
 
+Packages below are in-process libraries, not independently deployed services.
+The T+0 subgraph shows its actual process boundary.
+
 ```mermaid
 graph TD
     User[User / Developer]
@@ -19,32 +22,57 @@ graph TD
     FundamentalProviders[External Fundamental Data Providers]
 
     subgraph StockPilot[StockPilot Local Workspace]
-        Chantheory[packages/chantheory<br/>Chan analysis core adapter]
-        FundamentalCore[packages/fundamentalscreener<br/>Fundamental Screener core, repository, sync, quality]
-        ChanApp[apps/chan-viewer<br/>Streamlit debug app]
-        FsApp[apps/fundamental-screener<br/>Streamlit workbench app]
-        Skill[skills/china-stock-analysis<br/>Installable report-generation skill]
-        RuntimeData[stockpilot/config + db + reports]
+        Chantheory[packages/chantheory]
+        MarketData[packages/marketdata]
+        Indicators[packages/indicators]
+        T0Core[packages/t0assistant]
+        FundamentalCore[packages/fundamentalscreener]
+        ChanApp[apps/chan-viewer: Streamlit process]
+        FsApp[apps/fundamental-screener: Streamlit process]
+        Skill[skills/china-stock-analysis: report adapter]
+        subgraph T0[apps/t0-assistant]
+            Renderer[React renderer process + isolated preload]
+            Main[Electron main process]
+            Python[Python child: backend/service.py]
+        end
+        RuntimeData[Local runtime config + db + reports]
         SQLite[(Local SQLite)]
     end
 
-    User -->|uses| ChanApp
-    User -->|uses| FsApp
-    User -->|runs| Skill
-
-    ChanApp -->|calls| Chantheory
-    ChanApp -->|uses shared K-line services from| Skill
-
-    FsApp -->|calls| FundamentalCore
-
-    Skill -->|reads/writes| RuntimeData
-    FundamentalCore -->|reads/writes| SQLite
+    User --> ChanApp
+    User --> FsApp
+    User --> Renderer
+    User --> Skill
+    ChanApp --> Chantheory
+    ChanApp --> MarketData
+    FsApp --> FundamentalCore
+    Renderer -->|allowlisted IPC via preload| Main
+    Main -->|owns lifecycle; authenticated loopback HTTP + WS| Python
+    Python --> T0Core
+    Python --> MarketData
+    T0Core --> MarketData
+    T0Core --> Chantheory
+    T0Core --> Indicators
+    T0Core -->|trades and preferences| SQLite
+    MarketData -->|K-lines and securities| SQLite
+    MarketData --> MarketProviders
+    FundamentalCore --> SQLite
+    FundamentalCore --> FundamentalProviders
+    Skill --> RuntimeData
+    Skill --> MarketProviders
     RuntimeData -->|contains| SQLite
-
-    Skill -->|fetches market data from| MarketProviders
-    FundamentalCore -->|fetches fundamental and sector data from| FundamentalProviders
-    FundamentalCore -->|may supplement quotes from| MarketProviders
 ```
+
+The skill node retains its existing delivery context; standalone skill packaging
+and dependency verification are outside #191. No application imports its market
+services from the skill. Chan's `services/market_service.py` imports `marketdata`;
+T+0 backend assembly imports `packages.marketdata` and `packages.t0assistant`.
+The shared T+0 `runtime/pipeline.py` calls Chan Theory and indicators.
+
+Fundamental Screener obtains company daily quotes and the CSI 300 benchmark
+through AkShare's Sina-backed `stock_zh_a_daily` and `stock_zh_index_daily`
+adapters. These belong to its external provider integration, not the Tencent
+market-data path used by `packages/marketdata`.
 
 ## Container Responsibilities
 
@@ -60,6 +88,27 @@ graph TD
   quality handling.
 - Builds stable domain snapshots from fixture or SQLite-backed sources.
 - Exposes reusable logic to CLI and app layers.
+
+### Shared market data, indicators, and T+0 core
+
+- `packages/marketdata` owns providers, calendars, runtime paths, K-line storage,
+  and securities storage.
+- `packages/indicators` owns timestamp-aligned calculations used by the common
+  Live/Replay pipeline.
+- `packages/t0assistant` owns runtime sessions, pipeline, Replay, trade records,
+  preferences, repositories, and trading abstractions. Live and Replay share
+  calculation code while keeping mutable session state separate.
+
+### `apps/t0-assistant`
+
+- React renders project-owned payloads and calls the preload Safe Bridge.
+- Electron main owns the Python child, credentials, ephemeral loopback port,
+  HTTP requests, and WebSocket event gateway.
+- `backend/service.py` is the sole managed Python entry point; backend adapters
+  assemble shared package services.
+- Renderer has no direct Python transport or SQLite access. Service event loss
+  requires the documented [restart procedure](../../apps/t0-assistant/README.md#internal-service-event-failures).
+- Public fields and event semantics remain in the [existing contract guide](../../apps/t0-assistant/contracts/README.md).
 
 ### `apps/chan-viewer`
 
@@ -100,4 +149,4 @@ packages -> data source adapters / SQLite
 ```
 
 The reverse direction should not happen. Domain logic should not move upward
-into Streamlit pages or installable skill entry points.
+into Streamlit pages, Electron/React adapters, or installable skill entry points.
