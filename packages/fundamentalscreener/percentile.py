@@ -1,13 +1,13 @@
 """基于本地 SQLite 计算 PE/PB 历史分位与风险标记（Phase 6C）。
 
 读取 sync 写入的 ``company_valuation_history`` / ``stocks`` /
-``company_daily_snapshot`` / ``financial_metrics`` 表，计算：
+``financial_metrics`` 表，计算：
 
 - ``pe_percentile`` / ``pb_percentile``：当前估值在历史分布中的位置 ``[0.0, 1.0]``，
   0 = 历史最低，1.0 = 历史最高。下游 ``valuation.py`` 的 ``_history_percentile_score``
   期望此区间。
 - ``warnings``：缺失 / 负 PE / 样本不足等质量警告（docs §20 要求不用 0 替代缺失）。
-- ``risk_flags``：ST / 退市 / 停牌 / 亏损等风险标记。
+- ``risk_flags``：有可见证据的 ST / 退市 / 亏损标记，不推断停牌。
 
 分位配置由 ``config.PERCENTILE_CONFIG`` 提供，版本化以便复算和审计。
 """
@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from .config import PERCENTILE_CONFIG
+from .financial_pit import FINANCIAL_DEDUP_ORDER, valid_date
 
 
 # ---------------------------------------------------------------------------
@@ -163,39 +164,37 @@ def compute_company_risk_flags(
     code: str,
     analysis_date: str,
 ) -> List[str]:
-    """检查公司的风险标记：ST / 退市 / 停牌 / 亏损。
+    """检查分析日可见的 ST / 退市 / 亏损标记，保持字符串列表契约。
 
-    读取 ``stocks``（名称）、``company_daily_snapshot``（停牌）、
-    ``financial_metrics``（亏损）表，返回风险标记字符串列表。
+    名称只在 stocks 的快照日和已有更新证据均不晚于分析日时使用；
+    单行股票池不能恢复被覆盖的历史名称。财务过滤和排序与主仓储一致。
+    当前没有明确停牌证据，暂不输出 suspended；不输出不代表正常交易。
+    空列表也不证明无风险，未知状态不新增旗标。
     """
     flags: List[str] = []
 
-    # ST / 退市：从 stocks 表名称判断
+    # 实时股票池会把查询日写入 as_of_date，必须同时检查实际更新日期。
     stock_row = conn.execute(
-        "SELECT name FROM stocks WHERE code = ?", (code,)
+        "SELECT name, as_of_date, updated_at, source_updated_at "
+        "FROM stocks WHERE code = ?", (code,)
     ).fetchone()
     if stock_row and stock_row[0]:
-        name = str(stock_row[0])
-        if "ST" in name or "*ST" in name:
-            flags.append("st")
-        if "退" in name:
-            flags.append("delisting_risk")
+        evidence_dates = [stock_row[1], str(stock_row[2] or "")[:10]]
+        if stock_row[3] is not None:
+            evidence_dates.append(str(stock_row[3])[:10])
+        if all(valid_date(d) and d <= analysis_date for d in evidence_dates):
+            name = str(stock_row[0])
+            if "ST" in name:
+                flags.append("st")
+            if "退" in name:
+                flags.append("delisting_risk")
 
-    # 停牌：analysis_date 当日无成交快照
-    snap = conn.execute(
-        "SELECT close FROM company_daily_snapshot "
-        "WHERE code = ? AND trade_date = ?",
-        (code, analysis_date),
-    ).fetchone()
-    if not snap or snap[0] is None:
-        flags.append("suspended")
-
-    # 亏损：最新已披露财报的 net_margin < 0
+    # 亏损：最新可见财报，复用主仓储的报告类型和版本断优顺序。
     fin = conn.execute(
         "SELECT net_margin FROM financial_metrics "
-        "WHERE code = ? AND disclosure_date <= ? "
-        "ORDER BY period_end_date DESC LIMIT 1",
-        (code, analysis_date),
+        "WHERE code = ? AND disclosure_date <= ? AND as_of_date <= ? "
+        f"ORDER BY {FINANCIAL_DEDUP_ORDER} LIMIT 1",
+        (code, analysis_date, analysis_date),
     ).fetchone()
     if fin and fin[0] is not None and float(fin[0]) < 0:
         flags.append("loss")

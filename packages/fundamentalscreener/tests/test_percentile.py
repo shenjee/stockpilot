@@ -4,7 +4,7 @@
 - 分位计算正确性（低/中/高位置）。
 - 负 PE / 缺失 / 样本不足 → warning + None。
 - 配置覆盖（lookback / min_samples）。
-- 风险标记：ST / 退市 / 停牌 / 亏损。
+- 风险标记：ST / 退市 / 亏损；缺行情不推断停牌。
 - 点-in-time：不读取 analysis_date 之后的数据。
 """
 
@@ -270,15 +270,101 @@ class RiskFlagsTests(unittest.TestCase):
         finally:
             conn.close()
 
-    def test_suspended_flag(self) -> None:
+    def test_missing_snapshot_does_not_imply_suspension(self) -> None:
         conn = self._setup_db()
         try:
             self._insert_stock(conn, "600001", "正常")
-            # 不插入 snapshot → 停牌
+            # 不插入 snapshot 不能证明停牌
             flags = compute_company_risk_flags(conn, "600001", "2026-06-19")
-            self.assertIn("suspended", flags)
+            self.assertNotIn("suspended", flags)
         finally:
             conn.close()
+
+    def test_quotes_never_imply_suspension(self) -> None:
+        for analysis_date, close in [("2026-06-19", None), ("2026-06-19", 10.0),
+                                     ("2026-06-20", None)]:
+            with self.subTest(analysis_date=analysis_date, close=close):
+                conn = self._setup_db()
+                try:
+                    if analysis_date == "2026-06-19":
+                        self._insert_snapshot(conn, "600001", analysis_date, close)
+                    self.assertEqual(compute_company_risk_flags(conn, "600001", analysis_date), [])
+                finally:
+                    conn.close()
+
+    def test_name_visibility(self) -> None:
+        cases = [
+            ("2026-06-18", "2026-06-19", "2026-06-19", "2026-06-19", []),
+            ("2026-06-19", "2026-06-19", "2026-06-19T15:00:00+08:00", "2026-06-19", ["st", "delisting_risk"]),
+            ("2026-06-20", "2026-06-19", "2026-06-19", "2026-06-19", ["st", "delisting_risk"]),
+            # Historical request dates cannot backdate a freshly fetched name.
+            ("2026-05-01", "2026-05-01", "2026-09-30", "2026-05-01", []),
+            ("2026-05-01", "2026-05-01", None, "2026-09-30", []),
+            ("2026-06-19", None, "2026-06-19", "2026-06-19", []),
+            ("2026-06-19", "", "2026-06-19", "2026-06-19", []),
+            ("2026-06-19", "invalid", "2026-06-19", "2026-06-19", []),
+        ]
+        for analysis, as_of, source_updated, updated, expected in cases:
+            with self.subTest(analysis=analysis, as_of=as_of, source_updated=source_updated, updated=updated):
+                conn = self._setup_db()
+                try:
+                    self._insert_stock(conn, "600001", "*ST示例退")
+                    conn.execute("UPDATE stocks SET as_of_date=?, source_updated_at=?, updated_at=?",
+                                 (as_of, source_updated, updated))
+                    self.assertEqual(compute_company_risk_flags(conn, "600001", analysis), expected)
+                finally:
+                    conn.close()
+
+    def test_financial_visibility_boundaries(self) -> None:
+        for disclosure, as_of, expected in [
+            ("2026-04-30", "2026-09-30", []),
+            ("2026-05-02", "2026-04-30", []),
+            ("2026-05-01", "2026-05-01", ["loss"]),
+        ]:
+            with self.subTest(disclosure=disclosure, as_of=as_of):
+                conn = self._setup_db()
+                try:
+                    self._insert_financial(conn, "600001", "2026-03-31", disclosure, -0.05)
+                    conn.execute("UPDATE financial_metrics SET as_of_date=?", (as_of,))
+                    self.assertEqual(compute_company_risk_flags(conn, "600001", "2026-05-01"), expected)
+                finally:
+                    conn.close()
+
+    def test_loss_selection_matches_repository(self) -> None:
+        from packages.fundamentalscreener.sqlite_repository import SqliteFundamentalRepository
+
+        # Report date, type, disclosure and source update each break ties.
+        cases = [
+            [("2025-12-31", "annual", "2026-04-29", "2026-04-29", -0.1),
+             ("2026-03-31", "quarterly", "2026-04-30", "2026-04-30", 0.1)],
+            [("2025-12-31", "quarterly", "2026-04-30", "2026-04-30", -0.1),
+             ("2025-12-31", "annual", "2026-04-29", "2026-04-29", 0.1)],
+            [("2026-03-31", "quarterly", "2026-04-29", "2026-04-29", -0.1),
+             ("2026-03-31", "quarterly", "2026-04-30", "2026-04-30", 0.1)],
+            [("2026-03-31", "quarterly", "2026-04-30", "2026-04-30T09:00:00", -0.1),
+             ("2026-03-31", "quarter", "2026-04-30", "2026-04-30T10:00:00", None)],
+        ]
+        for rows in cases:
+            for ordered in (rows, list(reversed(rows))):
+                with self.subTest(rows=ordered):
+                    conn = self._setup_db()
+                    try:
+                        for end, kind, disclosure, updated, margin in ordered:
+                            conn.execute(
+                                "INSERT INTO financial_metrics "
+                                "(code, report_period, period_end_date, period_type, disclosure_date, "
+                                "as_of_date, net_margin, source, fetch_run_id, source_updated_at, created_at, updated_at) "
+                                "VALUES ('600001', ?, ?, ?, ?, '2026-04-30', ?, 'test', 'run1', ?, ?, ?)",
+                                (end, end, kind, disclosure, margin, updated, updated, updated),
+                            )
+                        # Future, newer loss must not override the visible selection.
+                        self._insert_financial(conn, "600001", "2026-06-30", "2026-04-30", -0.2)
+                        repo = SqliteFundamentalRepository(conn, "2026-05-01")
+                        chosen = repo._load_financials(conn, {"600001"})[0]
+                        self.assertEqual(chosen.net_margin, rows[1][-1])
+                        self.assertEqual(compute_company_risk_flags(conn, "600001", "2026-05-01"), [])
+                    finally:
+                        conn.close()
 
     def test_loss_flag(self) -> None:
         conn = self._setup_db()
