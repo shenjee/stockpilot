@@ -326,7 +326,6 @@ export class BackendGateway extends EventEmitter {
     if (this.rebaselining.has(key)) return;
     this.rebaselining.add(key);
     const connection = this.connection;
-    const socket = this.socket;
     try {
       const command = replay ? "get_replay_snapshot" : "get_live_snapshot";
       const response = await this.invoke(command, {
@@ -335,7 +334,11 @@ export class BackendGateway extends EventEmitter {
         session_id: envelope.session_id,
         ...(replay ? {} : { command, payload: {} }),
       });
-      if (this.closed || this.connection !== connection || this.socket !== socket) return;
+      // The HTTP snapshot belongs to this service connection, not its socket.
+      // Reconnect coalesces with this in-flight request, so keep its response
+      // across socket replacement. A stopped stream or restarted service still
+      // invalidates it.
+      if (this.closed || this.connection !== connection) return;
       if (response?.accepted === false || response?.error_code) {
         throw new Error(
           `snapshot request rejected: ${response.error?.error_code ?? response.error_code}`,

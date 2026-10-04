@@ -770,3 +770,66 @@ test("existing reconnect stops at a service gap instead of starting another reco
   assert.equal(gateway.socket, null);
   gateway.close();
 });
+
+for (const schema of ["t0_app_v2", "t0_replay_v2"]) {
+  test(`${schema} in-flight Session snapshot survives a same-generation socket reconnect`, async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    let resolveFetch;
+    const requests = [];
+    const gateway = new BackendGateway({
+      WebSocketImpl: FakeWebSocket,
+      reconnectBackoffMs: [10],
+      fetchImpl: (_url, options) => {
+        requests.push(JSON.parse(options.body));
+        return new Promise(resolve => { resolveFetch = resolve; });
+      },
+    });
+    t.after(() => gateway.close());
+    const replay = schema === "t0_replay_v2";
+    const events = [], snapshots = [];
+    gateway.on(replay ? "replay-event" : "app-event", event => events.push(event));
+    gateway.on("replay-snapshot", snapshot => snapshots.push(snapshot));
+    gateway.start(connection);
+    const first = FakeWebSocket.instances.at(-1);
+    first.open();
+    const event = revision => ({ ...serviceEvent(revision), schema_version: schema,
+      session_id: "paused-session", event_type: "session_status", payload: { state: "paused" } });
+    first.message(event(0));
+    first.message(event(2));
+    await tick();
+    assert.equal(requests.length, 1);
+    first.close();
+    t.mock.timers.tick(10);
+    const second = FakeWebSocket.instances.at(-1);
+    assert.notEqual(first, second);
+    second.open();
+    assert.equal(requests.length, 1, "reconnect coalesces with the pending snapshot request");
+    const snapshot = { session: { session_id: "paused-session", revision: 2, state: "paused" } };
+    resolveFetch({ ok: true, json: async () => replay ? snapshot : { data: snapshot } });
+    await tick();
+    assert.deepEqual(events.map(item => item.revision), [0, 2]);
+    assert.equal(events.at(-1).event_type, "workbench_snapshot");
+    assert.equal(gateway.baselines.get(`${schema}:paused-session`), 2);
+    assert.deepEqual(snapshots, replay ? [snapshot] : []);
+    assert.equal(gateway.restartRequiredStatus, null);
+  });
+}
+
+test("a snapshot from a replaced service generation is still discarded", async (t) => {
+  let resolveFetch;
+  const gateway = new BackendGateway({ WebSocketImpl: FakeWebSocket,
+    fetchImpl: () => new Promise(resolve => { resolveFetch = resolve; }) });
+  t.after(() => gateway.close());
+  const events = [];
+  gateway.on("app-event", event => events.push(event));
+  gateway.start(connection);
+  const socket = FakeWebSocket.instances.at(-1);
+  socket.message({ ...serviceEvent(0), session_id: "old-session" });
+  socket.message({ ...serviceEvent(2), session_id: "old-session" });
+  await tick();
+  gateway.start({ ...connection, service_generation: 5 });
+  resolveFetch({ ok: true, json: async () => ({ data: { session: { revision: 2 } } }) });
+  await tick();
+  assert.equal(events.length, 1);
+  assert.equal(gateway.baselines.has("t0_app_v2:old-session"), false);
+});
