@@ -10689,13 +10689,6 @@
     "pinyin": "W  KＡ"
   },
   {
-    "code": "000004",
-    "market": "sz",
-    "type": "stock",
-    "name": "国华退",
-    "pinyin": "GHT"
-  },
-  {
     "code": "000006",
     "market": "sz",
     "type": "stock",
@@ -11791,8 +11784,8 @@
     "code": "000595",
     "market": "sz",
     "type": "stock",
-    "name": "*ST宝实",
-    "pinyin": "*STBS"
+    "name": "新能股份",
+    "pinyin": "XNGF"
   },
   {
     "code": "000596",
@@ -12036,8 +12029,8 @@
     "code": "000656",
     "market": "sz",
     "type": "stock",
-    "name": "*ST金科",
-    "pinyin": "*STJK"
+    "name": "金科股份",
+    "pinyin": "JKGF"
   },
   {
     "code": "000657",
@@ -12288,8 +12281,8 @@
     "code": "000711",
     "market": "sz",
     "type": "stock",
-    "name": "ST京蓝",
-    "pinyin": "STJL"
+    "name": "京蓝科技",
+    "pinyin": "JLKJ"
   },
   {
     "code": "000712",
@@ -12645,8 +12638,8 @@
     "code": "000793",
     "market": "sz",
     "type": "stock",
-    "name": "*ST华闻",
-    "pinyin": "*STHW"
+    "name": "ST华闻",
+    "pinyin": "STHW"
   },
   {
     "code": "000795",
@@ -12785,8 +12778,8 @@
     "code": "000820",
     "market": "sz",
     "type": "stock",
-    "name": "*ST节能",
-    "pinyin": "*STJN"
+    "name": "神雾节能",
+    "pinyin": "SWJN"
   },
   {
     "code": "000821",
@@ -13142,8 +13135,8 @@
     "code": "000908",
     "market": "sz",
     "type": "stock",
-    "name": "景峰医药",
-    "pinyin": "JFYY"
+    "name": "石药景峰",
+    "pinyin": "SYJF"
   },
   {
     "code": "000909",
@@ -13457,8 +13450,8 @@
     "code": "000972",
     "market": "sz",
     "type": "stock",
-    "name": "*ST中基",
-    "pinyin": "*STZJ"
+    "name": "中基健康",
+    "pinyin": "ZJJK"
   },
   {
     "code": "000973",
@@ -13776,6 +13769,13 @@
     "pinyin": "NXKJ"
   },
   {
+    "code": "001232",
+    "market": "sz",
+    "type": "stock",
+    "name": "嘉立创",
+    "pinyin": "JLC"
+  },
+  {
     "code": "001233",
     "market": "sz",
     "type": "stock",
@@ -13816,6 +13816,20 @@
     "type": "stock",
     "name": "永达股份",
     "pinyin": "YDGF"
+  },
+  {
+    "code": "001246",
+    "market": "sz",
+    "type": "stock",
+    "name": "C力勤资源",
+    "pinyin": "CLQZY"
+  },
+  {
+    "code": "001248",
+    "market": "sz",
+    "type": "stock",
+    "name": "华润新能源",
+    "pinyin": "HRXNY"
   },
   {
     "code": "001255",
@@ -14357,6 +14371,13 @@
     "pinyin": "YFKJ"
   },
   {
+    "code": "001399",
+    "market": "sz",
+    "type": "stock",
+    "name": "惠科股份",
+    "pinyin": "HKGF"
+  },
+  {
     "code": "001400",
     "market": "sz",
     "type": "stock",
@@ -14437,8 +14458,8 @@
     "code": "002005",
     "market": "sz",
     "type": "stock",
-    "name": "ST德豪",
-    "pinyin": "STDH"
+    "name": "德豪润达",
+    "pinyin": "DHRD"
   },
   {
     "code": "002006",
@@ -14794,8 +14815,8 @@
     "code": "002058",
     "market": "sz",
     "type": "stock",
-    "name": "威尔泰",
-    "pinyin": "WET"
+    "name": "紫竹高科",
+    "pinyin": "ZZGK"
   },
   {
     "code": "002059",
@@ -15725,8 +15746,8 @@
     "code": "002199",
     "market": "sz",
     "type": "stock",
-    "name": "*ST东晶",
-    "pinyin": "*STDJ"
+    "name": "东晶电子",
+    "pinyin": "DJDZ"
   },
   {
     "code": "002200",
@@ -15830,8 +15851,8 @@
     "code": "002214",
     "market": "sz",
     "type": "stock",
-    "name": "*ST大立",
-    "pinyin": "*STDL"
+    "name": "大立科技",
+    "pinyin": "DLKJ"
   },
   {
     "code": "002215",
@@ -16089,8 +16110,8 @@
     "code": "002253",
     "market": "sz",
     "type": "stock",
-    "name": "*ST智胜",
-    "pinyin": "*STZS"
+    "name": "川大智胜",
+    "pinyin": "CDZS"
   },
   {
     "code": "002254",
@@ -16313,8 +16334,8 @@
     "code": "002289",
     "market": "sz",
     "type": "stock",
-    "name": "*ST宇顺",
-    "pinyin": "*STYS"
+    "name": "宇顺电子",
+    "pinyin": "YSDZ"
   },
   {
     "code": "002290",
@@ -16754,8 +16775,8 @@
     "code": "002356",
     "market": "sz",
     "type": "stock",
-    "name": "赫美集团",
-    "pinyin": "HMJT"
+    "name": "鹏飞绿能",
+    "pinyin": "PFLN"
   },
   {
     "code": "002357",
@@ -18252,8 +18273,8 @@
     "code": "002586",
     "market": "sz",
     "type": "stock",
-    "name": "ST围海",
-    "pinyin": "STWH"
+    "name": "围海股份",
+    "pinyin": "WHGF"
   },
   {
     "code": "002587",
@@ -18707,8 +18728,8 @@
     "code": "002656",
     "market": "sz",
     "type": "stock",
-    "name": "*ST摩登",
-    "pinyin": "*STMD"
+    "name": "摩登大道",
+    "pinyin": "MDDD"
   },
   {
     "code": "002657",
@@ -19057,8 +19078,8 @@
     "code": "002713",
     "market": "sz",
     "type": "stock",
-    "name": "*ST东易",
-    "pinyin": "*STDY"
+    "name": "东易日盛",
+    "pinyin": "DYRS"
   },
   {
     "code": "002714",
@@ -19176,8 +19197,8 @@
     "code": "002731",
     "market": "sz",
     "type": "stock",
-    "name": "ST萃华",
-    "pinyin": "STCH"
+    "name": "*ST萃华",
+    "pinyin": "*STCH"
   },
   {
     "code": "002732",
@@ -19253,8 +19274,8 @@
     "code": "002743",
     "market": "sz",
     "type": "stock",
-    "name": "富煌钢构",
-    "pinyin": "FHGG"
+    "name": "ST富煌",
+    "pinyin": "STFH"
   },
   {
     "code": "002745",
@@ -19337,8 +19358,8 @@
     "code": "002759",
     "market": "sz",
     "type": "stock",
-    "name": "天际股份",
-    "pinyin": "TJGF"
+    "name": "ST天际",
+    "pinyin": "STTJ"
   },
   {
     "code": "002760",
@@ -19626,13 +19647,6 @@
     "type": "stock",
     "name": "江阴银行",
     "pinyin": "JYYH"
-  },
-  {
-    "code": "002808",
-    "market": "sz",
-    "type": "stock",
-    "name": "恒久退",
-    "pinyin": "HJT"
   },
   {
     "code": "002809",
@@ -20214,13 +20228,6 @@
     "type": "stock",
     "name": "意华股份",
     "pinyin": "YHGF"
-  },
-  {
-    "code": "002898",
-    "market": "sz",
-    "type": "stock",
-    "name": "*ST赛隆",
-    "pinyin": "*STSL"
   },
   {
     "code": "002899",
@@ -21560,13 +21567,6 @@
     "pinyin": "STHY"
   },
   {
-    "code": "300029",
-    "market": "sz",
-    "type": "stock",
-    "name": "天龙退",
-    "pinyin": "TLT"
-  },
-  {
     "code": "300030",
     "market": "sz",
     "type": "stock",
@@ -21948,8 +21948,8 @@
     "code": "300087",
     "market": "sz",
     "type": "stock",
-    "name": "荃银高科",
-    "pinyin": "QYGK"
+    "name": "ST荃银",
+    "pinyin": "STQY"
   },
   {
     "code": "300088",
@@ -21997,8 +21997,8 @@
     "code": "300096",
     "market": "sz",
     "type": "stock",
-    "name": "ST易联众",
-    "pinyin": "STYLZ"
+    "name": "易联众",
+    "pinyin": "YLZ"
   },
   {
     "code": "300097",
@@ -22165,8 +22165,8 @@
     "code": "300125",
     "market": "sz",
     "type": "stock",
-    "name": "*ST聆达",
-    "pinyin": "*STLD"
+    "name": "聆达股份",
+    "pinyin": "LDGF"
   },
   {
     "code": "300126",
@@ -22214,8 +22214,8 @@
     "code": "300132",
     "market": "sz",
     "type": "stock",
-    "name": "青松股份",
-    "pinyin": "QSGF"
+    "name": "诺斯贝尔",
+    "pinyin": "NSBE"
   },
   {
     "code": "300133",
@@ -22732,8 +22732,8 @@
     "code": "300211",
     "market": "sz",
     "type": "stock",
-    "name": "*ST亿通",
-    "pinyin": "*STYT"
+    "name": "亿通科技",
+    "pinyin": "YTKJ"
   },
   {
     "code": "300212",
@@ -22809,8 +22809,8 @@
     "code": "300223",
     "market": "sz",
     "type": "stock",
-    "name": "北京君正",
-    "pinyin": "BJJZ"
+    "name": "君正股份",
+    "pinyin": "JZGF"
   },
   {
     "code": "300224",
@@ -23250,8 +23250,8 @@
     "code": "300290",
     "market": "sz",
     "type": "stock",
-    "name": "荣科科技",
-    "pinyin": "RKKJ"
+    "name": "ST荣科",
+    "pinyin": "STRK"
   },
   {
     "code": "300291",
@@ -23383,8 +23383,8 @@
     "code": "300311",
     "market": "sz",
     "type": "stock",
-    "name": "ST任子行",
-    "pinyin": "STRZX"
+    "name": "任子行",
+    "pinyin": "RZX"
   },
   {
     "code": "300313",
@@ -24412,8 +24412,8 @@
     "code": "300472",
     "market": "sz",
     "type": "stock",
-    "name": "*ST新元",
-    "pinyin": "*STXY"
+    "name": "ST新元",
+    "pinyin": "STXY"
   },
   {
     "code": "300473",
@@ -24776,8 +24776,8 @@
     "code": "300527",
     "market": "sz",
     "type": "stock",
-    "name": "ST应急",
-    "pinyin": "STYJ"
+    "name": "中船应急",
+    "pinyin": "ZCYJ"
   },
   {
     "code": "300528",
@@ -25014,8 +25014,8 @@
     "code": "300562",
     "market": "sz",
     "type": "stock",
-    "name": "乐心医疗",
-    "pinyin": "LXYL"
+    "name": "乐心股份",
+    "pinyin": "LXGF"
   },
   {
     "code": "300563",
@@ -28689,8 +28689,8 @@
     "code": "301117",
     "market": "sz",
     "type": "stock",
-    "name": "佳缘科技",
-    "pinyin": "JYKJ"
+    "name": "ST佳缘",
+    "pinyin": "STJY"
   },
   {
     "code": "301118",
@@ -28829,8 +28829,8 @@
     "code": "301139",
     "market": "sz",
     "type": "stock",
-    "name": "*ST元道",
-    "pinyin": "*STYD"
+    "name": "元道退",
+    "pinyin": "YDT"
   },
   {
     "code": "301141",
@@ -29991,8 +29991,8 @@
     "code": "301339",
     "market": "sz",
     "type": "stock",
-    "name": "通行宝",
-    "pinyin": "TXB"
+    "name": "苏交数智",
+    "pinyin": "SJSZ"
   },
   {
     "code": "301345",
@@ -30733,8 +30733,8 @@
     "code": "301560",
     "market": "sz",
     "type": "stock",
-    "name": "众捷汽车",
-    "pinyin": "ZJQC"
+    "name": "众捷股份",
+    "pinyin": "ZJGF"
   },
   {
     "code": "301563",
@@ -30812,6 +30812,13 @@
     "type": "stock",
     "name": "黄山谷捷",
     "pinyin": "HSGJ"
+  },
+  {
+    "code": "301583",
+    "market": "sz",
+    "type": "stock",
+    "name": "托伦斯",
+    "pinyin": "TLS"
   },
   {
     "code": "301584",
@@ -31066,6 +31073,13 @@
     "pinyin": "NWSZ"
   },
   {
+    "code": "301655",
+    "market": "sz",
+    "type": "stock",
+    "name": "绿控传动",
+    "pinyin": "LKCD"
+  },
+  {
     "code": "301656",
     "market": "sz",
     "type": "stock",
@@ -31122,6 +31136,13 @@
     "pinyin": "GTDZ"
   },
   {
+    "code": "301677",
+    "market": "sz",
+    "type": "stock",
+    "name": "欣兴工具",
+    "pinyin": "XXGJ"
+  },
+  {
     "code": "301678",
     "market": "sz",
     "type": "stock",
@@ -31150,6 +31171,13 @@
     "pinyin": "HGXC"
   },
   {
+    "code": "301686",
+    "market": "sz",
+    "type": "stock",
+    "name": "中塑股份",
+    "pinyin": "ZSGF"
+  },
+  {
     "code": "301687",
     "market": "sz",
     "type": "stock",
@@ -31157,11 +31185,60 @@
     "pinyin": "XGY"
   },
   {
+    "code": "301688",
+    "market": "sz",
+    "type": "stock",
+    "name": "格林生物",
+    "pinyin": "GLSW"
+  },
+  {
+    "code": "301689",
+    "market": "sz",
+    "type": "stock",
+    "name": "电科思仪",
+    "pinyin": "DKSY"
+  },
+  {
     "code": "301696",
     "market": "sz",
     "type": "stock",
     "name": "三瑞智能",
     "pinyin": "SRZN"
+  },
+  {
+    "code": "301697",
+    "market": "sz",
+    "type": "stock",
+    "name": "贝特利",
+    "pinyin": "BTL"
+  },
+  {
+    "code": "301699",
+    "market": "sz",
+    "type": "stock",
+    "name": "洛轴股份",
+    "pinyin": "LZGF"
+  },
+  {
+    "code": "301707",
+    "market": "sz",
+    "type": "stock",
+    "name": "展芯股份",
+    "pinyin": "ZXGF"
+  },
+  {
+    "code": "301716",
+    "market": "sz",
+    "type": "stock",
+    "name": "C鸿富诚",
+    "pinyin": "CHFC"
+  },
+  {
+    "code": "301717",
+    "market": "sz",
+    "type": "stock",
+    "name": "超纯应材",
+    "pinyin": "CCYC"
   },
   {
     "code": "302132",
@@ -31265,8 +31342,8 @@
     "code": "600019",
     "market": "sh",
     "type": "stock",
-    "name": "XD宝钢股",
-    "pinyin": "XDBGG"
+    "name": "宝钢股份",
+    "pinyin": "BGGF"
   },
   {
     "code": "600020",
@@ -31664,8 +31741,8 @@
     "code": "600100",
     "market": "sh",
     "type": "stock",
-    "name": "XD同方股",
-    "pinyin": "XDTFG"
+    "name": "同方股份",
+    "pinyin": "TFGF"
   },
   {
     "code": "600101",
@@ -32021,8 +32098,8 @@
     "code": "600165",
     "market": "sh",
     "type": "stock",
-    "name": "ST宁科",
-    "pinyin": "STNK"
+    "name": "宁科生物",
+    "pinyin": "NKSW"
   },
   {
     "code": "600166",
@@ -32184,13 +32261,6 @@
     "type": "stock",
     "name": "长城电工",
     "pinyin": "CCDG"
-  },
-  {
-    "code": "600193",
-    "market": "sh",
-    "type": "stock",
-    "name": "退市创兴",
-    "pinyin": "TSCX"
   },
   {
     "code": "600195",
@@ -32434,8 +32504,8 @@
     "code": "600238",
     "market": "sh",
     "type": "stock",
-    "name": "*ST椰岛",
-    "pinyin": "*STYD"
+    "name": "ST椰岛",
+    "pinyin": "STYD"
   },
   {
     "code": "600239",
@@ -32791,8 +32861,8 @@
     "code": "600312",
     "market": "sh",
     "type": "stock",
-    "name": "XD平高电",
-    "pinyin": "XDPGD"
+    "name": "平高电气",
+    "pinyin": "PGDQ"
   },
   {
     "code": "600313",
@@ -33064,8 +33134,8 @@
     "code": "600363",
     "market": "sh",
     "type": "stock",
-    "name": "联创光电",
-    "pinyin": "LCGD"
+    "name": "ST联光",
+    "pinyin": "STLG"
   },
   {
     "code": "600365",
@@ -33204,8 +33274,8 @@
     "code": "600388",
     "market": "sh",
     "type": "stock",
-    "name": "龙净环保",
-    "pinyin": "LJHB"
+    "name": "紫金龙净",
+    "pinyin": "ZJLJ"
   },
   {
     "code": "600389",
@@ -33355,13 +33425,6 @@
     "pinyin": "GYXD"
   },
   {
-    "code": "600421",
-    "market": "sh",
-    "type": "stock",
-    "name": "退市华嵘",
-    "pinyin": "TSHR"
-  },
-  {
     "code": "600422",
     "market": "sh",
     "type": "stock",
@@ -33435,8 +33498,8 @@
     "code": "600439",
     "market": "sh",
     "type": "stock",
-    "name": "瑞贝卡",
-    "pinyin": "RBK"
+    "name": "ST瑞贝卡",
+    "pinyin": "STRBK"
   },
   {
     "code": "600444",
@@ -33470,8 +33533,8 @@
     "code": "600452",
     "market": "sh",
     "type": "stock",
-    "name": "XD涪陵电",
-    "pinyin": "XDFLD"
+    "name": "涪陵电力",
+    "pinyin": "FLDL"
   },
   {
     "code": "600455",
@@ -33617,8 +33680,8 @@
     "code": "600486",
     "market": "sh",
     "type": "stock",
-    "name": "XD扬农化",
-    "pinyin": "XDYNH"
+    "name": "扬农化工",
+    "pinyin": "YNHG"
   },
   {
     "code": "600487",
@@ -33757,8 +33820,8 @@
     "code": "600509",
     "market": "sh",
     "type": "stock",
-    "name": "XD天富能",
-    "pinyin": "XDTFN"
+    "name": "天富能源",
+    "pinyin": "TFNY"
   },
   {
     "code": "600510",
@@ -33855,8 +33918,8 @@
     "code": "600525",
     "market": "sh",
     "type": "stock",
-    "name": "ST长园",
-    "pinyin": "STCY"
+    "name": "长园集团",
+    "pinyin": "CYJT"
   },
   {
     "code": "600526",
@@ -33869,8 +33932,8 @@
     "code": "600527",
     "market": "sh",
     "type": "stock",
-    "name": "XD江南高",
-    "pinyin": "XDJNG"
+    "name": "江南高纤",
+    "pinyin": "JNGX"
   },
   {
     "code": "600528",
@@ -33890,8 +33953,8 @@
     "code": "600530",
     "market": "sh",
     "type": "stock",
-    "name": "交大昂立",
-    "pinyin": "JDAL"
+    "name": "ST交昂",
+    "pinyin": "STJA"
   },
   {
     "code": "600531",
@@ -34233,8 +34296,8 @@
     "code": "600590",
     "market": "sh",
     "type": "stock",
-    "name": "XD泰豪科",
-    "pinyin": "XDTHK"
+    "name": "泰豪科技",
+    "pinyin": "THKJ"
   },
   {
     "code": "600592",
@@ -34286,13 +34349,6 @@
     "pinyin": "BDH"
   },
   {
-    "code": "600599",
-    "market": "sh",
-    "type": "stock",
-    "name": "退市熊猫",
-    "pinyin": "TSXM"
-  },
-  {
     "code": "600600",
     "market": "sh",
     "type": "stock",
@@ -34340,13 +34396,6 @@
     "type": "stock",
     "name": "绿地控股",
     "pinyin": "LDKG"
-  },
-  {
-    "code": "600608",
-    "market": "sh",
-    "type": "stock",
-    "name": "退市沪科",
-    "pinyin": "TSHK"
   },
   {
     "code": "600609",
@@ -34494,13 +34543,6 @@
     "type": "stock",
     "name": "大众公用",
     "pinyin": "DZGY"
-  },
-  {
-    "code": "600636",
-    "market": "sh",
-    "type": "stock",
-    "name": "退市国化",
-    "pinyin": "TSGH"
   },
   {
     "code": "600637",
@@ -34723,8 +34765,8 @@
     "code": "600676",
     "market": "sh",
     "type": "stock",
-    "name": "交运股份",
-    "pinyin": "JYGF"
+    "name": "久事动娱",
+    "pinyin": "JSDY"
   },
   {
     "code": "600678",
@@ -34832,13 +34874,6 @@
     "pinyin": "DSGF"
   },
   {
-    "code": "600696",
-    "market": "sh",
-    "type": "stock",
-    "name": "退市岩石",
-    "pinyin": "TSYS"
-  },
-  {
     "code": "600697",
     "market": "sh",
     "type": "stock",
@@ -34891,8 +34926,8 @@
     "code": "600707",
     "market": "sh",
     "type": "stock",
-    "name": "XD彩虹股",
-    "pinyin": "XDCHG"
+    "name": "彩虹股份",
+    "pinyin": "CHGF"
   },
   {
     "code": "600708",
@@ -35017,8 +35052,8 @@
     "code": "600727",
     "market": "sh",
     "type": "stock",
-    "name": "XD鲁北化",
-    "pinyin": "XDLBH"
+    "name": "鲁北化工",
+    "pinyin": "LBHG"
   },
   {
     "code": "600728",
@@ -35269,8 +35304,8 @@
     "code": "600768",
     "market": "sh",
     "type": "stock",
-    "name": "宁波富邦",
-    "pinyin": "NBFB"
+    "name": "富邦新材",
+    "pinyin": "FBXC"
   },
   {
     "code": "600769",
@@ -35374,8 +35409,8 @@
     "code": "600785",
     "market": "sh",
     "type": "stock",
-    "name": "DR新华百",
-    "pinyin": "DRXHB"
+    "name": "新华百货",
+    "pinyin": "XHBH"
   },
   {
     "code": "600787",
@@ -35983,8 +36018,8 @@
     "code": "600892",
     "market": "sh",
     "type": "stock",
-    "name": "*ST大晟",
-    "pinyin": "*STDC"
+    "name": "大晟文化",
+    "pinyin": "DCWH"
   },
   {
     "code": "600893",
@@ -36067,8 +36102,8 @@
     "code": "600916",
     "market": "sh",
     "type": "stock",
-    "name": "XD中国黄",
-    "pinyin": "XDZGH"
+    "name": "中国黄金",
+    "pinyin": "ZGHJ"
   },
   {
     "code": "600917",
@@ -36256,8 +36291,8 @@
     "code": "600968",
     "market": "sh",
     "type": "stock",
-    "name": "XD海油发",
-    "pinyin": "XDHYF"
+    "name": "海油发展",
+    "pinyin": "HYFZ"
   },
   {
     "code": "600969",
@@ -36655,8 +36690,8 @@
     "code": "601083",
     "market": "sh",
     "type": "stock",
-    "name": "XD锦江航",
-    "pinyin": "XDJJH"
+    "name": "锦江航运",
+    "pinyin": "JJHY"
   },
   {
     "code": "601086",
@@ -36678,6 +36713,13 @@
     "type": "stock",
     "name": "福元医药",
     "pinyin": "FYYY"
+  },
+  {
+    "code": "601091",
+    "market": "sh",
+    "type": "stock",
+    "name": "沈鼓集团",
+    "pinyin": "SGJT"
   },
   {
     "code": "601096",
@@ -36783,6 +36825,13 @@
     "type": "stock",
     "name": "宝地矿业",
     "pinyin": "BDKY"
+  },
+  {
+    "code": "601123",
+    "market": "sh",
+    "type": "stock",
+    "name": "马矿股份",
+    "pinyin": "MKGF"
   },
   {
     "code": "601126",
@@ -36907,8 +36956,8 @@
     "code": "601179",
     "market": "sh",
     "type": "stock",
-    "name": "XD中国西",
-    "pinyin": "XDZGX"
+    "name": "中国西电",
+    "pinyin": "ZGXD"
   },
   {
     "code": "601186",
@@ -37502,8 +37551,8 @@
     "code": "601698",
     "market": "sh",
     "type": "stock",
-    "name": "XD中国卫",
-    "pinyin": "XDZGW"
+    "name": "中国卫通",
+    "pinyin": "ZGWT"
   },
   {
     "code": "601699",
@@ -38055,8 +38104,8 @@
     "code": "603006",
     "market": "sh",
     "type": "stock",
-    "name": "联明股份",
-    "pinyin": "LMGF"
+    "name": "XD联明股",
+    "pinyin": "XDLMG"
   },
   {
     "code": "603007",
@@ -38279,8 +38328,8 @@
     "code": "603040",
     "market": "sh",
     "type": "stock",
-    "name": "DR新坐标",
-    "pinyin": "DRXZB"
+    "name": "新坐标",
+    "pinyin": "XZB"
   },
   {
     "code": "603041",
@@ -38468,8 +38517,8 @@
     "code": "603073",
     "market": "sh",
     "type": "stock",
-    "name": "XD彩蝶实",
-    "pinyin": "XDCDS"
+    "name": "彩蝶实业",
+    "pinyin": "CDSY"
   },
   {
     "code": "603075",
@@ -38517,8 +38566,8 @@
     "code": "603081",
     "market": "sh",
     "type": "stock",
-    "name": "XD大丰实",
-    "pinyin": "XDDFS"
+    "name": "大丰实业",
+    "pinyin": "DFSY"
   },
   {
     "code": "603082",
@@ -38580,15 +38629,15 @@
     "code": "603091",
     "market": "sh",
     "type": "stock",
-    "name": "DR众鑫股",
-    "pinyin": "DRZXG"
+    "name": "众鑫股份",
+    "pinyin": "ZXGF"
   },
   {
     "code": "603092",
     "market": "sh",
     "type": "stock",
-    "name": "XD德力佳",
-    "pinyin": "XDDLJ"
+    "name": "德力佳",
+    "pinyin": "DLJ"
   },
   {
     "code": "603093",
@@ -38944,8 +38993,8 @@
     "code": "603161",
     "market": "sh",
     "type": "stock",
-    "name": "XD科华控",
-    "pinyin": "XDKHK"
+    "name": "科华控股",
+    "pinyin": "KHKG"
   },
   {
     "code": "603162",
@@ -39196,8 +39245,8 @@
     "code": "603200",
     "market": "sh",
     "type": "stock",
-    "name": "XD上海洗",
-    "pinyin": "XDSHX"
+    "name": "上海洗霸",
+    "pinyin": "SHXB"
   },
   {
     "code": "603201",
@@ -39623,8 +39672,8 @@
     "code": "603282",
     "market": "sh",
     "type": "stock",
-    "name": "XD亚光股",
-    "pinyin": "XDYGG"
+    "name": "亚光股份",
+    "pinyin": "YGGF"
   },
   {
     "code": "603283",
@@ -39735,8 +39784,8 @@
     "code": "603303",
     "market": "sh",
     "type": "stock",
-    "name": "得邦照明",
-    "pinyin": "DBZM"
+    "name": "XD得邦照",
+    "pinyin": "XDDBZ"
   },
   {
     "code": "603305",
@@ -39756,8 +39805,8 @@
     "code": "603307",
     "market": "sh",
     "type": "stock",
-    "name": "扬州金泉",
-    "pinyin": "YZJQ"
+    "name": "XD扬州金",
+    "pinyin": "XDYZJ"
   },
   {
     "code": "603308",
@@ -39924,8 +39973,8 @@
     "code": "603332",
     "market": "sh",
     "type": "stock",
-    "name": "XD苏州龙",
-    "pinyin": "XDSZL"
+    "name": "苏州龙杰",
+    "pinyin": "SZLJ"
   },
   {
     "code": "603333",
@@ -39959,8 +40008,8 @@
     "code": "603337",
     "market": "sh",
     "type": "stock",
-    "name": "杰克科技",
-    "pinyin": "JKKJ"
+    "name": "XD杰克科",
+    "pinyin": "XDJKK"
   },
   {
     "code": "603338",
@@ -40057,8 +40106,8 @@
     "code": "603358",
     "market": "sh",
     "type": "stock",
-    "name": "XD华达科",
-    "pinyin": "XDHDK"
+    "name": "华达科技",
+    "pinyin": "HDKJ"
   },
   {
     "code": "603359",
@@ -40218,8 +40267,8 @@
     "code": "603389",
     "market": "sh",
     "type": "stock",
-    "name": "*ST亚振",
-    "pinyin": "*STYZ"
+    "name": "亚振家居",
+    "pinyin": "YZJJ"
   },
   {
     "code": "603390",
@@ -40369,6 +40418,13 @@
     "pinyin": "JBT"
   },
   {
+    "code": "603448",
+    "market": "sh",
+    "type": "stock",
+    "name": "天博智能",
+    "pinyin": "TBZN"
+  },
+  {
     "code": "603456",
     "market": "sh",
     "type": "stock",
@@ -40395,6 +40451,13 @@
     "type": "stock",
     "name": "风语筑",
     "pinyin": "FYZ"
+  },
+  {
+    "code": "603468",
+    "market": "sh",
+    "type": "stock",
+    "name": "津富士达",
+    "pinyin": "JFSD"
   },
   {
     "code": "603477",
@@ -40617,8 +40680,8 @@
     "code": "603559",
     "market": "sh",
     "type": "stock",
-    "name": "ST通脉",
-    "pinyin": "STTM"
+    "name": "中通国脉",
+    "pinyin": "ZTGM"
   },
   {
     "code": "603565",
@@ -40680,8 +40743,8 @@
     "code": "603580",
     "market": "sh",
     "type": "stock",
-    "name": "*ST艾艾",
-    "pinyin": "*STAA"
+    "name": "艾艾精工",
+    "pinyin": "AAJG"
   },
   {
     "code": "603583",
@@ -40925,8 +40988,8 @@
     "code": "603637",
     "market": "sh",
     "type": "stock",
-    "name": "XD镇海股",
-    "pinyin": "XDZHG"
+    "name": "镇海股份",
+    "pinyin": "ZHGF"
   },
   {
     "code": "603638",
@@ -41191,8 +41254,8 @@
     "code": "603700",
     "market": "sh",
     "type": "stock",
-    "name": "XD宁水集",
-    "pinyin": "XDNSJ"
+    "name": "宁水集团",
+    "pinyin": "NSJT"
   },
   {
     "code": "603701",
@@ -41653,8 +41716,8 @@
     "code": "603833",
     "market": "sh",
     "type": "stock",
-    "name": "XD欧派家",
-    "pinyin": "XDOPJ"
+    "name": "欧派家居",
+    "pinyin": "OPJJ"
   },
   {
     "code": "603836",
@@ -42080,8 +42143,8 @@
     "code": "603939",
     "market": "sh",
     "type": "stock",
-    "name": "XD益丰药",
-    "pinyin": "XDYFY"
+    "name": "益丰药房",
+    "pinyin": "YFYF"
   },
   {
     "code": "603948",
@@ -42381,8 +42444,8 @@
     "code": "605018",
     "market": "sh",
     "type": "stock",
-    "name": "XD长华集",
-    "pinyin": "XDCHJ"
+    "name": "长华集团",
+    "pinyin": "CHJT"
   },
   {
     "code": "605020",
@@ -42474,13 +42537,6 @@
     "type": "stock",
     "name": "浙江自然",
     "pinyin": "ZJZR"
-  },
-  {
-    "code": "605081",
-    "market": "sh",
-    "type": "stock",
-    "name": "退市太和",
-    "pinyin": "TSTH"
   },
   {
     "code": "605086",
@@ -42626,15 +42682,15 @@
     "code": "605158",
     "market": "sh",
     "type": "stock",
-    "name": "XD华达新",
-    "pinyin": "XDHDX"
+    "name": "华达新材",
+    "pinyin": "HDXC"
   },
   {
     "code": "605162",
     "market": "sh",
     "type": "stock",
-    "name": "XD新中港",
-    "pinyin": "XDXZG"
+    "name": "新中港",
+    "pinyin": "XZG"
   },
   {
     "code": "605166",
@@ -42759,8 +42815,8 @@
     "code": "605222",
     "market": "sh",
     "type": "stock",
-    "name": "XD起帆电",
-    "pinyin": "XDQFD"
+    "name": "起帆电缆",
+    "pinyin": "QFDL"
   },
   {
     "code": "605228",
@@ -42969,8 +43025,8 @@
     "code": "605376",
     "market": "sh",
     "type": "stock",
-    "name": "XD博迁新",
-    "pinyin": "XDBQX"
+    "name": "博迁新材",
+    "pinyin": "BQXC"
   },
   {
     "code": "605377",
@@ -43648,15 +43704,15 @@
     "code": "688089",
     "market": "sh",
     "type": "stock",
-    "name": "嘉必优",
-    "pinyin": "JBY"
+    "name": "ST嘉必优",
+    "pinyin": "STJBY"
   },
   {
     "code": "688090",
     "market": "sh",
     "type": "stock",
-    "name": "DR瑞松科",
-    "pinyin": "DRRSK"
+    "name": "瑞松科技",
+    "pinyin": "RSKJ"
   },
   {
     "code": "688091",
@@ -43858,8 +43914,8 @@
     "code": "688121",
     "market": "sh",
     "type": "stock",
-    "name": "卓然股份",
-    "pinyin": "ZRGF"
+    "name": "*ST卓然",
+    "pinyin": "*STZR"
   },
   {
     "code": "688122",
@@ -44215,8 +44271,8 @@
     "code": "688182",
     "market": "sh",
     "type": "stock",
-    "name": "XD灿勤科",
-    "pinyin": "XDCQK"
+    "name": "灿勤科技",
+    "pinyin": "CQKJ"
   },
   {
     "code": "688183",
@@ -44306,8 +44362,8 @@
     "code": "688196",
     "market": "sh",
     "type": "stock",
-    "name": "XD卓越新",
-    "pinyin": "XDZYX"
+    "name": "卓越新能",
+    "pinyin": "ZYXN"
   },
   {
     "code": "688197",
@@ -44978,8 +45034,8 @@
     "code": "688309",
     "market": "sh",
     "type": "stock",
-    "name": "恒誉环保",
-    "pinyin": "HYHB"
+    "name": "恒誉科技",
+    "pinyin": "HYKJ"
   },
   {
     "code": "688310",
@@ -45510,8 +45566,8 @@
     "code": "688396",
     "market": "sh",
     "type": "stock",
-    "name": "XD华润微",
-    "pinyin": "XDHRW"
+    "name": "华润微",
+    "pinyin": "HRW"
   },
   {
     "code": "688398",
@@ -45699,8 +45755,8 @@
     "code": "688456",
     "market": "sh",
     "type": "stock",
-    "name": "XD有研粉",
-    "pinyin": "XDYYF"
+    "name": "有研粉材",
+    "pinyin": "YYFC"
   },
   {
     "code": "688458",
@@ -46056,8 +46112,8 @@
     "code": "688539",
     "market": "sh",
     "type": "stock",
-    "name": "XD高华科",
-    "pinyin": "XDGHK"
+    "name": "高华科技",
+    "pinyin": "GHKJ"
   },
   {
     "code": "688543",
@@ -46182,8 +46238,8 @@
     "code": "688566",
     "market": "sh",
     "type": "stock",
-    "name": "XD吉贝尔",
-    "pinyin": "XDJBE"
+    "name": "吉贝尔",
+    "pinyin": "JBE"
   },
   {
     "code": "688567",
@@ -46287,8 +46343,8 @@
     "code": "688583",
     "market": "sh",
     "type": "stock",
-    "name": "DR思看科",
-    "pinyin": "DRSKK"
+    "name": "思看科技",
+    "pinyin": "SKKJ"
   },
   {
     "code": "688584",
@@ -46434,8 +46490,8 @@
     "code": "688607",
     "market": "sh",
     "type": "stock",
-    "name": "康众医疗",
-    "pinyin": "KZYL"
+    "name": "康众科技",
+    "pinyin": "KZKJ"
   },
   {
     "code": "688608",
@@ -46630,8 +46686,8 @@
     "code": "688646",
     "market": "sh",
     "type": "stock",
-    "name": "ST逸飞",
-    "pinyin": "STYF"
+    "name": "逸飞激光",
+    "pinyin": "YFJG"
   },
   {
     "code": "688648",
@@ -47260,8 +47316,8 @@
     "code": "688797",
     "market": "sh",
     "type": "stock",
-    "name": "C臻宝",
-    "pinyin": "CZB"
+    "name": "臻宝科技",
+    "pinyin": "ZBKJ"
   },
   {
     "code": "688798",
@@ -47285,6 +47341,13 @@
     "pinyin": "RKD"
   },
   {
+    "code": "688801",
+    "market": "sh",
+    "type": "stock",
+    "name": "燧原科技",
+    "pinyin": "SYKJ"
+  },
+  {
     "code": "688802",
     "market": "sh",
     "type": "stock",
@@ -47297,6 +47360,13 @@
     "type": "stock",
     "name": "健信超导",
     "pinyin": "JXCD"
+  },
+  {
+    "code": "688806",
+    "market": "sh",
+    "type": "stock",
+    "name": "泰诺麦博",
+    "pinyin": "TNMB"
   },
   {
     "code": "688807",
@@ -47360,6 +47430,48 @@
     "type": "stock",
     "name": "盛合晶微",
     "pinyin": "SHJW"
+  },
+  {
+    "code": "688825",
+    "market": "sh",
+    "type": "stock",
+    "name": "长鑫科技",
+    "pinyin": "CXKJ"
+  },
+  {
+    "code": "688826",
+    "market": "sh",
+    "type": "stock",
+    "name": "频准激光",
+    "pinyin": "PZJG"
+  },
+  {
+    "code": "688828",
+    "market": "sh",
+    "type": "stock",
+    "name": "国仪公司",
+    "pinyin": "GYGS"
+  },
+  {
+    "code": "688835",
+    "market": "sh",
+    "type": "stock",
+    "name": "高凯技术",
+    "pinyin": "GKJS"
+  },
+  {
+    "code": "688836",
+    "market": "sh",
+    "type": "stock",
+    "name": "宇树科技",
+    "pinyin": "YSKJ"
+  },
+  {
+    "code": "688837",
+    "market": "sh",
+    "type": "stock",
+    "name": "信诺维",
+    "pinyin": "XNW"
   },
   {
     "code": "688981",
@@ -47428,8 +47540,8 @@
     "code": "920008",
     "market": "bj",
     "type": "stock",
-    "name": "XD成电光",
-    "pinyin": "XDCDG"
+    "name": "成电光信",
+    "pinyin": "CDGX"
   },
   {
     "code": "920009",
@@ -47498,8 +47610,8 @@
     "code": "920019",
     "market": "bj",
     "type": "stock",
-    "name": "XD铜冠矿",
-    "pinyin": "XDTGK"
+    "name": "铜冠矿建",
+    "pinyin": "TGKJ"
   },
   {
     "code": "920020",
@@ -47528,6 +47640,13 @@
     "type": "stock",
     "name": "*ST田野",
     "pinyin": "*STTY"
+  },
+  {
+    "code": "920025",
+    "market": "bj",
+    "type": "stock",
+    "name": "凯达重工",
+    "pinyin": "KDZG"
   },
   {
     "code": "920026",
@@ -47593,6 +47712,13 @@
     "pinyin": "GXKJ"
   },
   {
+    "code": "920038",
+    "market": "bj",
+    "type": "stock",
+    "name": "森合高科",
+    "pinyin": "SHGK"
+  },
+  {
     "code": "920039",
     "market": "bj",
     "type": "stock",
@@ -47624,8 +47750,8 @@
     "code": "920050",
     "market": "bj",
     "type": "stock",
-    "name": "爱舍伦",
-    "pinyin": "ASL"
+    "name": "爱伦医疗",
+    "pinyin": "ALYL"
   },
   {
     "code": "920055",
@@ -47656,6 +47782,13 @@
     "pinyin": "HYSC"
   },
   {
+    "code": "920059",
+    "market": "bj",
+    "type": "stock",
+    "name": "双英集团",
+    "pinyin": "SYJT"
+  },
+  {
     "code": "920060",
     "market": "bj",
     "type": "stock",
@@ -47677,6 +47810,13 @@
     "pinyin": "KRZK"
   },
   {
+    "code": "920065",
+    "market": "bj",
+    "type": "stock",
+    "name": "千岸科技",
+    "pinyin": "QAKJ"
+  },
+  {
     "code": "920066",
     "market": "bj",
     "type": "stock",
@@ -47696,6 +47836,20 @@
     "type": "stock",
     "name": "普昂医疗",
     "pinyin": "PAYL"
+  },
+  {
+    "code": "920071",
+    "market": "bj",
+    "type": "stock",
+    "name": "金钛股份",
+    "pinyin": "JTGF"
+  },
+  {
+    "code": "920072",
+    "market": "bj",
+    "type": "stock",
+    "name": "科莱瑞迪",
+    "pinyin": "KLRD"
   },
   {
     "code": "920075",
@@ -47726,11 +47880,25 @@
     "pinyin": "ZXXC"
   },
   {
+    "code": "920079",
+    "market": "bj",
+    "type": "stock",
+    "name": "乔路铭",
+    "pinyin": "QLM"
+  },
+  {
     "code": "920080",
     "market": "bj",
     "type": "stock",
     "name": "奥美森",
     "pinyin": "AMS"
+  },
+  {
+    "code": "920081",
+    "market": "bj",
+    "type": "stock",
+    "name": "欧伦电气",
+    "pinyin": "OLDQ"
   },
   {
     "code": "920082",
@@ -47796,6 +47964,13 @@
     "pinyin": "HXKJ"
   },
   {
+    "code": "920093",
+    "market": "bj",
+    "type": "stock",
+    "name": "信胜科技",
+    "pinyin": "XSKJ"
+  },
+  {
     "code": "920096",
     "market": "bj",
     "type": "stock",
@@ -47838,6 +48013,13 @@
     "pinyin": "LTXC"
   },
   {
+    "code": "920107",
+    "market": "bj",
+    "type": "stock",
+    "name": "恒兴股份",
+    "pinyin": "HXGF"
+  },
+  {
     "code": "920108",
     "market": "bj",
     "type": "stock",
@@ -47871,6 +48053,13 @@
     "type": "stock",
     "name": "星图测控",
     "pinyin": "XTCK"
+  },
+  {
+    "code": "920117",
+    "market": "bj",
+    "type": "stock",
+    "name": "龙鑫智能",
+    "pinyin": "LXZN"
   },
   {
     "code": "920118",
@@ -47950,6 +48139,20 @@
     "pinyin": "TPZN"
   },
   {
+    "code": "920136",
+    "market": "bj",
+    "type": "stock",
+    "name": "永励精密",
+    "pinyin": "YLJM"
+  },
+  {
+    "code": "920138",
+    "market": "bj",
+    "type": "stock",
+    "name": "杰理科技",
+    "pinyin": "JLKJ"
+  },
+  {
     "code": "920139",
     "market": "bj",
     "type": "stock",
@@ -47992,6 +48195,13 @@
     "pinyin": "HCZN"
   },
   {
+    "code": "920157",
+    "market": "bj",
+    "type": "stock",
+    "name": "N宇特",
+    "pinyin": "NYT"
+  },
+  {
     "code": "920158",
     "market": "bj",
     "type": "stock",
@@ -48025,6 +48235,13 @@
     "type": "stock",
     "name": "方大新材",
     "pinyin": "FDXC"
+  },
+  {
+    "code": "920165",
+    "market": "bj",
+    "type": "stock",
+    "name": "珈凯生物",
+    "pinyin": "JKSW"
   },
   {
     "code": "920166",
@@ -48074,6 +48291,13 @@
     "type": "stock",
     "name": "东方碳素",
     "pinyin": "DFTS"
+  },
+  {
+    "code": "920176",
+    "market": "bj",
+    "type": "stock",
+    "name": "维琪科技",
+    "pinyin": "WQKJ"
   },
   {
     "code": "920177",
@@ -48153,6 +48377,13 @@
     "pinyin": "YLKJ"
   },
   {
+    "code": "920189",
+    "market": "bj",
+    "type": "stock",
+    "name": "康美特",
+    "pinyin": "KMT"
+  },
+  {
     "code": "920190",
     "market": "bj",
     "type": "stock",
@@ -48165,6 +48396,13 @@
     "type": "stock",
     "name": "瑞尔竞达",
     "pinyin": "REJD"
+  },
+  {
+    "code": "920193",
+    "market": "bj",
+    "type": "stock",
+    "name": "吉和昌",
+    "pinyin": "JHC"
   },
   {
     "code": "920195",
@@ -48193,6 +48431,20 @@
     "type": "stock",
     "name": "振宏股份",
     "pinyin": "ZHGF"
+  },
+  {
+    "code": "920201",
+    "market": "bj",
+    "type": "stock",
+    "name": "百瑞吉",
+    "pinyin": "BRJ"
+  },
+  {
+    "code": "920202",
+    "market": "bj",
+    "type": "stock",
+    "name": "安达股份",
+    "pinyin": "ADGF"
   },
   {
     "code": "920204",
@@ -48258,6 +48510,13 @@
     "pinyin": "YSJM"
   },
   {
+    "code": "920222",
+    "market": "bj",
+    "type": "stock",
+    "name": "益坤电气",
+    "pinyin": "YKDQ"
+  },
+  {
     "code": "920223",
     "market": "bj",
     "type": "stock",
@@ -48279,6 +48538,13 @@
     "pinyin": "MDKJ"
   },
   {
+    "code": "920229",
+    "market": "bj",
+    "type": "stock",
+    "name": "世纪数码",
+    "pinyin": "SJSM"
+  },
+  {
     "code": "920230",
     "market": "bj",
     "type": "stock",
@@ -48291,6 +48557,13 @@
     "type": "stock",
     "name": "力佳科技",
     "pinyin": "LJKJ"
+  },
+  {
+    "code": "920238",
+    "market": "bj",
+    "type": "stock",
+    "name": "长鹰硬科",
+    "pinyin": "CYYK"
   },
   {
     "code": "920239",
@@ -48335,6 +48608,13 @@
     "pinyin": "THLD"
   },
   {
+    "code": "920258",
+    "market": "bj",
+    "type": "stock",
+    "name": "聚仁新材",
+    "pinyin": "JRXC"
+  },
+  {
     "code": "920260",
     "market": "bj",
     "type": "stock",
@@ -48375,6 +48655,20 @@
     "type": "stock",
     "name": "鑫汇科",
     "pinyin": "XHK"
+  },
+  {
+    "code": "920268",
+    "market": "bj",
+    "type": "stock",
+    "name": "百迈科",
+    "pinyin": "BMK"
+  },
+  {
+    "code": "920269",
+    "market": "bj",
+    "type": "stock",
+    "name": "杰锋动力",
+    "pinyin": "JFDL"
   },
   {
     "code": "920270",
@@ -48426,6 +48720,27 @@
     "pinyin": "LGKJ"
   },
   {
+    "code": "920288",
+    "market": "bj",
+    "type": "stock",
+    "name": "华大海天",
+    "pinyin": "HDHT"
+  },
+  {
+    "code": "920289",
+    "market": "bj",
+    "type": "stock",
+    "name": "华汇智能",
+    "pinyin": "HHZN"
+  },
+  {
+    "code": "920298",
+    "market": "bj",
+    "type": "stock",
+    "name": "腾信精密",
+    "pinyin": "TXJM"
+  },
+  {
     "code": "920299",
     "market": "bj",
     "type": "stock",
@@ -48447,13 +48762,6 @@
     "pinyin": "DEHG"
   },
   {
-    "code": "920305",
-    "market": "bj",
-    "type": "stock",
-    "name": "*ST云创",
-    "pinyin": "*STYC"
-  },
-  {
     "code": "920339",
     "market": "bj",
     "type": "stock",
@@ -48471,8 +48779,8 @@
     "code": "920346",
     "market": "bj",
     "type": "stock",
-    "name": "XD威贸电",
-    "pinyin": "XDWMD"
+    "name": "威贸电子",
+    "pinyin": "WMDZ"
   },
   {
     "code": "920351",
@@ -49605,8 +49913,8 @@
     "code": "920982",
     "market": "bj",
     "type": "stock",
-    "name": "XD锦波生",
-    "pinyin": "XDJBS"
+    "name": "锦波生物",
+    "pinyin": "JBSW"
   },
   {
     "code": "920985",
