@@ -747,6 +747,62 @@ class TencentStockDataProviderTests(unittest.TestCase):
         self.assertFalse(any(issue.reason_code == "adjustment_unavailable" for issue in result.warnings()))
         self.assertEqual(result.warnings()[0].reason_code, "no_data")
 
+    def test_get_kline_result_a_share_qfq_missing_key_falls_back_to_day(self):
+        # 新上市 A 股（如 688825）没有复权序列，腾讯响应不含 "qfqday" 键，
+        # 只有未复权 "day"；键缺失时应回退到 base 序列而不是按 no_data 处理，
+        # 否则“成功的空结果”会被覆盖缓存固化，之后永远查不到 K 线。
+        payload = {
+            "code": 0,
+            "data": {
+                "sh688825": {
+                    "day": [
+                        ["2026-07-27", "49.50", "49.00", "55.03", "38.11", "2990129163.00", {}, "66.40", "14118663.30", "0.00", "0.00"],
+                    ],
+                }
+            },
+        }
+        with patch.object(
+            TencentStockDataProvider, "_fetch_with_retry", return_value=json.dumps(payload)
+        ):
+            result = TencentStockDataProvider.get_kline_result(
+                code="688825",
+                market="sh",
+                start_date="2026-04-14",
+                end_date="2026-10-11",
+                ktype="day",
+                autype="qfq",
+            )
+        self.assertTrue(result.success)
+        self.assertEqual(len(result.data), 1)
+        self.assertEqual(result.data[0]["close"], 49.00)
+        self.assertTrue(any(issue.reason_code == "adjustment_unavailable" for issue in result.warnings()))
+
+    def test_get_kline_result_a_share_qfq_missing_key_empty_base_is_no_data(self):
+        # 键缺失且 base 序列也为空（如上市前区间），仍应判定为 no_data。
+        payload = {
+            "code": 0,
+            "data": {
+                "sh688825": {
+                    "day": [],
+                }
+            },
+        }
+        with patch.object(
+            TencentStockDataProvider, "_fetch_with_retry", return_value=json.dumps(payload)
+        ):
+            result = TencentStockDataProvider.get_kline_result(
+                code="688825",
+                market="sh",
+                start_date="2026-01-01",
+                end_date="2026-03-01",
+                ktype="day",
+                autype="qfq",
+            )
+        self.assertTrue(result.success)
+        self.assertEqual(result.data, [])
+        self.assertFalse(any(issue.reason_code == "adjustment_unavailable" for issue in result.warnings()))
+        self.assertEqual(result.warnings()[0].reason_code, "no_data")
+
     def test_get_kline_result_nonzero_code_is_error(self):
         payload = {"code": 1, "msg": "bad"}
         with patch.object(

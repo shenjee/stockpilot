@@ -582,8 +582,12 @@ class TencentStockDataProvider(MarketDataProvider):
 
         klines = symbol_payload.get(key, [])
         fallback_to_base = False
-        # 港股不论 autype 均返回 base_key（如 "day"），在 autype 键缺失时回退
-        if not klines and autype and base_key != key and market == "hk":
+        # 港股不论 autype 均返回 base_key（如 "day"），在 autype 键缺失时回退。
+        # A 股新上市标的没有复权序列时，腾讯同样不下发 autype 键（只有 "day"
+        # 没有 "qfqday"）；此时 base 序列即未复权事实，键缺失时回退可避免
+        # “成功的空结果”被覆盖缓存固化（issue: 688825 查不到 K 线）。
+        # autype 键存在但为空列表时仍按 no_data 处理，不回退。
+        if not klines and autype and base_key != key and (market == "hk" or key not in symbol_payload):
             klines = symbol_payload.get(base_key, [])
             fallback_to_base = True
         if not isinstance(klines, list):
