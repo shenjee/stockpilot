@@ -87,7 +87,14 @@ class LiveSessionFactory:
         self._incremental_handler: Callable[[LiveIncrementalUpdate], object] | None = None
         self._refresh_failure_handler: (
             Callable[
-                [SessionSpec, LiveRefreshKind, BaseException, int | None], None
+                [
+                    SessionSpec,
+                    LiveRefreshKind,
+                    BaseException,
+                    int | None,
+                    BranchingLiveInput,
+                ],
+                None,
             ]
             | None
         ) = None
@@ -118,7 +125,14 @@ class LiveSessionFactory:
         candidate_handler: Callable[[Any], None],
         incremental_handler: Callable[[LiveIncrementalUpdate], object],
         refresh_failure_handler: Callable[
-            [SessionSpec, LiveRefreshKind, BaseException, int | None], None
+            [
+                SessionSpec,
+                LiveRefreshKind,
+                BaseException,
+                int | None,
+                BranchingLiveInput,
+            ],
+            None,
         ],
         state_handler: Callable[[SessionSpec, str, str], None],
         thirty_minute_delayed_handler: Callable[[bool], None] | None = None,
@@ -149,7 +163,9 @@ class LiveSessionFactory:
             on_snapshot_candidate=self._candidate_handler,
             on_incremental_update=self._incremental_handler,
             on_refresh_failure=lambda kind, failure, market_epoch=None: (
-                self._refresh_failure_handler(spec, kind, failure, market_epoch)
+                self._refresh_failure_handler(
+                    spec, kind, failure, market_epoch, runtime_input
+                )
             ),
             on_state_change=lambda state, reason: self._state_handler(
                 spec, state, reason
@@ -574,6 +590,7 @@ class LiveApplicationApi:
         kind: LiveRefreshKind,
         failure: BaseException,
         market_epoch: int | None = None,
+        runtime_input: BranchingLiveInput | None = None,
     ) -> None:
         operation_id = f"live-refresh-{kind.value}-{spec.session_id}"
         capabilities = {
@@ -593,7 +610,7 @@ class LiveApplicationApi:
                 "severity": "error",
                 "retryable": True,
                 "affected_capability": capabilities[kind],
-                "message": self._refresh_failure_message(),
+                "message": self._refresh_failure_message(runtime_input),
                 "request_id": operation_id,
                 "operation_id": operation_id,
                 "details": {"refresh_kind": kind.value},
@@ -602,24 +619,31 @@ class LiveApplicationApi:
         if accepted is not None:
             self._event_publisher.publish_envelope(accepted.to_envelope())
 
-    def _refresh_failure_message(self) -> str:
-        """Pick the refresh-failure copy from the failure code path.
+    def _refresh_failure_message(
+        self,
+        runtime_input: BranchingLiveInput | None,
+    ) -> str:
+        """Pick the refresh-failure copy from the input that failed.
+
+        The factory's latest input can already belong to a newer session.
+        ``market_phase`` also defaults to ``closed`` until ``prepare`` stores
+        a session, so an unprepared input is not a closed market.
 
         - Failure during close reconciliation (``close_reconcile_status`` is
           ``in_progress``) → close-reconciliation copy.
-        - Market already closed but reconciliation not running →
-          close-reconciliation copy (not realtime).
-        - Ordinary in-session polling failure → realtime copy.
+        - Prepared market phase is already ``closed`` → close-reconciliation
+          copy. This is the Live phase advanced for that input.
+        - Every other automatic refresh failure → realtime copy.
         """
-        runtime_input = self._session_factory.latest_runtime_input
-        if runtime_input is not None:
-            if runtime_input.close_reconcile_status == "in_progress":
-                return _LIVE_RECONCILE_FAILURE_MESSAGE
-            session = runtime_input.market_session
-            if session is not None and session.phase_at(
-                self._session_factory.clock()
-            ) == "closed":
-                return _LIVE_RECONCILE_FAILURE_MESSAGE
+        if runtime_input is None:
+            return _LIVE_REALTIME_FAILURE_MESSAGE
+        if runtime_input.close_reconcile_status == "in_progress":
+            return _LIVE_RECONCILE_FAILURE_MESSAGE
+        if (
+            runtime_input.market_session is not None
+            and runtime_input.market_phase == "closed"
+        ):
+            return _LIVE_RECONCILE_FAILURE_MESSAGE
         return _LIVE_REALTIME_FAILURE_MESSAGE
 
     def _on_state_change(
