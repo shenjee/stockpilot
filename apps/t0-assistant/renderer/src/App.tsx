@@ -1324,9 +1324,7 @@ export function App() {
       const error = applicationErrorFrom(response);
       if (error) {
         setLoading(false);
-        setDayChartNotice(
-          `该交易日（${tradeDate}）的历史图形加载失败：${error.message}`,
-        );
+        setDayChartNotice(HISTORICAL_MARKET_FAILURE_MESSAGE);
         return;
       }
       const responseData = (response as { data?: unknown }).data;
@@ -1364,11 +1362,8 @@ export function App() {
       setLoading(false);
     } catch (error) {
       if (!navigationRequests.current.isCurrent(requestSequence)) return;
-      const appError = clientError(error, "historical_chart");
       setLoading(false);
-      setDayChartNotice(
-        `该交易日（${tradeDate}）的历史图形加载失败：${appError.message}`,
-      );
+      setDayChartNotice(HISTORICAL_MARKET_FAILURE_MESSAGE);
     }
   }
 
@@ -2846,6 +2841,10 @@ function preferencesFromResponse(response: unknown) {
 // the terminal stream failure; tested against the main-process gateway output.
 const RESTART_REQUIRED_MESSAGE =
   "应用内部服务异常，成交记录可能未更新。请退出应用后重新打开。";
+
+// Fixed user-facing copy for historical day-chart fetch failures. The backend
+// message (English provider errors) is never surfaced to the user.
+const HISTORICAL_MARKET_FAILURE_MESSAGE = "【历史行情】数据获取失败，请重试";
 
 function serviceStatusError(status: ServiceStatus): ApplicationError {
   return {

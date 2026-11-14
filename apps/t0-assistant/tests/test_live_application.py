@@ -19,6 +19,9 @@ from backend.live_application import (  # noqa: E402
 from packages.marketdata.services.market_context_service import (  # noqa: E402
     MarketContextService,
 )
+from packages.marketdata.calendar_query import (  # noqa: E402
+    MarketContextCalendarAdapter,
+)
 from packages.t0assistant.preferences import PreferenceService, PreferenceValues  # noqa: E402
 from packages.t0assistant.repositories import (  # noqa: E402
     SqlitePreferenceRepository,
@@ -89,7 +92,7 @@ class _DeterministicLiveInput:
         self.outcomes = list(outcomes or [])
         self.requests = []
         self.refresh_requests = []
-        self.refresh_outcomes = {"quote": [], "1m": [], "5m": []}
+        self.refresh_outcomes = {"quote": [], "1m": [], "5m": [], "30m": []}
         self.context = MarketContextService(["2026-07-23", "2026-07-24"])
 
     def prepare(self, spec, *, minimum_preheat_5m, target_trade_date=None):
@@ -169,11 +172,15 @@ class LiveApplicationTests(unittest.TestCase):
         *,
         restore_on_startup: bool = False,
         resolve_security=None,
+        calendar=None,
+        clock=None,
     ) -> LiveApplicationApi:
         factory = LiveSessionFactory(
             input_port,
             analyzer=lambda bars, symbol: _chan(symbol),
+            calendar=calendar,
             auto_poll=False,
+            clock=clock,
         )
         self.factory = factory
         if resolve_security is None:
@@ -709,6 +716,156 @@ class LiveApplicationTests(unittest.TestCase):
 
         self.assertIsNone(state.last_failure)
         self.assertEqual(app.store.current_revision, before)
+
+    def _failure_events(self, deadline_seconds: float = 1.0) -> list[dict]:
+        emitted = []
+        deadline = datetime.now().timestamp() + deadline_seconds
+        while datetime.now().timestamp() < deadline:
+            try:
+                emitted.append(self.events.get(timeout=0.05))
+            except Exception:
+                if emitted:
+                    break
+        return emitted
+
+    def test_initial_failure_during_trading_session_uses_realtime_copy(self) -> None:
+        app = self._app(
+            _DeterministicLiveInput([RuntimeError("initial provider failure")]),
+            calendar=MarketContextCalendarAdapter(
+                _DeterministicLiveInput().context
+            ),
+            clock=lambda: datetime(2026, 7, 24, 10, 0),
+        )
+
+        selected = app.select_security(
+            request_id="select-morning",
+            symbol="sh.600000",
+        )
+        failure = self.events.get(timeout=1)
+
+        self.assertEqual(failure["event_type"], "operation_failed")
+        self.assertEqual(
+            failure["payload"]["message"],
+            "【实时行情】数据获取失败，请重试",
+        )
+        self.assertEqual(failure["payload"]["error_code"], "calculation_failed")
+        self.assertTrue(failure["payload"]["retryable"])
+        self.assertEqual(failure["session_id"], selected["data"]["session_id"])
+
+    def test_initial_failure_after_close_uses_close_copy(self) -> None:
+        app = self._app(
+            _DeterministicLiveInput([RuntimeError("initial provider failure")]),
+            calendar=MarketContextCalendarAdapter(
+                _DeterministicLiveInput().context
+            ),
+            clock=lambda: datetime(2026, 7, 24, 15, 30),
+        )
+
+        app.select_security(request_id="select-after-close", symbol="sh.600000")
+        failure = self.events.get(timeout=1)
+
+        self.assertEqual(failure["event_type"], "operation_failed")
+        self.assertEqual(
+            failure["payload"]["message"],
+            "【收盘行情】数据获取失败，请重试",
+        )
+
+    def test_initial_failure_before_prepare_uses_close_copy_after_close(self) -> None:
+        # prepare() never returns a session (raises immediately), so the
+        # phase must come from the factory calendar at the failure moment.
+        app = self._app(
+            _DeterministicLiveInput([RuntimeError("provider down")]),
+            calendar=MarketContextCalendarAdapter(
+                _DeterministicLiveInput().context
+            ),
+            clock=lambda: datetime(2026, 7, 24, 15, 30),
+        )
+
+        app.select_security(request_id="select-late", symbol="sh.600000")
+        failure = self.events.get(timeout=1)
+
+        self.assertEqual(failure["event_type"], "operation_failed")
+        self.assertEqual(
+            failure["payload"]["message"],
+            "【收盘行情】数据获取失败，请重试",
+        )
+
+    def test_refresh_failure_during_close_reconciliation_uses_reconcile_copy(self) -> None:
+        input_port = _DeterministicLiveInput()
+        input_port.queue_refresh("quote", RuntimeError("quote unavailable"))
+        app = self._app(
+            input_port,
+            calendar=MarketContextCalendarAdapter(input_port.context),
+            clock=lambda: datetime(2026, 7, 24, 15, 6),
+        )
+        app.select_security(request_id="select", symbol="sh.600000")
+        self.events.get(timeout=1)
+        runtime = self.factory.latest_session
+        assert runtime is not None
+        runtime.wait_for_completion(1)
+
+        runtime.run_refresh_due(datetime(2026, 7, 24, 15, 6))
+        emitted = self._failure_events()
+
+        failure = next(e for e in emitted if e["event_type"] == "operation_failed")
+        self.assertEqual(
+            failure["payload"]["message"],
+            "【盘后核对】数据获取失败，请重试",
+        )
+        self.assertEqual(failure["payload"]["error_code"], "calculation_failed")
+        self.assertTrue(failure["payload"]["retryable"])
+        self.assertEqual(
+            failure["payload"]["details"]["refresh_kind"],
+            "quote",
+        )
+
+    def test_refresh_failure_during_trading_session_uses_realtime_copy(self) -> None:
+        input_port = _DeterministicLiveInput()
+        input_port.queue_refresh("quote", RuntimeError("quote unavailable"))
+        app = self._app(
+            input_port,
+            calendar=MarketContextCalendarAdapter(input_port.context),
+            clock=lambda: datetime(2026, 7, 24, 9, 35),
+        )
+        app.select_security(request_id="select", symbol="sh.600000")
+        self.events.get(timeout=1)
+        runtime = self.factory.latest_session
+        assert runtime is not None
+        runtime.wait_for_completion(1)
+
+        runtime.run_refresh_due(datetime(2026, 7, 24, 9, 35))
+        emitted = self._failure_events()
+
+        failure = next(e for e in emitted if e["event_type"] == "operation_failed")
+        self.assertEqual(
+            failure["payload"]["message"],
+            "【实时行情】数据获取失败，请重试",
+        )
+
+    def test_calendar_failure_keeps_original_copy(self) -> None:
+        from packages.t0assistant.runtime import LiveCalendarUnavailableError
+
+        app = self._app(
+            _DeterministicLiveInput(
+                [LiveCalendarUnavailableError("calendar coverage missing")]
+            ),
+            calendar=MarketContextCalendarAdapter(
+                _DeterministicLiveInput().context
+            ),
+            clock=lambda: datetime(2026, 7, 24, 10, 0),
+        )
+
+        app.select_security(request_id="select-calendar", symbol="sh.600000")
+        failure = self.events.get(timeout=1)
+
+        self.assertEqual(failure["event_type"], "operation_failed")
+        self.assertEqual(
+            failure["payload"]["message"],
+            "交易日历覆盖不足，无法权威解析有效交易日",
+        )
+        self.assertEqual(failure["payload"]["error_code"], "calendar_unavailable")
+        self.assertFalse(failure["payload"]["retryable"])
+        self.assertEqual(failure["payload"]["affected_capability"], "market_calendar")
 
 if __name__ == "__main__":
     unittest.main()
