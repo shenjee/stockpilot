@@ -93,7 +93,7 @@ test("preferences hydrate only after the event channel is connected", () => {
 test("Live failures become non-blocking while Replay owns the visible workbench", () => {
   const error = {
     error_code: "live_data_unavailable",
-    message: "Live 行情加载失败，请重试",
+    message: "【实时行情】数据获取失败，请重试",
     retryable: true,
     affected_capability: "live",
   };
@@ -105,7 +105,7 @@ test("Live failures become non-blocking while Replay owns the visible workbench"
     blocking: false,
     error: {
       ...error,
-      message: "后台 Live 行情加载失败，请重试；当前回放不受影响",
+      message: "后台 【实时行情】数据获取失败，请重试；当前回放不受影响",
     },
   });
 });
@@ -399,7 +399,7 @@ test("workbench baseline clears only Live-scoped background errors", () => {
   };
   const liveError = {
     error_code: "live_data_unavailable",
-    message: "Live 行情加载失败，请重试",
+    message: "【实时行情】数据获取失败，请重试",
     retryable: true,
     affected_capability: "live",
   };

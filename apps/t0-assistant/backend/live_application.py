@@ -8,7 +8,7 @@ tests can therefore drive the full flow without network access.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from threading import Lock
 from typing import Any, Callable
@@ -46,6 +46,7 @@ from packages.t0assistant.runtime import (
     LiveRefreshKind,
     LiveRuntimeSession,
     SessionSpec,
+    resolve_live_market_context,
 )
 from packages.t0assistant.runtime.thirty_minute_warnings import (
     THIRTY_MINUTE_OFFICIAL_DELAYED,
@@ -56,6 +57,13 @@ try:
     from backend.historical_snapshot_api import _build_live_market_context
 except ImportError:
     from historical_snapshot_api import _build_live_market_context
+
+# User-facing market-data failure copy. The prefix is chosen by the failure
+# code path (first load vs. automatic refresh vs. close reconciliation), not
+# by the internal "Live" naming. Technical causes stay in logs only.
+_LIVE_REALTIME_FAILURE_MESSAGE = "【实时行情】数据获取失败，请重试"
+_LIVE_CLOSE_FAILURE_MESSAGE = "【收盘行情】数据获取失败，请重试"
+_LIVE_RECONCILE_FAILURE_MESSAGE = "【盘后核对】数据获取失败，请重试"
 
 
 class LiveSessionFactory:
@@ -68,26 +76,48 @@ class LiveSessionFactory:
         analyzer: CzscAnalyzerPort | None = None,
         calendar: CalendarQueryPort | None = None,
         auto_poll: bool = True,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._input_port = input_port
         self._analyzer = analyzer
         self._calendar = calendar
         self._auto_poll = auto_poll
+        self._clock = clock or datetime.now
         self._candidate_handler: Callable[[Any], None] | None = None
         self._incremental_handler: Callable[[LiveIncrementalUpdate], object] | None = None
         self._refresh_failure_handler: (
             Callable[
-                [SessionSpec, LiveRefreshKind, BaseException, int | None], None
+                [
+                    SessionSpec,
+                    LiveRefreshKind,
+                    BaseException,
+                    int | None,
+                    BranchingLiveInput,
+                ],
+                None,
             ]
             | None
         ) = None
         self._state_handler: Callable[[SessionSpec, str, str], None] | None = None
         self._thirty_minute_delayed_handler: Callable[[bool], None] | None = None
         self._latest_session: LiveRuntimeSession | None = None
+        self._latest_runtime_input: BranchingLiveInput | None = None
 
     @property
     def latest_session(self) -> LiveRuntimeSession | None:
         return self._latest_session
+
+    @property
+    def latest_runtime_input(self) -> BranchingLiveInput | None:
+        return self._latest_runtime_input
+
+    @property
+    def calendar(self) -> CalendarQueryPort | None:
+        return self._calendar
+
+    @property
+    def clock(self) -> Callable[[], datetime]:
+        return self._clock
 
     def bind(
         self,
@@ -95,7 +125,14 @@ class LiveSessionFactory:
         candidate_handler: Callable[[Any], None],
         incremental_handler: Callable[[LiveIncrementalUpdate], object],
         refresh_failure_handler: Callable[
-            [SessionSpec, LiveRefreshKind, BaseException, int | None], None
+            [
+                SessionSpec,
+                LiveRefreshKind,
+                BaseException,
+                int | None,
+                BranchingLiveInput,
+            ],
+            None,
         ],
         state_handler: Callable[[SessionSpec, str, str], None],
         thirty_minute_delayed_handler: Callable[[bool], None] | None = None,
@@ -119,13 +156,16 @@ class LiveSessionFactory:
             analyzer=self._analyzer,
             calendar=self._calendar,
         )
+        self._latest_runtime_input = runtime_input
         session = LiveRuntimeSession(
             spec,
             runtime_input,
             on_snapshot_candidate=self._candidate_handler,
             on_incremental_update=self._incremental_handler,
             on_refresh_failure=lambda kind, failure, market_epoch=None: (
-                self._refresh_failure_handler(spec, kind, failure, market_epoch)
+                self._refresh_failure_handler(
+                    spec, kind, failure, market_epoch, runtime_input
+                )
             ),
             on_state_change=lambda state, reason: self._state_handler(
                 spec, state, reason
@@ -550,6 +590,7 @@ class LiveApplicationApi:
         kind: LiveRefreshKind,
         failure: BaseException,
         market_epoch: int | None = None,
+        runtime_input: BranchingLiveInput | None = None,
     ) -> None:
         operation_id = f"live-refresh-{kind.value}-{spec.session_id}"
         capabilities = {
@@ -569,7 +610,7 @@ class LiveApplicationApi:
                 "severity": "error",
                 "retryable": True,
                 "affected_capability": capabilities[kind],
-                "message": "Live 行情刷新失败，请重试",
+                "message": self._refresh_failure_message(runtime_input),
                 "request_id": operation_id,
                 "operation_id": operation_id,
                 "details": {"refresh_kind": kind.value},
@@ -577,6 +618,33 @@ class LiveApplicationApi:
         )
         if accepted is not None:
             self._event_publisher.publish_envelope(accepted.to_envelope())
+
+    def _refresh_failure_message(
+        self,
+        runtime_input: BranchingLiveInput | None,
+    ) -> str:
+        """Pick the refresh-failure copy from the input that failed.
+
+        The factory's latest input can already belong to a newer session.
+        ``market_phase`` also defaults to ``closed`` until ``prepare`` stores
+        a session, so an unprepared input is not a closed market.
+
+        - Failure during close reconciliation (``close_reconcile_status`` is
+          ``in_progress``) → close-reconciliation copy.
+        - Prepared market phase is already ``closed`` → close-reconciliation
+          copy. This is the Live phase advanced for that input.
+        - Every other automatic refresh failure → realtime copy.
+        """
+        if runtime_input is None:
+            return _LIVE_REALTIME_FAILURE_MESSAGE
+        if runtime_input.close_reconcile_status == "in_progress":
+            return _LIVE_RECONCILE_FAILURE_MESSAGE
+        if (
+            runtime_input.market_session is not None
+            and runtime_input.market_phase == "closed"
+        ):
+            return _LIVE_RECONCILE_FAILURE_MESSAGE
+        return _LIVE_REALTIME_FAILURE_MESSAGE
 
     def _on_state_change(
         self,
@@ -611,7 +679,7 @@ class LiveApplicationApi:
                 "message": (
                     "交易日历覆盖不足，无法权威解析有效交易日"
                     if calendar_failure
-                    else "Live 行情加载失败，请重试"
+                    else self._initial_failure_message(spec)
                 ),
                 "request_id": operation_id,
                 "operation_id": operation_id,
@@ -620,6 +688,37 @@ class LiveApplicationApi:
         )
         if accepted is not None:
             self._event_publisher.publish_envelope(accepted.to_envelope())
+
+    def _initial_failure_message(self, spec: SessionSpec) -> str:
+        """Pick the first-load failure copy from the market phase at failure.
+
+        Uses the calendar and clock at the moment of failure. When ``prepare``
+        has not returned yet (or failed), the factory calendar resolves the
+        phase for the same moment instead of guessing. Unknown or missing
+        calendar information falls back to the close copy (never claim
+        realtime when the phase cannot be proven).
+        """
+        factory = self._session_factory
+        runtime_input = factory.latest_runtime_input
+        session = runtime_input.market_session if runtime_input else None
+        phase: str | None = None
+        if session is not None:
+            phase = session.phase_at(factory.clock())
+        else:
+            calendar = factory.calendar
+            if calendar is not None:
+                try:
+                    resolved = resolve_live_market_context(
+                        calendar,
+                        observed_now=factory.clock(),
+                        market=spec.symbol.split(".", 1)[0],
+                    )
+                    phase = resolved.market_phase
+                except Exception:
+                    phase = None
+        if phase in ("morning", "afternoon"):
+            return _LIVE_REALTIME_FAILURE_MESSAGE
+        return _LIVE_CLOSE_FAILURE_MESSAGE
 
     def _save_last_symbol(self, symbol: str) -> dict[str, Any] | None:
         try:
