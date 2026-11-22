@@ -157,6 +157,13 @@ class BranchingLiveInput(LiveInitialInputPort, LiveRefreshInputPort):
         with self._lock:
             return self._session
 
+    @property
+    def market_phase(self) -> str:
+        """Pinned Live market phase at the last prepare or view advance."""
+
+        with self._lock:
+            return self._market_phase
+
     def prepare(
         self,
         spec: SessionSpec,
