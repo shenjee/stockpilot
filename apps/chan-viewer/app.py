@@ -253,6 +253,7 @@ def main() -> None:
             min_value=MIN_STOCK_DATE,
             max_value=DEFAULT_END,
         )
+        run = st.button(_t(language, "run_button"), type="primary")
         enable_alignment = st.checkbox(_t(language, "enable_alignment_label"), value=False)
         alignment_timeframes = st.multiselect(
             _t(language, "alignment_timeframes_label"),
@@ -268,7 +269,6 @@ def main() -> None:
         visibility = {layer: st.checkbox(_layer_label(layer, language), value=(layer not in _default_off)) for layer in LAYER_KEYS}
         st.markdown(_sidebar_section_title(_t(language, "display_header")), unsafe_allow_html=True)
         show_candle_tip  = st.checkbox(_t(language, "show_candle_tip_label"), value=True)
-        run = st.button(_t(language, "run_button"), type="primary")
         st.selectbox(
             _t(language, "language_label"),
             list(SUPPORTED_LANGUAGES.keys()),
