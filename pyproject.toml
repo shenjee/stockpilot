@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "stockpilot"
 version = "0.1.0"
-description = "Stock-focused analysis workflows, reusable packages, apps, and installable skills."
+description = "Stock-focused analysis workflows, reusable packages, and apps."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

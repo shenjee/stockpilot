@@ -3,41 +3,7 @@
 This document records the main runtime sequences that the current repository is
 designed to support.
 
-## 1. Daily Report Generation
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant CLI as Skill CLI / Entry Script
-    participant Orchestrator as ReportOrchestrator
-    participant ReportData as ReportDataService
-    participant KLineService as KLineDataService
-    participant Store as KLineStore
-    participant Provider as MarketDataProvider
-    participant Indicator as IndicatorService
-    participant Rules as RuleEvaluator
-    participant Renderer as MarkdownReportRenderer
-
-    User->>CLI: run daily report command
-    CLI->>Orchestrator: generate_report(...)
-    Orchestrator->>ReportData: build structured report data
-    ReportData->>KLineService: get required K-lines
-    KLineService->>Store: read local K-lines
-    alt local data insufficient
-        KLineService->>Provider: fetch remote market data
-        Provider-->>KLineService: K-line rows
-        KLineService->>Store: upsert local cache
-    end
-    KLineService-->>ReportData: normalized K-lines
-    ReportData->>Indicator: compute indicators
-    ReportData->>Rules: evaluate configured rules
-    ReportData-->>Orchestrator: report payload
-    Orchestrator->>Renderer: render markdown
-    Renderer-->>Orchestrator: markdown report
-    Orchestrator-->>CLI: save and return result
-```
-
-## 2. Chan Analysis In The Debug App
+## 1. Chan Analysis In The Debug App
 
 ```mermaid
 sequenceDiagram
@@ -71,7 +37,7 @@ sequenceDiagram
     App-->>User: render structure result and chart
 ```
 
-## 3. Fundamental Screener Refresh
+## 2. Fundamental Screener Refresh
 
 ```mermaid
 sequenceDiagram
@@ -100,7 +66,7 @@ sequenceDiagram
     App-->>User: render board, warnings, and metadata
 ```
 
-## 4. Sector-Detail Lazy Loading
+## 3. Sector-Detail Lazy Loading
 
 ```mermaid
 sequenceDiagram

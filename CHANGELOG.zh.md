@@ -2,6 +2,14 @@
 
 StockPilot 的所有重要变更都会记录在这里。
 
+## [未发布]
+
+### 移除
+
+- 删除 `skills/china-stock-analysis` skill 及其日报工作流（#189、#190）。
+- 将 `build_securities_master.py` 及其测试迁入 `packages/marketdata/`；脚本改为直接引用 `packages.marketdata`，只写共享的 `packages/marketdata/securities_master.json`，并在仓库根目录以 `python -m packages.marketdata.build_securities_master` 启动，未做 editable install 也能运行（#189）。
+- 从导入兼容性测试与探针中移除 Skill 脚本复制、`market_data` wrapper 和 `_standalone_marketdata` 回退；保留 `marketdata`、`chantheory`、`fundamentalscreener` 三个短名的身份、异常与共享队列断言（#184）。
+
 ## [1.2.0] - 2026-06-15
 
 ### 变更

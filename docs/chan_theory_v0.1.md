@@ -8,13 +8,13 @@
 
 - 我们在 Phase 2 采用什么缠论能力边界
 - 我们如何使用开源 `czsc` 作为底层分析引擎
-- 我们如何通过项目自己的 `chantheory` 适配层向 skills、agents、apps、调试工具暴露统一结果
+- 我们如何通过项目自己的 `chantheory` 适配层向 apps、CLI、调试工具暴露统一结果
 
 这份文档同时承担三种作用：
 
 - 口径对照文档：说明哪些能力直接沿用 `czsc`，哪些能力由项目补充约束
 - 简化规则文档：说明 Phase 2 最终暴露哪些结构与输出
-- 工程映射文档：说明这些规则如何落到 `chantheory`、Streamlit、skill 集成中
+- 工程映射文档：说明这些规则如何落到 `chantheory` 与 Streamlit 集成中
 
 ## 1.1 术语约定
 
@@ -84,11 +84,11 @@
 
 - Phase 2 的目标是回答“这只股票现在处于什么走势结构”
 - 图形化输出是主输出，文字说明只是辅助输出
-- 不在 `china-stock-analysis` 的日报脚本中直接堆叠缠论核心逻辑
+- 不在 UI 层直接堆叠缠论核心逻辑
 - 不从零自研 `分型 / 笔 / 线段 / 中枢` 全套核心算法
 - 默认采用开源 `czsc` 作为底层缠论分析引擎
 - 项目保留自己的 `chantheory` 适配层，统一输入、输出、图形数据和告警语义
-- 上层 skill、agent、UI 不直接依赖 `czsc` 内部对象和版本细节
+- 上层 app、CLI、UI 不直接依赖 `czsc` 内部对象和版本细节
 
 ## 3. 总体架构
 
@@ -100,10 +100,9 @@ chantheory 适配层
   ├─ 调用 czsc
   └─ 映射为项目 schema / plot_primitives / summary / warnings
         ->
-  ├─ china-stock-analysis
   ├─ Streamlit debug app
   ├─ desktop / local app
-  └─ agent / app integrations
+  └─ CLI / app integrations
 ```
 
 职责划分如下：
@@ -112,8 +111,6 @@ chantheory 适配层
   负责底层缠论核心分析，包括分型、笔、中枢等核心对象与多周期能力
 - `chantheory`
   负责输入标准化、参数约束、调用 `czsc`、结果清洗、统一 schema、图形数据输出、摘要和告警
-- `china-stock-analysis`
-  负责业务编排、日报生成、结构摘要接入和配置管理
 - `Streamlit`
   负责调试、验算、可视化检查和参数试验
 
@@ -146,13 +143,13 @@ Phase 2 的口径策略不是“完全照搬 `czsc` 的所有能力”，而是�
 
 ### 5.3 不直接暴露的部分
 
-- 不直接把 `czsc` 原生对象透传给 skills 或 UI
+- 不直接把 `czsc` 原生对象透传给 apps 或 UI
 - 不直接让上层依赖 `czsc` 内部类名、属性名和版本细节
 - 不把 `czsc` 的全部能力原样包装成项目 API
 
 ## 6. Phase 2 对外能力边界
 
-Phase 2 只暴露“足够支撑结构观察、图形验证和日报摘要”的能力，不一次性开放所有缠论细节。
+Phase 2 只暴露“足够支撑结构观察、图形验证和页面摘要”的能力，不一次性开放所有缠论细节。
 
 ### 6.1 Phase 2 结构范围
 
@@ -233,7 +230,7 @@ Phase 2 的 `candidate_buy_points` 和 `candidate_sell_points` 只表示结构�
 - `plot_primitives`
   UI 用的点、线、框、标签、颜色等绘图原语
 - `summary`
-  供日报和 agent 使用的简短结构摘要
+  供页面和 CLI 使用的简短结构摘要
 - `warnings`
   数据不足、结构不稳定、转换异常、版本差异等告警
 - `meta`
@@ -495,7 +492,7 @@ Phase 2 的结构结果对输入口径敏感，`chantheory` 在调用 `czsc` 前
 - 所有方向字段统一使用 `direction`
 - 所有确认态字段统一使用 `confirmed`
 - 所有扩展信息统一放入 `meta`
-- 字段设计优先支持 skill、debug UI 和未来 desktop app 共享
+- 字段设计优先支持 debug UI 和未来 desktop app 共享
 - 不把 `czsc` 原生字段名直接暴露为最终公开 schema
 
 ## 8. plot_primitives 约定
@@ -585,7 +582,7 @@ packages/chantheory/
 - `config.py`
   管理 `czsc` 版本锁定、参数默认值和兼容性开关
 
-## 10. 与 china-stock-analysis 的集成方式
+## 10. 与 apps/chan-viewer 的集成方式
 
 推荐流程：
 
@@ -600,14 +597,14 @@ packages/chantheory/
     ->
 返回统一结构结果
     ->
-日报输出 summary / warnings / 结构变化提醒
+页面输出图表 / summary / warnings / 结构变化提醒
 ```
 
 集成原则：
 
-- `china-stock-analysis` 不直接操作 `czsc` 原生对象
-- skill 层只消费 `chantheory` 的稳定结果
-- skill 失败时要能优雅降级，不因为缠论失败而中断整份日报
+- `apps/chan-viewer` 不直接操作 `czsc` 原生对象
+- app 层只消费 `chantheory` 的稳定结果
+- app 失败时要能优雅降级，不因为缠论失败而中断整页渲染
 
 ## 11. Streamlit 调试界面定位
 
@@ -627,7 +624,7 @@ Phase 2 中，Streamlit 应承担：
 - `czsc` 的内部对象和命名不应直接成为上层长期依赖
 - A 股本地数据格式、复权方式、周期定义需要先做兼容性验证
 - 多周期结果和背驰判断在 Phase 2 应保持保守，不追求一步到位
-- 图形结果、摘要结果、日报结果必须来自同一套统一输出，避免口径分裂
+- 图形结果、摘要结果、页面结果必须来自同一套统一输出，避免口径分裂
 - 当前 day bar 路径已验证；复权标识、交易日历、停牌处理和分钟级聚合仍是 Phase 2 收口前需要显式记录的 gaps
 
 ## 13. 本版本的结论
@@ -637,7 +634,7 @@ Phase 2 中，Streamlit 应承担：
 - 项目必须保留自己的 `chantheory` 适配层
 - 图形化结果是主输出，文字是辅助输出
 - Streamlit 是调试与验算界面，不是长期正式宿主
-- `china-stock-analysis` 通过 `chantheory` 接入缠论结果，而不是直接依赖 `czsc`
+- `apps/chan-viewer` 通过 `chantheory` 接入缠论结果，而不是直接依赖 `czsc`
 - Phase 2 中的买卖点字段只表示结构候选点，不能绕过 Phase 3 信号系统直接形成交易指令
 
 ## 14. 后续待定问题
@@ -646,5 +643,5 @@ Phase 2 中，Streamlit 应承担：
 - `divergences` 是否继续保持保守空输出，或冻结一版项目级定义
 - 是否在 Phase 2 首版就暴露多周期联立结果
 - `plot_primitives` 是否需要兼容未来 desktop app 的交互特性
-- 哪些结构变化需要进入日报提醒，哪些只保留在调试界面
+- 哪些结构变化需要进入页面提醒，哪些只保留在调试界面
 - 复权方式、交易日历、停牌 / 缺失 K 线和分钟级聚合如何进入正式输入契约

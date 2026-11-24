@@ -2,6 +2,14 @@
 
 All notable changes to StockPilot are documented here.
 
+## [Unreleased]
+
+### Removed
+
+- Removed the `skills/china-stock-analysis` skill and its daily report workflow (#189, #190).
+- Moved `build_securities_master.py` and its test into `packages/marketdata/`; the script now imports `packages.marketdata` directly, writes only the shared `packages/marketdata/securities_master.json`, and is run from the repository root with `python -m packages.marketdata.build_securities_master` so it works without an editable install (#189).
+- Removed the standalone Skill copy, `market_data` wrapper, and `_standalone_marketdata` fallback from the import compatibility tests and probe; the `marketdata`, `chantheory`, and `fundamentalscreener` short-name identity, exception, and shared-queue assertions are retained (#184).
+
 ## [1.2.0] - 2026-06-15
 
 ### Changed

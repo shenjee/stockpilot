@@ -20,7 +20,6 @@ python -m unittest discover -s packages/chantheory/tests -p 'test_*.py'         
 python -m unittest discover -s packages/fundamentalscreener/tests -p 'test_*.py' # fundamental screener core
 python -m unittest discover -s apps/chan-viewer/tests -p 'test_*.py'          # debug app
 python -m unittest discover -s apps/fundamental-screener/tests -p 'test_*.py'    # screener app
-python -m unittest discover -s skills/china-stock-analysis/tests -p 'test_*.py'  # skill scripts
 ```
 
 Run a single test module / case:
@@ -53,7 +52,7 @@ If app dependencies are missing: `python -m pip install -e ".[apps]"`.
 
 ## Big-Picture Architecture
 
-The repo is a **product codebase**, not just a skill collection. It has reusable cores under `packages/`, user/debug surfaces under `apps/`, and installable agent capabilities under `skills/`. Dependency direction is strict: `packages/` ← `apps/` and `skills/`; reusable logic lives in `packages/`, never duplicated into `apps/` or `skills/`.
+The repo is a **product codebase**. It has reusable cores under `packages/` and user/debug surfaces under `apps/`. Dependency direction is strict: `packages/` ← `apps/`; reusable logic lives in `packages/`, never duplicated into `apps/`.
 
 ### `packages/chantheory/` — Chan Theory adapter (Phase 2 core)
 A thin, project-owned adapter over the `czsc` engine (`czsc==1.0.1`, Python 3.14 runtime). It is **not** a reimplementation of Chan Theory. Pipeline:
@@ -79,17 +78,10 @@ The core for quantitative fundamental screening. It answers "which sectors and c
 - `sync.py` / `quality.py` / `lineage.py` — SQLite sync, quality gates, and snapshot metadata.
 - `cli.py` — stable JSON-first entry point: `python -m packages.fundamentalscreener.cli <command> ...`.
 
-The screener core should remain UI-neutral and skill-neutral. Use fixtures for deterministic tests; real-market AkShare access belongs in the data source/sync layer and should not be copied into apps.
-
-### `skills/china-stock-analysis/` — installable agent skill
-Generates factual (no buy/sell advice) China A-share daily market reports. Installed by copying the directory into a client's skills dir; **runtime data must live outside the install dir** under a configurable `runtime_dir` (default `stockpilot/`) with `config/`, `db/`, `reports/` subdirs.
-- `scripts/generate_report.py` is the compatible entry point; `cli.py` / `report_orchestrator.py` drive it.
-- `scripts/market_data.py` — data provider layer. Default is the Tencent Finance public API (stdlib-only). **New providers must implement the same provider contract** — do not add HTTP code to `generate_report.py`.
-- `scripts/services/` (indicator, kline_data, report_data, rule_evaluator), `scripts/repositories/kline_store.py` (SQLite cache), `scripts/renderers/` (markdown).
-- Config templates live in `assets/config_templates/`; actual `config/*.yaml` are runtime/private (gitignored).
+The screener core should remain UI-neutral and caller-neutral. Use fixtures for deterministic tests; real-market AkShare access belongs in the data source/sync layer and should not be copied into apps.
 
 ### `apps/chan-viewer/` — Streamlit debug/validation app
-A debug surface for `chantheory`, **not** the product UI. `app.py` uses `sys.path.insert` to import from `packages/` and `skills/.../scripts/`. Local structure: `charts/` (axis policy, figure builder, primitive renderer), `services/` (analysis + market), `chan_chart_widget/` (Plotly component), `ui_text.py` (bilingual `zh`/`en` labels — keep both in sync when adding strings). Reads analysis from `chantheory`; never re-implements it here.
+A debug surface for `chantheory`, **not** the product UI. `app.py` uses `sys.path.insert` to import from `packages/`. Local structure: `charts/` (axis policy, figure builder, primitive renderer), `services/` (analysis + market), `chan_chart_widget/` (Plotly component), `ui_text.py` (bilingual `zh`/`en` labels — keep both in sync when adding strings). Reads analysis from `chantheory`; never re-implements it here.
 
 ### `apps/fundamental-screener/` — Streamlit screener app
 Product validation UI for `packages/fundamentalscreener`, focused on browsing sector rotation, company rankings, financial quality, valuation, and warnings. It is a visualization/navigation layer only:
@@ -103,11 +95,11 @@ Product and phase design notes — treat as source-of-truth for intent and bound
 
 ## Change Conventions
 
-- Keep reusable Python logic in `packages/`; don't let apps/skills depend on raw `czsc` objects when `chantheory` can provide the contract.
+- Keep reusable Python logic in `packages/`; don't let apps depend on raw `czsc` objects when `chantheory` can provide the contract.
 - Preserve Phase 2 boundary: visualization-ready structure output is primary; narrative text is supporting.
-- Preserve Fundamental Screener boundaries: core calculations live in `packages/fundamentalscreener`; Streamlit only renders/navigates; skill code should call core/CLI rather than copy algorithms.
+- Preserve Fundamental Screener boundaries: core calculations live in `packages/fundamentalscreener`; Streamlit only renders/navigates; external callers should use the core/CLI rather than copy algorithms.
 - When changing chart output, keep `plot_primitives` and human-readable summaries aligned; check nearby fixtures in `packages/chantheory/tests/fixtures/`.
 - When changing screener output, keep CLI JSON payloads, app tables/charts, warnings, and lineage metadata aligned; check fixtures in `packages/fundamentalscreener/tests/fixtures/`.
-- Keep public data fields `snake_case`; don't leak unstable engine details into skills/apps/user-facing output.
+- Keep public data fields `snake_case`; don't leak unstable engine details into apps/user-facing output.
 - User-facing copy in the app must stay bilingual (`zh` + `en`) — update `ui_text.py` for both.
 - Ask before changing public schema shape, directory layout, cross-cutting architecture, or introducing new dependencies.

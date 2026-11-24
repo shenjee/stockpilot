@@ -457,7 +457,7 @@ Implementation boundary:
 - Phase 2 does not rebuild a full Chan core from scratch
 - Phase 2 uses open-source `czsc` as the default underlying Chan analysis engine
 - The project keeps its own `chantheory` adapter layer for input normalization, parameter constraints, unified schema, plotting data, and summaries
-- Skill scripts call the `chantheory` adapter layer and turn the results into Markdown, text summaries, or signal inputs
+- Apps and CLIs call the `chantheory` adapter layer and turn the results into charts, text summaries, or signal inputs
 - The UI layer focuses on visualization and should not own the core Chan calculations
 - Visual output should take priority over natural-language description, with language kept only as a supporting layer
 - Candidate buy/sell points in Phase 2 are structure candidates only; they must not become standalone trading instructions before Phase 3 signal synthesis
@@ -472,7 +472,6 @@ chantheory adapter
   ├─ call czsc
   └─ map results to project schema / plot_primitives / summary / warnings
         ->
-  ├─ skill scripts: text reports, structure summaries, agent use
   ├─ Streamlit app: algorithm verification, structure inspection, parameter debugging
   └─ desktop / local app: K-line overlays, fractal/stroke/segment/central-zone visualization, interactive review
 ```
@@ -481,16 +480,15 @@ Reasons:
 
 - `czsc` already provides mature core Chan capabilities and is a strong default engine for Phase 2
 - Reimplementing Fractals, Strokes, Segments, and Pivot Zones from scratch would duplicate effort and increase testing cost
-- Keeping a project-owned adapter layer avoids binding skills, agents, and UIs directly to `czsc` native objects and version details
-- Once the result model is unified, skills, agents, apps, and debug tools can all consume the same contract
+- Keeping a project-owned adapter layer avoids binding apps and CLIs directly to `czsc` native objects and version details
+- Once the result model is unified, apps, CLIs, and debug tools can all consume the same contract
 
 Recommended delivery order:
 
 1. Verify that `czsc` matches the current A-share K-line format and timeframe requirements
 2. Build the `chantheory` adapter layer and unify inputs, outputs, and `plot_primitives`
 3. Use Streamlit to build a debug and verification view for checking whether Fractals, Strokes, Segments, and Pivot Zones are drawn correctly
-4. Let the skill consume the adapter layer and output short text summaries plus structured results
-5. Build a local UI or desktop app only after the structure rules and output format stabilize
+4. Build a local UI or desktop app only after the structure rules and output format stabilize
 
 Suggested inputs for the `chantheory` adapter layer:
 
@@ -532,7 +530,7 @@ Notes:
 - But the UI should not rely on openclaw, codex, or similar agent runtimes as a long-term interaction host
 - A better approach is to build the UI as a local desktop app or local web app that reads Chan results through a unified analysis interface
 - `czsc` owns the underlying Chan core recognition, while `chantheory` owns project-side adaptation, constraints, and unified output
-- The skill and the desktop app should both depend on the `chantheory` adapter layer instead of UI components or `czsc` internals
+- The desktop app should depend on the `chantheory` adapter layer instead of UI components or `czsc` internals
 
 Chart window policy:
 
@@ -655,52 +653,22 @@ Output:
 - Risk level
 - Human confirmation items
 
-## 7. Skill Organization
+## 7. Capability Organization
 
-In the short term, continue using one main skill:
+The repository keeps its capabilities as reusable packages and local apps
+rather than installable agent skills. Shared market-data logic lives in
+`packages/marketdata`.
 
-```text
-china-stock-analysis
-```
+Guidance:
 
-Reasons:
-
-- Requirements are still evolving
-- A single skill is easier to iterate
-- The current skill already has report and configuration foundations
-- Splitting too early increases maintenance complexity
-- `czsc` is a good underlying engine, but it should not become a naked dependency of the upper-layer skill
-
-Additional guidance:
-
-- Keep `china-stock-analysis` as the main skill entry in the short term
-- Let new Phase 2 Chan capability land first as a project-owned `chantheory` adapter layer consumed by the main skill
+- Let new Chan capability land in the project-owned `chantheory` adapter layer
 - Let `chantheory` integrate `czsc` by default while exposing a stable project schema and plotting data to the outside
-- Decide whether Chan should become a separate skill only after the analysis interfaces and parameter boundaries stabilize
-- Do not place the Chan UI directly inside the skill; UI fits better as a separate local application
-- `chantheory` should be treated as an independent integration layer, with skills, agents, apps, and debug tools all acting as consumers
-
-In the medium to long term, the system can be split into multiple skills:
-
-```text
-stock-data-engine
-stock-technical-engine
-stock-strategy-engine
-stock-sector-engine
-stock-macro-event-engine
-stock-portfolio-pilot
-```
-
-Split when:
-
-- Module boundaries stabilize
-- Data interfaces stabilize
-- Code size grows significantly
-- Other agents need to reuse only part of the capability
+- Keep the Chan UI as a separate local application, not inside an analysis package
+- `chantheory` should be treated as an independent integration layer, with apps, CLIs, and debug tools all acting as consumers
 
 ## 8. Suggested Directory Structure
 
-This repository is the StockPilot product codebase. Repository-level design documents stay under `docs/`, installable skills stay under `skills/<skill-name>/`, project-owned adapters stay under `packages/`, visualization apps stay under `apps/`, and reusable CLI/core capabilities should remain shared across these consumers:
+This repository is the StockPilot product codebase. Repository-level design documents stay under `docs/`, project-owned adapters stay under `packages/`, visualization apps stay under `apps/`, and reusable CLI/core capabilities should remain shared across these consumers:
 
 ```text
 stockpilot/
@@ -711,35 +679,24 @@ stockpilot/
 │   ├── phase2_tasks.md
 │   └── chan_theory_v0.1.md
 ├── packages/
-│   └── chantheory/
-│       ├── __init__.py
-│       ├── normalize.py
-│       ├── adapters.py
-│       ├── schema.py
-│       ├── describe.py
-│       ├── plotting.py
-│       └── config.py
-├── apps/
-│   └── chan-viewer/
-│       ├── README.md
-│       ├── app.py
-│       └── pages/
-└── skills/
-    └── china-stock-analysis/
-        ├── SKILL.md
-        ├── scripts/
-        │   ├── generate_report.py
-        │   ├── local_db.py
-        │   ├── market_data.py
-        │   ├── indicators.py
-        │   ├── strategy_engine.py
-        │   ├── sector_rotation.py
-        │   ├── macro_events.py
-        │   └── portfolio_risk.py
-        ├── assets/
-        │   ├── config_templates/
-        │   └── strategies/
-        └── references/
+│   ├── chantheory/
+│   │   ├── __init__.py
+│   │   ├── normalize.py
+│   │   ├── adapters.py
+│   │   ├── schema.py
+│   │   ├── describe.py
+│   │   ├── plotting.py
+│   │   └── config.py
+│   └── marketdata/
+│       ├── market_data.py
+│       ├── runtime_paths.py
+│       ├── repositories/
+│       └── services/
+└── apps/
+    └── chan-viewer/
+        ├── README.md
+        ├── app.py
+        └── pages/
 ```
 
 This is a target structure, not a one-shot implementation plan.

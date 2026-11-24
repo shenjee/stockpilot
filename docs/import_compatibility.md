@@ -5,6 +5,10 @@ Current base: `158173c` (includes #182 and the merged #183). Rebased on
 `git range-diff` confirmed the implementation patch was identical before the
 verification-record update. The four old #183 conflict files are not in this PR.
 
+The `china-stock-analysis` Skill and its `_standalone_marketdata` copy have since
+been removed from the repository (#189). The short-name identity contract below
+applies to the `packages.*` implementations only.
+
 ## Post-rebase verification (2026-10-04)
 
 All requested affected suites were rerun on the rebased branch:

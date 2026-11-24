@@ -10,13 +10,16 @@ akshare 与 pypinyin 只在本脚本内使用，且采用懒导入：本模块�
 依赖的环境里被 import（例如只为了拿常量），只有在真正执行 `_build()` 时才需要。
 运行时 App 不依赖 akshare / pypinyin —— 主数据已在构建期算好并固化进 JSON。
 
-共享运行时默认从 ``packages/marketdata/securities_master.json`` 读取；为保持
-兼容，本脚本也会同步更新 ``skills/china-stock-analysis/scripts/`` 下的旧路径。
-两份 JSON 都应由本脚本统一输出，避免共享版与 standalone 产物漂移。
+本脚本只生成共享的 ``packages/marketdata/securities_master.json``，由
+``packages.marketdata.repositories.securities_store.SecuritiesStore`` 在运行时导入。
 
-执行::
+执行（仓库根目录）::
 
-    python skills/china-stock-analysis/scripts/build_securities_master.py
+    python -m packages.marketdata.build_securities_master
+
+必须用 ``-m`` 方式启动：直接 ``python packages/marketdata/build_securities_master.py``
+只会把 ``packages/marketdata/`` 放进 ``sys.path``，仓库根不在其中，未做 editable
+install 时 ``from packages.marketdata...`` 会失败。
 """
 
 from __future__ import annotations
@@ -25,16 +28,9 @@ import json
 import sys
 from pathlib import Path
 
-# 让脚本既能直接运行（相对导入 market_data）也能被 -m 调用。
-_SCRIPTS_DIR = Path(__file__).resolve().parent
-if str(_SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS_DIR))
+from packages.marketdata.market_data import INDICES, get_market_prefix
 
-from market_data import INDICES, get_market_prefix  # noqa: E402
-
-_ROOT = _SCRIPTS_DIR.parents[2]
-OUTPUT_PATH = _ROOT / "packages" / "marketdata" / "securities_master.json"
-LEGACY_OUTPUT_PATH = _SCRIPTS_DIR / "securities_master.json"
+OUTPUT_PATH = Path(__file__).resolve().parent / "securities_master.json"
 
 HK_STATIC_STOCKS = [
     ("00005", "汇丰控股", "HFKG"),
@@ -144,7 +140,7 @@ def _collect_hk_stocks(records: list[dict]) -> None:
     """收集维护中的港股静态主数据。
 
     当前港股不走 akshare 动态抓取，避免生成流程受外部源波动影响；
-    这里维护一份明确的静态清单，供共享版与 standalone 一起产出。
+    这里维护一份明确的静态清单。
     """
 
     for code, name, pinyin in HK_STATIC_STOCKS:
@@ -178,15 +174,14 @@ def _build() -> None:
     unique.sort(key=lambda r: (r["type"], r["code"], r["market"]))
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    for path in (OUTPUT_PATH, LEGACY_OUTPUT_PATH):
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(unique, f, ensure_ascii=False, indent=2)
+    with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
+        json.dump(unique, f, ensure_ascii=False, indent=2)
 
     by_type: dict[str, int] = {}
     for r in unique:
         by_type[r["type"]] = by_type.get(r["type"], 0) + 1
     print(
-        f"写入 {OUTPUT_PATH} 和 {LEGACY_OUTPUT_PATH}：共 {len(unique)} 条；"
+        f"写入 {OUTPUT_PATH}：共 {len(unique)} 条；"
         + "；".join(f"{t} {c}" for t, c in sorted(by_type.items()))
     )
 

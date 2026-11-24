@@ -2,7 +2,7 @@
 
 ## 目标
 
-围绕开源 `czsc` 构建 Phase 2，不重复自研完整 Chan Theory 核心算法，而是在项目内建立 `chantheory` 适配层，完成输入标准化、结果统一、可视化输出与 `china-stock-analysis` 集成。
+围绕开源 `czsc` 构建 Phase 2，不重复自研完整 Chan Theory 核心算法，而是在项目内建立 `chantheory` 适配层，完成输入标准化、结果统一、可视化输出与 `apps/chan-viewer` 集成。
 
 ## 范围
 
@@ -11,18 +11,18 @@
 - 主输出：可视化结构结果
 - 辅助输出：简短摘要与告警
 - 调试界面：Streamlit 验证界面
-- 集成目标：`skills/china-stock-analysis`
+- 集成目标：`apps/chan-viewer`
 
 ## 非目标
 
 - [ ] Phase 2 不做完整 desktop app
 - [ ] Phase 2 不从零实现完整 Chan Theory 核心
 - [ ] Phase 2 不让上层直接依赖 `czsc` 原生对象
-- [ ] Phase 2 不把缠论逻辑继续堆进日报脚本
+- [ ] Phase 2 不把缠论逻辑堆进 UI 层
 
 ## 执行原则
 
-- [ ] 默认采用 `czsc` 作为底层引擎，但不让 skill、agent、UI 直接绑定其内部实现
+- [ ] 默认采用 `czsc` 作为底层引擎，但不让 app、CLI、UI 直接绑定其内部实现
 - [ ] 所有项目侧逻辑统一沉淀在 `chantheory`，包括标准化、schema 映射、绘图数据、摘要和告警
 - [ ] 先冻结输出契约，再做大范围集成
 - [ ] 图形化输出优先，文本输出从属
@@ -37,7 +37,7 @@
 5. 再冻结 `plot_primitives`、摘要与告警语义
 6. 再建设 Streamlit 验证流程
 7. 再补齐与 `czsc` 案例对比后的关键能力差异，但排除 HTML 导出
-8. 再接入 `china-stock-analysis`
+8. 再接入 `apps/chan-viewer`
 9. 收尾阶段补齐测试、性能检查与文档
 
 ## 核心交付物
@@ -47,7 +47,7 @@
 - [x] 冻结 Phase 2 对外 schema，统一使用 `snake_case`
 - [x] 冻结 `plot_primitives` 绘图契约
 - [x] 提供 Streamlit 调试与验算界面
-- [ ] 提供 `china-stock-analysis` 的稳定接入路径
+- [x] 提供 `apps/chan-viewer` 的稳定接入路径
 - [ ] 建立完整测试样例、回归基线与运行时预算
 
 ## 短期不准备做的重点
@@ -85,7 +85,7 @@
 - [x] 检查现有本地数据字段是否足够支撑 `czsc`
 - [x] 记录当前数据与 `czsc` 预期之间的差距
 - [x] 明确 `chantheory` 是适配层而不是自研 Chan Theory 引擎
-- [x] 定义 `chantheory` 对 skills、agents、apps 的公共 API
+- [x] 定义 `chantheory` 对 apps、CLI 的公共 API
 - [x] 冻结第一版统一输出契约：`fractals`、`strokes`、`segments`、`pivot_zones`、`divergences`
 - [x] 冻结字段命名规范为 `snake_case`
 - [x] 明确 `structure_alerts`、`candidate_buy_points`、`candidate_sell_points`
@@ -150,7 +150,7 @@
 - [x] 输出已知样例的 JSON 基线
 - [x] 生成结构摘要，且保持短句化
 - [x] 生成不足数据、结构不稳、转换异常等 `warnings`
-- [x] 定义 agent 可读、日报可用的摘要文案
+- [x] 定义机器可读、页面可用的摘要文案
 - [x] 创建 `apps/chan-viewer/`
 - [x] 添加 `app.py`
 - [x] 添加 Streamlit README
@@ -165,7 +165,7 @@
 
 - [x] `chantheory` 能输出稳定的结构结果和绘图原语
 - [x] Streamlit 能完成结构叠加和结果核对
-- [x] 摘要和告警能用于调试与日报接入
+- [x] 摘要和告警能用于调试与页面接入
 - [x] Phase 2 的视觉输出契约已基本稳定
 
 ## P3：差异点补齐与信号增强
@@ -329,47 +329,47 @@
 
 ### 目标
 
-把前述 Phase 2 能力稳定接入 `china-stock-analysis`，并通过测试、性能、文档完成收口。
+把前述 Phase 2 能力稳定接入 `apps/chan-viewer`，并通过测试、性能、文档完成收口。
 
 ### 交付物
 
-- skill 集成点
+- app 集成点
 - 测试与回归样例
 - 性能基线
 - Phase 2 文档闭环
 
 ### 必须完成
 
-- [ ] 在 `china-stock-analysis` 中增加 Phase 2 集成点
-- [ ] 在调用前完成 K 线输入标准化
-- [ ] skill 只调用 `chantheory`，不直接调用 `czsc`
-- [ ] 把结构结果接入日报流水线
-- [ ] 在日报中加入简短结构摘要
-- [ ] 保证缠论分析失败时整份日报仍可降级输出
-- [ ] 增加开关配置，可启停 Phase 2 分析
-- [ ] 确认日报中只展示结构候选点，不把 candidate points 渲染为直接买卖指令
-- [ ] 增加 normalization 和 schema conversion 单元测试
-- [ ] 增加代表性 Chan Theory 结构回归样例
-- [ ] 增加 `czsc` 结果映射测试
-- [ ] 增加 `china-stock-analysis` 集成测试
-- [ ] 增加 Streamlit 数据流 smoke tests
-- [ ] 检查相同输入下输出是否具备确定性
+- [x] 在 `apps/chan-viewer` 中增加 Phase 2 集成点
+- [x] 在调用前完成 K 线输入标准化
+- [x] app 只调用 `chantheory`，不直接调用 `czsc`
+- [x] 把结构结果接入图表流水线
+- [x] 在页面中加入简短结构摘要
+- [x] 保证缠论分析失败时页面仍可降级输出
+- [x] 增加开关配置，可启停 Phase 2 分析
+- [x] 确认页面中只展示结构候选点，不把 candidate points 渲染为直接买卖指令
+- [x] 增加 normalization 和 schema conversion 单元测试
+- [x] 增加代表性 Chan Theory 结构回归样例
+- [x] 增加 `czsc` 结果映射测试
+- [x] 增加 `apps/chan-viewer` 集成测试
+- [x] 增加 Streamlit 数据流 smoke tests
+- [x] 检查相同输入下输出是否具备确定性
 - [ ] 测量真实 watchlist 规模下的运行耗时
-- [ ] 定义日报执行可接受的运行时预算
+- [ ] 定义页面执行可接受的运行时预算
 - [ ] 仅在基线清楚后再做缓存或优化
-- [ ] 验证短历史、缺失数据、部分结构情况下的表现
-- [ ] 尽量把失败转为 warnings 而不是中断
-- [ ] 记录最终 `czsc` 版本和依赖策略
-- [ ] 记录 `chantheory` API 和统一 schema
-- [ ] 记录 `plot_primitives` 契约
-- [ ] 记录 Streamlit 验证流程
-- [ ] 记录与 `china-stock-analysis` 的集成流
+- [x] 验证短历史、缺失数据、部分结构情况下的表现
+- [x] 尽量把失败转为 warnings 而不是中断
+- [x] 记录最终 `czsc` 版本和依赖策略
+- [x] 记录 `chantheory` API 和统一 schema
+- [x] 记录 `plot_primitives` 契约
+- [x] 记录 Streamlit 验证流程
+- [x] 记录与 `apps/chan-viewer` 的集成流
 - [ ] 记录已知限制与 Phase 4 交接点
 - [ ] 将 Phase 2 剩余数据口径 gaps 记录到用户可读文档：复权、交易日历、停牌 / 缺失 K 线、分钟级聚合
 
 ### 完成标准
 
-- [ ] `china-stock-analysis` 已通过 `chantheory` 稳定消费 Phase 2 能力
+- [x] `apps/chan-viewer` 已通过 `chantheory` 稳定消费 Phase 2 能力
 - [ ] 关键测试、回归样例、运行时基线已具备
 - [ ] 文档足够支撑后续实现和维护
 - [ ] Phase 2 达到可验收状态
@@ -382,7 +382,7 @@
 - [x] 再冻结统一 schema 和 `plot_primitives`
 - [x] 再完成 Streamlit 验证界面
 - [ ] 再补齐信号、多周期、副图、交互和背驰等关键差异点
-- [ ] 再接入 `china-stock-analysis`
+- [x] 再接入 `apps/chan-viewer`
 - [ ] 最后补齐测试、性能与文档
 
 ## 验收标准
@@ -395,7 +395,7 @@
 - [ ] 项目已补齐通用信号、多周期联立、副图体系和当前 bar 信号详情等关键差异能力
 - [ ] 候选买卖点与通用信号已完成分层表达，且不会混淆为直接交易指令
 - [ ] `divergences` 已具备项目级稳定输出，不再长期为空
-- [ ] `china-stock-analysis` 已通过 `chantheory` 接入，而非直接绑定 `czsc`
+- [x] `apps/chan-viewer` 已通过 `chantheory` 接入，而非直接绑定 `czsc`
 - [ ] Phase 2 的文本输出保持简短辅助，图形输出保持主导地位
-- [ ] Phase 2 的结构候选买卖点不会被日报或 skill 输出升级为直接交易指令
+- [x] Phase 2 的结构候选买卖点不会被页面输出升级为直接交易指令
 - [ ] 复权、交易日历、停牌 / 缺失 K 线、分钟级聚合等数据口径 gaps 已有明确处理或限制说明

@@ -5,8 +5,7 @@ current StockPilot repository.
 
 ## Purpose
 
-- Clarify the responsibilities of `packages/`, `apps/`, `skills/`, and runtime
-  data.
+- Clarify the responsibilities of `packages/`, `apps/`, and runtime data.
 - Show the dependency direction between reusable logic and delivery adapters.
 - Make the local SQLite boundary explicit.
 
@@ -29,7 +28,6 @@ graph TD
         FundamentalCore[packages/fundamentalscreener]
         ChanApp[apps/chan-viewer: Streamlit process]
         FsApp[apps/fundamental-screener: Streamlit process]
-        Skill[skills/china-stock-analysis: report adapter]
         subgraph T0[apps/t0-assistant]
             Renderer[React renderer process + isolated preload]
             Main[Electron main process]
@@ -42,7 +40,6 @@ graph TD
     User --> ChanApp
     User --> FsApp
     User --> Renderer
-    User --> Skill
     ChanApp --> Chantheory
     ChanApp --> MarketData
     FsApp --> FundamentalCore
@@ -58,15 +55,11 @@ graph TD
     MarketData --> MarketProviders
     FundamentalCore --> SQLite
     FundamentalCore --> FundamentalProviders
-    Skill --> RuntimeData
-    Skill --> MarketProviders
     RuntimeData -->|contains| SQLite
 ```
 
-The skill node retains its existing delivery context; standalone skill packaging
-and dependency verification are outside #191. No application imports its market
-services from the skill. Chan's `services/market_service.py` imports `marketdata`;
-T+0 backend assembly imports `packages.marketdata` and `packages.t0assistant`.
+Chan's `services/market_service.py` imports `marketdata`; T+0 backend assembly
+imports `packages.marketdata` and `packages.t0assistant`.
 The shared T+0 `runtime/pipeline.py` calls Chan Theory and indicators.
 
 Fundamental Screener obtains company daily quotes and the CSI 300 benchmark
@@ -122,19 +115,10 @@ market-data path used by `packages/marketdata`.
 - Uses a thin frontend adapter layer to hide SQLite paths, fixture details, and
   engineering internals from the UI.
 
-### `skills/china-stock-analysis`
-
-- An installable skill bundle for daily report generation and related runtime
-  workflows.
-- Owns skill-specific scripting, runtime paths, report orchestration, and local
-  market-data fetching flows.
-- Does not currently invoke `packages/chantheory`; Chan analysis is handled by
-  the debug app through the shared package.
-
 ### Local Runtime Data And SQLite
 
 - `config/`, `db/`, and generated reports belong to local runtime data, not to
-  the installable skill bundle.
+  the source repository.
 - SQLite is the current storage boundary for local caches and synchronized
   market/fundamental snapshots.
 
@@ -144,9 +128,8 @@ The intended direction is:
 
 ```text
 apps -> packages
-skills -> packages
 packages -> data source adapters / SQLite
 ```
 
 The reverse direction should not happen. Domain logic should not move upward
-into Streamlit pages, Electron/React adapters, or installable skill entry points.
+into Streamlit pages or Electron/React adapters.

@@ -87,15 +87,15 @@ implementation of GitHub's path-filter engine or proof of remote event delivery.
 ## Scope and closing policy
 
 Not covered by this CI matrix: chan-viewer, fundamental-screener and its
-independent core package, Skills, all other T+0 app Python/Node test files not
+independent core package, all other T+0 app Python/Node test files not
 listed above, Electron GUI/physical-device acceptance, packaging/signing, and
 release workflows. Local `npm test` is broader than the CI Node subset.
 
 Issue #185 may close once this Must matrix and negative gates pass on remote
 Ubuntu CI; it does
-not wait for #184. Skill isolation fixes and the complete repository-local
-regression belong to #184. This change introduces no Skill exceptions and
-does not claim that CI was necessarily failing before the change.
+not wait for #184. Import-identity fixes and the complete repository-local
+regression belong to #184. This change introduces no import-identity exceptions
+and does not claim that CI was necessarily failing before the change.
 
 ## Reproduction and local verification
 
