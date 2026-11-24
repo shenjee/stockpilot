@@ -18,7 +18,7 @@ AkShare / 公开源
   -> 财务质量对比
   -> 估值对比
   -> CLI JSON 输出
-  -> Streamlit / skill / 日报消费
+  -> Streamlit / CLI 消费
 ```
 
 ## 2. 执行规则
@@ -28,10 +28,9 @@ AkShare / 公开源
 | 规则 | 要求 |
 | --- | --- |
 | 逐 Phase 执行 | 未完成当前 Phase 的 DoD，不进入下一 Phase |
-| core 优先 | 先实现 `packages/fundamentalscreener/`，再做 app 或 skill |
+| core 优先 | 先实现 `packages/fundamentalscreener/`，再做 app |
 | CLI 优先 | 每个可用能力必须先能通过 CLI 输出 JSON |
 | UI 不承载算法 | Streamlit 只能调用 core/CLI，不允许重复实现计算逻辑 |
-| skill 不承载算法 | skill 只能调用 CLI 或 core，不允许复制算法 |
 | 输出可追溯 | 每个分数必须能回到原始指标 |
 | 缺失可降级 | 数据缺失时输出 `warnings`，不要让整条命令崩溃 |
 | 不做研报 | 不生成长文分析，不拼新闻故事 |
@@ -51,7 +50,6 @@ AkShare / 公开源
 ```text
 packages/chantheory/              # 技术面缠论适配层
 apps/chan-viewer/              # 缠论调试 app
-skills/china-stock-analysis/      # 当前 skill
 stockpilot/db/market_data.sqlite  # 当前本地行情库
 ```
 
@@ -332,7 +330,7 @@ python -m packages.fundamentalscreener.cli screen \
 
 ## 7. JSON 输出契约
 
-CLI 的 `json` 输出必须稳定。字段使用 `snake_case`。所有 JSON 输出顶层都应包含统一的 `snapshot` 对象，用于向 CLI、Streamlit 和 skill 透传快照血缘与质量状态。
+CLI 的 `json` 输出必须稳定。字段使用 `snake_case`。所有 JSON 输出顶层都应包含统一的 `snapshot` 对象，用于向 CLI 和 Streamlit 透传快照血缘与质量状态。
 
 ```json
 {
@@ -778,7 +776,6 @@ packages/fundamentalscreener/tests/test_cli.py
 ### Phase 0 禁止
 
 - [ ] 不接 Streamlit。
-- [ ] 不接 skill。
 - [ ] 不读取真实 SQLite。
 - [ ] 不实现复杂评分。
 - [ ] 不加入新第三方依赖，除非用户明确同意。
@@ -997,7 +994,7 @@ not_applicable -> expensive_but_supported -> expensive -> low_need_quality_check
 ### DoD
 
 - [x] `screen --sector-top 10 --company-top 5 --format json` 正常。
-- [x] JSON 可直接供 skill 调用。
+- [x] JSON 可直接供 CLI 调用。
 - [x] 分组逻辑可解释。
 - [x] 所有分数可追溯。
 
@@ -1005,7 +1002,7 @@ not_applicable -> expensive_but_supported -> expensive -> low_need_quality_check
 
 ### 目标
 
-把测试 fixture 升级为独立的数据治理模块。真实数据必须先经过采集、SQLite 本地缓存、标准化和质量检查，再由 repository 组装为 `MarketSnapshot`。Streamlit、skill 和 CLI 不直接联网抓基本面数据。
+把测试 fixture 升级为独立的数据治理模块。真实数据必须先经过采集、SQLite 本地缓存、标准化和质量检查，再由 repository 组装为 `MarketSnapshot`。Streamlit 和 CLI 不直接联网抓基本面数据。
 
 Phase 6 只实现数据治理、同步、缓存、质量检查和 repository 接入，不改评分算法。不得修改 `sector_rotation.py`、`company_ranking.py`、`financial_quality.py`、`valuation.py` 的评分规则，除非是为了让现有 core 消费 `MarketSnapshot` / `snapshot` 血缘字段所需的最小 schema 适配。
 
@@ -1026,7 +1023,7 @@ AkShare / 公开源（优先同花顺行业板块）
   -> SqliteFundamentalRepository
   -> MarketSnapshot
   -> core
-  -> CLI / Streamlit / Skill
+  -> CLI / Streamlit
 ```
 
 ### 实施拆分
@@ -1238,7 +1235,7 @@ python -m packages.fundamentalscreener.sync quality \
 - [ ] benchmark 必须有历史行情。
 - [ ] 板块日线至少覆盖 60 个交易日。
 - [ ] 公司 code 必须能在 companies、financials、valuations 中对齐。
-- [ ] 网络采集失败时，CLI/UI/skill 可以读取最近一次成功缓存并输出 warnings。
+- [ ] 网络采集失败时，CLI/UI 可以读取最近一次成功缓存并输出 warnings。
 - [ ] 行情和估值数据的 `trade_date` 应为最近可用交易日，过旧时输出 stale warning。
 - [ ] 行业板块成分覆盖率应达到配置阈值，低于阈值时降级或阻断。
 - [ ] 财务指标覆盖率应在质量报告中展示，例如候选公司中多少比例有可用最新财报。
@@ -1255,7 +1252,7 @@ python -m packages.fundamentalscreener.sync quality \
 ### 快照、血缘与质量状态契约
 
 - [ ] 每次生成 `MarketSnapshot` 必须产生 `snapshot_id`，并记录 `analysis_date`、`data_cutoff`、`source_set`、`fetch_run_id`、`quality_report_id`、`config_version`、`formula_version`、`generated_at`。
-- [ ] CLI/JSON、Streamlit 和 skill 消费结果时，应能展示或透传快照血缘信息。
+- [ ] CLI/JSON 和 Streamlit 消费结果时，应能展示或透传快照血缘信息。
 - [ ] 所有时变数据必须按 `analysis_date` 截断：行情/估值使用 `trade_date <= analysis_date`，板块成分、股票池、上市状态使用 `as_of_date <= analysis_date` 或 `valid_from <= analysis_date < valid_to`，财务数据使用 `availability_date <= analysis_date`。
 - [ ] `availability_date` 通常取 `disclosure_date` / `announcement_date` 中可证明市场可见的日期。
 - [ ] `source_set` 记录本次快照实际使用的数据源集合及其角色，例如 `sector=akshare_em`、`quote=tencent`、`financial=akshare_em`。
@@ -1266,7 +1263,6 @@ python -m packages.fundamentalscreener.sync quality \
 ### 禁止
 
 - [ ] 不让 Streamlit 直接调用 AkShare、东方财富或腾讯基本面接口。
-- [ ] 不让 skill 直接抓基本面数据。
 - [ ] 不把 AkShare、SQLite 或腾讯接口细节泄漏到 core 算法。
 - [ ] 不把 `ths_industry`、`em_industry`、`em_concept` 混写成同一个板块口径。
 - [ ] 不接新闻、公告、研报。
@@ -1380,35 +1376,7 @@ docs/fundamental_screener_streamlit_frontend_plan.md
 - [x] 页面明确展示数据日期和质量 warnings。
 - [x] 用户界面不出现 fixture、SQLite、数据库路径或 CLI 参数。
 
-## 20. Phase 8：Skill 和日报集成
-
-### 目标
-
-让 `skills/china-stock-analysis` 调用 Fundamental Screener，把基本面量化结果接入自选股和持仓场景。skill 只消费 CLI/core/repository 输出，不直接实现数据治理。
-
-### 必须实现
-
-- [ ] skill 通过 CLI 或 core 调用 Fundamental Screener。
-- [ ] 自选股日报展示股票所属板块状态。
-- [ ] 持仓报告展示板块相对强弱。
-- [ ] 持仓报告展示财务质量分和估值标签。
-- [ ] 输出表格和短标签。
-- [ ] 基本面调用失败时，原有日报仍可生成。
-
-### 禁止
-
-- [ ] 不在 skill 内复制 Fundamental Screener 算法。
-- [ ] 不在 skill 内直接抓 AkShare、东方财富或腾讯基本面数据。
-- [ ] 不生成长篇基本面研报。
-- [ ] 不输出买卖建议。
-
-### DoD
-
-- [ ] skill 可以读取 CLI JSON。
-- [ ] 自选股/持仓报告出现基本面量化表格。
-- [ ] Fundamental Screener 异常时，报告输出 warnings，但不中断原有技术面内容。
-
-## 21. 第一批开发任务
+## 20. 第一批开发任务
 
 如果从零开始编码，只执行以下任务，不要越界：
 
@@ -1420,9 +1388,9 @@ docs/fundamental_screener_streamlit_frontend_plan.md
 6. 让 `sectors --fixture ... --format json` 返回稳定空结构。
 7. 跑通 Phase 0 测试。
 
-不要在第一批任务中实现真实板块计算、Streamlit、skill 集成、财务、估值。
+不要在第一批任务中实现真实板块计算、Streamlit、财务、估值。
 
-## 22. 开发完成后必须汇报
+## 21. 开发完成后必须汇报
 
 每次完成一个 Phase，最终回复必须包含：
 

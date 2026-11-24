@@ -2,9 +2,9 @@
 
 StockPilot is a Python repository for stock-focused analysis workflows. It
 contains reusable analysis packages, Streamlit apps for local validation, an
-Electron T+0 desktop app, installable agent skills, and supporting product docs.
+Electron T+0 desktop app, and supporting product docs.
 
-The repository is no longer only a Chan Theory skill prototype. The current
+The repository is no longer only a Chan Theory prototype. The current
 codebase includes Fundamental Screener, shared market data and indicators, and
 a T+0 desktop workbench with Live and Replay workflows.
 
@@ -14,22 +14,20 @@ a T+0 desktop workbench with Live and Replay workflows.
 | --- | --- | --- |
 | Reusable package | `packages/chantheory/` | Project-owned adapter layer around `czsc` for Chan Theory structure analysis. |
 | Reusable package | `packages/fundamentalscreener/` | Fundamental Screener core for sector rotation, company ranking, financial quality, valuation, repositories, lineage, CLI payloads, and SQLite sync/schema support. |
-| Reusable package | `packages/marketdata/` | Shared market-data provider, runtime path, K-line store, and securities-store infrastructure used by the Chan app, T+0 Live/Replay, and China stock analysis skill. |
+| Reusable package | `packages/marketdata/` | Shared market-data provider, runtime path, K-line store, and securities-store infrastructure used by the Chan app and T+0 Live/Replay. |
 | Reusable package | `packages/indicators/` | Schema-aligned MA, BOLL, MACD, volume-average, and intraday VWAP calculations shared by Live and Replay pipelines. |
 | Reusable package | `packages/t0assistant/` | T+0 contracts, Live/Replay runtime, shared pipeline, trade records, preferences, and repositories. |
 | Local app | `apps/t0-assistant/` | Electron desktop app with a React renderer and an Electron-managed Python service. |
 | Local app | `apps/chan-viewer/` | Streamlit debug app for validating `chantheory` chart overlays and structure output. |
 | Local app | `apps/fundamental-screener/` | Streamlit frontend for browsing Fundamental Screener outputs and validations. |
-| Installable skill | `skills/china-stock-analysis/` | Agent skill that generates factual China A-share daily reports using installable scripts, templates, and references. |
 | Product docs | `docs/` | Chan Theory design docs, Fundamental Screener MVP/phase plans, and supporting technical notes. |
 
 ## Repository Layout
 
 Top-level repository roles:
 
-- `packages/`: shared Python logic that can be reused by apps, skills, and CLIs.
+- `packages/`: shared Python logic that can be reused by apps and CLIs.
 - `apps/`: Streamlit validation apps and the Electron/React/Python T+0 desktop app.
-- `skills/`: installable skill bundles with scripts, references, and config templates.
 - `docs/`: product design notes, plans, and technical documentation.
 - `pyproject.toml`: editable install metadata, dependency extras, and CLI entry points.
 - `CHANGELOG.md` and `CHANGELOG.zh.md`: change history.
@@ -59,8 +57,6 @@ stockpilot/
 |   |-- marketdata/
 |   |-- fundamentalscreener/
 |   `-- t0assistant/
-`-- skills/
-    `-- china-stock-analysis/
 ```
 
 ## Development Setup
@@ -75,7 +71,7 @@ python -m pip install -e ".[dev]"
 
 Common dependency sets:
 
-- `python -m pip install -e .` for core packages and the China stock analysis skill runtime
+- `python -m pip install -e .` for the core packages
 - `python -m pip install -e ".[apps]"` for both Streamlit apps, including `streamlit-searchbox`
 - `python -m pip install -e ".[akshare]"` for AkShare-backed sync and master-data build helpers
 - `python -m pip install -e ".[dev]"` for the full local development environment
@@ -98,11 +94,10 @@ python -m packages.fundamentalscreener.cli screen --format json
 
 - `packages/chantheory/` is the stable project-facing Chan Theory adapter layer.
 - `packages/fundamentalscreener/` is the stable core for screening, scoring, quality checks, repositories, CLI output, and sync.
-- `packages/marketdata/` is the shared market-data and runtime infrastructure for the Chan app, T+0 Live/Replay, and stock-analysis skill.
+- `packages/marketdata/` is the shared market-data and runtime infrastructure for the Chan app and T+0 Live/Replay.
 - `packages/indicators/` owns reusable, timestamp-aligned technical indicators for standard market bars.
 - `packages/t0assistant/` owns T+0 runtime, Replay, trading records, preferences, and repositories.
 - Apps should render and orchestrate shared logic, not duplicate screening or structure-analysis rules.
-- Skills should keep runtime-specific scripting inside `skills/`, while shared analysis logic stays in `packages/`.
 
 ### Compatible Python imports
 
@@ -115,10 +110,6 @@ supported. The neutral `packages/_import_aliases.py` mechanism runs at package
 initialization boundaries; it does not make Chan Theory or Fundamental Screener
 depend on market data.
 
-The skill's `_standalone_marketdata` copy is independent. Without StockPilot
-installed, its wrappers use that copy; with an editable or regular installation,
-they use the shared implementation. Standalone tests run in fresh `-I -S`
-interpreters against temporary skill directories, without host editable finders.
 See [import compatibility verification](docs/import_compatibility.md) for the
 entry-point inventory, installation matrix, and regression results.
 
@@ -163,7 +154,6 @@ python apps/t0-assistant/tests/run_required_python.py packages/t0assistant/tests
 python apps/t0-assistant/tests/run_required_python.py apps/t0-assistant/tests
 python -m unittest discover -s apps/chan-viewer/tests -p 'test_*.py'
 python -m unittest discover -s apps/fundamental-screener/tests -p 'test_*.py'
-python -m unittest discover -s skills/china-stock-analysis/tests -p 'test_*.py'
 ```
 
 T+0 renderer, Electron host, and contract checks:
@@ -184,8 +174,7 @@ Development rules are in [AGENTS.md](AGENTS.md).
 ## Runtime Data Boundary
 
 The repository stores source code, docs, and committed test fixtures. Private or
-generated runtime data should stay outside the installed skill directory and, in
-general, outside the source repository.
+generated runtime data should stay outside the source repository.
 
 Expected runtime layout:
 
@@ -197,19 +186,7 @@ Expected runtime layout:
     `-- reports/
 ```
 
-Expected installed skill layout:
-
-```text
-<target-skills-dir>/
-`-- china-stock-analysis/
-    |-- SKILL.md
-    |-- scripts/
-    |-- references/
-    `-- assets/
-```
-
-This keeps skill installs immutable and prevents private state from being mixed
-into the repo.
+This keeps private state from being mixed into the repo.
 
 ## Related Docs
 

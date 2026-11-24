@@ -334,15 +334,14 @@ flowchart TD
 
 ## 9. CLI 与应用形态
 
-Fundamental Screener 的核心能力应优先设计成可复用 CLI，供 StockPilot skill、日报任务、自动化任务和 Streamlit 页面共同调用。Streamlit 只是一个交互界面，不应承载核心计算逻辑。
+Fundamental Screener 的核心能力应优先设计成可复用 CLI，供自动化任务和 Streamlit 页面共同调用。Streamlit 只是一个交互界面，不应承载核心计算逻辑。
 
 ```mermaid
 flowchart TD
     A["Fundamental Screener Core"] --> B["CLI"]
-    B --> C["StockPilot Skill"]
-    B --> D["Streamlit App"]
-    B --> E["日报/批处理任务"]
-    B --> F["后续交易决策应用"]
+    B --> C["Streamlit App"]
+    B --> D["批处理任务"]
+    B --> E["后续交易决策应用"]
 ```
 
 ### 9.1 CLI 设计原则
@@ -350,7 +349,7 @@ flowchart TD
 | 原则 | 说明 |
 | --- | --- |
 | 核心逻辑与 UI 分离 | 板块计算、公司筛选、财务评分、估值评分都在 core/CLI 层完成 |
-| 输出结构化数据 | 默认输出 JSON，方便 skill 和其他程序调用 |
+| 输出结构化数据 | 默认输出 JSON，方便其他程序调用 |
 | 支持表格输出 | CLI 可选输出 Markdown/CSV，方便人工查看 |
 | 参数显式 | 日期、股票池、板块分类、基准指数、排序列、Top N 等通过参数传入 |
 | 可批处理 | 支持一次性输出多个板块和公司筛选结果 |
@@ -412,11 +411,11 @@ stockpilot fundamental screen \
 
 ### 9.3 CLI 输出格式
 
-CLI 默认输出 JSON，给 skill 调用时优先使用 JSON。人工调试时可以使用 Markdown 或 CSV。
+CLI 默认输出 JSON，程序调用时优先使用 JSON。人工调试时可以使用 Markdown 或 CSV。
 
 | 格式 | 用途 |
 | --- | --- |
-| JSON | skill 调用、自动化任务、Streamlit 数据源 |
+| JSON | 自动化任务、Streamlit 数据源 |
 | Markdown | 终端查看、轻量记录 |
 | CSV | 导出到表格工具继续分析 |
 
@@ -449,20 +448,6 @@ fundamental_screen:
     watch: []
     cautious: []
 ```
-
-### 9.4 Skill 调用场景
-
-CLI 应支持 StockPilot skill 在以下场景调用：
-
-| 场景 | 调用方式 |
-| --- | --- |
-| 自选股日报 | 拉取自选股所属板块状态、板块排名、公司财务和估值摘要 |
-| 持仓股票报告 | 判断持仓所在板块是否强势、公司财务和估值是否恶化 |
-| 板块筛选 | 输出当前强势、正在增强、高位过热、低位异动板块 |
-| 公司筛选 | 输出指定板块 Top 公司和候选分组 |
-| 后续交易应用 | 为买入、加仓、减仓、清仓模块提供基本面量化输入 |
-
-Skill 不应重复实现计算逻辑，只负责调用 CLI、解释结构化输出、结合用户上下文做展示。
 
 ## 10. MVP 页面设计
 
@@ -622,8 +607,8 @@ valuation:
 - 可以展示板块内公司估值横向对比表。
 - 可以识别并展示基础财务异常。
 - 可以输出优先研究、继续观察、谨慎/排除三个分组。
-- 可以通过 CLI 输出 JSON，供 StockPilot skill 调用。
-- Streamlit 页面和 skill 调用应复用同一套核心计算逻辑。
+- 可以通过 CLI 输出 JSON，供自动化任务调用。
+- Streamlit 页面和 CLI 调用应复用同一套核心计算逻辑。
 - 所有分数都能回溯到原始指标。
 - 页面不生成长篇研报，不输出买入/卖出建议。
 
@@ -642,7 +627,7 @@ MVP 验证有效后，再考虑以下扩展：
 
 ## 15. 数据治理
 
-数据治理是 Fundamental Screener 的独立基础模块，不属于 Streamlit app、skill 或 CLI。真实数据必须先经过采集、缓存、标准化和质量检查，再由 repository 组装成统一的 `MarketSnapshot`，供 core、CLI、Streamlit 和 skill 消费。
+数据治理是 Fundamental Screener 的独立基础模块，不属于 Streamlit app 或 CLI。真实数据必须先经过采集、缓存、标准化和质量检查，再由 repository 组装成统一的 `MarketSnapshot`，供 core、CLI 和 Streamlit 消费。
 
 推荐链路：
 
@@ -653,7 +638,7 @@ AkShare / 公开源
   -> SqliteFundamentalRepository
   -> MarketSnapshot
   -> core
-  -> CLI / Streamlit / Skill
+  -> CLI / Streamlit
 ```
 
 ### 15.1 数据源边界
@@ -879,7 +864,7 @@ CLI 的现有 `warnings` 字段显示相同说明，App 的“质量问题”显
 
 ### 15.7 快照、血缘与质量状态契约
 
-每次生成 `MarketSnapshot` 必须产生 `snapshot_id`，并记录 `analysis_date`、`data_cutoff`、`source_set`、`fetch_run_id`、`quality_report_id`、`config_version`、`formula_version`、`generated_at`。CLI/JSON、Streamlit 和 skill 消费结果时，应能展示或透传这些信息。
+每次生成 `MarketSnapshot` 必须产生 `snapshot_id`，并记录 `analysis_date`、`data_cutoff`、`source_set`、`fetch_run_id`、`quality_report_id`、`config_version`、`formula_version`、`generated_at`。CLI/JSON 和 Streamlit 消费结果时，应能展示或透传这些信息。
 
 所有时变数据必须按 `analysis_date` 截断，不只财务数据：
 
@@ -899,12 +884,11 @@ ok | degraded | stale | invalid
 
 ### 15.8 阶段边界
 
-数据治理应作为独立 Phase 先完成，再进入 app 和 skill：
+数据治理应作为独立 Phase 先完成，再进入 app：
 
 ```text
 Phase 6：数据治理与真实数据接入
 Phase 7：Streamlit 数据工作台
-Phase 8：CLI / Skill / 日报集成
 ```
 
 当前 Streamlit 工作台如果已经基于 fixture/core 完成，只能视为 Phase 7 的界面验证；接入真实数据前仍必须先完成 Phase 6。Phase 7 的真实数据 DoD 是“页面读取 Phase 6 的 SQLite/repository，并展示数据日期、来源和质量 warnings”。
@@ -912,7 +896,6 @@ Phase 8：CLI / Skill / 日报集成
 核心原则：
 
 - `apps/` 不直接抓基本面数据。
-- `skills/` 不直接抓基本面数据。
 - `core` 不关心 AkShare、SQLite 或腾讯接口。
 - `repositories.py` 是真实数据进入 `MarketSnapshot` 的边界。
 - fixture 继续作为测试数据，不承担真实数据治理职责。

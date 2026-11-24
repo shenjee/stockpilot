@@ -56,14 +56,14 @@
 | #181 / #193 | 财务 PIT 持久化与筛选；MVP §15.4.1 及 App README 已包含披露依据和历史可见性限制，本次无需另写规则 |
 | #182 / #194 | sync outcome、CLI 与 App；MVP 和 App README 已区分空结果、部分失败、失败，本次不更改公共状态 |
 | #183 / #195 | 债务映射与质量规则；现有 MVP 与 App README 已说明无可靠有息负债输入时不推导比率 |
-| #184 / #196 | 共享包导入身份；根 README 和 import_compatibility 已记录兼容入口，保留已有 Skill 历史记录 |
+| #184 / #196 | 共享包导入身份；根 README 和 import_compatibility 已记录兼容入口 |
 | #185 / #197 | package.json、测试 gate 与 CI 工作流；根 README 补齐 T+0 入口并区分 npm smoke 与完整 CI，详细覆盖矩阵继续复用现有文档 |
 | #186 / #198 | Python event publisher、Electron gateway、Renderer；现有契约和 App README 的重启提示保持一致，C4 补齐实际进程边界 |
 | #187 / #199 | Chan normalize 与包 README；有限值和宽松时间戳规则已更新，本次无需改写 |
 | #188 / #200 | quality 与历史可见性；MVP 已说明不产出 suspended，不把缺行情当停牌，本次无需改写 |
 
 本次仅静态核对启动/测试入口与现有脚本、CI；未启动行情采集、GUI、部署或物理设备验收，
-也未重跑上述业务修复的全套测试。Skill 专项文档、启动/测试和部署验证不纳入 #191。
+也未重跑上述业务修复的全套测试。启动/测试和部署验证不纳入 #191。
 
 ## 可重复的本地 Markdown 目标检查
 

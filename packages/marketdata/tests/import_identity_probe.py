@@ -40,9 +40,6 @@ def trace(frame, event, arg):
     return trace
 
 sys.setprofile(trace)
-if first == "wrapper":
-    sys.path.insert(0, str(root / "skill" / "scripts"))
-    import_module("market_data")
 a_name, b_name = (package, "packages." + package) if first == "short" else ("packages." + package, package)
 a, b = import_module(a_name), import_module(b_name)
 check.assertIs(a, b)
@@ -97,24 +94,6 @@ else:
     check.assertNotIn("marketdata", sys.modules)
     check.assertNotIn("packages.marketdata", sys.modules)
 
-# A copied standalone tree remains independent even with the aliases active.
-if package == "marketdata":
-    scripts = root / "skill" / "scripts" if layout in {"editable", "installed"} else root / "skills/china-stock-analysis/scripts"
-    sys.path.insert(0, str(scripts))
-    wrapper = import_module("market_data")
-    check.assertIs(wrapper.TencentStockDataProvider, a.TencentStockDataProvider)
-    for wrapper_name, suffix, symbol in (
-        ("runtime_paths", "runtime_paths", "RuntimePaths"),
-        ("repositories.kline_store", "repositories.kline_store", "KLineStore"),
-        ("repositories.securities_store", "repositories.securities_store", "SecuritiesStore"),
-        ("services.kline_data_service", "services.kline_data_service", "KLineDataService"),
-    ):
-        check.assertIs(getattr(import_module(wrapper_name), symbol),
-                       getattr(import_module("packages.marketdata." + suffix), symbol))
-    standalone = import_module("_standalone_marketdata.provider_result")
-    check.assertIsNot(standalone.MarketDataResult, a.MarketDataResult)
-    check.assertTrue(wrapper.TencentStockDataProvider.__module__.startswith("packages.marketdata."))
-
 sys.setprofile(None)
 for path, count in executions.items():
     # The packages-first bootstrap visits __init__ once under each name, but
@@ -126,5 +105,4 @@ for name, module in list(sys.modules.items()):
         check.assertIs(module, sys.modules["packages." + name])
         parent, _, child = name.rpartition(".")
         check.assertIs(getattr(sys.modules[parent], child), module)
-check.assertFalse(any("_standalone_marketdata" in str(f) for f in sys.meta_path))
 print(json.dumps({"layout": layout, "first": first, "package": package, "origin": a.__file__}))

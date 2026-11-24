@@ -22,14 +22,11 @@ class ImportCompatibilityTests(unittest.TestCase):
             shutil.copytree(ROOT / name, source / name, ignore=shutil.ignore_patterns("__pycache__"))
         for name in ("pyproject.toml", "README.md"):
             shutil.copyfile(ROOT / name, source / name)
-        shutil.copytree(ROOT / "skills/china-stock-analysis/scripts", cls.install_root / "skill/scripts",
-                        ignore=shutil.ignore_patterns("__pycache__"))
         for layout in ("editable", "installed"):
             target = cls.install_root / layout
             target.mkdir()
             # Both installs use the same source, but each gets its own site dir.
             (target / "source").symlink_to(source, target_is_directory=True)
-            (target / "skill").symlink_to(cls.install_root / "skill", target_is_directory=True)
             command = [sys.executable, "-m", "pip", "install", "--no-deps", "--no-build-isolation",
                        "--no-index", "--disable-pip-version-check", "--target", str(target / "site")]
             if layout == "editable":
@@ -75,12 +72,6 @@ class ImportCompatibilityTests(unittest.TestCase):
 
     def test_installed_canonical_first(self):
         self._matrix("installed", "canonical")
-
-    def test_editable_wrappers_first(self):
-        self._matrix("editable", "wrapper", packages=("marketdata",))
-
-    def test_installed_wrappers_first(self):
-        self._matrix("installed", "wrapper", packages=("marketdata",))
 
 
 if __name__ == "__main__":

@@ -268,11 +268,11 @@ Style rules:
 
 ## Current Data Fit
 
-Shared market data persists day and minute bars with optional `amount`.
-Normalization preserves supplied finite amount values and derives `amount` with
-`close * volume` only when absent.
+Shared market data (`packages/marketdata`) persists day and minute bars
+with optional `amount`. Normalization preserves supplied finite amount values
+and derives `amount` with `close * volume` only when absent.
 
-Current `china-stock-analysis` day-bar records already provide:
+Day-bar records from the shared market-data store provide:
 
 - `date`
 - `open`

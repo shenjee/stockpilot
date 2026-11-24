@@ -250,7 +250,7 @@ T+0 桌面应用不是孤立 App，它复用仓库内已有 package：
 | `packages/indicators/` | MA、BOLL、MACD、VWAP 等指标 |
 | `packages/t0assistant/` | Session、Pipeline、成交、偏好、Replay API |
 
-`skills/china-stock-analysis/` 与 T+0 当前阶段无直接耦合；skill 的公共逻辑提炼将在 T+0 基线完成后另行规划。
+`skills/china-stock-analysis/` 已随 #189 删除，不再规划从中提炼公共逻辑；T+0 只依赖上表中的 `packages/*`。
 
 ## 12. 模块实现说明（待补充）
 

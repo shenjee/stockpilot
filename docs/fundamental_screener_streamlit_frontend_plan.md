@@ -324,5 +324,5 @@ streamlit run apps/fundamental-screener/app.py
 - 不要把东方财富行业板块继续写死为唯一默认源。
 - 不要在 Streamlit 中复制 core 算法。
 - 不要新增复杂前端框架；继续使用 Streamlit。
-- 不要做登录、权限、部署、日报集成、skill 集成。
+- 不要做登录、权限、部署。
 - 不要改评分规则。

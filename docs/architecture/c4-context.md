@@ -14,7 +14,7 @@ C4-style view expressed in Mermaid.
 ```mermaid
 graph TD
     User[User / Developer]
-    Runtime[Local App / CLI / Skill Execution]
+    Runtime[Local App / CLI Execution]
     Repo[StockPilot Source Repository]
     Workspace[Local Workspace]
     RuntimeData[Local Runtime Data]
@@ -23,7 +23,7 @@ graph TD
     FundamentalProviders[External Fundamental Data Providers]
 
     User -->|reads, edits, runs| Repo
-    User -->|runs Streamlit, Electron T+0, CLI, skills| Runtime
+    User -->|runs Streamlit, Electron T+0, CLI| Runtime
     Runtime -->|loads code from| Workspace
     Workspace -->|contains checked-out code from| Repo
 
@@ -42,7 +42,6 @@ StockPilot is the system inside the `Local Workspace`. It includes:
 
 - reusable domain packages under `packages/`
 - local Streamlit apps and the Electron/React/Python T+0 desktop app under `apps/`
-- installable skill bundles under `skills/`
 - documentation under `docs/`
 
 The source repository is the code origin. The local workspace is the active
@@ -50,11 +49,10 @@ checkout used by developers, tests, CLI commands, and local app runs.
 
 ## External Actors And Systems
 
-- `User / Developer`: reads docs, runs commands, uses Streamlit or T+0 desktop apps, and may
-  install the skill into an agent runtime.
-- `Local App / CLI / Skill Execution`: local execution environments; apps and
-  CLIs can run directly without an agent runtime. T+0 process boundaries are
-  detailed in the [container view](c4-container.md).
+- `User / Developer`: reads docs, runs commands, and uses Streamlit or T+0
+  desktop apps.
+- `Local App / CLI Execution`: local execution environments for apps and CLIs.
+  T+0 process boundaries are detailed in the [container view](c4-container.md).
 - `External Market Data Providers`: currently represent Tencent-backed quote/K-
   line access and similar market-data integrations.
 - `External Fundamental Data Providers`: currently represent AkShare-backed
@@ -64,7 +62,7 @@ checkout used by developers, tests, CLI commands, and local app runs.
 
 - Local runtime data is not the same thing as the source repository.
 - Runtime files such as `config/`, `db/`, and generated reports belong under a
-  local runtime directory, not inside the installed skill bundle.
+  local runtime directory, not inside the source repository.
 - SQLite is the current local persistence boundary for market and fundamental
   data caches.
 

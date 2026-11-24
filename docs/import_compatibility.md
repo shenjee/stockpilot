@@ -5,6 +5,10 @@ Current base: `158173c` (includes #182 and the merged #183). Rebased on
 `git range-diff` confirmed the implementation patch was identical before the
 verification-record update. The four old #183 conflict files are not in this PR.
 
+The `china-stock-analysis` Skill and its `_standalone_marketdata` copy have since
+been removed from the repository (#189). The short-name identity contract below
+applies to the `packages.*` implementations only.
+
 ## Post-rebase verification (2026-10-04)
 
 All requested affected suites were rerun on the rebased branch:
@@ -12,10 +16,9 @@ All requested affected suites were rerun on the rebased branch:
 | Suite | Tests | Result |
 | --- | ---: | --- |
 | `packages/marketdata/tests` | 185 | Pass; includes 11 import-identity tests / 29 probes |
-| `skills/china-stock-analysis/tests` | 13 | Pass; includes 9 compatibility tests / 8 isolated standalone checks |
 | `packages/fundamentalscreener/tests` | 342 | Pass; includes main's #182 coverage |
 | `apps/fundamental-screener/tests` | 43 | Pass; includes main's #182 coverage |
-| **Post-rebase rerun total** | **583** | **Pass** |
+| **Post-rebase rerun total** | **570** | **Pass** |
 
 Short-name and canonical CLI `--help` output was also rechecked and matched.
 The previous 1,466-test complete Python run and JS/TS results below remain
@@ -30,10 +33,6 @@ Passing the former's failed result to the latter namespace's default queue
 retry predicate returned `False`. The two queue modules also created different
 shared queues. This demonstrates a mixed-import defect; it does not imply that
 all entry points were broken.
-
-The original skill compatibility suite ran 9 tests with 1 failure:
-`test_wrappers_fall_back_in_standalone_skill_layout`. Removing repository paths
-from `sys.path` did not isolate an installed package or an editable finder.
 
 ## Implementation boundary
 
@@ -51,10 +50,9 @@ its repository/install root to resolve the canonical namespace. Existing caller
 path setup and public exports remain supported. Class `__module__` values use
 the canonical `packages.*` names.
 
-No business module, standalone copy, dependency declaration, or publication-copy
-generator changed. `_standalone_marketdata` is outside the alias allowlist and
-retains its own types and state. Chan Theory and Fundamental Screener import no
-market-data package merely to set up aliases.
+No business module, dependency declaration, or publication-copy generator
+changed. Chan Theory and Fundamental Screener import no market-data package
+merely to set up aliases.
 
 ## Production entry points and smoke coverage
 
@@ -63,21 +61,19 @@ market-data package merely to set up aliases.
 | Fundamental Screener CLI / sync console scripts | `packages.fundamentalscreener.cli:main` / `.sync:main` | Full CLI and sync Python tests; installed CLI help; canonical `sectors --format json` and short-name `screen --format json` parse successfully; short/canonical help output matches. |
 | Chan Viewer Streamlit app | App inserts `packages/`; short `chantheory`, `marketdata`, and their children in app/services/UI modules | All 37 app tests, including app import with Streamlit stub; 122 Chan Theory tests. |
 | Fundamental Screener Streamlit app | App inserts `packages/`; short `fundamentalscreener` and children in app/services | All 43 app tests after rebase, including import and `main()` smoke with recorded/stubbed UI and data services. |
-| China stock analysis Skill | Flat provider/runtime/repository/service wrappers prefer `marketdata.*`; fallback `_standalone_marketdata.*` | Wrapper object identity; cold-wrapper editable and regular-install tests; all 8 standalone behavior checks in isolated processes. |
 | T+0 desktop/backend | Canonical `packages.marketdata.*`, `packages.chantheory.*`, `packages.t0assistant.*` | Backend `service.py --help`; all 104 app/backend Python tests and 479 Node tests, including real authenticated local-service startup/shutdown and transport; 617 T+0 package tests. |
 
 ## Independent acceptance checks
 
 ### Runtime identity and installed layouts
 
-`packages/marketdata/tests/test_import_compat.py` runs 11 test methods containing
-29 fresh-interpreter probes:
+`packages/marketdata/tests/test_import_compat.py` runs 9 test methods containing
+27 fresh-interpreter probes:
 
 - Three packages × two import orders × four layouts: repository root,
   `packages/` first, real editable installation, and regular wheel installation.
 - Three packages loaded short-name first with only `packages/` initially on the
   path (no repository root or host site initialization).
-- Two cold Skill-wrapper probes, one per installation mode.
 
 Temporary installs use pip with `--no-deps --no-build-isolation --no-index` on a
 source copy; the regular install is built as a wheel by pip. Each installed
@@ -90,17 +86,7 @@ imports, parent attributes, canonical metadata, cross-namespace exception
 catching, and shared queue object identity. A failed result from the opposite
 namespace actually causes a second provider attempt and succeeds. A profile
 hook counts business-module body executions to rule out double loading followed
-by re-exporting. Standalone types remain distinct even when aliases are active.
-
-### Standalone isolation
-
-`skills/china-stock-analysis/tests/test_marketdata_compat.py` copies scripts and
-the standalone test helper into a fresh temporary tree for each check. It runs
-`python -I -S` from that tree, disabling environment paths and site/.pth startup.
-The child verifies that no editable finder/module loaded, no shared market-data
-package loaded, and every loaded standalone module file lies in the temporary
-scripts directory. All assertions from the original eight standalone test
-bodies are preserved; their AST assertion-call lists were compared during review.
+by re-exporting.
 
 ## Original full local regression (2026-10-03, base `94c8479`)
 
@@ -117,11 +103,10 @@ Python suites run separately to retain their existing discovery/import setup:
 | `apps/chan-viewer/tests` | 37 | Pass |
 | `apps/fundamental-screener/tests` | 41 | Pass |
 | `apps/t0-assistant/tests` | 104 | Pass |
-| `skills/china-stock-analysis/tests` | 13 | Pass |
-| **Python total** | **1,466** | **Pass** |
+| **Python total** | **1,453** | **Pass** |
 
-The standalone child checks and the identity matrix above are exercised within
-these totals, not added again as separate unittest test counts.
+The identity matrix above is exercised within these totals, not added again as
+separate unittest test counts.
 
 | JavaScript / TypeScript validation | Tests | Result |
 | --- | ---: | --- |
@@ -139,8 +124,7 @@ Reproduction commands (from the repository root, unless using `npm --prefix`):
 ```bash
 source ~/.venvs/czsc/bin/activate
 for suite in packages/{chantheory,fundamentalscreener,indicators,marketdata,t0assistant}/tests \
-             apps/{chan-viewer,fundamental-screener,t0-assistant}/tests \
-             skills/china-stock-analysis/tests; do
+             apps/{chan-viewer,fundamental-screener,t0-assistant}/tests; do
     python -m unittest discover -s "$suite" -p 'test_*.py'
 done
 npm --prefix apps/t0-assistant test

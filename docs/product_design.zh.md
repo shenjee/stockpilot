@@ -457,7 +457,7 @@ AI芯片管制放松：
 - Phase 2 不重复造轮子自研完整缠论核心算法
 - Phase 2 默认采用开源 `czsc` 作为底层缠论分析引擎
 - 项目内保留自己的 `chantheory` 适配层，负责输入标准化、参数约束、统一 schema、图形数据和摘要输出
-- skill script 负责调用 `chantheory` 适配层，并把结果转成 Markdown、文本摘要或信号输入
+- app / CLI 负责调用 `chantheory` 适配层，并把结果转成图表、文本摘要或信号输入
 - UI 负责可视化展示，不承载核心缠论计算逻辑
 - 图形化结果优先于自然语言描述，自然语言仅作为辅助说明
 - Phase 2 的潜在买卖点只表示结构候选，不应在 Phase 3 信号合成之前单独形成交易指令
@@ -472,7 +472,6 @@ chantheory 适配层
   ├─ 调用 czsc
   └─ 映射为项目 schema / plot_primitives / summary / warnings
         ->
-  ├─ skill scripts：文本报告、结构摘要、agent 调用
   ├─ Streamlit app：算法验证、结构检查、参数调试
   └─ desktop / local app：K线叠加、分型/笔/线段/中枢可视化、交互复盘
 ```
@@ -481,16 +480,15 @@ chantheory 适配层
 
 - `czsc` 已提供较成熟的缠论核心能力，适合作为 Phase 2 的默认引擎
 - 直接自研分型、笔、线段、中枢会重复造轮子，且口径与测试成本很高
-- 保留项目自己的适配层后，可以避免 skill、agent、UI 直接绑定 `czsc` 原生对象和版本细节
-- 统一结果模型后，skills、agents、apps、调试工具都能共享同一套输出契约
+- 保留项目自己的适配层后，可以避免 app、CLI、UI 直接绑定 `czsc` 原生对象和版本细节
+- 统一结果模型后，apps、CLI、调试工具都能共享同一套输出契约
 
 推荐交付顺序：
 
 1. 先验证 `czsc` 与当前 A 股 K 线数据格式和周期配置是否匹配
 2. 先完成 `chantheory` 适配层，统一输入输出与 `plot_primitives`
 3. 先用 Streamlit 建立调试与验证界面，检查分型、笔、线段、中枢绘制是否正确
-4. skill 接入适配层，输出简短文字摘要和结构化结果
-5. 等结构口径稳定后，再建设本地 UI 或 desktop app
+4. 等结构口径稳定后，再建设本地 UI 或 desktop app
 
 `chantheory` 适配层建议输入：
 
@@ -532,7 +530,7 @@ chantheory 适配层
 - 但 UI 不适合直接依赖 openclaw、codex 一类 agent 运行环境长期承载
 - 更合理的做法是将 UI 单独做成本地 desktop app 或本地 web app，并通过统一分析接口读取缠论结果
 - `czsc` 负责底层缠论核心识别，`chantheory` 负责项目侧的适配、约束和统一输出
-- skill 与 desktop app 应共同依赖 `chantheory` 适配层，而不是直接依赖 UI 组件或 `czsc` 内部对象
+- desktop app 应依赖 `chantheory` 适配层，而不是直接依赖 UI 组件或 `czsc` 内部对象
 
 走势图窗口策略：
 
@@ -655,52 +653,21 @@ chantheory 适配层
 - 风险等级
 - 人工确认项
 
-## 7. Skill 组织建议
+## 7. 能力组织
 
-短期建议继续使用一个主 skill：
-
-```text
-china-stock-analysis
-```
-
-原因：
-
-- 需求仍在成型
-- 单 skill 更容易迭代
-- 当前已有日报和配置基础
-- 过早拆分会增加维护复杂度
-- `czsc` 适合作为底层分析引擎，但不应直接成为上层 skill 的裸依赖
+仓库以可复用 package 和本地 app 的形式组织能力，不再提供可安装的 agent skill。
+共享行情数据逻辑位于 `packages/marketdata`。
 
 补充建议：
 
-- 短期保持 `china-stock-analysis` 作为主 skill 入口
-- Phase 2 新增的缠论能力优先沉淀为项目内的 `chantheory` 适配层，由主 skill 调用
+- Phase 2 新增的缠论能力优先沉淀为项目内的 `chantheory` 适配层
 - `chantheory` 默认集成 `czsc`，但对外暴露项目自己的稳定 schema 和绘图数据
-- 是否把缠论单独拆成新 skill，应在分析接口稳定、参数边界稳定后再决定
-- 不建议把缠论 UI 直接做进 skill；UI 更适合作为独立本地应用存在
-- `chantheory` 应被视为独立分析接入层，skills、agents、apps、调试工具都应作为它的消费者
-
-中长期可拆分为多个 skill：
-
-```text
-stock-data-engine
-stock-technical-engine
-stock-strategy-engine
-stock-sector-engine
-stock-macro-event-engine
-stock-portfolio-pilot
-```
-
-拆分条件：
-
-- 模块边界稳定
-- 数据接口稳定
-- 代码体量明显变大
-- 不同 agent 需要复用其中一部分能力
+- 缠论 UI 作为独立本地应用存在，不放进分析 package
+- `chantheory` 应被视为独立分析接入层，apps、CLI、调试工具都应作为它的消费者
 
 ## 8. 建议目录结构
 
-本仓库是 StockPilot 产品代码库。仓库级设计文档放在 `docs/`，每个可安装 skill 放在 `skills/<skill-name>/`，项目自有适配层放在 `packages/`，可视化应用放在 `apps/`，可复用 CLI/core 能力应在这些消费者之间共享：
+本仓库是 StockPilot 产品代码库。仓库级设计文档放在 `docs/`，项目自有适配层放在 `packages/`，可视化应用放在 `apps/`，可复用 CLI/core 能力应在这些消费者之间共享：
 
 ```text
 stockpilot/
@@ -711,35 +678,24 @@ stockpilot/
 │   ├── phase2_tasks.md
 │   └── chan_theory_v0.1.md
 ├── packages/
-│   └── chantheory/
-│       ├── __init__.py
-│       ├── normalize.py
-│       ├── adapters.py
-│       ├── schema.py
-│       ├── describe.py
-│       ├── plotting.py
-│       └── config.py
-├── apps/
-│   └── chan-viewer/
-│       ├── README.md
-│       ├── app.py
-│       └── pages/
-└── skills/
-    └── china-stock-analysis/
-        ├── SKILL.md
-        ├── scripts/
-        │   ├── generate_report.py
-        │   ├── local_db.py
-        │   ├── market_data.py
-        │   ├── indicators.py
-        │   ├── strategy_engine.py
-        │   ├── sector_rotation.py
-        │   ├── macro_events.py
-        │   └── portfolio_risk.py
-        ├── assets/
-        │   ├── config_templates/
-        │   └── strategies/
-        └── references/
+│   ├── chantheory/
+│   │   ├── __init__.py
+│   │   ├── normalize.py
+│   │   ├── adapters.py
+│   │   ├── schema.py
+│   │   ├── describe.py
+│   │   ├── plotting.py
+│   │   └── config.py
+│   └── marketdata/
+│       ├── market_data.py
+│       ├── runtime_paths.py
+│       ├── repositories/
+│       └── services/
+└── apps/
+    └── chan-viewer/
+        ├── README.md
+        ├── app.py
+        └── pages/
 ```
 
 这只是目标结构，不代表一次性实现。
