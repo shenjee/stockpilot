@@ -78,7 +78,11 @@ graph TD
 - `packages/marketdata/repositories/securities_store.py` imports the committed
   `securities_master.json` into SQLite for search.
 - `packages/marketdata/build_securities_master.py` regenerates
-  `securities_master.json` from AkShare and the maintained HK static list.
+  `securities_master.json` from AkShare and the maintained HK static list. Run it
+  from the repository root with
+  `python -m packages.marketdata.build_securities_master`; the `-m` form is
+  required because the script imports `packages.marketdata` and must work
+  without an editable install.
 - `packages/marketdata/runtime_paths.py` resolves local runtime directories.
 
 ### Domain Component

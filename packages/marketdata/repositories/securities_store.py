@@ -85,7 +85,8 @@ class SecuritiesStore:
             return
         print(
             f"[WARN] 证券主数据 JSON 不存在：{self.json_path}；securities 表为空，"
-            "前端搜索将无任何结果。请运行 python packages/marketdata/build_securities_master.py "
+            "前端搜索将无任何结果。请在仓库根目录运行 "
+            "python -m packages.marketdata.build_securities_master "
             "生成该文件并放置到上述路径。",
             file=sys.stderr,
         )

@@ -15,7 +15,11 @@ akshare 与 pypinyin 只在本脚本内使用，且采用懒导入：本模块�
 
 执行（仓库根目录）::
 
-    python packages/marketdata/build_securities_master.py
+    python -m packages.marketdata.build_securities_master
+
+必须用 ``-m`` 方式启动：直接 ``python packages/marketdata/build_securities_master.py``
+只会把 ``packages/marketdata/`` 放进 ``sys.path``，仓库根不在其中，未做 editable
+install 时 ``from packages.marketdata...`` 会失败。
 """
 
 from __future__ import annotations
