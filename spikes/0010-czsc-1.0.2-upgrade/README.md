@@ -54,16 +54,16 @@ diff formal-freeze-before.txt formal-freeze-after.txt   # 无输出
 
 **`min_bi_len` 结论**：两版默认值都是 6，项目从未显式传参，对照脚本**不补参数**，保持与生产路径一致。
 
-### 四个默认信号的注册名（k3 迁移确认）
+### 四个默认信号的 k3 迁移确认
 
-通过 `czsc._native.call_signal(name, analyzer, params)` 解析（信号不是 `_native` 的直接属性）：
+通过 `czsc._native.call_signal(name, analyzer, params)` 解析（信号不是 `_native` 的直接属性）。**注册名（`signal_name`）两版都没变**，仍是 `cxt_first_buy_V221126` / `cxt_first_sell_V221126` / `cxt_second_bs_V240524` / `cxt_third_bs_V230319` 这一组；变的是 value 里的 k3 段：
 
-| 项目信号 key | 1.0.1 注册名 | 1.0.2 注册名 |
-|---|---|---|
-| `first_buy` | `BUY1` | `BUY1V221126` |
-| `first_sell` | `SELL1` | `SELL1V221126` |
-| `second_bs` | `第二买卖点V240524` | `第二买卖点V240524`（不变） |
-| `third_bs` | `BS3辅助V230319` | `BS3辅助V230319`（不变） |
+| 项目信号 key | 注册名（不变） | 1.0.1 value 的 k3 | 1.0.2 value 的 k3 |
+|---|---|---|---|
+| `first_buy` | `cxt_first_buy_V221126` | `BUY1` | `BUY1V221126` |
+| `first_sell` | `cxt_first_sell_V221126` | `SELL1` | `SELL1V221126` |
+| `second_bs` | `cxt_second_bs_V240524` | `第二买卖点V240524` | 不变 |
+| `third_bs` | `cxt_third_bs_V230319` | `BS3辅助V230319` | 不变 |
 
 `BUY1` / `SELL1` 在 1.0.2 被 k3 迁移为带日期后缀的版本。项目 `DEFAULT_SIGNALS_CONFIG` 中的 `signal_key` 是项目自己的 key，不是上游注册名，**不需要改配置**；对照结果（§4）证实迁移后的 value 与 1.0.1 完全一致。
 
@@ -90,15 +90,21 @@ diff formal-freeze-before.txt formal-freeze-after.txt   # 无输出
   - 不传 `min_bi_len`，与生产路径一致。
 - [`compare_1_0_1_vs_1_0_2.py`](./compare_1_0_1_vs_1_0_2.py)：驱动两个子进程分别用两个解释器跑 `run_frozen.py`，然后比较：
   - 分型 / 笔 / 线段 / 中枢的稳定字段（`STRUCTURE_FIELDS`）
-  - 四个信号的 value / active / status 逐 snapshot 比较
-  - `signal_events`、`plot_primitives` 计数、warnings
-  - 被删分型归因：只有能逐条归因为"相邻同标记重复项"才算允许差异
+  - 背驰 / 买卖点 / `plot_primitives` 的全字段（`CONTENT_FIELDS`）——不只比计数
+  - 四个信号的 value / active / status 逐 snapshot 比较；`signal_events` 逐事件比较
+  - warnings 的 code 集合
+  - 被删分型归因：只有**直接前驱**（ref 序列中的上一个分型）本身被保留且同标记才算可归因；前驱也被删的，归为 unattributed
   - **不把 `engine_version` 字符串当结构差异**
+  - **PASS 门**：上述任一集合有字段差异、出现 1.0.2 独有分型、有 unattributed 被删分型、信号有差异、warnings 不同 → `STOP`。注意这比 #205 原文"被删分型可归因则允许"**更严**：分型本身在 `HARD_COLLECTIONS` 里，任何分型差异都会 STOP，归因记录只用于说明差异性质。#347 真的删分型时，笔/线段几乎必然跟着变，本来就该停下来人工看。
   - 输出 [`comparison-report.json`](./comparison-report.json)
+
+> **PASS 门经过负向测试。** 对 candidate 输出人为注入以下差异，脚本均判 STOP：分型 id 不变但 price 变、背驰 type 翻转、买卖点 price 变、`plot_primitive` y 变、删除前驱不同标记的分型、三个同标记连排删后两个（旧逻辑会误归因到隔一个的被删项）。
 
 ### 对照设计
 
-两侧跑的是**同一份项目代码**（`git_sha` 均为 `ecd8bbc`，pin 均为 1.0.1），candidate 侧通过 `--override-pin` 在进程内放行 1.0.2。这样两侧唯一变量就是引擎版本。pin 的正式改动是在对照**通过之后**才做的。
+两侧跑的是**同一份项目代码**（`git_sha` 均为 `ecd8bbc`，pin 均为 1.0.1），candidate 侧通过 `--override-pin` 在进程内放行 1.0.2。pin 的正式改动是在对照**通过之后**才做的。
+
+> **不是严格单变量对照。** 两个 venv 除 czsc 外还有 numpy（2.5.0 → 2.5.5）、pandas（3.0.3 → 3.1.1）、wbt（0.9.0 → 0.9.2）、urllib3（2.7.0 → 2.8.0）的差异——这是新建隔离 venv 时 pip 解析出的最新版本，没有刻意对齐。输出仍然逐字段一致，所以结论只会更稳（差异被更多变量覆盖仍然为零），但实验本身不能声称"唯一变量是引擎版本"。
 
 ---
 
@@ -139,7 +145,15 @@ diff formal-freeze-before.txt formal-freeze-after.txt   # 无输出
 | 5m_real_600584_548 | 548 | 0 | 0 | 0 | 0 | 0 |
 | 30m_real_600584 | 1336 | 0 | 0 | 0 | 0 | 0 |
 
-所有 snapshot 的 value 均以 `其他` 开头（`其他_任意_任意_0`），两版一致。"是否以 `其他` 开头"的判定不变。
+**活跃信号（非 `其他`）在两版逐点相同。** 冻结输出里并非全部 snapshot 都是 `其他_任意_任意_0`——三个样本都有活跃信号：
+
+| 样本 | 非 `其他` 的点数 | 出现过的 value |
+|---|---|---|
+| daily_synthetic_120 | 16 | `一卖_7笔_任意_0` |
+| 5m_real_600584_548 | 84 | `一卖_9笔_任意_0`、`一卖_15笔_任意_0`、`二买_任意_任意_0`、`二卖_任意_任意_0` |
+| 30m_real_600584 | 579 | 一买、一卖、二买、二卖、三买、三卖（含 `均线底分` / `均线新高` 等变体） |
+
+这些 value 以及"是否以 `其他` 开头"的判定，两版逐点一致——这正是 #205 的通过条件。
 
 ### 4.3 结构字段对照
 
@@ -173,7 +187,8 @@ diff formal-freeze-before.txt formal-freeze-after.txt   # 无输出
 | 规则 | 结果 |
 |---|---|
 | 分型 / 笔 / 线段 / 中枢一致 | ✅ 三个场景计数和稳定字段全部一致 |
-| 四个默认信号 value 不变 | ✅ 2004 个 snapshot 逐点一致 |
+| 背驰 / 买卖点 / `plot_primitives` 一致 | ✅ 全字段一致（收紧 PASS 门后复核） |
+| 四个默认信号 value 不变 | ✅ 2004 个 snapshot 逐点一致，含 679 个活跃（非 `其他`）点 |
 | "是否以 `其他` 开头"不变 | ✅ |
 | 唯一允许的结构差异（被删分型可归因） | 不适用——被删分型为 0 |
 | `min_bi_len` 默认值 | ✅ 两版均 6，未补参数 |
@@ -222,9 +237,9 @@ python spikes/0010-czsc-1.0.2-upgrade/compare_1_0_1_vs_1_0_2.py
 
 # 只重跑单侧
 ~/.venvs/czsc/bin/python spikes/0010-czsc-1.0.2-upgrade/run_frozen.py \
-    --output-dir spikes/0010-czsc-1.0.2-upgrade/reference-1.0.1
+    --out spikes/0010-czsc-1.0.2-upgrade/reference-1.0.1
 ~/.venvs/czsc102-isolated/bin/python spikes/0010-czsc-1.0.2-upgrade/run_frozen.py \
-    --output-dir spikes/0010-czsc-1.0.2-upgrade/candidate-1.0.2 --override-pin
+    --out spikes/0010-czsc-1.0.2-upgrade/candidate-1.0.2 --override-pin
 
 # 复用已有输出只做比较
 python spikes/0010-czsc-1.0.2-upgrade/compare_1_0_1_vs_1_0_2.py --skip-run

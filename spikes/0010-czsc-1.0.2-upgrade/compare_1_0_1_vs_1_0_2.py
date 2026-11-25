@@ -52,6 +52,19 @@ STRUCTURE_FIELDS = {
     "pivot_zones": ("id", "level", "start_timestamp", "end_timestamp", "high", "low", "active", "segment_ids"),
 }
 
+# Collections whose *content* must match, not just their length. A count-only
+# check would miss a divergence whose id stays put while its type or ratio
+# changes, or a candidate point whose price moves.
+CONTENT_FIELDS = {
+    "divergences": ("id", "divergence_type", "confirmed", "timestamp", "reference_id", "pivot_zone_id", "ratio"),
+    "candidate_buy_points": ("id", "point_type", "timestamp", "price", "confirmed", "reference_id", "reason", "meta"),
+    "candidate_sell_points": ("id", "point_type", "timestamp", "price", "confirmed", "reference_id", "reason", "meta"),
+    "plot_primitives": ("id", "type", "layer", "style", "x", "y", "x1", "x2", "y1", "y2", "text", "color", "meta"),
+}
+
+# Collections compared field-by-field; any difference is a hard STOP.
+HARD_COLLECTIONS = ("fractals", "strokes", "segments", "pivot_zones", *CONTENT_FIELDS)
+
 SIGNAL_KEYS = ("first_buy", "first_sell", "second_bs", "third_bs")
 
 
@@ -78,33 +91,33 @@ def attribute_removed_fractals(ref: list[dict], cand: list[dict]) -> dict:
 
     Upstream #347 drops a candidate fractal when it carries the same mark as
     the adjacent (previous) kept fractal. So a removed fractal ``R`` is
-    attributable when the nearest *kept* fractal before ``R`` in ``ref`` has
-    the same ``fractal_type`` and there is no other kept fractal between them.
+    attributable only when its *immediate predecessor in the ref sequence*
+    is itself kept in ``cand`` and has the same ``fractal_type``. Using the
+    last kept fractal anywhere before ``R`` would wrongly attribute a run of
+    consecutive removals to a fractal several positions back.
     Returns per-removal records plus the residual (unattributed) list.
     """
     cand_ids = {f["id"] for f in cand}
-    kept = []
-    removed = []
-    for f in ref:
-        if f["id"] in cand_ids:
-            kept.append(f)
-        else:
-            removed.append(f)
     records = []
     unattributed = []
-    for r in removed:
-        prev_kept = kept[-1] if kept else None
-        # ``kept`` only contains fractals before ``r`` because ref is in order.
-        same_mark = prev_kept is not None and prev_kept["fractal_type"] == r["fractal_type"]
+    removed_count = 0
+    for i, r in enumerate(ref):
+        if r["id"] in cand_ids:
+            continue
+        removed_count += 1
+        prev = ref[i - 1] if i > 0 else None
+        prev_kept = prev is not None and prev["id"] in cand_ids
+        same_mark = prev_kept and prev["fractal_type"] == r["fractal_type"]
         rec = {
             "removed": r,
-            "previous_kept": prev_kept,
-            "same_mark_as_previous_kept": same_mark,
+            "immediate_predecessor": prev,
+            "predecessor_kept_in_cand": prev_kept,
+            "same_mark_as_predecessor": same_mark,
         }
         records.append(rec)
         if not same_mark:
             unattributed.append(rec)
-    return {"removed_count": len(removed), "records": records, "unattributed": unattributed}
+    return {"removed_count": removed_count, "records": records, "unattributed": unattributed}
 
 
 def compare_signals(ref: dict, cand: dict) -> tuple[list[dict], dict]:
@@ -179,7 +192,7 @@ def main() -> int:
                        for k in ("fractals", "strokes", "segments", "pivot_zones", "divergences", "signal_events",
                                  "signal_snapshots", "candidate_buy_points", "candidate_sell_points", "plot_primitives")}
         s["structure_diffs"] = {}
-        for coll, fields in STRUCTURE_FIELDS.items():
+        for coll, fields in {**STRUCTURE_FIELDS, **CONTENT_FIELDS}.items():
             d = diff_list(coll, project(ref[coll], fields), project(cand[coll], fields))
             if d:
                 s["structure_diffs"][coll] = d
@@ -197,13 +210,13 @@ def main() -> int:
         s["summary_ref"] = ref["summary"]
         s["summary_cand"] = cand["summary"]
 
-        hard = [c for c in ("strokes", "segments", "pivot_zones") if c in s["structure_diffs"]]
+        hard = [c for c in HARD_COLLECTIONS if c in s["structure_diffs"]]
         fx_attr = s["fractal_attribution"]
         verdict = "PASS"
         reasons = []
         if hard:
             verdict = "STOP"
-            reasons.append(f"structure changed: {hard}")
+            reasons.append(f"structure/content changed: {hard}")
         if s["fractals_only_in_cand"]:
             verdict = "STOP"
             reasons.append("fractals appear in 1.0.2 that are absent in 1.0.1")
