@@ -1,0 +1,98 @@
+{
+  "captured_at_utc": "2026-11-25T06:50:22.308837+00:00",
+  "czsc_dist_info": {
+    "location": "/Users/jishen/.venvs/czsc/lib/python3.14/site-packages",
+    "version": "1.0.1"
+  },
+  "czsc_file": "/Users/jishen/.venvs/czsc/lib/python3.14/site-packages/czsc/__init__.py",
+  "czsc_version": "1.0.1",
+  "env_CZSC_MAX_BI_NUM": null,
+  "env_CZSC_MIN_BI_LEN": null,
+  "env_czsc_max_bi_num": null,
+  "env_czsc_min_bi_len": null,
+  "git_branch": "upgrade/czsc-1.0.2",
+  "git_sha": "ecd8bbc8c61ec6be36e2f525d009de7dad3f7d3b",
+  "machine": "arm64",
+  "numpy": "2.5.0",
+  "pandas": "3.0.3",
+  "pin_in_config_before_override": "1.0.1",
+  "pin_override": false,
+  "pin_rebound_modules": [],
+  "platform": "macOS-27.2.1-arm64-arm-64bit-Mach-O",
+  "python": "3.14.5",
+  "python_executable": "/Users/jishen/.venvs/czsc/bin/python",
+  "scenarios": {
+    "30m_real_600584": {
+      "counts": {
+        "bars": 1336,
+        "candidate_buy_points": 54,
+        "candidate_sell_points": 58,
+        "divergences": 9,
+        "fractals": 417,
+        "pivot_zones": 21,
+        "plot_primitives": 662,
+        "segments": 9,
+        "signal_events": 220,
+        "signal_series": 4,
+        "signal_snapshots": 1336,
+        "strokes": 95
+      },
+      "engine_version": "1.0.1",
+      "input_file": "30m_600584_sh_rows.json",
+      "input_sha256": "f60f5b735f07fabb73747fd2f3576ed4d3b293cfcdc2fcab74922bb6289da9d9",
+      "output_file": "30m_real_600584.json",
+      "output_sha256": "2f27d7bfa2d9e8a4f2a44cc1513b8bf2693787d094f1c5e4dbc32509a18e09ae",
+      "warning_codes": [
+        "AMOUNT_DERIVED"
+      ]
+    },
+    "5m_real_600584_548": {
+      "counts": {
+        "bars": 548,
+        "candidate_buy_points": 4,
+        "candidate_sell_points": 6,
+        "divergences": 2,
+        "fractals": 38,
+        "pivot_zones": 1,
+        "plot_primitives": 79,
+        "segments": 3,
+        "signal_events": 20,
+        "signal_series": 4,
+        "signal_snapshots": 548,
+        "strokes": 24
+      },
+      "engine_version": "1.0.1",
+      "input_file": "5m_real_600584_548_rows.json",
+      "input_sha256": "03c5deb34d9adf44f56bd8bf6e8b8d945b7d0927219227055d5e94c1aaccf8d6",
+      "output_file": "5m_real_600584_548.json",
+      "output_sha256": "dcf6edbbe922dc078d1437d7aeef4b47cc753a3fb0969fb2257d65ed6d06d6c2",
+      "warning_codes": []
+    },
+    "daily_synthetic_120": {
+      "counts": {
+        "bars": 120,
+        "candidate_buy_points": 0,
+        "candidate_sell_points": 2,
+        "divergences": 2,
+        "fractals": 30,
+        "pivot_zones": 2,
+        "plot_primitives": 48,
+        "segments": 1,
+        "signal_events": 4,
+        "signal_series": 4,
+        "signal_snapshots": 120,
+        "strokes": 9
+      },
+      "engine_version": "1.0.1",
+      "input_file": "daily_synthetic_120_rows.json",
+      "input_sha256": "fed13e7c47f19865d582011bb5114c919737b64850acbaa30a6da1ee876f24af",
+      "output_file": "daily_synthetic_120.json",
+      "output_sha256": "53322db45fb20f2831b1da886d5e515321ba8529fd2f61b1d423e4b97de58b35",
+      "warning_codes": [
+        "AMOUNT_DERIVED"
+      ]
+    }
+  },
+  "urllib3": "2.7.0",
+  "wbt": "0.9.0"
+}

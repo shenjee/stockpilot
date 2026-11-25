@@ -55,9 +55,9 @@ If app dependencies are missing: `python -m pip install -e ".[apps]"`.
 The repo is a **product codebase**. It has reusable cores under `packages/` and user/debug surfaces under `apps/`. Dependency direction is strict: `packages/` ← `apps/`; reusable logic lives in `packages/`, never duplicated into `apps/`.
 
 ### `packages/chantheory/` — Chan Theory adapter (Phase 2 core)
-A thin, project-owned adapter over the `czsc` engine (`czsc==1.0.1`, Python 3.14 runtime). It is **not** a reimplementation of Chan Theory. Pipeline:
+A thin, project-owned adapter over the `czsc` engine (`czsc==1.0.2`, Python 3.14 runtime). It is **not** a reimplementation of Chan Theory. Pipeline:
 - `normalize.py` — standardizes heterogeneous OHLCV input (various timestamp/field names) into ascending bars with stable `symbol`/`timeframe`. Public entry points: `normalize_ohlcv_rows`, `normalize_tracker_klines`.
-- `engine.py` — loads `czsc` and runs analysis. **Import-order quirk:** `numpy.typing` must be imported before `czsc` so the Rust-native extension initializes consistently. 1.0.1 uses top-level `czsc.RawBar` / `czsc.CZSC` (`czsc._native`); the old pure-Python `czsc.py.*` path is gone. `assert_engine_version()` refuses a mismatch with `PINNED_ENGINE_VERSION`.
+- `engine.py` — loads `czsc` and runs analysis. **Import-order quirk:** `numpy.typing` must be imported before `czsc` so the Rust-native extension initializes consistently. 1.0.x uses top-level `czsc.RawBar` / `czsc.CZSC` (`czsc._native`); the old pure-Python `czsc.py.*` path is gone. `assert_engine_version()` refuses a mismatch with `PINNED_ENGINE_VERSION`.
 - `structure_mapping.py` / `segments.py` — map `czsc` output into project schema (`fractals`, `strokes`, `segments`, `pivot_zones`, `divergences`).
 - `candidate_points.py` — structure-only buy/sell candidates (NOT trading instructions).
 - `plotting.py` — emits `plot_primitives` (markers/lines/boxes/labels) consumed by apps.

@@ -14,14 +14,14 @@ It is not a reimplementation of Chan Theory core logic. Its job is to:
 
 Phase 2 P1 freezes the adapter contract and validates a working `czsc` path.
 
-- Engine: `czsc==1.0.1`
+- Engine: `czsc==1.0.2`
 - Validation runtime: Python `3.14.5`
-- Why this pin: upgraded from `0.10.12` after isolation, adapter migration, and regression against the frozen 0.10.12 baseline (see `spikes/0009-czsc-1.0.1-upgrade/`)
-- Import note: load `numpy.typing` before importing `czsc` so the Rust-native extension initializes consistently. `rs_czsc` is no longer a dependency of czsc 1.0.1.
+- Why this pin: upgraded from `0.10.12` to `1.0.1` after isolation, adapter migration, and regression against the frozen 0.10.12 baseline (see `spikes/0009-czsc-1.0.1-upgrade/`); then upgraded to `1.0.2` after an isolated comparison showed structure-identical output on the frozen inputs (see `spikes/0010-czsc-1.0.2-upgrade/`)
+- Import note: load `numpy.typing` before importing `czsc` so the Rust-native extension initializes consistently. `rs_czsc` is no longer a dependency of czsc 1.0.x.
 
 Observed validation result:
 
-- `czsc==1.0.1` installs on CPython 3.14.5 via the `cp310-abi3` wheel (`czsc._native`)
+- `czsc==1.0.2` installs on CPython 3.14.5 via the `cp310-abi3` wheel (`czsc._native`)
 - tracker day-bar payloads convert into top-level `czsc.RawBar`
 - `CZSC(raw_bars, max_bi_num=..., min_bi_len=6)` runs successfully for A-share sample data
 
@@ -142,7 +142,7 @@ P1 freezes the top-level schema and P2 fills the stable structure mapping.
   "timeframe": "day",
   "source": "tencent",
   "engine": "czsc",
-  "engine_version": "1.0.1",
+  "engine_version": "1.0.2",
   "parameters": {
     "max_bi_num": 50,
     "min_bars": 60,
@@ -177,7 +177,7 @@ Multi-timeframe analysis uses a project-owned grouped container instead of leaki
   "symbol": "000001.SZ",
   "source": "tencent",
   "engine": "czsc",
-  "engine_version": "1.0.1",
+  "engine_version": "1.0.2",
   "base_timeframe": "day",
   "timeframes": ["day", "week", "month"],
   "levels": [

@@ -93,7 +93,8 @@ class PlotPrimitivesContractTests(unittest.TestCase):
 
 class BaselineCountSmokeTests(unittest.TestCase):
     def test_frozen_scenarios_produce_expected_structure_counts(self):
-        # Counts must match #173/#175 observed equal counts under 1.0.1.
+        # Counts must match #173/#175 observed equal counts under 1.0.1;
+        # re-verified identical under 1.0.2 (spikes/0010-czsc-1.0.2-upgrade/).
         cases = (
             ("daily_synthetic_120_rows.json", "000001.SZ", "day", "synthetic", 30, 9),
             ("5m_real_600584_548_rows.json", "600584.SH", "5m", "tencent", 38, 24),
