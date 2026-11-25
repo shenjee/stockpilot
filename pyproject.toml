@@ -9,7 +9,7 @@ description = "Stock-focused analysis workflows, reusable packages, and apps."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "czsc==1.0.1",
+  "czsc==1.0.2",
   "numpy>=1.26",
   "PyYAML>=6.0",
   "jsonschema>=4.23",

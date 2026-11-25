@@ -189,7 +189,7 @@ Phase 2 的 `candidate_buy_points` 和 `candidate_sell_points` 只表示结构�
   "timeframe": "day",
   "source": "tencent",
   "engine": "czsc",
-  "engine_version": "1.0.1",
+  "engine_version": "1.0.2",
   "parameters": {
     "max_bi_num": 50,
     "min_bars": 60
@@ -629,7 +629,7 @@ Phase 2 中，Streamlit 应承担：
 
 ## 13. 本版本的结论
 
-- Phase 2 采用 `czsc==1.0.1` 作为当前锁定的底层缠论引擎
+- Phase 2 采用 `czsc==1.0.2` 作为当前锁定的底层缠论引擎
 - 项目不从零自研完整缠论核心算法
 - 项目必须保留自己的 `chantheory` 适配层
 - 图形化结果是主输出，文字是辅助输出

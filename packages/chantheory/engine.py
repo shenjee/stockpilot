@@ -45,7 +45,7 @@ def assert_engine_version() -> str:
 
 
 def load_czsc() -> Tuple[object, object, object]:
-    # Load numpy.typing first. czsc 1.0.1 no longer depends on rs_czsc; the
+    # Load numpy.typing first. czsc 1.0.x no longer depends on rs_czsc; the
     # shim is retained so import order stays stable across the Rust-native
     # extension initialization.
     import_module("numpy.typing")
@@ -140,12 +140,12 @@ def run_engine(
     max_bi_num = int(parameters["max_bi_num"])
     min_bi_len = int(parameters.get("min_bi_len", MIN_BI_LEN_DEFAULT))
 
-    # czsc 1.0.1 exposes ``min_bi_len`` as a constructor parameter and as an
+    # czsc 1.0.x exposes ``min_bi_len`` as a constructor parameter and as an
     # instance attribute; 0.10.12 does NOT accept the kwarg (its pure-Python
     # path reads ``czsc_min_bi_len`` from the environment, while the Rust
     # extension uses the default of 6). Only forward ``min_bi_len`` when the
     # installed engine accepts it, so the same call path works under both
-    # versions. Passing it explicitly on 1.0.1 prevents env-var drift from
+    # versions. Passing it explicitly on 1.0.x prevents env-var drift from
     # silently changing the baseline structure.
     czsc = import_module("czsc")
     installed_version = getattr(czsc, "__version__", "")

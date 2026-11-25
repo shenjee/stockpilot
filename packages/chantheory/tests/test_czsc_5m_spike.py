@@ -119,14 +119,14 @@ class RebuildAndIncrementalTests(unittest.TestCase):
         self.assertTrue(result.strokes)
 
     def test_finished_bis_tail_exclusion_condition(self):
-        """Regression assertion: czsc 1.0.1 retains the tail-exclusion
+        """Regression assertion: czsc 1.0.x retains the tail-exclusion
         condition on finished_bis. The type stubs claim finished_bis is
         identical to bi_list, but the actual engine excludes the last bi
         when the unfinished-bi (ubi) buffer holds fewer than 5 bars
         (``len(bars_ubi) < 5``). When ``bars_ubi >= 5`` the last bi is
         confirmed and finished_bis equals bi_list.
 
-        ``ubi`` is a plain dict in 1.0.1 (not an object), so attribute
+        ``ubi`` is a plain dict in 1.0.x (not an object), so attribute
         access via ``getattr(ubi, "bars", [])`` silently returns ``[]`` and
         never exercises the exclusion branch. This test uses two real
         fixed prefixes of the 5m fixture — one per branch — and verifies
@@ -196,7 +196,7 @@ class RebuildAndIncrementalTests(unittest.TestCase):
         self.assertAlmostEqual(float(analyzer.bars_raw[-1].close), last_close + 0.5, places=6)
 
     def test_zs_list_matches_get_zs_seq_on_finished_bis(self):
-        """czsc 1.0.1 exposes zs_list as a CZSC instance attribute and
+        """czsc 1.0.x exposes zs_list as a CZSC instance attribute and
         get_zs_seq as a top-level function. Both must produce the same
         pivot-zone sequence when applied to finished_bis."""
         from chantheory.engine import load_czsc_utils
@@ -238,7 +238,7 @@ class RebuildAndIncrementalTests(unittest.TestCase):
 
 
 class RealEngineSignalTests(unittest.TestCase):
-    """Real czsc 1.0.1 engine samples for the four default signals (#175 DoD).
+    """Real czsc 1.0.x engine samples for the four default signals (#175 DoD).
 
     These tests exercise the Rust-native ``czsc._native.call_signal``
     dispatcher against the frozen 5m fixture. They document the coverage
@@ -348,14 +348,14 @@ class RealEngineSignalTests(unittest.TestCase):
         self.assertTrue(any(e.bar_index == 341 for e in buy_events))
 
     def test_unsafe_raw_bar_sharing_has_prefix_two_minimal_reproduction(self):
-        # czsc 1.0.1's Rust-native signal dispatcher (czsc._native.call_signal)
+        # czsc 1.0.x's Rust-native signal dispatcher (czsc._native.call_signal)
         # is stateless with respect to RawBar objects: it does not cache
         # intermediate calculations on the bar instances the way the old
         # pure-Python czsc.signals.cxt functions did. Consequently, sharing
         # the engine-owned RawBar list across signal replay no longer produces
         # a different result from a clean rebuild. This test was originally
         # written under czsc 0.10.12 where the old signal functions mutated
-        # shared bar state; under 1.0.1 the unsafe and isolated paths are
+        # shared bar state; under 1.0.x the unsafe and isolated paths are
         # equivalent, which is the correct and safer behaviour.
         unsafe = IncrementalExperiment(self.warm, isolate_signal_replay=False)
         first_normalized, first = unsafe.advance(self.target[0])
@@ -365,7 +365,7 @@ class RealEngineSignalTests(unittest.TestCase):
         second_normalized, second = unsafe.advance(self.target[1])
         oracle_normalized, oracle = full_rebuild(self.warm + self.target[:2])
         differences = compare_results(oracle, second, oracle_normalized, second_normalized)
-        # Under czsc 1.0.1 the Rust-native dispatcher does not mutate shared
+        # Under czsc 1.0.x the Rust-native dispatcher does not mutate shared
         # RawBar state, so the unsafe path matches the clean rebuild.
         self.assertEqual(differences, [])
 

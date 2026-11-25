@@ -1,0 +1,358 @@
+{
+  "candidate_dir": "/Users/jishen/projects/stockpilot/spikes/0010-czsc-1.0.2-upgrade/candidate-1.0.2",
+  "overall": "PASS",
+  "reference_dir": "/Users/jishen/projects/stockpilot/spikes/0010-czsc-1.0.2-upgrade/reference-1.0.1",
+  "scenarios": {
+    "30m_real_600584": {
+      "cand_engine_version": "1.0.2",
+      "counts": {
+        "candidate_buy_points": {
+          "cand": 54,
+          "ref": 54
+        },
+        "candidate_sell_points": {
+          "cand": 58,
+          "ref": 58
+        },
+        "divergences": {
+          "cand": 9,
+          "ref": 9
+        },
+        "fractals": {
+          "cand": 417,
+          "ref": 417
+        },
+        "pivot_zones": {
+          "cand": 21,
+          "ref": 21
+        },
+        "plot_primitives": {
+          "cand": 662,
+          "ref": 662
+        },
+        "segments": {
+          "cand": 9,
+          "ref": 9
+        },
+        "signal_events": {
+          "cand": 220,
+          "ref": 220
+        },
+        "signal_snapshots": {
+          "cand": 1336,
+          "ref": 1336
+        },
+        "strokes": {
+          "cand": 95,
+          "ref": 95
+        }
+      },
+      "fractal_attribution": {
+        "records": [],
+        "removed_count": 0,
+        "unattributed": []
+      },
+      "fractals_only_in_cand": [],
+      "fractals_only_in_ref": [],
+      "reasons": [],
+      "ref_engine_version": "1.0.1",
+      "signal_diffs": [],
+      "signal_stats": {
+        "_snapshots": {
+          "changed": 0,
+          "count": 1336
+        },
+        "first_buy": {
+          "active_changed": 0,
+          "cand_latest": "其他_任意_任意_0",
+          "points": 1336,
+          "ref_latest": "其他_任意_任意_0",
+          "value_changed": 0
+        },
+        "first_sell": {
+          "active_changed": 0,
+          "cand_latest": "其他_任意_任意_0",
+          "points": 1336,
+          "ref_latest": "其他_任意_任意_0",
+          "value_changed": 0
+        },
+        "second_bs": {
+          "active_changed": 0,
+          "cand_latest": "其他_任意_任意_0",
+          "points": 1336,
+          "ref_latest": "其他_任意_任意_0",
+          "value_changed": 0
+        },
+        "third_bs": {
+          "active_changed": 0,
+          "cand_latest": "其他_任意_任意_0",
+          "points": 1336,
+          "ref_latest": "其他_任意_任意_0",
+          "value_changed": 0
+        }
+      },
+      "structure_diffs": {},
+      "summary_cand": [
+        "600584.SH normalized 1336 30m bars for Phase 2 analysis.",
+        "czsc 1.0.2 mapped 417 fractals and 95 finished strokes.",
+        "Phase 2 produced 9 segments and 21 pivot zones (stroke: 19, segment: 2).",
+        "Divergence mapping identified 9 confirmed divergences.",
+        "Signal replay tracks 4 series, 1336 snapshots, and 220 transition events.",
+        "Candidate replay records 220 buy/sell lifecycle events.",
+        "The latest confirmed stroke points down into 2026-09-08 14:30:00.",
+        "A conservative buy-point candidate is present but not confirmed.",
+        "A conservative sell-point candidate is present but not confirmed."
+      ],
+      "summary_ref": [
+        "600584.SH normalized 1336 30m bars for Phase 2 analysis.",
+        "czsc 1.0.1 mapped 417 fractals and 95 finished strokes.",
+        "Phase 2 produced 9 segments and 21 pivot zones (stroke: 19, segment: 2).",
+        "Divergence mapping identified 9 confirmed divergences.",
+        "Signal replay tracks 4 series, 1336 snapshots, and 220 transition events.",
+        "Candidate replay records 220 buy/sell lifecycle events.",
+        "The latest confirmed stroke points down into 2026-09-08 14:30:00.",
+        "A conservative buy-point candidate is present but not confirmed.",
+        "A conservative sell-point candidate is present but not confirmed."
+      ],
+      "verdict": "PASS",
+      "warnings_cand": [
+        "AMOUNT_DERIVED"
+      ],
+      "warnings_ref": [
+        "AMOUNT_DERIVED"
+      ]
+    },
+    "5m_real_600584_548": {
+      "cand_engine_version": "1.0.2",
+      "counts": {
+        "candidate_buy_points": {
+          "cand": 4,
+          "ref": 4
+        },
+        "candidate_sell_points": {
+          "cand": 6,
+          "ref": 6
+        },
+        "divergences": {
+          "cand": 2,
+          "ref": 2
+        },
+        "fractals": {
+          "cand": 38,
+          "ref": 38
+        },
+        "pivot_zones": {
+          "cand": 1,
+          "ref": 1
+        },
+        "plot_primitives": {
+          "cand": 79,
+          "ref": 79
+        },
+        "segments": {
+          "cand": 3,
+          "ref": 3
+        },
+        "signal_events": {
+          "cand": 20,
+          "ref": 20
+        },
+        "signal_snapshots": {
+          "cand": 548,
+          "ref": 548
+        },
+        "strokes": {
+          "cand": 24,
+          "ref": 24
+        }
+      },
+      "fractal_attribution": {
+        "records": [],
+        "removed_count": 0,
+        "unattributed": []
+      },
+      "fractals_only_in_cand": [],
+      "fractals_only_in_ref": [],
+      "reasons": [],
+      "ref_engine_version": "1.0.1",
+      "signal_diffs": [],
+      "signal_stats": {
+        "_snapshots": {
+          "changed": 0,
+          "count": 548
+        },
+        "first_buy": {
+          "active_changed": 0,
+          "cand_latest": "其他_任意_任意_0",
+          "points": 548,
+          "ref_latest": "其他_任意_任意_0",
+          "value_changed": 0
+        },
+        "first_sell": {
+          "active_changed": 0,
+          "cand_latest": "其他_任意_任意_0",
+          "points": 548,
+          "ref_latest": "其他_任意_任意_0",
+          "value_changed": 0
+        },
+        "second_bs": {
+          "active_changed": 0,
+          "cand_latest": "其他_任意_任意_0",
+          "points": 548,
+          "ref_latest": "其他_任意_任意_0",
+          "value_changed": 0
+        },
+        "third_bs": {
+          "active_changed": 0,
+          "cand_latest": "其他_任意_任意_0",
+          "points": 548,
+          "ref_latest": "其他_任意_任意_0",
+          "value_changed": 0
+        }
+      },
+      "structure_diffs": {},
+      "summary_cand": [
+        "600584.SH normalized 548 5m bars for Phase 2 analysis.",
+        "czsc 1.0.2 mapped 38 fractals and 24 finished strokes.",
+        "Phase 2 produced 3 segments and 1 pivot zones (stroke: 1, segment: 0).",
+        "Divergence mapping identified 2 confirmed divergences.",
+        "Signal replay tracks 4 series, 548 snapshots, and 20 transition events.",
+        "Candidate replay records 20 buy/sell lifecycle events.",
+        "The latest confirmed stroke points up into 2026-07-14 14:20:00.",
+        "A conservative buy-point candidate is present but not confirmed.",
+        "A conservative sell-point candidate is present but not confirmed."
+      ],
+      "summary_ref": [
+        "600584.SH normalized 548 5m bars for Phase 2 analysis.",
+        "czsc 1.0.1 mapped 38 fractals and 24 finished strokes.",
+        "Phase 2 produced 3 segments and 1 pivot zones (stroke: 1, segment: 0).",
+        "Divergence mapping identified 2 confirmed divergences.",
+        "Signal replay tracks 4 series, 548 snapshots, and 20 transition events.",
+        "Candidate replay records 20 buy/sell lifecycle events.",
+        "The latest confirmed stroke points up into 2026-07-14 14:20:00.",
+        "A conservative buy-point candidate is present but not confirmed.",
+        "A conservative sell-point candidate is present but not confirmed."
+      ],
+      "verdict": "PASS",
+      "warnings_cand": [],
+      "warnings_ref": []
+    },
+    "daily_synthetic_120": {
+      "cand_engine_version": "1.0.2",
+      "counts": {
+        "candidate_buy_points": {
+          "cand": 0,
+          "ref": 0
+        },
+        "candidate_sell_points": {
+          "cand": 2,
+          "ref": 2
+        },
+        "divergences": {
+          "cand": 2,
+          "ref": 2
+        },
+        "fractals": {
+          "cand": 30,
+          "ref": 30
+        },
+        "pivot_zones": {
+          "cand": 2,
+          "ref": 2
+        },
+        "plot_primitives": {
+          "cand": 48,
+          "ref": 48
+        },
+        "segments": {
+          "cand": 1,
+          "ref": 1
+        },
+        "signal_events": {
+          "cand": 4,
+          "ref": 4
+        },
+        "signal_snapshots": {
+          "cand": 120,
+          "ref": 120
+        },
+        "strokes": {
+          "cand": 9,
+          "ref": 9
+        }
+      },
+      "fractal_attribution": {
+        "records": [],
+        "removed_count": 0,
+        "unattributed": []
+      },
+      "fractals_only_in_cand": [],
+      "fractals_only_in_ref": [],
+      "reasons": [],
+      "ref_engine_version": "1.0.1",
+      "signal_diffs": [],
+      "signal_stats": {
+        "_snapshots": {
+          "changed": 0,
+          "count": 120
+        },
+        "first_buy": {
+          "active_changed": 0,
+          "cand_latest": "其他_任意_任意_0",
+          "points": 120,
+          "ref_latest": "其他_任意_任意_0",
+          "value_changed": 0
+        },
+        "first_sell": {
+          "active_changed": 0,
+          "cand_latest": "其他_任意_任意_0",
+          "points": 120,
+          "ref_latest": "其他_任意_任意_0",
+          "value_changed": 0
+        },
+        "second_bs": {
+          "active_changed": 0,
+          "cand_latest": "其他_任意_任意_0",
+          "points": 120,
+          "ref_latest": "其他_任意_任意_0",
+          "value_changed": 0
+        },
+        "third_bs": {
+          "active_changed": 0,
+          "cand_latest": "其他_任意_任意_0",
+          "points": 120,
+          "ref_latest": "其他_任意_任意_0",
+          "value_changed": 0
+        }
+      },
+      "structure_diffs": {},
+      "summary_cand": [
+        "000001.SZ normalized 120 day bars for Phase 2 analysis.",
+        "czsc 1.0.2 mapped 30 fractals and 9 finished strokes.",
+        "Phase 2 produced 1 segments and 2 pivot zones (stroke: 2, segment: 0).",
+        "Divergence mapping identified 2 confirmed divergences.",
+        "Signal replay tracks 4 series, 120 snapshots, and 4 transition events.",
+        "Candidate replay records 4 buy/sell lifecycle events.",
+        "The latest confirmed stroke points up into 2024-06-04.",
+        "A conservative sell-point candidate is present but not confirmed."
+      ],
+      "summary_ref": [
+        "000001.SZ normalized 120 day bars for Phase 2 analysis.",
+        "czsc 1.0.1 mapped 30 fractals and 9 finished strokes.",
+        "Phase 2 produced 1 segments and 2 pivot zones (stroke: 2, segment: 0).",
+        "Divergence mapping identified 2 confirmed divergences.",
+        "Signal replay tracks 4 series, 120 snapshots, and 4 transition events.",
+        "Candidate replay records 4 buy/sell lifecycle events.",
+        "The latest confirmed stroke points up into 2024-06-04.",
+        "A conservative sell-point candidate is present but not confirmed."
+      ],
+      "verdict": "PASS",
+      "warnings_cand": [
+        "AMOUNT_DERIVED"
+      ],
+      "warnings_ref": [
+        "AMOUNT_DERIVED"
+      ]
+    }
+  }
+}

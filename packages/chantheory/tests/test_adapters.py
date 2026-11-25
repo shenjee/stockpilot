@@ -1960,7 +1960,7 @@ class AdapterTests(unittest.TestCase):
     def test_short_p2_sample_is_boundary_and_matches_real_engine(self):
         """5-bar p2_sample is a boundary fixture, not structure gold.
 
-        Real czsc 1.0.1 yields 0 fractals / 0 strokes and INSUFFICIENT_BARS.
+        Real czsc 1.0.x yields 0 fractals / 0 strokes and INSUFFICIENT_BARS.
         Long frozen samples under spikes/0009-czsc-1.0.1-upgrade/baseline/
         remain the structure gold standard.
         """

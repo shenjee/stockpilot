@@ -3,7 +3,7 @@
   "timeframe": "day",
   "source": "tencent",
   "engine": "czsc",
-  "engine_version": "1.0.1",
+  "engine_version": "1.0.2",
   "parameters": {
     "max_bi_num": 50,
     "min_bi_len": 6,
@@ -456,7 +456,7 @@
   "plot_primitives": [],
   "summary": [
     "000001.SZ normalized 5 day bars for Phase 2 analysis.",
-    "czsc 1.0.1 mapped 0 fractals and 0 finished strokes.",
+    "czsc 1.0.2 mapped 0 fractals and 0 finished strokes.",
     "Signal replay tracks 4 series, 5 snapshots, and 0 transition events."
   ],
   "warnings": [
@@ -490,10 +490,10 @@
       "min_bi_len": 6,
       "min_bi_len_requested": 6,
       "max_bi_num": 50,
-      "installed_version": "1.0.1"
+      "installed_version": "1.0.2"
     },
     "engine_assumptions": {
-      "engine_version": "1.0.1",
+      "engine_version": "1.0.2",
       "segment_strategy": "chan_feature_sequence_gap_fractal_confirmation",
       "pivot_zone_strategy": "czsc.zs_list (instance attribute) with get_zs_seq fallback on finished strokes plus chantheory segment pivots",
       "divergence_strategy": "same_direction_stroke_extension_with_weaker_magnitude_around_pivot_zone"

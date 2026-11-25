@@ -3,13 +3,14 @@
 This module handles signal configuration normalization, bar-by-bar replay,
 and construction of signal series, events, and snapshots.
 
-czsc 1.0.1 replaced the pure-Python ``czsc.signals.cxt`` module with the
+czsc 1.0.x replaced the pure-Python ``czsc.signals.cxt`` module with the
 Rust-native ``czsc._native.call_signal`` dispatcher. Signal evaluation now
 goes through :func:`czsc._native.call_signal(name, czsc, params)`, which
 returns a ``list[Signal]``. Each ``Signal`` exposes ``.key`` and ``.value``
 attributes; ``.value`` uses the same ``v1_v2_v3_score`` format that the old
 OrderedDict values used, so the downstream series/events/snapshots contracts
-are unchanged.
+are unchanged. czsc 1.0.2 migrated the k3 segment of some signal values
+(e.g. ``BUY1`` -> ``BUY1V221126``); this module never matches on k3.
 """
 
 from __future__ import annotations
@@ -365,7 +366,7 @@ def build_signal_payloads(
 ) -> Tuple[List[Dict[str, Any]], List[SignalSeries], List[SignalEvent], List[SignalSnapshot], List[AnalysisWarning], List[Dict[str, Any]]]:
     """Run bar-by-bar signal replay and return evaluations, series, events, snapshots, warnings, and resolved config.
 
-    *dispatcher* defaults to the czsc 1.0.1 native ``call_signal`` dispatcher.
+    *dispatcher* defaults to the czsc 1.0.x native ``call_signal`` dispatcher.
     Tests may pass a mock dispatcher to avoid importing czsc.
     """
     warnings: List[AnalysisWarning] = []

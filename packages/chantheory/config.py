@@ -5,11 +5,12 @@ from typing import Dict, List, Tuple
 
 
 ENGINE_NAME = "czsc"
-PINNED_ENGINE_VERSION = "1.0.1"
+PINNED_ENGINE_VERSION = "1.0.2"
 PINNED_ENGINE_REASON = (
-    "Pinned to czsc 1.0.1; the Rust-native engine replaces the old pure-Python "
+    "Pinned to czsc 1.0.2; the Rust-native engine replaces the old pure-Python "
     "czsc.py path. Timestamps, finished_bis tail-exclusion, and zs_list have "
-    "been verified against the 0.10.12 baseline."
+    "been verified against the 0.10.12 baseline, and the 1.0.2 upgrade was "
+    "verified structure-identical to 1.0.1 on the frozen #205 inputs."
 )
 
 DEFAULT_PARAMETERS = {
@@ -20,26 +21,31 @@ DEFAULT_PARAMETERS = {
     "derive_amount_from_close_volume": True,
 }
 
-# czsc 1.0.1 exposes ``min_bi_len`` as a CZSC constructor parameter (default
+# czsc 1.0.x exposes ``min_bi_len`` as a CZSC constructor parameter (default
 # 6) and as an instance attribute; the kwarg takes precedence over the
 # ``czsc_min_bi_len`` / ``CZSC_MIN_BI_LEN`` env vars. czsc 0.10.12 does NOT
 # accept the kwarg — its pure-Python path reads ``czsc_min_bi_len`` from the
 # environment (default 6) via ``czsc.envs.get_min_bi_len``, while the Rust
 # extension uses the default of 6 regardless. The baseline fixtures were
 # frozen under 0.10.12 with an effective value of 6, so the explicit value
-# keeps 1.0.1 aligned with the baseline and prevents env-var drift.
-# ``run_engine`` only forwards the kwarg on 1.0+.
+# keeps 1.0.x aligned with the baseline and prevents env-var drift.
+# ``run_engine`` only forwards the kwarg on 1.0+. The 1.0.2 default was
+# re-verified as 6 (see spikes/0010-czsc-1.0.2-upgrade/).
 MIN_BI_LEN_DEFAULT = 6
 
 MINUTE_TIMEFRAMES_FOR_MAX_BI = {"1m", "5m", "15m", "30m", "60m"}
 DEFAULT_MAX_BI_NUM_MINUTE = 500
 
-# czsc 1.0.1 removed the pure-Python ``czsc.signals.cxt`` module and replaced
+# czsc 1.0.x removed the pure-Python ``czsc.signals.cxt`` module and replaced
 # it with the Rust-native ``czsc._native.call_signal`` dispatcher. Signal
 # definitions no longer reference a Python module; the dispatcher resolves a
 # signal by its registered name (e.g. ``cxt_first_buy_V221126``). The
 # ``module`` field is retained for schema compatibility and lineage metadata
 # but is set to ``czsc._native`` so consumers can trace the dispatch path.
+# czsc 1.0.2 migrated the k3 segment of 34 signal values (e.g. ``BUY1`` ->
+# ``BUY1V221126``); registered names, parameters and the trailing
+# ``其他_任意_任意_0`` classification are unchanged, and this project only
+# consumes ``.value`` without matching on k3.
 DEFAULT_SIGNALS_CONFIG = (
     {
         "module": "czsc._native",
@@ -137,7 +143,7 @@ def get_engine_compatibility() -> EngineCompatibility:
     return EngineCompatibility(
         engine=ENGINE_NAME,
         version=PINNED_ENGINE_VERSION,
-        supported_python="Requires Python >=3.10; czsc 1.0.1 uses built-in Rust extension (czsc._native)",
+        supported_python="Requires Python >=3.10; czsc 1.0.2 uses built-in Rust extension (czsc._native)",
         validated_python="3.14.5",
         import_shim="Import numpy.typing before czsc so the Rust extension initializes consistently.",
     )

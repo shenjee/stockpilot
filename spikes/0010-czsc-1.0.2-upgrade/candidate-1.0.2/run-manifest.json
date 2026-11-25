@@ -1,0 +1,104 @@
+{
+  "captured_at_utc": "2026-11-25T06:50:23.855257+00:00",
+  "czsc_dist_info": {
+    "location": "/Users/jishen/.venvs/czsc102-isolated/lib/python3.14/site-packages",
+    "version": "1.0.2"
+  },
+  "czsc_file": "/Users/jishen/.venvs/czsc102-isolated/lib/python3.14/site-packages/czsc/__init__.py",
+  "czsc_version": "1.0.2",
+  "env_CZSC_MAX_BI_NUM": null,
+  "env_CZSC_MIN_BI_LEN": null,
+  "env_czsc_max_bi_num": null,
+  "env_czsc_min_bi_len": null,
+  "git_branch": "upgrade/czsc-1.0.2",
+  "git_sha": "ecd8bbc8c61ec6be36e2f525d009de7dad3f7d3b",
+  "machine": "arm64",
+  "numpy": "2.5.5",
+  "pandas": "3.1.1",
+  "pin_in_config_before_override": "1.0.1",
+  "pin_override": true,
+  "pin_rebound_modules": [
+    "packages.chantheory",
+    "packages.chantheory.adapters",
+    "packages.chantheory.config",
+    "packages.chantheory.engine",
+    "packages.chantheory.multi_timeframe"
+  ],
+  "platform": "macOS-27.2.1-arm64-arm-64bit-Mach-O",
+  "python": "3.14.5",
+  "python_executable": "/Users/jishen/.venvs/czsc102-isolated/bin/python",
+  "scenarios": {
+    "30m_real_600584": {
+      "counts": {
+        "bars": 1336,
+        "candidate_buy_points": 54,
+        "candidate_sell_points": 58,
+        "divergences": 9,
+        "fractals": 417,
+        "pivot_zones": 21,
+        "plot_primitives": 662,
+        "segments": 9,
+        "signal_events": 220,
+        "signal_series": 4,
+        "signal_snapshots": 1336,
+        "strokes": 95
+      },
+      "engine_version": "1.0.2",
+      "input_file": "30m_600584_sh_rows.json",
+      "input_sha256": "f60f5b735f07fabb73747fd2f3576ed4d3b293cfcdc2fcab74922bb6289da9d9",
+      "output_file": "30m_real_600584.json",
+      "output_sha256": "8a69f4806429ec9114771efc914db3c01ffd92893c91662833b9290d93ee5722",
+      "warning_codes": [
+        "AMOUNT_DERIVED"
+      ]
+    },
+    "5m_real_600584_548": {
+      "counts": {
+        "bars": 548,
+        "candidate_buy_points": 4,
+        "candidate_sell_points": 6,
+        "divergences": 2,
+        "fractals": 38,
+        "pivot_zones": 1,
+        "plot_primitives": 79,
+        "segments": 3,
+        "signal_events": 20,
+        "signal_series": 4,
+        "signal_snapshots": 548,
+        "strokes": 24
+      },
+      "engine_version": "1.0.2",
+      "input_file": "5m_real_600584_548_rows.json",
+      "input_sha256": "03c5deb34d9adf44f56bd8bf6e8b8d945b7d0927219227055d5e94c1aaccf8d6",
+      "output_file": "5m_real_600584_548.json",
+      "output_sha256": "98f1c680961061eaa0e33e6ec356daa14519811bb8e00942d5a5177caee3d358",
+      "warning_codes": []
+    },
+    "daily_synthetic_120": {
+      "counts": {
+        "bars": 120,
+        "candidate_buy_points": 0,
+        "candidate_sell_points": 2,
+        "divergences": 2,
+        "fractals": 30,
+        "pivot_zones": 2,
+        "plot_primitives": 48,
+        "segments": 1,
+        "signal_events": 4,
+        "signal_series": 4,
+        "signal_snapshots": 120,
+        "strokes": 9
+      },
+      "engine_version": "1.0.2",
+      "input_file": "daily_synthetic_120_rows.json",
+      "input_sha256": "fed13e7c47f19865d582011bb5114c919737b64850acbaa30a6da1ee876f24af",
+      "output_file": "daily_synthetic_120.json",
+      "output_sha256": "9f4426e1ab0ce753a2e2f7e6a4a4016dc24b6f0bd46dc6b69ec693ab0c4b56d5",
+      "warning_codes": [
+        "AMOUNT_DERIVED"
+      ]
+    }
+  },
+  "urllib3": "2.8.0",
+  "wbt": "0.9.2"
+}
